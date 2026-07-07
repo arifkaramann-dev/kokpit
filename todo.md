@@ -1,0 +1,63 @@
+# Art of Colour Kokpit — TODO
+
+## Altyapı
+- [x] Veritabanı şeması: siparişler, sipariş kalemleri, hammaddeler, ana ürünler, türev ürünler, formül kalemleri, tedarikçiler, kampanyalar
+- [x] Migration üretimi ve veritabanına uygulanması
+- [x] Tema/tasarım sistemi (index.css, font, renk paleti — sade ve işlevsel, boya markasına uygun canlı vurgu rengi)
+- [x] DashboardLayout ile sidebar navigasyon ve rota yapısı (App.tsx)
+
+## Modül 1: Sipariş Panosu
+- [x] Sipariş CRUD (müşteri adı, kanal, tutar, notlar, kalemler)
+- [x] Kanban panosu: Yeni / Üretimde / Kargoya Hazır / Tamamlandı sütunları
+- [x] Sürükle-bırak ile durum değiştirme (optimistic update)
+- [x] Sipariş detay/düzenleme dialogu
+
+## Modül 2: Hammadde ve Stok Takibi
+- [x] Hammadde CRUD (ad, kategori: pigment/solvent/şişe/etiket/diğer, birim, stok miktarı, kritik eşik, birim maliyet)
+- [x] Stok giriş/çıkış hareketi (miktar güncelleme)
+- [x] Kritik stok uyarısı (eşik altına düşünce görsel uyarı + dashboard'da gösterim)
+
+## Modül 3: Ana Ürün ve Türev Ürün Sistemi (esnek)
+- [x] Ana ürün CRUD (ad, seri, renk kodu, temel satış fiyatı)
+- [x] Sınırsız/esnek türev ekleme: türev adı, serbest metin yüzey/kullanım alanı tipi, katkı maddeleri ve oran farkları
+- [x] Türev tipi önceden sabit DEĞİL — kullanıcı istediği yüzey tipini kendisi tanımlar
+- [x] Her türev bağımsız formül taşır
+
+## Modül 4: Ürün Formül Defteri
+- [x] Ana ürün ve türev için hammadde bazlı formül kalemleri (hammadde + miktar + birim + not)
+- [x] Formül görüntüleme/düzenleme arayüzü
+
+## Modül 5: Maliyet ve Kar Marjı Hesaplayıcı
+- [x] Formülden otomatik hammadde maliyeti hesabı
+- [x] Ambalaj + kargo maliyeti girişi
+- [x] Satış fiyatı + indirim oranı → net kar, kar marjı %, otomatik hesap
+- [x] Ürün bazlı maliyet kayıt/güncelleme
+
+## Modül 6: AI Pazarlama Metin Ajanı
+- [x] LLM entegrasyonu (server-side invokeLLM)
+- [x] İçerik tipi seçimi: ürün açıklaması / Instagram postu / reklam metni
+- [x] Ürün seçimi + ton + ek yönergeler girişi
+- [x] Üretilen metinleri kaydetme ve geçmiş listesi, kopyalama
+
+## Modül 7: Kampanya Takvimi
+- [x] Kampanya CRUD (ad, ürün grubu, başlangıç/bitiş, indirim oranı, not, durum)
+- [x] Aylık takvim görünümü
+- [x] Yaklaşan kampanyalar listesi + dashboard'da hatırlatma
+
+## Modül 8: Tedarikçi Rehberi
+- [x] Tedarikçi CRUD (firma, ilgili kişi, telefon, e-posta, tedarik ettiği malzemeler, son sipariş tarihi, fiyat notları)
+
+## Modül 9: Dashboard (Kokpit)
+- [x] Günlük/toplam sipariş özeti kartları
+- [x] Kritik stok uyarı listesi
+- [x] Yaklaşan kampanyalar
+- [x] Sipariş durum dağılımı ve hızlı erişim linkleri
+
+## Test & Teslim
+- [x] Vitest testleri (10 test geçiyor: kar marjı hesabı, kritik stok uyarı mantığı, sipariş durum akışı, auth)
+- [x] Ekran görüntüleriyle görsel doğrulama
+- [x] Checkpoint + teslim
+
+## Sonraki Oturuma Ertelenenler (opsiyonel geliştirmeler)
+- AI görsel üretimi modülü (ürün fotoğrafı arka plan değiştirme) — kullanıcı talebiyle eklenecek
+- Sipariş kalemleri için detaylı satır bazı CRUD (şu an özet metin alanı kullanılıyor) — kullanıcı talebiyle eklenecek
