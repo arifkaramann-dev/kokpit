@@ -1,0 +1,51 @@
+import DashboardLayout from "@/components/DashboardLayout";
+import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import Campaigns from "@/pages/Campaigns";
+import Costs from "@/pages/Costs";
+import Formulas from "@/pages/Formulas";
+import Home from "@/pages/Home";
+import Marketing from "@/pages/Marketing";
+import NotFound from "@/pages/NotFound";
+import Orders from "@/pages/Orders";
+import Products from "@/pages/Products";
+import Stock from "@/pages/Stock";
+import Suppliers from "@/pages/Suppliers";
+import { Route, Switch } from "wouter";
+import ErrorBoundary from "./components/ErrorBoundary";
+import { ThemeProvider } from "./contexts/ThemeContext";
+
+function Router() {
+  return (
+    <DashboardLayout>
+      <Switch>
+        <Route path={"/"} component={Home} />
+        <Route path={"/siparisler"} component={Orders} />
+        <Route path={"/stok"} component={Stock} />
+        <Route path={"/urunler"} component={Products} />
+        <Route path={"/formuller"} component={Formulas} />
+        <Route path={"/maliyet"} component={Costs} />
+        <Route path={"/pazarlama"} component={Marketing} />
+        <Route path={"/kampanyalar"} component={Campaigns} />
+        <Route path={"/tedarikciler"} component={Suppliers} />
+        <Route path={"/404"} component={NotFound} />
+        <Route component={NotFound} />
+      </Switch>
+    </DashboardLayout>
+  );
+}
+
+function App() {
+  return (
+    <ErrorBoundary>
+      <ThemeProvider defaultTheme="light">
+        <TooltipProvider>
+          <Toaster />
+          <Router />
+        </TooltipProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
+  );
+}
+
+export default App;

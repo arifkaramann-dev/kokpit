@@ -1,0 +1,224 @@
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { formatDate, formatQty, formatTL, ORDER_STATUSES } from "@/lib/format";
+import { trpc } from "@/lib/trpc";
+import {
+  AlertTriangle,
+  ArrowRight,
+  CalendarDays,
+  ClipboardList,
+  Package,
+  ShoppingCart,
+  Sparkles,
+  TrendingUp,
+} from "lucide-react";
+import { useLocation } from "wouter";
+
+export default function Home() {
+  const [, setLocation] = useLocation();
+  const { data, isLoading } = trpc.dashboard.summary.useQuery();
+
+  const statusMap = new Map((data?.statusCounts ?? []).map(s => [s.status, Number(s.count)]));
+  const activeOrders =
+    (statusMap.get("new") ?? 0) + (statusMap.get("production") ?? 0) + (statusMap.get("ready") ?? 0);
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">Kokpit</h1>
+        <p className="text-sm text-muted-foreground">
+          İşletmenizin günlük durumu tek bakışta.
+        </p>
+      </div>
+
+      {/* Özet kartları */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard
+          icon={<ShoppingCart className="h-5 w-5" />}
+          label="Bugünkü Sipariş"
+          value={isLoading ? "..." : String(data?.today?.count ?? 0)}
+          sub={isLoading ? "" : formatTL(data?.today?.total ?? 0)}
+          color="text-blue-600 bg-blue-50 dark:bg-blue-950/40"
+        />
+        <StatCard
+          icon={<ClipboardList className="h-5 w-5" />}
+          label="Aktif Sipariş"
+          value={isLoading ? "..." : String(activeOrders)}
+          sub="Yeni + Üretimde + Hazır"
+          color="text-amber-600 bg-amber-50 dark:bg-amber-950/40"
+        />
+        <StatCard
+          icon={<AlertTriangle className="h-5 w-5" />}
+          label="Kritik Stok"
+          value={isLoading ? "..." : String(data?.critical?.length ?? 0)}
+          sub="Eşik altındaki malzeme"
+          color="text-rose-600 bg-rose-50 dark:bg-rose-950/40"
+        />
+        <StatCard
+          icon={<CalendarDays className="h-5 w-5" />}
+          label="Yaklaşan Kampanya"
+          value={isLoading ? "..." : String(data?.upcoming?.length ?? 0)}
+          sub="Önümüzdeki 30 gün"
+          color="text-violet-600 bg-violet-50 dark:bg-violet-950/40"
+        />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Sipariş durum dağılımı */}
+        <Card className="p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold">Sipariş Durumları</h2>
+            <Button variant="ghost" size="sm" onClick={() => setLocation("/siparisler")}>
+              Panoya Git <ArrowRight className="h-3.5 w-3.5 ml-1" />
+            </Button>
+          </div>
+          <div className="space-y-2">
+            {ORDER_STATUSES.map(s => (
+              <div key={s.value} className="flex items-center gap-3">
+                <span className={`h-2.5 w-2.5 rounded-full ${s.color}`} />
+                <span className="text-sm flex-1">{s.label}</span>
+                <span className="font-semibold">{statusMap.get(s.value) ?? 0}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        {/* Kritik stok */}
+        <Card className="p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-500" /> Kritik Stok Uyarıları
+            </h2>
+            <Button variant="ghost" size="sm" onClick={() => setLocation("/stok")}>
+              Stoğa Git <ArrowRight className="h-3.5 w-3.5 ml-1" />
+            </Button>
+          </div>
+          {(data?.critical ?? []).length === 0 ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">
+              Tüm stoklar yeterli seviyede. 👍
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {(data?.critical ?? []).slice(0, 5).map(m => (
+                <div key={m.id} className="flex items-center gap-2 text-sm">
+                  <span className="flex-1 truncate">{m.name}</span>
+                  <Badge variant="secondary">{m.category}</Badge>
+                  <span className="font-medium text-amber-600 whitespace-nowrap">
+                    {formatQty(m.stockQty)} {m.unit}
+                  </span>
+                </div>
+              ))}
+              {(data?.critical ?? []).length > 5 && (
+                <p className="text-xs text-muted-foreground">
+                  +{(data?.critical ?? []).length - 5} malzeme daha...
+                </p>
+              )}
+            </div>
+          )}
+        </Card>
+
+        {/* Yaklaşan kampanyalar */}
+        <Card className="p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold flex items-center gap-2">
+              <CalendarDays className="h-4 w-4 text-violet-500" /> Yaklaşan Kampanyalar
+            </h2>
+            <Button variant="ghost" size="sm" onClick={() => setLocation("/kampanyalar")}>
+              Takvime Git <ArrowRight className="h-3.5 w-3.5 ml-1" />
+            </Button>
+          </div>
+          {(data?.upcoming ?? []).length === 0 ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">
+              Önümüzdeki 30 günde planlı kampanya yok.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {(data?.upcoming ?? []).slice(0, 5).map(c => (
+                <div key={c.id} className="flex items-center gap-2 text-sm">
+                  <span className="flex-1 truncate font-medium">{c.name}</span>
+                  {c.productGroup && <Badge variant="outline">{c.productGroup}</Badge>}
+                  <span className="text-muted-foreground whitespace-nowrap text-xs">
+                    {formatDate(c.startDate)} – {formatDate(c.endDate)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+
+        {/* Hızlı erişim */}
+        <Card className="p-5 space-y-3">
+          <h2 className="font-semibold">Hızlı İşlemler</h2>
+          <div className="grid grid-cols-2 gap-2">
+            <QuickAction
+              icon={<ClipboardList className="h-4 w-4" />}
+              label="Yeni Sipariş"
+              onClick={() => setLocation("/siparisler")}
+            />
+            <QuickAction
+              icon={<Package className="h-4 w-4" />}
+              label="Ürün Ekle"
+              onClick={() => setLocation("/urunler")}
+            />
+            <QuickAction
+              icon={<Sparkles className="h-4 w-4" />}
+              label="AI Metin Üret"
+              onClick={() => setLocation("/pazarlama")}
+            />
+            <QuickAction
+              icon={<TrendingUp className="h-4 w-4" />}
+              label="Kar Hesapla"
+              onClick={() => setLocation("/maliyet")}
+            />
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function StatCard({
+  icon,
+  label,
+  value,
+  sub,
+  color,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  sub: string;
+  color: string;
+}) {
+  return (
+    <Card className="p-4 space-y-2">
+      <div className={`h-9 w-9 rounded-lg flex items-center justify-center ${color}`}>{icon}</div>
+      <div>
+        <p className="text-2xl font-bold leading-none">{value}</p>
+        <p className="text-xs text-muted-foreground mt-1">{label}</p>
+        {sub && <p className="text-[11px] text-muted-foreground/70">{sub}</p>}
+      </div>
+    </Card>
+  );
+}
+
+function QuickAction({
+  icon,
+  label,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-2 rounded-lg border p-3 text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors"
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
