@@ -48,17 +48,31 @@ type OrderRow = {
   createdAt: Date;
 };
 
+type ItemRow = { productName: string; quantity: string; unitPrice: string };
+
 const emptyForm = {
   customerName: "",
   channel: "web",
   totalAmount: "",
   itemsSummary: "",
   notes: "",
+  items: [] as ItemRow[],
 };
+
+function parseItemRows(items: ItemRow[]) {
+  return items
+    .filter(r => r.productName.trim())
+    .map(r => ({
+      productName: r.productName.trim(),
+      quantity: parseFloat(r.quantity) || 1,
+      unitPrice: parseFloat(r.unitPrice) || 0,
+    }));
+}
 
 export default function Orders() {
   const utils = trpc.useUtils();
   const { data: orders, isLoading } = trpc.orders.list.useQuery();
+  const { data: products } = trpc.products.list.useQuery();
   const [activeOrder, setActiveOrder] = useState<OrderRow | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editOrder, setEditOrder] = useState<OrderRow | null>(null);
@@ -138,7 +152,7 @@ export default function Orders() {
     setDialogOpen(true);
   }
 
-  function openEdit(order: OrderRow) {
+  async function openEdit(order: OrderRow) {
     setEditOrder(order);
     setForm({
       customerName: order.customerName,
@@ -146,8 +160,22 @@ export default function Orders() {
       totalAmount: order.totalAmount,
       itemsSummary: order.itemsSummary ?? "",
       notes: order.notes ?? "",
+      items: [],
     });
     setDialogOpen(true);
+    try {
+      const items = await utils.orders.items.fetch({ orderId: order.id });
+      setForm(f => ({
+        ...f,
+        items: items.map(i => ({
+          productName: i.productName,
+          quantity: String(parseFloat(i.quantity)),
+          unitPrice: String(parseFloat(i.unitPrice)),
+        })),
+      }));
+    } catch {
+      // Kalemler yüklenemezse eski usül (özet metin) düzenleme yeterli.
+    }
   }
 
   function submit() {
@@ -155,12 +183,15 @@ export default function Orders() {
       toast.error("Müşteri adı gerekli");
       return;
     }
+    const itemRows = parseItemRows(form.items);
     const payload = {
       customerName: form.customerName.trim(),
       channel: form.channel,
       totalAmount: parseFloat(form.totalAmount) || 0,
       itemsSummary: form.itemsSummary || null,
       notes: form.notes || null,
+      // Kalem girildiyse toplam ve özet sunucuda satırlardan hesaplanır.
+      ...(itemRows.length > 0 ? { items: itemRows } : {}),
     };
     if (editOrder) {
       updateOrder.mutate({ id: editOrder.id, data: payload });
@@ -168,6 +199,11 @@ export default function Orders() {
       createOrder.mutate(payload);
     }
   }
+
+  const itemsTotal = parseItemRows(form.items).reduce(
+    (sum, r) => sum + r.quantity * r.unitPrice,
+    0,
+  );
 
   return (
     <div className="space-y-4">
@@ -184,7 +220,7 @@ export default function Orders() {
               <Plus className="h-4 w-4 mr-1" /> Yeni Sipariş
             </Button>
           </DialogTrigger>
-          <DialogContent className="sm:max-w-md">
+          <DialogContent className="sm:max-w-lg">
             <DialogHeader>
               <DialogTitle>{editOrder ? "Siparişi Düzenle" : "Yeni Sipariş"}</DialogTitle>
             </DialogHeader>
@@ -219,21 +255,133 @@ export default function Orders() {
                     type="number"
                     min="0"
                     step="0.01"
-                    value={form.totalAmount}
+                    value={form.items.length > 0 ? itemsTotal.toFixed(2) : form.totalAmount}
                     onChange={e => setForm(f => ({ ...f, totalAmount: e.target.value }))}
                     placeholder="0,00"
+                    disabled={form.items.length > 0}
                   />
+                  {form.items.length > 0 && (
+                    <p className="text-[11px] text-muted-foreground">
+                      Kalemlerden otomatik hesaplanır.
+                    </p>
+                  )}
                 </div>
               </div>
+
+              {/* Kalem satırları */}
               <div className="space-y-1.5">
-                <Label>Sipariş İçeriği</Label>
-                <Textarea
-                  value={form.itemsSummary}
-                  onChange={e => setForm(f => ({ ...f, itemsSummary: e.target.value }))}
-                  placeholder="Örn. 2x Meteor M1128 Nemesis, 1x Gloss Sprey Vernik"
-                  rows={2}
-                />
+                <div className="flex items-center justify-between">
+                  <Label>Sipariş Kalemleri</Label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() =>
+                      setForm(f => ({
+                        ...f,
+                        items: [...f.items, { productName: "", quantity: "1", unitPrice: "" }],
+                      }))
+                    }
+                  >
+                    <Plus className="h-3.5 w-3.5 mr-1" /> Satır Ekle
+                  </Button>
+                </div>
+                {form.items.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-[1fr_64px_88px_28px] gap-1.5 text-[11px] text-muted-foreground px-0.5">
+                      <span>Ürün</span>
+                      <span>Adet</span>
+                      <span>Birim ₺</span>
+                      <span />
+                    </div>
+                    {form.items.map((row, idx) => (
+                      <div key={idx} className="grid grid-cols-[1fr_64px_88px_28px] gap-1.5 items-center">
+                        <Input
+                          list="order-product-options"
+                          value={row.productName}
+                          placeholder="Ürün adı"
+                          onChange={e => {
+                            const name = e.target.value;
+                            setForm(f => {
+                              const items = [...f.items];
+                              const matched = products?.find(p => p.name === name);
+                              items[idx] = {
+                                ...items[idx],
+                                productName: name,
+                                // Ürün listesinden seçilirse satış fiyatını otomatik doldur.
+                                unitPrice:
+                                  matched && !items[idx].unitPrice
+                                    ? String(parseFloat(matched.salePrice))
+                                    : items[idx].unitPrice,
+                              };
+                              return { ...f, items };
+                            });
+                          }}
+                        />
+                        <Input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={row.quantity}
+                          onChange={e =>
+                            setForm(f => {
+                              const items = [...f.items];
+                              items[idx] = { ...items[idx], quantity: e.target.value };
+                              return { ...f, items };
+                            })
+                          }
+                        />
+                        <Input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          placeholder="0,00"
+                          value={row.unitPrice}
+                          onChange={e =>
+                            setForm(f => {
+                              const items = [...f.items];
+                              items[idx] = { ...items[idx], unitPrice: e.target.value };
+                              return { ...f, items };
+                            })
+                          }
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          onClick={() =>
+                            setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }))
+                          }
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    ))}
+                    <datalist id="order-product-options">
+                      {products?.map(p => (
+                        <option key={p.id} value={p.name} />
+                      ))}
+                    </datalist>
+                    <p className="text-sm font-medium text-right">
+                      Toplam: {formatTL(itemsTotal)}
+                    </p>
+                  </div>
+                )}
               </div>
+
+              {form.items.length === 0 && (
+                <div className="space-y-1.5">
+                  <Label>Sipariş İçeriği</Label>
+                  <Textarea
+                    value={form.itemsSummary}
+                    onChange={e => setForm(f => ({ ...f, itemsSummary: e.target.value }))}
+                    placeholder="Örn. 2x Meteor M1128 Nemesis, 1x Gloss Sprey Vernik"
+                    rows={2}
+                  />
+                </div>
+              )}
               <div className="space-y-1.5">
                 <Label>Notlar</Label>
                 <Textarea

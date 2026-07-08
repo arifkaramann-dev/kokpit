@@ -5,10 +5,12 @@ import {
   formulaItems,
   InsertMaterial,
   InsertOrder,
+  InsertOrderItem,
   InsertProduct,
   InsertUser,
   marketingTexts,
   materials,
+  orderItems,
   orders,
   products,
   stockMovements,
@@ -256,7 +258,25 @@ export async function updateOrder(id: number, data: Partial<InsertOrder>) {
 
 export async function deleteOrder(id: number) {
   const db = await requireDb();
+  await db.delete(orderItems).where(eq(orderItems.orderId, id));
   await db.delete(orders).where(eq(orders.id, id));
+}
+
+export async function listOrderItems(orderId: number) {
+  const db = await requireDb();
+  return db.select().from(orderItems).where(eq(orderItems.orderId, orderId)).orderBy(orderItems.id);
+}
+
+/** Siparişin kalemlerini komple değiştirir (sil + yeniden ekle). */
+export async function replaceOrderItems(
+  orderId: number,
+  items: Omit<InsertOrderItem, "orderId">[]
+) {
+  const db = await requireDb();
+  await db.delete(orderItems).where(eq(orderItems.orderId, orderId));
+  if (items.length > 0) {
+    await db.insert(orderItems).values(items.map(item => ({ ...item, orderId })));
+  }
 }
 
 export async function countOrdersToday() {
