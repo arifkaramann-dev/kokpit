@@ -262,6 +262,12 @@ export async function deleteOrder(id: number) {
   await db.delete(orders).where(eq(orders.id, id));
 }
 
+export async function getOrderByOrderNo(orderNo: string) {
+  const db = await requireDb();
+  const result = await db.select().from(orders).where(eq(orders.orderNo, orderNo)).limit(1);
+  return result[0];
+}
+
 export async function listOrderItems(orderId: number) {
   const db = await requireDb();
   return db.select().from(orderItems).where(eq(orderItems.orderId, orderId)).orderBy(orderItems.id);

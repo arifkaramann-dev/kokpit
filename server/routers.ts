@@ -4,7 +4,10 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { invokeLLM } from "./_core/llm";
 import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
+import { TRPCError } from "@trpc/server";
 import * as db from "./db";
+import { itemsTotal, summarizeItems, toItemRows } from "./orderUtils";
+import { syncTrendyolOrders } from "./trendyol";
 
 /* ------------------------- Zod schemas ------------------------- */
 
@@ -50,30 +53,7 @@ const orderInput = z.object({
   items: z.array(orderItemInput).optional(),
 });
 
-type OrderItemInput = z.infer<typeof orderItemInput>;
-
-export function itemsTotal(items: OrderItemInput[]): number {
-  return items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
-}
-
-export function summarizeItems(items: OrderItemInput[]): string {
-  return items
-    .map(item => `${formatQtyForSummary(item.quantity)}× ${item.productName}`)
-    .join(", ");
-}
-
-function formatQtyForSummary(qty: number): string {
-  return Number.isInteger(qty) ? String(qty) : qty.toLocaleString("tr-TR");
-}
-
-/** Kalem satırlarını decimal (string) alanlı insert kayıtlarına çevirir. */
-function toItemRows(items: OrderItemInput[]) {
-  return items.map(item => ({
-    productName: item.productName,
-    quantity: String(item.quantity),
-    unitPrice: String(item.unitPrice),
-  }));
-}
+export { itemsTotal, summarizeItems } from "./orderUtils";
 
 const supplierInput = z.object({
   name: z.string().min(1),
@@ -178,6 +158,16 @@ export const appRouter = router({
     items: protectedProcedure
       .input(z.object({ orderId: z.number() }))
       .query(({ input }) => db.listOrderItems(input.orderId)),
+    syncTrendyol: protectedProcedure.mutation(async () => {
+      try {
+        return await syncTrendyolOrders();
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: error instanceof Error ? error.message : "Trendyol senkronizasyonu başarısız",
+        });
+      }
+    }),
     create: protectedProcedure.input(orderInput).mutation(async ({ input }) => {
       const { items, ...order } = input;
       if (items?.length) {

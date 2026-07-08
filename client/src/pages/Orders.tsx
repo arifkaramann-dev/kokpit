@@ -32,7 +32,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import { CHANNELS, formatDate, formatTL, ORDER_STATUSES, OrderStatus } from "@/lib/format";
-import { GripVertical, Pencil, Plus, Trash2 } from "lucide-react";
+import { GripVertical, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -114,6 +114,19 @@ export default function Orders() {
       setDialogOpen(false);
       setEditOrder(null);
       setForm(emptyForm);
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  const syncTrendyol = trpc.orders.syncTrendyol.useMutation({
+    onSuccess: r => {
+      utils.orders.list.invalidate();
+      utils.dashboard.summary.invalidate();
+      toast.success(
+        r.imported > 0
+          ? `Trendyol: ${r.imported} yeni sipariş alındı${r.skipped ? `, ${r.skipped} zaten kayıtlıydı` : ""}`
+          : "Trendyol: yeni sipariş yok",
+      );
     },
     onError: e => toast.error(e.message),
   });
@@ -214,6 +227,15 @@ export default function Orders() {
             Siparişleri sürükleyip bırakarak aşamalar arasında taşıyın.
           </p>
         </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => syncTrendyol.mutate()}
+            disabled={syncTrendyol.isPending}
+          >
+            <RefreshCw className={`h-4 w-4 mr-1 ${syncTrendyol.isPending ? "animate-spin" : ""}`} />
+            Trendyol'dan Çek
+          </Button>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
             <Button onClick={openCreate}>
@@ -402,6 +424,7 @@ export default function Orders() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {isLoading ? (
