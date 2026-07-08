@@ -20,7 +20,10 @@ Render'ın kendi yönetilen MySQL'i yoktur; ücretsiz bir MySQL için iki iyi se
    ```
 
    > Sondaki `?ssl=...` kısmı zorunludur; TiDB yalnızca TLS bağlantı kabul eder.
-5. Connect ekranındaki SQL konsolundan veritabanını oluşturun: `CREATE DATABASE kokpit;`
+
+> Veritabanını elle oluşturmanıza gerek yok: uygulama açılışta adresteki
+> veritabanı yoksa kendisi oluşturur ve tabloları kurar
+> (`scripts/ensure-db.mjs` + otomatik migration).
 
 ### Seçenek B: Aiven for MySQL (ücretsiz plan)
 1. <https://aiven.io> hesabı açın, **MySQL > Free plan** seçin.
