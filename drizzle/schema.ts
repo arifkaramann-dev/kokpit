@@ -140,6 +140,63 @@ export type OrderItem = typeof orderItems.$inferSelect;
 export type InsertOrderItem = typeof orderItems.$inferInsert;
 
 /**
+ * Ürün geliştirme projeleri — fikirden bitmiş ürüne 5 adımlı rehberli akış.
+ * currentStep: 1 Tanım, 2 Reçete Denemeleri, 3 Test, 4 Maliyet/Fiyat, 5 Ürünleştirme.
+ */
+export const devProjects = mysqlTable("devProjects", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  targetUse: text("targetUse"),
+  series: varchar("series", { length: 128 }),
+  colorCode: varchar("colorCode", { length: 64 }),
+  colorHex: varchar("colorHex", { length: 16 }),
+  status: mysqlEnum("status", ["active", "done", "archived"]).notNull().default("active"),
+  currentStep: int("currentStep").notNull().default(1),
+  applicationNotes: text("applicationNotes"),
+  dryingTime: varchar("dryingTime", { length: 128 }),
+  coats: varchar("coats", { length: 64 }),
+  testNotes: text("testNotes"),
+  packagingCost: decimal("packagingCost", { precision: 12, scale: 2 }).notNull().default("0"),
+  shippingCost: decimal("shippingCost", { precision: 12, scale: 2 }).notNull().default("0"),
+  salePrice: decimal("salePrice", { precision: 12, scale: 2 }).notNull().default("0"),
+  productId: int("productId"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DevProject = typeof devProjects.$inferSelect;
+export type InsertDevProject = typeof devProjects.$inferInsert;
+
+/** Reçete denemeleri: her deneme hammadde satırları taşır, biri "seçili" olur. */
+export const devTrials = mysqlTable("devTrials", {
+  id: int("id").autoincrement().primaryKey(),
+  projectId: int("projectId").notNull(),
+  trialNo: int("trialNo").notNull(),
+  result: mysqlEnum("result", ["pending", "success", "partial", "fail"])
+    .notNull()
+    .default("pending"),
+  isChosen: int("isChosen").notNull().default(0),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DevTrial = typeof devTrials.$inferSelect;
+export type InsertDevTrial = typeof devTrials.$inferInsert;
+
+export const devTrialItems = mysqlTable("devTrialItems", {
+  id: int("id").autoincrement().primaryKey(),
+  trialId: int("trialId").notNull(),
+  materialId: int("materialId").notNull(),
+  qty: decimal("qty", { precision: 12, scale: 3 }).notNull(),
+  note: text("note"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DevTrialItem = typeof devTrialItems.$inferSelect;
+export type InsertDevTrialItem = typeof devTrialItems.$inferInsert;
+
+/**
  * Tedarikçiler.
  */
 export const suppliers = mysqlTable("suppliers", {

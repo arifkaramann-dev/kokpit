@@ -15,6 +15,13 @@
       "when": 1783505955595,
       "tag": "0001_ancient_hairball",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1783545025767,
+      "tag": "0002_common_forge",
+      "breakpoints": true
     }
   ]
 }

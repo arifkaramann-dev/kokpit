@@ -3,6 +3,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Campaigns from "@/pages/Campaigns";
 import Costs from "@/pages/Costs";
+import Development from "@/pages/Development";
 import Formulas from "@/pages/Formulas";
 import Home from "@/pages/Home";
 import Marketing from "@/pages/Marketing";
@@ -23,6 +24,7 @@ function Router() {
         <Route path={"/siparisler"} component={Orders} />
         <Route path={"/stok"} component={Stock} />
         <Route path={"/urunler"} component={Products} />
+        <Route path={"/gelistirme"} component={Development} />
         <Route path={"/formuller"} component={Formulas} />
         <Route path={"/maliyet"} component={Costs} />
         <Route path={"/pazarlama"} component={Marketing} />
