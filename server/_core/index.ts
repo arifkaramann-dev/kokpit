@@ -38,6 +38,10 @@ async function startServer() {
   registerStorageProxy(app);
   registerOAuthRoutes(app);
   registerLocalAuthRoutes(app);
+  // Health check for hosting platforms (Render, Railway, uptime monitors).
+  app.get("/api/health", (_req, res) => {
+    res.json({ ok: true });
+  });
   // tRPC API
   app.use(
     "/api/trpc",
