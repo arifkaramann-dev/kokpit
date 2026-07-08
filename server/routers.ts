@@ -336,6 +336,23 @@ export const appRouter = router({
 
   marketing: router({
     history: protectedProcedure.query(() => db.listMarketingTexts()),
+    // Elle yazılan metinleri de aynı arşive kaydeder (AI zorunlu değil).
+    saveManual: protectedProcedure
+      .input(
+        z.object({
+          contentType: z.enum(["urun_aciklamasi", "instagram_post", "reklam_metni"]),
+          productName: z.string().nullable().optional(),
+          content: z.string().min(1),
+        }),
+      )
+      .mutation(({ input }) =>
+        db.saveMarketingText({
+          contentType: input.contentType,
+          productName: input.productName ?? null,
+          prompt: null,
+          content: input.content,
+        }),
+      ),
     delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteMarketingText(input.id)),
     generate: protectedProcedure
       .input(

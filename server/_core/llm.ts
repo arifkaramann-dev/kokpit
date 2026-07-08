@@ -1,3 +1,4 @@
+import { invokeClaude, isClaudeConfigured } from "./claude";
 import { ENV } from "./env";
 
 export type Role = "system" | "user" | "assistant" | "tool" | "function";
@@ -219,7 +220,9 @@ const resolveApiUrl = () =>
 
 const assertApiKey = () => {
   if (!ENV.forgeApiKey) {
-    throw new Error("OPENAI_API_KEY is not configured");
+    throw new Error(
+      "AI özelliği yapılandırılmamış: ANTHROPIC_API_KEY ortam değişkenini ekleyin (console.anthropic.com'dan alınır)."
+    );
   }
 };
 
@@ -340,6 +343,10 @@ const fetchWithBackoff = async (
 };
 
 export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
+  // ANTHROPIC_API_KEY tanımlıysa Claude'a git; Manus forge yalnızca yedek yol.
+  if (isClaudeConfigured()) {
+    return invokeClaude(params);
+  }
   assertApiKey();
 
   const {
