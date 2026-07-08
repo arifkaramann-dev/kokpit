@@ -48,4 +48,13 @@ export const ORDER_STATUSES = [
 
 export type OrderStatus = (typeof ORDER_STATUSES)[number]["value"];
 
-export const CHANNELS = ["web", "instagram", "telefon", "whatsapp", "pazaryeri", "diğer"];
+export const CHANNELS = [
+  "web",
+  "trendyol",
+  "hepsiburada",
+  "instagram",
+  "telefon",
+  "whatsapp",
+  "pazaryeri",
+  "diğer",
+];

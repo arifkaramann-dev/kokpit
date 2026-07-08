@@ -22,3 +22,9 @@ services:
         sync: false # Panele giriş şifresi
       - key: OWNER_NAME
         value: Art of Colour
+      - key: TRENDYOL_SELLER_ID
+        sync: false # Trendyol Satıcı ID (rakam)
+      - key: TRENDYOL_API_KEY
+        sync: false
+      - key: TRENDYOL_API_SECRET
+        sync: false

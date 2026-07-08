@@ -124,6 +124,22 @@ export type Order = typeof orders.$inferSelect;
 export type InsertOrder = typeof orders.$inferInsert;
 
 /**
+ * Sipariş kalemleri: her siparişte ürün + miktar + birim fiyat satırları.
+ * Toplam tutar ve kart özeti bu satırlardan türetilir.
+ */
+export const orderItems = mysqlTable("orderItems", {
+  id: int("id").autoincrement().primaryKey(),
+  orderId: int("orderId").notNull(),
+  productName: varchar("productName", { length: 255 }).notNull(),
+  quantity: decimal("quantity", { precision: 12, scale: 2 }).notNull().default("1"),
+  unitPrice: decimal("unitPrice", { precision: 12, scale: 2 }).notNull().default("0"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type OrderItem = typeof orderItems.$inferSelect;
+export type InsertOrderItem = typeof orderItems.$inferInsert;
+
+/**
  * Tedarikçiler.
  */
 export const suppliers = mysqlTable("suppliers", {
