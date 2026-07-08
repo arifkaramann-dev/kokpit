@@ -3,6 +3,7 @@ import express from "express";
 import { createServer } from "http";
 import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
+import { registerLocalAuthRoutes } from "./localAuth";
 import { registerOAuthRoutes } from "./oauth";
 import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
@@ -36,6 +37,11 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerStorageProxy(app);
   registerOAuthRoutes(app);
+  registerLocalAuthRoutes(app);
+  // Health check for hosting platforms (Render, Railway, uptime monitors).
+  app.get("/api/health", (_req, res) => {
+    res.json({ ok: true });
+  });
   // tRPC API
   app.use(
     "/api/trpc",

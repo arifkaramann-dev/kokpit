@@ -19,7 +19,6 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { startLogin } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
 import {
   Beaker,
@@ -37,7 +36,7 @@ import {
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
-import { Button } from "./ui/button";
+import LoginForm from "./LoginForm";
 
 const menuItems = [
   { icon: LayoutDashboard, label: "Kokpit", path: "/" },
@@ -76,30 +75,7 @@ export default function DashboardLayout({
   }
 
   if (!user) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="flex flex-col items-center gap-8 p-8 max-w-md w-full">
-          <div className="flex flex-col items-center gap-6">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground text-2xl font-bold shadow-lg">
-              A
-            </div>
-            <h1 className="text-2xl font-semibold tracking-tight text-center">
-              Art of Colour Kokpit
-            </h1>
-            <p className="text-sm text-muted-foreground text-center max-w-sm">
-              İşletme yönetim panelinize erişmek için giriş yapın.
-            </p>
-          </div>
-          <Button
-            onClick={() => startLogin()}
-            size="lg"
-            className="w-full shadow-lg hover:shadow-xl transition-all"
-          >
-            Giriş Yap
-          </Button>
-        </div>
-      </div>
-    );
+    return <LoginForm />;
   }
 
   return (

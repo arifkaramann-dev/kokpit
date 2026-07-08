@@ -1,0 +1,24 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# Render panelinde "New > Blueprint" deyip bu depoyu seçince bu dosya okunur.
+services:
+  - type: web
+    name: artofcolour-kokpit
+    runtime: node
+    plan: free
+    buildCommand: corepack enable && corepack prepare pnpm@10.4.1 --activate && pnpm install --frozen-lockfile && pnpm build
+    # Migration'lar her deploy'da başlangıçta çalışır (tablo yoksa oluşturur, varsa dokunmaz).
+    startCommand: pnpm db:migrate && pnpm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 22.16.0
+      - key: JWT_SECRET
+        generateValue: true # Render güvenli bir değer üretir
+      - key: DATABASE_URL
+        sync: false # Render panelinden elle girilir (MySQL bağlantı adresi)
+      - key: OWNER_EMAIL
+        sync: false # Panele giriş e-postası
+      - key: OWNER_PASSWORD
+        sync: false # Panele giriş şifresi
+      - key: OWNER_NAME
+        value: Art of Colour
