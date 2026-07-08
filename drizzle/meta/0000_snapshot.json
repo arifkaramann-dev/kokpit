@@ -1,8 +1,8 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "18a7b8ea-2ad2-4712-b015-cd60e5f163c3",
-  "prevId": "499f71f1-be64-439e-b656-1d1eb4a82828",
+  "id": "7e392719-f6a9-47f6-b47e-30a1fc03673b",
+  "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "campaigns": {
       "name": "campaigns",

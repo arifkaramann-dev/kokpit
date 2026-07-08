@@ -5,15 +5,8 @@
     {
       "idx": 0,
       "version": "5",
-      "when": 1783460413863,
-      "tag": "0000_daily_stellaris",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "5",
-      "when": 1783460710796,
-      "tag": "0001_fast_deadpool",
+      "when": 1783498594164,
+      "tag": "0000_omniscient_night_nurse",
       "breakpoints": true
     }
   ]
