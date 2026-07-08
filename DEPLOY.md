@@ -8,9 +8,10 @@ katmanlarda canlıya alabilirsiniz.
 
 Render'ın kendi yönetilen MySQL'i yoktur; ücretsiz bir MySQL için iki iyi seçenek:
 
-### Seçenek A: TiDB Cloud Serverless (önerilen, kalıcı ücretsiz katman)
-1. <https://tidbcloud.com> adresinde hesap açın (Google ile girilebilir).
-2. **Create Cluster > Serverless** ile (bölge: Frankfurt/eu-central-1 önerilir) küme oluşturun.
+### Seçenek A: TiDB Cloud Starter (önerilen, kalıcı ücretsiz katman)
+> Eski adıyla "TiDB Cloud Serverless" — Ağustos 2025'te "Starter" olarak yeniden adlandırıldı.
+1. <https://tidbcloud.com> adresinde hesap açın (Google ile girilebilir, kredi kartı istemez).
+2. **Create Cluster > Starter** planıyla (bölge: Frankfurt/eu-central-1 önerilir) küme oluşturun.
 3. Küme açılınca **Connect** düğmesine basın, `Generate Password` deyin.
 4. Ekrandaki bilgilerle bağlantı adresini kurun. Örnek biçim:
 
