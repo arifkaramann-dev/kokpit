@@ -11,6 +11,7 @@ import NotFound from "@/pages/NotFound";
 import Orders from "@/pages/Orders";
 import Products from "@/pages/Products";
 import Stock from "@/pages/Stock";
+import Strategy from "@/pages/Strategy";
 import Suppliers from "@/pages/Suppliers";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -30,6 +31,7 @@ function Router() {
         <Route path={"/pazarlama"} component={Marketing} />
         <Route path={"/kampanyalar"} component={Campaigns} />
         <Route path={"/tedarikciler"} component={Suppliers} />
+        <Route path={"/strateji"} component={Strategy} />
         <Route path={"/404"} component={NotFound} />
         <Route component={NotFound} />
       </Switch>

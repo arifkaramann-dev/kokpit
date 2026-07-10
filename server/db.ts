@@ -519,3 +519,36 @@ export async function getChosenDevTrialItems(projectId: number) {
   if (!chosen) return null;
   return db.select().from(devTrialItems).where(eq(devTrialItems.trialId, chosen.id));
 }
+
+/* ------------------------- Strateji & Rapor ------------------------- */
+
+/** Rapor sayfasının tek seferde ihtiyaç duyduğu tüm veri kümeleri. */
+export async function reportData() {
+  const db = await requireDb();
+  const [allProducts, formulaRows, textRows, allOrders, allOrderItems, allMaterials, allCampaigns] =
+    await Promise.all([
+      db.select().from(products),
+      db
+        .select({
+          productId: formulaItems.productId,
+          qty: formulaItems.qty,
+          unitCost: materials.unitCost,
+        })
+        .from(formulaItems)
+        .leftJoin(materials, eq(formulaItems.materialId, materials.id)),
+      db.select({ productName: marketingTexts.productName }).from(marketingTexts),
+      db.select().from(orders),
+      db.select().from(orderItems),
+      db.select().from(materials),
+      db.select().from(campaigns),
+    ]);
+  return {
+    products: allProducts,
+    formulas: formulaRows,
+    marketingTexts: textRows,
+    orders: allOrders,
+    orderItems: allOrderItems,
+    materials: allMaterials,
+    campaigns: allCampaigns,
+  };
+}

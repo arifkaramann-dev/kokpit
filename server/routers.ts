@@ -313,6 +313,10 @@ export const appRouter = router({
       }),
   }),
 
+  report: router({
+    data: protectedProcedure.query(() => db.reportData()),
+  }),
+
   suppliers: router({
     list: protectedProcedure.query(() => db.listSuppliers()),
     create: protectedProcedure.input(supplierInput).mutation(({ input }) => db.createSupplier(input as never)),

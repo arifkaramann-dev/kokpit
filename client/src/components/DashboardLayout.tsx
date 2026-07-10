@@ -31,6 +31,7 @@ import {
   Package,
   PanelLeft,
   Sparkles,
+  Target,
   Truck,
   Warehouse,
 } from "lucide-react";
@@ -50,6 +51,7 @@ const menuItems = [
   { icon: Sparkles, label: "AI Pazarlama", path: "/pazarlama" },
   { icon: CalendarDays, label: "Kampanya Takvimi", path: "/kampanyalar" },
   { icon: Truck, label: "Tedarikçiler", path: "/tedarikciler" },
+  { icon: Target, label: "Strateji & Rapor", path: "/strateji" },
 ];
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
