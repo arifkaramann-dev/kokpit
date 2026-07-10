@@ -55,6 +55,30 @@ const orderInput = z.object({
 
 export { itemsTotal, summarizeItems } from "./orderUtils";
 
+const devProjectInput = z.object({
+  name: z.string().min(1),
+  targetUse: z.string().nullable().optional(),
+  series: z.string().nullable().optional(),
+  colorCode: z.string().nullable().optional(),
+  colorHex: z.string().nullable().optional(),
+  applicationNotes: z.string().nullable().optional(),
+  dryingTime: z.string().nullable().optional(),
+  coats: z.string().nullable().optional(),
+  testNotes: z.string().nullable().optional(),
+  packagingCost: z.number().min(0).optional(),
+  shippingCost: z.number().min(0).optional(),
+  salePrice: z.number().min(0).optional(),
+  currentStep: z.number().min(1).max(5).optional(),
+  status: z.enum(["active", "done", "archived"]).optional(),
+  notes: z.string().nullable().optional(),
+});
+
+const devTrialItemInput = z.object({
+  materialId: z.number(),
+  qty: z.number().positive(),
+  note: z.string().nullable().optional(),
+});
+
 const supplierInput = z.object({
   name: z.string().min(1),
   contactPerson: z.string().nullable().optional(),
@@ -200,6 +224,95 @@ export const appRouter = router({
     delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteOrder(input.id)),
   }),
 
+  dev: router({
+    list: protectedProcedure.query(() => db.listDevProjects()),
+    get: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
+      const project = await db.getDevProject(input.id);
+      if (!project) throw new TRPCError({ code: "NOT_FOUND", message: "Proje bulunamadı" });
+      const trials = await db.listDevTrials(input.id);
+      return { project, trials };
+    }),
+    create: protectedProcedure.input(devProjectInput).mutation(({ input }) =>
+      db.createDevProject(toDecimalFields(input, ["packagingCost", "shippingCost", "salePrice"]) as never),
+    ),
+    update: protectedProcedure
+      .input(z.object({ id: z.number(), data: devProjectInput.partial() }))
+      .mutation(({ input }) =>
+        db.updateDevProject(
+          input.id,
+          toDecimalFields(input.data, ["packagingCost", "shippingCost", "salePrice"]) as never,
+        ),
+      ),
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(({ input }) => db.deleteDevProject(input.id)),
+    addTrial: protectedProcedure
+      .input(z.object({ projectId: z.number(), notes: z.string().nullable().optional(), items: z.array(devTrialItemInput) }))
+      .mutation(({ input }) => db.createDevTrial(input.projectId, { notes: input.notes ?? null }, input.items)),
+    updateTrial: protectedProcedure
+      .input(
+        z.object({
+          id: z.number(),
+          result: z.enum(["pending", "success", "partial", "fail"]).optional(),
+          notes: z.string().nullable().optional(),
+          items: z.array(devTrialItemInput).optional(),
+        }),
+      )
+      .mutation(({ input }) =>
+        db.updateDevTrial(input.id, { result: input.result, notes: input.notes }, input.items),
+      ),
+    deleteTrial: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(({ input }) => db.deleteDevTrial(input.id)),
+    chooseTrial: protectedProcedure
+      .input(z.object({ projectId: z.number(), trialId: z.number() }))
+      .mutation(({ input }) => db.chooseDevTrial(input.projectId, input.trialId)),
+    // Adım 5: projeyi formülü ve fiyatıyla eksiksiz bir ürüne dönüştürür.
+    convert: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        const project = await db.getDevProject(input.id);
+        if (!project) throw new TRPCError({ code: "NOT_FOUND", message: "Proje bulunamadı" });
+        if (project.productId) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Bu proje zaten ürüne dönüştürülmüş" });
+        }
+        const chosenItems = await db.getChosenDevTrialItems(input.id);
+        if (!chosenItems || chosenItems.length === 0) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Önce 2. adımda başarılı bir reçeteyi 'Seçili Reçete' yapın.",
+          });
+        }
+        const descriptionParts = [
+          project.targetUse ? `Kullanım alanı: ${project.targetUse}` : null,
+          project.applicationNotes ? `Uygulama: ${project.applicationNotes}` : null,
+          project.dryingTime ? `Kuruma süresi: ${project.dryingTime}` : null,
+          project.coats ? `Önerilen kat sayısı: ${project.coats}` : null,
+          project.testNotes ? `Test notları: ${project.testNotes}` : null,
+        ].filter(Boolean);
+        const productId = await db.createProduct({
+          name: project.name,
+          series: project.series,
+          colorCode: project.colorCode,
+          colorHex: project.colorHex,
+          surfaceType: project.targetUse,
+          description: descriptionParts.join("\n") || null,
+          salePrice: project.salePrice,
+          packagingCost: project.packagingCost,
+          shippingCost: project.shippingCost,
+        } as never);
+        for (const item of chosenItems) {
+          await db.addFormulaItem(Number(productId), item.materialId, parseFloat(item.qty), item.note ?? undefined);
+        }
+        await db.updateDevProject(input.id, {
+          status: "done",
+          currentStep: 5,
+          productId: Number(productId),
+        });
+        return { productId: Number(productId) };
+      }),
+  }),
+
   suppliers: router({
     list: protectedProcedure.query(() => db.listSuppliers()),
     create: protectedProcedure.input(supplierInput).mutation(({ input }) => db.createSupplier(input as never)),
@@ -223,6 +336,23 @@ export const appRouter = router({
 
   marketing: router({
     history: protectedProcedure.query(() => db.listMarketingTexts()),
+    // Elle yazılan metinleri de aynı arşive kaydeder (AI zorunlu değil).
+    saveManual: protectedProcedure
+      .input(
+        z.object({
+          contentType: z.enum(["urun_aciklamasi", "instagram_post", "reklam_metni"]),
+          productName: z.string().nullable().optional(),
+          content: z.string().min(1),
+        }),
+      )
+      .mutation(({ input }) =>
+        db.saveMarketingText({
+          contentType: input.contentType,
+          productName: input.productName ?? null,
+          prompt: null,
+          content: input.content,
+        }),
+      ),
     delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteMarketingText(input.id)),
     generate: protectedProcedure
       .input(

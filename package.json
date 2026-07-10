@@ -14,6 +14,7 @@
     "db:migrate": "node scripts/ensure-db.mjs && drizzle-kit migrate"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.110.0",
     "@aws-sdk/client-s3": "^3.693.0",
     "@aws-sdk/s3-request-presigner": "^3.693.0",
     "@dnd-kit/core": "^6.3.1",

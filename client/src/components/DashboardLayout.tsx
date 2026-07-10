@@ -23,6 +23,7 @@ import { useIsMobile } from "@/hooks/useMobile";
 import {
   Beaker,
   CalendarDays,
+  FlaskConical,
   Calculator,
   ClipboardList,
   LayoutDashboard,
@@ -43,6 +44,7 @@ const menuItems = [
   { icon: ClipboardList, label: "Sipariş Panosu", path: "/siparisler" },
   { icon: Warehouse, label: "Stok & Hammadde", path: "/stok" },
   { icon: Package, label: "Ürünler & Türevler", path: "/urunler" },
+  { icon: FlaskConical, label: "Ürün Geliştirme", path: "/gelistirme" },
   { icon: Beaker, label: "Formül Defteri", path: "/formuller" },
   { icon: Calculator, label: "Maliyet & Kar", path: "/maliyet" },
   { icon: Sparkles, label: "AI Pazarlama", path: "/pazarlama" },

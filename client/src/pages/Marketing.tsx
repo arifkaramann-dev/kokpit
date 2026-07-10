@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
-import { Copy, Loader2, Sparkles, Trash2 } from "lucide-react";
+import { Copy, Loader2, PenLine, Sparkles, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Streamdown } from "streamdown";
@@ -40,6 +40,17 @@ export default function Marketing() {
   const [tone, setTone] = useState<string>("profesyonel");
   const [extra, setExtra] = useState("");
   const [result, setResult] = useState("");
+  const [mode, setMode] = useState<"ai" | "manual">("ai");
+  const [manualText, setManualText] = useState("");
+
+  const saveManual = trpc.marketing.saveManual.useMutation({
+    onSuccess: () => {
+      utils.marketing.history.invalidate();
+      setManualText("");
+      toast.success("Metin arşive kaydedildi");
+    },
+    onError: e => toast.error(e.message),
+  });
 
   const generate = trpc.marketing.generate.useMutation({
     onSuccess: data => {
@@ -84,9 +95,37 @@ export default function Marketing() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card className="p-5 space-y-3">
-          <h2 className="font-semibold flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-primary" /> Metin Üret
-          </h2>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="font-semibold flex items-center gap-2">
+              {mode === "ai" ? (
+                <>
+                  <Sparkles className="h-4 w-4 text-primary" /> Metin Üret
+                </>
+              ) : (
+                <>
+                  <PenLine className="h-4 w-4 text-primary" /> Elle Yaz
+                </>
+              )}
+            </h2>
+            <div className="flex rounded-lg border p-0.5">
+              <button
+                onClick={() => setMode("ai")}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                  mode === "ai" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+                }`}
+              >
+                AI ile
+              </button>
+              <button
+                onClick={() => setMode("manual")}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                  mode === "manual" ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+                }`}
+              >
+                Elle
+              </button>
+            </div>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>İçerik Tipi</Label>
@@ -103,21 +142,23 @@ export default function Marketing() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1.5">
-              <Label>Ton</Label>
-              <Select value={tone} onValueChange={setTone}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {TONES.map(t => (
-                    <SelectItem key={t.value} value={t.value}>
-                      {t.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {mode === "ai" && (
+              <div className="space-y-1.5">
+                <Label>Ton</Label>
+                <Select value={tone} onValueChange={setTone}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TONES.map(t => (
+                      <SelectItem key={t.value} value={t.value}>
+                        {t.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label>Ürün</Label>
@@ -141,34 +182,64 @@ export default function Marketing() {
               placeholder="Veya ürün adını elle yazın: örn. Meteor M1128 Nemesis Bukalemun Boya"
             />
           </div>
-          <div className="space-y-1.5">
-            <Label>Ürün Detayları (opsiyonel)</Label>
-            <Textarea
-              value={productDetails}
-              onChange={e => setProductDetails(e.target.value)}
-              rows={2}
-              placeholder="Örn. açıdan açıya renk değiştiren bukalemun efekt, 1K bazkat, airbrush uyumlu"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Ek Yönergeler (opsiyonel)</Label>
-            <Input
-              value={extra}
-              onChange={e => setExtra(e.target.value)}
-              placeholder="Örn. %43 indirimi vurgula, kısa tut"
-            />
-          </div>
-          <Button onClick={submit} disabled={generate.isPending} className="w-full">
-            {generate.isPending ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-1 animate-spin" /> Üretiliyor...
-              </>
-            ) : (
-              <>
-                <Sparkles className="h-4 w-4 mr-1" /> Metni Üret
-              </>
-            )}
-          </Button>
+          {mode === "ai" ? (
+            <>
+              <div className="space-y-1.5">
+                <Label>Ürün Detayları (opsiyonel)</Label>
+                <Textarea
+                  value={productDetails}
+                  onChange={e => setProductDetails(e.target.value)}
+                  rows={2}
+                  placeholder="Örn. açıdan açıya renk değiştiren bukalemun efekt, 1K bazkat, airbrush uyumlu"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Ek Yönergeler (opsiyonel)</Label>
+                <Input
+                  value={extra}
+                  onChange={e => setExtra(e.target.value)}
+                  placeholder="Örn. %43 indirimi vurgula, kısa tut"
+                />
+              </div>
+              <Button onClick={submit} disabled={generate.isPending} className="w-full">
+                {generate.isPending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-1 animate-spin" /> Üretiliyor...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-4 w-4 mr-1" /> Metni Üret
+                  </>
+                )}
+              </Button>
+            </>
+          ) : (
+            <>
+              <div className="space-y-1.5">
+                <Label>Metin</Label>
+                <Textarea
+                  value={manualText}
+                  onChange={e => setManualText(e.target.value)}
+                  rows={8}
+                  placeholder="Kendi yazdığın gönderi/açıklama metnini buraya yapıştır veya yaz — arşivde saklanır, istediğinde kopyalarsın."
+                />
+              </div>
+              <Button
+                onClick={() => {
+                  if (!manualText.trim()) return toast.error("Metin boş olamaz");
+                  saveManual.mutate({
+                    contentType: contentType as "urun_aciklamasi" | "instagram_post" | "reklam_metni",
+                    productName: productName.trim() || null,
+                    content: manualText.trim(),
+                  });
+                }}
+                disabled={saveManual.isPending}
+                className="w-full"
+              >
+                <PenLine className="h-4 w-4 mr-1" /> Arşive Kaydet
+              </Button>
+            </>
+          )}
         </Card>
 
         <Card className="p-5 space-y-3">

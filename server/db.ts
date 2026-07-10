@@ -2,7 +2,11 @@ import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   campaigns,
+  devProjects,
+  devTrialItems,
+  devTrials,
   formulaItems,
+  InsertDevProject,
   InsertMaterial,
   InsertOrder,
   InsertOrderItem,
@@ -377,4 +381,141 @@ export async function saveMarketingText(data: typeof marketingTexts.$inferInsert
 export async function deleteMarketingText(id: number) {
   const db = await requireDb();
   await db.delete(marketingTexts).where(eq(marketingTexts.id, id));
+}
+
+/* ------------------------- Ürün Geliştirme ------------------------- */
+
+export async function listDevProjects() {
+  const db = await requireDb();
+  return db.select().from(devProjects).orderBy(desc(devProjects.updatedAt));
+}
+
+export async function getDevProject(id: number) {
+  const db = await requireDb();
+  const result = await db.select().from(devProjects).where(eq(devProjects.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createDevProject(data: InsertDevProject) {
+  const db = await requireDb();
+  const [result] = await db.insert(devProjects).values(data);
+  return result.insertId;
+}
+
+export async function updateDevProject(id: number, data: Partial<InsertDevProject>) {
+  const db = await requireDb();
+  await db.update(devProjects).set(data).where(eq(devProjects.id, id));
+}
+
+export async function deleteDevProject(id: number) {
+  const db = await requireDb();
+  const trials = await db.select({ id: devTrials.id }).from(devTrials).where(eq(devTrials.projectId, id));
+  for (const trial of trials) {
+    await db.delete(devTrialItems).where(eq(devTrialItems.trialId, trial.id));
+  }
+  await db.delete(devTrials).where(eq(devTrials.projectId, id));
+  await db.delete(devProjects).where(eq(devProjects.id, id));
+}
+
+export async function listDevTrials(projectId: number) {
+  const db = await requireDb();
+  const trials = await db
+    .select()
+    .from(devTrials)
+    .where(eq(devTrials.projectId, projectId))
+    .orderBy(devTrials.trialNo);
+  const items = await db
+    .select({
+      id: devTrialItems.id,
+      trialId: devTrialItems.trialId,
+      materialId: devTrialItems.materialId,
+      qty: devTrialItems.qty,
+      note: devTrialItems.note,
+      materialName: materials.name,
+      materialUnit: materials.unit,
+      materialUnitCost: materials.unitCost,
+    })
+    .from(devTrialItems)
+    .leftJoin(materials, eq(devTrialItems.materialId, materials.id))
+    .where(
+      sql`${devTrialItems.trialId} IN (SELECT id FROM devTrials WHERE projectId = ${projectId})`
+    );
+  return trials.map(trial => ({
+    ...trial,
+    items: items.filter(item => item.trialId === trial.id),
+  }));
+}
+
+export async function createDevTrial(
+  projectId: number,
+  data: { notes?: string | null },
+  items: { materialId: number; qty: number; note?: string | null }[]
+) {
+  const db = await requireDb();
+  const [maxRow] = await db
+    .select({ max: sql<number>`COALESCE(MAX(${devTrials.trialNo}), 0)` })
+    .from(devTrials)
+    .where(eq(devTrials.projectId, projectId));
+  const [result] = await db.insert(devTrials).values({
+    projectId,
+    trialNo: Number(maxRow?.max ?? 0) + 1,
+    notes: data.notes ?? null,
+  });
+  const trialId = Number(result.insertId);
+  if (items.length > 0) {
+    await db.insert(devTrialItems).values(
+      items.map(item => ({
+        trialId,
+        materialId: item.materialId,
+        qty: String(item.qty),
+        note: item.note ?? null,
+      }))
+    );
+  }
+  return trialId;
+}
+
+export async function updateDevTrial(
+  id: number,
+  data: { result?: "pending" | "success" | "partial" | "fail"; notes?: string | null },
+  items?: { materialId: number; qty: number; note?: string | null }[]
+) {
+  const db = await requireDb();
+  await db.update(devTrials).set(data).where(eq(devTrials.id, id));
+  if (items !== undefined) {
+    await db.delete(devTrialItems).where(eq(devTrialItems.trialId, id));
+    if (items.length > 0) {
+      await db.insert(devTrialItems).values(
+        items.map(item => ({
+          trialId: id,
+          materialId: item.materialId,
+          qty: String(item.qty),
+          note: item.note ?? null,
+        }))
+      );
+    }
+  }
+}
+
+export async function deleteDevTrial(id: number) {
+  const db = await requireDb();
+  await db.delete(devTrialItems).where(eq(devTrialItems.trialId, id));
+  await db.delete(devTrials).where(eq(devTrials.id, id));
+}
+
+export async function chooseDevTrial(projectId: number, trialId: number) {
+  const db = await requireDb();
+  await db.update(devTrials).set({ isChosen: 0 }).where(eq(devTrials.projectId, projectId));
+  await db.update(devTrials).set({ isChosen: 1 }).where(eq(devTrials.id, trialId));
+}
+
+export async function getChosenDevTrialItems(projectId: number) {
+  const db = await requireDb();
+  const [chosen] = await db
+    .select({ id: devTrials.id })
+    .from(devTrials)
+    .where(and(eq(devTrials.projectId, projectId), eq(devTrials.isChosen, 1)))
+    .limit(1);
+  if (!chosen) return null;
+  return db.select().from(devTrialItems).where(eq(devTrialItems.trialId, chosen.id));
 }

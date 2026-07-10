@@ -28,3 +28,5 @@ services:
         sync: false
       - key: TRENDYOL_API_SECRET
         sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false # AI pazarlama metinleri için (opsiyonel)
