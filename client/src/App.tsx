@@ -10,6 +10,7 @@ import Marketing from "@/pages/Marketing";
 import NotFound from "@/pages/NotFound";
 import Orders from "@/pages/Orders";
 import Products from "@/pages/Products";
+import Purchases from "@/pages/Purchases";
 import Stock from "@/pages/Stock";
 import Strategy from "@/pages/Strategy";
 import Suppliers from "@/pages/Suppliers";
@@ -24,6 +25,7 @@ function Router() {
         <Route path={"/"} component={Home} />
         <Route path={"/siparisler"} component={Orders} />
         <Route path={"/stok"} component={Stock} />
+        <Route path={"/faturalar"} component={Purchases} />
         <Route path={"/urunler"} component={Products} />
         <Route path={"/gelistirme"} component={Development} />
         <Route path={"/formuller"} component={Formulas} />

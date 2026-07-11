@@ -22,6 +22,13 @@
       "when": 1783545025767,
       "tag": "0002_common_forge",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1783756738039,
+      "tag": "0003_outgoing_firestar",
+      "breakpoints": true
     }
   ]
 }

@@ -7,6 +7,7 @@ import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { TRPCError } from "@trpc/server";
 import * as db from "./db";
 import { itemsTotal, summarizeItems, toItemRows } from "./orderUtils";
+import { extractInvoice } from "./_core/claude";
 import { syncTrendyolOrders } from "./trendyol";
 
 /* ------------------------- Zod schemas ------------------------- */
@@ -310,6 +311,52 @@ export const appRouter = router({
           productId: Number(productId),
         });
         return { productId: Number(productId) };
+      }),
+  }),
+
+  purchases: router({
+    list: protectedProcedure.query(() => db.listPurchases()),
+    create: protectedProcedure
+      .input(
+        z.object({
+          supplierName: z.string().nullable().optional(),
+          invoiceNo: z.string().nullable().optional(),
+          invoiceDate: z.date().nullable().optional(),
+          note: z.string().nullable().optional(),
+          items: z
+            .array(
+              z.object({
+                name: z.string().min(1),
+                qty: z.number().positive(),
+                unit: z.string().min(1),
+                unitCost: z.number().min(0),
+              }),
+            )
+            .min(1),
+        }),
+      )
+      .mutation(({ input }) =>
+        db.createPurchase(
+          {
+            supplierName: input.supplierName ?? null,
+            invoiceNo: input.invoiceNo ?? null,
+            invoiceDate: input.invoiceDate ?? null,
+            note: input.note ?? null,
+          },
+          input.items,
+        ),
+      ),
+    parseInvoice: protectedProcedure
+      .input(z.object({ mediaType: z.string(), data: z.string() }))
+      .mutation(async ({ input }) => {
+        try {
+          return await extractInvoice(input.mediaType, input.data);
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Fatura okunamadı",
+          });
+        }
       }),
   }),
 

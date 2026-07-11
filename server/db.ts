@@ -17,6 +17,8 @@ import {
   orderItems,
   orders,
   products,
+  purchaseItems,
+  purchases,
   stockMovements,
   suppliers,
   users,
@@ -551,4 +553,87 @@ export async function reportData() {
     materials: allMaterials,
     campaigns: allCampaigns,
   };
+}
+
+/* ------------------------- Alış Faturaları ------------------------- */
+
+/**
+ * Faturayı kaydeder ve kalemleri hammaddelere uygular:
+ * isimden eşleşen hammaddenin stoğu artar + birim maliyeti güncellenir,
+ * eşleşmeyen için yeni hammadde oluşturulur. Hepsi stok hareketine işlenir.
+ */
+export async function createPurchase(
+  header: {
+    supplierName: string | null;
+    invoiceNo: string | null;
+    invoiceDate: Date | null;
+    note: string | null;
+  },
+  items: { name: string; qty: number; unit: string; unitCost: number }[]
+) {
+  const db = await requireDb();
+  const total = items.reduce((s, i) => s + i.qty * i.unitCost, 0);
+  const [res] = await db.insert(purchases).values({
+    supplierName: header.supplierName,
+    invoiceNo: header.invoiceNo,
+    invoiceDate: header.invoiceDate,
+    note: header.note,
+    totalAmount: String(total),
+  });
+  const purchaseId = Number(res.insertId);
+
+  const existing = await db.select().from(materials);
+  const byName = new Map(existing.map(m => [m.name.trim().toLowerCase(), m]));
+  let createdCount = 0;
+  let updatedCount = 0;
+
+  for (const item of items) {
+    const name = item.name.trim();
+    const found = byName.get(name.toLowerCase());
+    let materialId: number;
+    if (!found) {
+      const [r] = await db.insert(materials).values({
+        name,
+        category: "diğer",
+        unit: item.unit || "adet",
+        stockQty: String(item.qty),
+        criticalQty: "0",
+        unitCost: String(item.unitCost),
+      });
+      materialId = Number(r.insertId);
+      createdCount++;
+    } else {
+      materialId = found.id;
+      await db
+        .update(materials)
+        .set({
+          stockQty: sql`${materials.stockQty} + ${item.qty}`,
+          unitCost: String(item.unitCost),
+        })
+        .where(eq(materials.id, found.id));
+      updatedCount++;
+    }
+    await db.insert(stockMovements).values({
+      materialId,
+      type: "in",
+      qty: String(item.qty),
+      note: `Fatura girişi${header.invoiceNo ? ` (${header.invoiceNo})` : ""}${header.supplierName ? ` — ${header.supplierName}` : ""}`,
+    });
+    await db.insert(purchaseItems).values({
+      purchaseId,
+      materialId,
+      name,
+      qty: String(item.qty),
+      unit: item.unit || "adet",
+      unitCost: String(item.unitCost),
+    });
+  }
+  return { purchaseId, createdCount, updatedCount };
+}
+
+export async function listPurchases() {
+  const db = await requireDb();
+  const rows = await db.select().from(purchases).orderBy(desc(purchases.createdAt)).limit(100);
+  const items = await db.select().from(purchaseItems);
+  return rows.map(p => ({ ...p, items: items.filter(i => i.purchaseId === p.id) }));
 }

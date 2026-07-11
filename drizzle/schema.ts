@@ -245,3 +245,32 @@ export const marketingTexts = mysqlTable("marketingTexts", {
 });
 
 export type MarketingText = typeof marketingTexts.$inferSelect;
+
+/**
+ * Alış faturaları: hammadde girişlerinin kaynağı.
+ * Kalemler hammaddelerle eşleşir; stok ve birim maliyet otomatik güncellenir.
+ */
+export const purchases = mysqlTable("purchases", {
+  id: int("id").autoincrement().primaryKey(),
+  supplierName: varchar("supplierName", { length: 255 }),
+  invoiceNo: varchar("invoiceNo", { length: 64 }),
+  invoiceDate: timestamp("invoiceDate"),
+  totalAmount: decimal("totalAmount", { precision: 12, scale: 2 }).notNull().default("0"),
+  note: text("note"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type Purchase = typeof purchases.$inferSelect;
+
+export const purchaseItems = mysqlTable("purchaseItems", {
+  id: int("id").autoincrement().primaryKey(),
+  purchaseId: int("purchaseId").notNull(),
+  materialId: int("materialId").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  qty: decimal("qty", { precision: 12, scale: 3 }).notNull(),
+  unit: varchar("unit", { length: 32 }).notNull().default("adet"),
+  unitCost: decimal("unitCost", { precision: 12, scale: 4 }).notNull().default("0"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type PurchaseItem = typeof purchaseItems.$inferSelect;
