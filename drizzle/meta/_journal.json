@@ -36,6 +36,27 @@
       "when": 1783758153144,
       "tag": "0004_tense_nebula",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1783781828919,
+      "tag": "0005_daily_preak",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1783802400206,
+      "tag": "0006_white_kabuki",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1783802490605,
+      "tag": "0007_jittery_texas_twister",
+      "breakpoints": true
     }
   ]
 }

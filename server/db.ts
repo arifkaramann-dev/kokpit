@@ -17,8 +17,10 @@ import {
   orderItems,
   orders,
   products,
+  productImages,
   purchaseItems,
   purchases,
+  templates,
   stockMovements,
   suppliers,
   users,
@@ -636,4 +638,55 @@ export async function listPurchases() {
   const rows = await db.select().from(purchases).orderBy(desc(purchases.createdAt)).limit(100);
   const items = await db.select().from(purchaseItems);
   return rows.map(p => ({ ...p, items: items.filter(i => i.purchaseId === p.id) }));
+}
+
+/* ------------------------- Şablonlar & Görseller ------------------------- */
+
+export async function listTemplates() {
+  const db = await requireDb();
+  return db.select().from(templates).orderBy(templates.kind, templates.name);
+}
+
+export async function createTemplate(data: { kind: string; name: string; content: string | null }) {
+  const db = await requireDb();
+  const [r] = await db.insert(templates).values(data as never);
+  return r.insertId;
+}
+
+export async function updateTemplate(id: number, data: { name?: string; content?: string | null }) {
+  const db = await requireDb();
+  await db.update(templates).set(data).where(eq(templates.id, id));
+}
+
+export async function deleteTemplate(id: number) {
+  const db = await requireDb();
+  await db.delete(templates).where(eq(templates.id, id));
+}
+
+export async function getProductImages(productId: number) {
+  const db = await requireDb();
+  return db.select().from(productImages).where(eq(productImages.productId, productId));
+}
+
+export async function setProductImage(productId: number, kind: "main" | "packaging" | "usage", data: string) {
+  const db = await requireDb();
+  await db
+    .delete(productImages)
+    .where(and(eq(productImages.productId, productId), eq(productImages.kind, kind)));
+  await db.insert(productImages).values({ productId, kind, data });
+}
+
+export async function deleteProductImage(productId: number, kind: "main" | "packaging" | "usage") {
+  const db = await requireDb();
+  await db
+    .delete(productImages)
+    .where(and(eq(productImages.productId, productId), eq(productImages.kind, kind)));
+}
+
+export async function copyProductImages(fromProductId: number, toProductId: number) {
+  const db = await requireDb();
+  const rows = await db.select().from(productImages).where(eq(productImages.productId, fromProductId));
+  for (const row of rows) {
+    await db.insert(productImages).values({ productId: toProductId, kind: row.kind, data: row.data });
+  }
 }

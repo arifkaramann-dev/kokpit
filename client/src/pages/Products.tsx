@@ -15,6 +15,7 @@ import { formatTL } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
 import { Beaker, ChevronDown, ChevronRight, Layers, Package, Pencil, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
+import TemplatePicker from "@/components/TemplatePicker";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 
@@ -32,6 +33,7 @@ export type ProductRow = {
   discountPercent: string;
   packagingCost: string;
   shippingCost: string;
+  packaging: string | null;
   labelSize: string | null;
   labelText: string | null;
   usageGuide: string | null;
@@ -52,6 +54,7 @@ const emptyForm = {
   discountPercent: "",
   packagingCost: "",
   shippingCost: "",
+  packaging: "",
   labelSize: "",
   labelText: "",
   usageGuide: "",
@@ -71,6 +74,30 @@ export default function Products() {
   const [deriveFor, setDeriveFor] = useState<ProductRow | null>(null);
   const [deriveTypes, setDeriveTypes] = useState<Set<string>>(new Set());
   const [customType, setCustomType] = useState("");
+  const [derivePacks, setDerivePacks] = useState<Set<string>>(new Set());
+  const [deriveColors, setDeriveColors] = useState<Set<string>>(new Set());
+  const [customPack, setCustomPack] = useState("");
+  const [customColor, setCustomColor] = useState("");
+  const [deriveSets, setDeriveSets] = useState<Set<string>>(new Set());
+  const [customSet, setCustomSet] = useState("");
+  const { data: templateList } = trpc.templates.list.useQuery();
+  const packOptions = (templateList ?? []).filter(t => t.kind === "ambalaj").map(t => t.name);
+  const colorOptions = (templateList ?? []).filter(t => t.kind === "renk").map(t => t.name);
+  const setOptions = (templateList ?? []).filter(t => t.kind === "set_paket").map(t => t.name);
+  const { data: productImages } = trpc.products.images.useQuery(
+    { productId: editing?.id ?? 0 },
+    { enabled: !!editing },
+  );
+  const setImage = trpc.products.setImage.useMutation({
+    onSuccess: () => {
+      utils.products.images.invalidate();
+      toast.success("Görsel kaydedildi");
+    },
+    onError: e => toast.error(e.message),
+  });
+  const deleteImage = trpc.products.deleteImage.useMutation({
+    onSuccess: () => utils.products.images.invalidate(),
+  });
 
   const mains = useMemo(
     () => ((products as ProductRow[]) ?? []).filter(p => p.parentId === null),
@@ -168,6 +195,7 @@ export default function Products() {
       discountPercent: p.discountPercent,
       packagingCost: p.packagingCost,
       shippingCost: p.shippingCost,
+      packaging: p.packaging ?? "",
       labelSize: p.labelSize ?? "",
       labelText: p.labelText ?? "",
       usageGuide: p.usageGuide ?? "",
@@ -194,6 +222,7 @@ export default function Products() {
       discountPercent: parseFloat(form.discountPercent) || 0,
       packagingCost: parseFloat(form.packagingCost) || 0,
       shippingCost: parseFloat(form.shippingCost) || 0,
+      packaging: form.packaging || null,
       labelSize: form.labelSize || null,
       labelText: form.labelText || null,
       usageGuide: form.usageGuide || null,
@@ -447,7 +476,21 @@ export default function Products() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label>Etiket Boyutu</Label>
+                <div className="flex items-center justify-between">
+                  <Label>Ambalaj</Label>
+                  <TemplatePicker kind="ambalaj" onPick={t => setForm(f => ({ ...f, packaging: t.name }))} />
+                </div>
+                <Input
+                  value={form.packaging}
+                  onChange={e => setForm(f => ({ ...f, packaging: e.target.value }))}
+                  placeholder="Örn. 400 ml Sprey"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label>Etiket Boyutu</Label>
+                  <TemplatePicker kind="etiket_boyutu" onPick={t => setForm(f => ({ ...f, labelSize: t.name }))} />
+                </div>
                 <Input
                   value={form.labelSize}
                   onChange={e => setForm(f => ({ ...f, labelSize: e.target.value }))}
@@ -464,7 +507,10 @@ export default function Products() {
               </div>
             </div>
             <div className="space-y-1.5">
-              <Label>Etiket Yazısı</Label>
+              <div className="flex items-center justify-between">
+                <Label>Etiket Yazısı</Label>
+                <TemplatePicker kind="etiket_yazisi" onPick={t => setForm(f => ({ ...f, labelText: t.content ?? t.name }))} />
+              </div>
               <Textarea
                 rows={2}
                 value={form.labelText}
@@ -473,7 +519,10 @@ export default function Products() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label>Kullanım Kılavuzu</Label>
+              <div className="flex items-center justify-between">
+                <Label>Kullanım Kılavuzu</Label>
+                <TemplatePicker kind="kilavuz" onPick={t => setForm(f => ({ ...f, usageGuide: t.content ?? t.name }))} />
+              </div>
               <Textarea
                 rows={3}
                 value={form.usageGuide}
@@ -482,7 +531,10 @@ export default function Products() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label>Güvenlik / Uyarılar</Label>
+              <div className="flex items-center justify-between">
+                <Label>Güvenlik / Uyarılar</Label>
+                <TemplatePicker kind="guvenlik" onPick={t => setForm(f => ({ ...f, safetyNotes: t.content ?? t.name }))} />
+              </div>
               <Textarea
                 rows={2}
                 value={form.safetyNotes}
@@ -490,6 +542,43 @@ export default function Products() {
                 placeholder="Saklama koşulları, güvenlik uyarıları..."
               />
             </div>
+
+            {editing && (
+              <div className="space-y-1.5">
+                <Label>Görseller</Label>
+                <div className="grid grid-cols-3 gap-2">
+                  <ImageSlot
+                    label="1. Ana / Pazarlama"
+                    kind="main"
+                    productId={editing.id}
+                    images={productImages}
+                    onUpload={(kind, data) => setImage.mutate({ productId: editing.id, kind, data })}
+                    onDelete={kind => deleteImage.mutate({ productId: editing.id, kind })}
+                  />
+                  <ImageSlot
+                    label="2. Ambalaj"
+                    kind="packaging"
+                    productId={editing.id}
+                    images={productImages}
+                    onUpload={(kind, data) => setImage.mutate({ productId: editing.id, kind, data })}
+                    onDelete={kind => deleteImage.mutate({ productId: editing.id, kind })}
+                  />
+                  <ImageSlot
+                    label="3. Kullanım"
+                    kind="usage"
+                    productId={editing.id}
+                    images={productImages}
+                    onUpload={(kind, data) => setImage.mutate({ productId: editing.id, kind, data })}
+                    onDelete={kind => deleteImage.mutate({ productId: editing.id, kind })}
+                  />
+                </div>
+              </div>
+            )}
+            {!editing && (
+              <p className="text-[11px] text-muted-foreground">
+                Görselleri eklemek için ürünü kaydettikten sonra düzenle penceresini aç.
+              </p>
+            )}
 
             {isVariantForm && (
               <>
@@ -574,78 +663,207 @@ export default function Products() {
       </Dialog>
 
       <Dialog open={deriveFor !== null} onOpenChange={o => !o && setDeriveFor(null)}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Hızlı Türet — {deriveFor?.name}</DialogTitle>
           </DialogHeader>
-          <div className="space-y-3">
+          <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Seçtiğin yüzey tipleri için tek tıkla türev ürünler oluşturulur (fiyat ve renk ana
-              üründen kopyalanır).
+              Seçtiğin kullanım × ambalaj × renk kombinasyonları için satışa hazır başlıklarla
+              türevler oluşturulur. Örn: "Artofcolour Jant {deriveFor?.name} 400 ml Sprey Antrasit Gri"
             </p>
-            <div className="flex flex-wrap gap-1.5">
-              {["Ahşap", "Metal", "Plastik", "Cam", "Seramik", "Jant", "3D Baskı", "Rapala / Yem", "Duvar / İç Mekan", "Airbrush"].map(t => (
-                <button
-                  key={t}
-                  onClick={() =>
-                    setDeriveTypes(prev => {
-                      const next = new Set(prev);
-                      if (next.has(t)) next.delete(t);
-                      else next.add(t);
-                      return next;
-                    })
-                  }
-                  className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-                    deriveTypes.has(t)
-                      ? "bg-primary text-primary-foreground border-primary"
-                      : "text-muted-foreground"
-                  }`}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
-            <div className="flex gap-2">
-              <Input
-                value={customType}
-                onChange={e => setCustomType(e.target.value)}
-                placeholder="Kendi tipini ekle..."
-              />
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  const t = customType.trim();
-                  if (!t) return;
-                  setDeriveTypes(prev => new Set(prev).add(t));
-                  setCustomType("");
-                }}
-              >
-                Ekle
-              </Button>
-            </div>
-            {deriveTypes.size > 0 && (
-              <p className="text-xs text-muted-foreground">
-                Oluşturulacak: {Array.from(deriveTypes).map(t => `${deriveFor?.name} — ${t}`).join(", ")}
-              </p>
-            )}
+            <ChipGroup
+              title="Kullanım / Yüzey"
+              options={["Ahşap", "Metal", "Plastik", "Cam", "Seramik", "Jant", "3D Baskı", "Rapala / Yem", "Duvar / İç Mekan", "Airbrush"]}
+              selected={deriveTypes}
+              setSelected={setDeriveTypes}
+              custom={customType}
+              setCustom={setCustomType}
+            />
+            <ChipGroup
+              title="Ambalaj (Şablonlar sayfasından yönetilir)"
+              options={packOptions.length ? packOptions : ["400 ml Sprey", "1 L Teneke", "250 ml Şişe"]}
+              selected={derivePacks}
+              setSelected={setDerivePacks}
+              custom={customPack}
+              setCustom={setCustomPack}
+            />
+            <ChipGroup
+              title="Renk (Şablonlar sayfasından yönetilir)"
+              options={colorOptions.length ? colorOptions : ["Açık Gri", "Antrasit Gri", "Siyah", "Beyaz"]}
+              selected={deriveColors}
+              setSelected={setDeriveColors}
+              custom={customColor}
+              setCustom={setCustomColor}
+            />
+            <ChipGroup
+              title="Set / Paket (fiyat ve ambalaj maliyeti adetle çarpılır)"
+              options={setOptions.length ? setOptions : ["2'li Set", "3'lü Set", "5'li Paket"]}
+              selected={deriveSets}
+              setSelected={setDeriveSets}
+              custom={customSet}
+              setCustom={setCustomSet}
+            />
+            {(() => {
+              const total =
+                Math.max(deriveTypes.size, 1) *
+                Math.max(derivePacks.size, 1) *
+                Math.max(deriveColors.size, 1) *
+                Math.max(deriveSets.size, 1);
+              const any = deriveTypes.size + derivePacks.size + deriveColors.size + deriveSets.size > 0;
+              return any ? (
+                <p className="text-xs font-medium">
+                  {total} türev oluşturulacak
+                  {total > 60 ? " — çok fazla, seçimleri azalt (en fazla 60)" : ""}
+                </p>
+              ) : null;
+            })()}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeriveFor(null)}>
               İptal
             </Button>
             <Button
-              disabled={deriveMany.isPending || deriveTypes.size === 0}
+              disabled={
+                deriveMany.isPending ||
+                deriveTypes.size + derivePacks.size + deriveColors.size + deriveSets.size === 0
+              }
               onClick={() =>
                 deriveFor &&
-                deriveMany.mutate({ parentId: deriveFor.id, types: Array.from(deriveTypes) })
+                deriveMany.mutate({
+                  parentId: deriveFor.id,
+                  uses: Array.from(deriveTypes),
+                  packagings: Array.from(derivePacks),
+                  colors: Array.from(deriveColors),
+                  sets: Array.from(deriveSets),
+                })
               }
             >
-              {deriveTypes.size} Türev Oluştur
+              Türevleri Oluştur
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function ChipGroup({
+  title,
+  options,
+  selected,
+  setSelected,
+  custom,
+  setCustom,
+}: {
+  title: string;
+  options: string[];
+  selected: Set<string>;
+  setSelected: (fn: (prev: Set<string>) => Set<string>) => void;
+  custom: string;
+  setCustom: (v: string) => void;
+}) {
+  const all = Array.from(new Set([...options, ...Array.from(selected)]));
+  return (
+    <div className="space-y-1.5">
+      <p className="text-xs font-medium text-muted-foreground">{title}</p>
+      <div className="flex flex-wrap gap-1.5">
+        {all.map(t => (
+          <button
+            key={t}
+            onClick={() =>
+              setSelected(prev => {
+                const next = new Set(prev);
+                if (next.has(t)) next.delete(t);
+                else next.add(t);
+                return next;
+              })
+            }
+            className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+              selected.has(t) ? "bg-primary text-primary-foreground border-primary" : "text-muted-foreground"
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <Input value={custom} onChange={e => setCustom(e.target.value)} placeholder="Kendi değerini ekle..." className="h-8 text-xs" />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8"
+          onClick={() => {
+            const t = custom.trim();
+            if (!t) return;
+            setSelected(prev => new Set(prev).add(t));
+            setCustom("");
+          }}
+        >
+          Ekle
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ImageSlot({
+  label,
+  kind,
+  images,
+  onUpload,
+  onDelete,
+}: {
+  label: string;
+  kind: "main" | "packaging" | "usage";
+  productId: number;
+  images: { kind: string; data: string }[] | undefined;
+  onUpload: (kind: "main" | "packaging" | "usage", data: string) => void;
+  onDelete: (kind: "main" | "packaging" | "usage") => void;
+}) {
+  const existing = images?.find(i => i.kind === kind);
+  function handleFile(file: File) {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const scale = Math.min(1, 900 / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+      onUpload(kind, canvas.toDataURL("image/jpeg", 0.82));
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
+  }
+  return (
+    <div className="space-y-1">
+      <p className="text-[10px] text-muted-foreground">{label}</p>
+      <label className="block cursor-pointer">
+        {existing ? (
+          <img src={existing.data} alt={label} className="h-20 w-full rounded-md border object-cover" />
+        ) : (
+          <div className="flex h-20 w-full items-center justify-center rounded-md border border-dashed text-[10px] text-muted-foreground">
+            + Yükle
+          </div>
+        )}
+        <input
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={e => {
+            const f = e.target.files?.[0];
+            if (f) handleFile(f);
+            e.target.value = "";
+          }}
+        />
+      </label>
+      {existing && (
+        <button type="button" onClick={() => onDelete(kind)} className="text-[10px] text-destructive hover:underline">
+          Kaldır
+        </button>
+      )}
     </div>
   );
 }

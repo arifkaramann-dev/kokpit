@@ -55,6 +55,13 @@ const emptyForm = {
 };
 
 export default function Stock() {
+  const { data: templateList } = trpc.templates.list.useQuery();
+  const allCategories = useMemo(() => {
+    const fromTemplates = (templateList ?? [])
+      .filter(t => t.kind === "hammadde_kategori")
+      .map(t => t.name);
+    return Array.from(new Set([...MATERIAL_CATEGORIES, ...fromTemplates]));
+  }, [templateList]);
   const utils = trpc.useUtils();
   const { data: materials, isLoading } = trpc.materials.list.useQuery();
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -193,7 +200,7 @@ export default function Stock() {
           <SelectContent>
             <SelectItem value="all">Tüm Kategoriler</SelectItem>
             <SelectItem value="critical">⚠ Kritik Stok</SelectItem>
-            {MATERIAL_CATEGORIES.map(c => (
+            {allCategories.map(c => (
               <SelectItem key={c} value={c}>
                 {c}
               </SelectItem>
@@ -319,7 +326,7 @@ export default function Stock() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {MATERIAL_CATEGORIES.map(c => (
+                    {allCategories.map(c => (
                       <SelectItem key={c} value={c}>
                         {c}
                       </SelectItem>

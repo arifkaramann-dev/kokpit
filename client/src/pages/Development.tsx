@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import TemplatePicker from "@/components/TemplatePicker";
 import { formatTL } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
 import {
@@ -238,6 +239,12 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
         dryingTime: project.dryingTime ?? "",
         coats: project.coats ?? "",
         testNotes: project.testNotes ?? "",
+        description: project.description ?? "",
+        packaging: project.packaging ?? "",
+        labelSize: project.labelSize ?? "",
+        labelText: project.labelText ?? "",
+        usageGuide: project.usageGuide ?? "",
+        safetyNotes: project.safetyNotes ?? "",
         packagingCost: project.packagingCost,
         shippingCost: project.shippingCost,
         salePrice: project.salePrice,
@@ -325,9 +332,17 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const profit = sale - totalCost;
   const margin = sale > 0 ? (profit / sale) * 100 : 0;
 
-  const field = (key: string, label: string, placeholder = "", textarea = false) => (
+  const field = (key: string, label: string, placeholder = "", textarea = false, pickerKind?: string) => (
     <div className="space-y-1.5">
-      <Label>{label}</Label>
+      <div className="flex items-center justify-between gap-2">
+        <Label>{label}</Label>
+        {pickerKind && (
+          <TemplatePicker
+            kind={pickerKind}
+            onPick={t => setForm(f => ({ ...f, [key]: t.content || t.name }))}
+          />
+        )}
+      </div>
       {textarea ? (
         <Textarea
           rows={2}
@@ -512,17 +527,50 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
           <p className="text-sm text-muted-foreground">
             Uygulama testlerinizin sonuçlarını kaydedin — ürün açıklamasına otomatik eklenir.
           </p>
-          {field("applicationNotes", "Uygulama Yöntemi", "Örn. Fırça / rulo, 2 kat, ara zımpara", true)}
+          {field("applicationNotes", "Uygulama Yöntemi", "Örn. Fırça / rulo, 2 kat, ara zımpara", true, "uygulama_yontemi")}
           <div className="grid grid-cols-2 gap-3">
-            {field("dryingTime", "Kuruma Süresi", "Örn. Dokunma 30 dk, tam 24 saat")}
-            {field("coats", "Önerilen Kat", "Örn. 2-3")}
+            {field("dryingTime", "Kuruma Süresi", "Örn. Dokunma 30 dk, tam 24 saat", false, "kuruma_suresi")}
+            {field("coats", "Önerilen Kat", "Örn. 2-3", false, "kat_sayisi")}
           </div>
-          {field("testNotes", "Test Sonuçları / Gözlemler", "Yüzeyde nasıl durdu, örtücülük, parlaklık...", true)}
+          {field("testNotes", "Test Sonuçları / Gözlemler", "Yüzeyde nasıl durdu, örtücülük, parlaklık...", true, "test_sonucu")}
+          <div className="border-t pt-3 space-y-3">
+            <p className="text-sm font-semibold">Etiket & Açıklama</p>
+            <p className="text-xs text-muted-foreground">
+              Burada doldurduklarınız ürünleşince doğrudan ana ürüne işlenir. Şablonlardan seçebilir
+              veya elle yazabilirsiniz.
+            </p>
+            {field("description", "Ürün Açıklaması", "Pazaryeri/web sitesi açıklaması — boş bırakılırsa test notlarından oluşturulur", true)}
+            <div className="grid grid-cols-2 gap-3">
+              {field("packaging", "Ambalaj", "Örn. 400 ml Sprey", false, "ambalaj")}
+              {field("labelSize", "Etiket Boyutu", "Örn. 6x9 cm", false, "etiket_boyutu")}
+            </div>
+            {field("labelText", "Etiket Yazısı", "Etiket üzerindeki tam metin", true, "etiket_yazisi")}
+            {field("usageGuide", "Kullanım Kılavuzu", "Uygulama adımları", true, "kilavuz")}
+            {field("safetyNotes", "Güvenlik / Uyarılar", "Saklama koşulları, uyarılar", true, "guvenlik")}
+          </div>
           <div className="flex justify-between">
             <Button variant="outline" onClick={() => setStep(2)}>
               <ArrowLeft className="h-4 w-4 mr-1" /> Geri
             </Button>
-            <Button onClick={() => saveFields(["applicationNotes", "dryingTime", "coats", "testNotes"], 4)}>
+            <Button
+              onClick={() =>
+                saveFields(
+                  [
+                    "applicationNotes",
+                    "dryingTime",
+                    "coats",
+                    "testNotes",
+                    "description",
+                    "packaging",
+                    "labelSize",
+                    "labelText",
+                    "usageGuide",
+                    "safetyNotes",
+                  ],
+                  4,
+                )
+              }
+            >
               Kaydet ve Devam <ArrowRight className="h-4 w-4 ml-1" />
             </Button>
           </div>

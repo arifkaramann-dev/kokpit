@@ -20,6 +20,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/useMobile";
+import VoiceButton from "@/components/VoiceButton";
 import {
   Beaker,
   CalendarDays,
@@ -27,6 +28,7 @@ import {
   Calculator,
   ClipboardList,
   LayoutDashboard,
+  LibraryBig,
   LogOut,
   Package,
   PanelLeft,
@@ -54,6 +56,7 @@ const menuItems = [
   { icon: CalendarDays, label: "Kampanya Takvimi", path: "/kampanyalar" },
   { icon: Truck, label: "Tedarikçiler", path: "/tedarikciler" },
   { icon: Target, label: "Strateji & Rapor", path: "/strateji" },
+  { icon: LibraryBig, label: "Şablonlar", path: "/sablonlar" },
 ];
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
@@ -260,6 +263,7 @@ function DashboardLayoutContent({
           </div>
         )}
         <main className="flex-1 p-4">{children}</main>
+        <VoiceButton />
       </SidebarInset>
     </>
   );

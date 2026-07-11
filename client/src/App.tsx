@@ -14,6 +14,7 @@ import Purchases from "@/pages/Purchases";
 import Stock from "@/pages/Stock";
 import Strategy from "@/pages/Strategy";
 import Suppliers from "@/pages/Suppliers";
+import Templates from "@/pages/Templates";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
@@ -34,6 +35,7 @@ function Router() {
         <Route path={"/kampanyalar"} component={Campaigns} />
         <Route path={"/tedarikciler"} component={Suppliers} />
         <Route path={"/strateji"} component={Strategy} />
+        <Route path={"/sablonlar"} component={Templates} />
         <Route path={"/404"} component={NotFound} />
         <Route component={NotFound} />
       </Switch>

@@ -1,0 +1,1 @@
+ALTER TABLE `productImages` MODIFY COLUMN `data` mediumtext NOT NULL;

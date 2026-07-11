@@ -95,3 +95,48 @@ describe("calcMarketplace — pazaryeri ve KDV analizi", () => {
     expect(r.margin).toBe(0);
   });
 });
+
+import { buildSaleTitle, deriveCombos, parseSetCount } from "../server/productUtils";
+
+describe("buildSaleTitle — satış başlığı üretimi", () => {
+  it("örnek başlığı doğru kurar", () => {
+    expect(buildSaleTitle("Astar", "3D Baskı", "400 ml Sprey", "Açık Gri")).toBe(
+      "Artofcolour 3D Baskı Astar 400 ml Sprey Açık Gri"
+    );
+  });
+  it("boş boyutları atlar", () => {
+    expect(buildSaleTitle("Jant Astarı", null, "400 ml Sprey", null)).toBe(
+      "Artofcolour Jant Astarı 400 ml Sprey"
+    );
+  });
+});
+
+describe("deriveCombos — kombinasyon üretimi", () => {
+  it("2 kullanım × 2 ambalaj × 1 renk = 4 kombinasyon", () => {
+    expect(deriveCombos(["Jant", "3D Baskı"], ["400 ml", "1 L"], ["Gri"])).toHaveLength(4);
+  });
+  it("tek boyut seçiliyse diğerleri null kalır", () => {
+    const combos = deriveCombos(["Ahşap"], [], []);
+    expect(combos).toEqual([{ use: "Ahşap", packaging: null, color: null, set: null }]);
+  });
+  it("set boyutu kombinasyonu çarpar", () => {
+    expect(deriveCombos([], ["400 ml"], ["Gri"], ["2'li Set", "3'lü Set"])).toHaveLength(2);
+  });
+});
+
+describe("parseSetCount — set adedi çıkarımı", () => {
+  it("Türkçe set adlarından adet çıkarır", () => {
+    expect(parseSetCount("2'li Set")).toBe(2);
+    expect(parseSetCount("5'li Paket")).toBe(5);
+    expect(parseSetCount("12 adet koli")).toBe(12);
+  });
+  it("sayı yoksa veya boşsa 1 döner", () => {
+    expect(parseSetCount("Mega Paket")).toBe(1);
+    expect(parseSetCount(null)).toBe(1);
+  });
+  it("set adı başlığın sonuna eklenir", () => {
+    expect(buildSaleTitle("Jant Astarı", null, "400 ml Sprey", "Antrasit Gri", "2'li Set")).toBe(
+      "Artofcolour Jant Astarı 400 ml Sprey Antrasit Gri 2'li Set"
+    );
+  });
+});

@@ -1,0 +1,1 @@
+ALTER TABLE `templates` MODIFY COLUMN `kind` enum('etiket_boyutu','etiket_yazisi','kilavuz','guvenlik','ambalaj','renk','set_paket','hammadde_kategori','uygulama_yontemi','kuruma_suresi','kat_sayisi','test_sonucu') NOT NULL;

@@ -1,6 +1,7 @@
 import {
   decimal,
   int,
+  mediumtext,
   mysqlEnum,
   mysqlTable,
   text,
@@ -81,6 +82,7 @@ export const products = mysqlTable("products", {
   discountPercent: decimal("discountPercent", { precision: 5, scale: 2 }).notNull().default("0"),
   packagingCost: decimal("packagingCost", { precision: 12, scale: 2 }).notNull().default("0"),
   shippingCost: decimal("shippingCost", { precision: 12, scale: 2 }).notNull().default("0"),
+  packaging: varchar("packaging", { length: 128 }),
   labelSize: varchar("labelSize", { length: 64 }),
   labelText: text("labelText"),
   usageGuide: text("usageGuide"),
@@ -161,6 +163,12 @@ export const devProjects = mysqlTable("devProjects", {
   dryingTime: varchar("dryingTime", { length: 128 }),
   coats: varchar("coats", { length: 64 }),
   testNotes: text("testNotes"),
+  description: text("description"),
+  packaging: varchar("packaging", { length: 128 }),
+  labelSize: varchar("labelSize", { length: 64 }),
+  labelText: text("labelText"),
+  usageGuide: text("usageGuide"),
+  safetyNotes: text("safetyNotes"),
   packagingCost: decimal("packagingCost", { precision: 12, scale: 2 }).notNull().default("0"),
   shippingCost: decimal("shippingCost", { precision: 12, scale: 2 }).notNull().default("0"),
   salePrice: decimal("salePrice", { precision: 12, scale: 2 }).notNull().default("0"),
@@ -279,3 +287,43 @@ export const purchaseItems = mysqlTable("purchaseItems", {
 });
 
 export type PurchaseItem = typeof purchaseItems.$inferSelect;
+
+/**
+ * Şablon kütüphanesi: etiket yazısı, kılavuz, etiket boyutu, ambalaj, renk,
+ * güvenlik metni gibi tekrar kullanılan içerikler tek yerde tanımlanır,
+ * ürünlere seçilerek eklenir (pazaryeri/web sitesi aktarımına hazırlık).
+ */
+export const templates = mysqlTable("templates", {
+  id: int("id").autoincrement().primaryKey(),
+  kind: mysqlEnum("kind", [
+    "etiket_boyutu",
+    "etiket_yazisi",
+    "kilavuz",
+    "guvenlik",
+    "ambalaj",
+    "renk",
+    "set_paket",
+    "hammadde_kategori",
+    "uygulama_yontemi",
+    "kuruma_suresi",
+    "kat_sayisi",
+    "test_sonucu",
+  ]).notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  content: text("content"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type Template = typeof templates.$inferSelect;
+
+/** Ürün görselleri: ana/pazarlama, ambalaj, kullanım örnekleri (base64). */
+export const productImages = mysqlTable("productImages", {
+  id: int("id").autoincrement().primaryKey(),
+  productId: int("productId").notNull(),
+  kind: mysqlEnum("kind", ["main", "packaging", "usage"]).notNull(),
+  // Base64 görseller 64KB'lık TEXT sınırına sığmaz; MEDIUMTEXT (16MB) kullanılır.
+  data: mediumtext("data").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ProductImage = typeof productImages.$inferSelect;

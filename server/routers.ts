@@ -8,6 +8,8 @@ import { TRPCError } from "@trpc/server";
 import * as db from "./db";
 import { itemsTotal, summarizeItems, toItemRows } from "./orderUtils";
 import { extractInvoice } from "./_core/claude";
+import { executeAssistantCommand, generateOrderNo } from "./assistant";
+import { buildSaleTitle, deriveCombos, parseSetCount } from "./productUtils";
 import { syncTrendyolOrders } from "./trendyol";
 
 /* ------------------------- Zod schemas ------------------------- */
@@ -36,6 +38,7 @@ const productInput = z.object({
   discountPercent: z.number().min(0).max(100).default(0),
   packagingCost: z.number().min(0).default(0),
   shippingCost: z.number().min(0).default(0),
+  packaging: z.string().nullable().optional(),
   labelSize: z.string().nullable().optional(),
   labelText: z.string().nullable().optional(),
   usageGuide: z.string().nullable().optional(),
@@ -73,6 +76,12 @@ const devProjectInput = z.object({
   dryingTime: z.string().nullable().optional(),
   coats: z.string().nullable().optional(),
   testNotes: z.string().nullable().optional(),
+  description: z.string().nullable().optional(),
+  packaging: z.string().nullable().optional(),
+  labelSize: z.string().nullable().optional(),
+  labelText: z.string().nullable().optional(),
+  usageGuide: z.string().nullable().optional(),
+  safetyNotes: z.string().nullable().optional(),
   packagingCost: z.number().min(0).optional(),
   shippingCost: z.number().min(0).optional(),
   salePrice: z.number().min(0).optional(),
@@ -120,13 +129,6 @@ function toDecimalFields<T extends Record<string, unknown>>(
   return out;
 }
 
-function generateOrderNo() {
-  const d = new Date();
-  const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
-  const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
-  return `AOC-${ymd}-${rand}`;
-}
-
 /* ------------------------- App router ------------------------- */
 
 export const appRouter = router({
@@ -172,29 +174,67 @@ export const appRouter = router({
         db.updateProduct(input.id, toDecimalFields(input.data, ["salePrice", "discountPercent", "packagingCost", "shippingCost"]) as never),
       ),
     delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteProduct(input.id)),
-    // Ana üründen seçilen yüzey tiplerini tek tıkla türev olarak üretir.
+    // Ana üründen yüzey × ambalaj × renk kombinasyonlarını tek tıkla türetir.
     deriveMany: protectedProcedure
-      .input(z.object({ parentId: z.number(), types: z.array(z.string().min(1)).min(1) }))
+      .input(
+        z.object({
+          parentId: z.number(),
+          uses: z.array(z.string().min(1)).default([]),
+          packagings: z.array(z.string().min(1)).default([]),
+          colors: z.array(z.string().min(1)).default([]),
+          sets: z.array(z.string().min(1)).default([]),
+        }),
+      )
       .mutation(async ({ input }) => {
         const parent = await db.getProduct(input.parentId);
         if (!parent) throw new TRPCError({ code: "NOT_FOUND", message: "Ana ürün bulunamadı" });
-        for (const type of input.types) {
-          await db.createProduct({
+        const combos = deriveCombos(input.uses, input.packagings, input.colors, input.sets);
+        const noSelection =
+          input.uses.length === 0 &&
+          input.packagings.length === 0 &&
+          input.colors.length === 0 &&
+          input.sets.length === 0;
+        if (combos.length === 0 || noSelection) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "En az bir seçenek işaretleyin" });
+        }
+        if (combos.length > 60) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: `${combos.length} kombinasyon çok fazla (en fazla 60)` });
+        }
+        for (const combo of combos) {
+          // Set/paket türevlerinde fiyat ve ambalaj maliyeti adetle çarpılır.
+          const setCount = parseSetCount(combo.set);
+          const id = await db.createProduct({
             parentId: parent.id,
-            name: `${parent.name} — ${type}`,
+            name: buildSaleTitle(parent.name, combo.use, combo.packaging, combo.color, combo.set),
             series: parent.series,
             colorCode: parent.colorCode,
             colorHex: parent.colorHex,
-            surfaceType: type,
+            surfaceType: combo.use ?? parent.surfaceType,
+            packaging: combo.packaging ?? parent.packaging,
             description: parent.description,
-            salePrice: parent.salePrice,
+            salePrice: String((parseFloat(parent.salePrice) || 0) * setCount),
             discountPercent: parent.discountPercent,
-            packagingCost: parent.packagingCost,
+            packagingCost: String((parseFloat(parent.packagingCost) || 0) * setCount),
             shippingCost: parent.shippingCost,
+            labelSize: parent.labelSize,
+            labelText: parent.labelText,
+            usageGuide: parent.usageGuide,
+            safetyNotes: parent.safetyNotes,
+            extraInfo: parent.extraInfo,
           } as never);
+          await db.copyProductImages(parent.id, Number(id));
         }
-        return { count: input.types.length };
+        return { count: combos.length };
       }),
+    images: protectedProcedure
+      .input(z.object({ productId: z.number() }))
+      .query(({ input }) => db.getProductImages(input.productId)),
+    setImage: protectedProcedure
+      .input(z.object({ productId: z.number(), kind: z.enum(["main", "packaging", "usage"]), data: z.string().min(1) }))
+      .mutation(({ input }) => db.setProductImage(input.productId, input.kind, input.data)),
+    deleteImage: protectedProcedure
+      .input(z.object({ productId: z.number(), kind: z.enum(["main", "packaging", "usage"]) }))
+      .mutation(({ input }) => db.deleteProductImage(input.productId, input.kind)),
   }),
 
   formula: router({
@@ -327,7 +367,13 @@ export const appRouter = router({
           colorCode: project.colorCode,
           colorHex: project.colorHex,
           surfaceType: project.targetUse,
-          description: descriptionParts.join("\n") || null,
+          // Projede açıklama yazıldıysa onu kullan; yoksa test notlarından derle.
+          description: project.description || descriptionParts.join("\n") || null,
+          packaging: project.packaging,
+          labelSize: project.labelSize,
+          labelText: project.labelText,
+          usageGuide: project.usageGuide,
+          safetyNotes: project.safetyNotes,
           salePrice: project.salePrice,
           packagingCost: project.packagingCost,
           shippingCost: project.shippingCost,
@@ -342,6 +388,42 @@ export const appRouter = router({
         });
         return { productId: Number(productId) };
       }),
+  }),
+
+  assistant: router({
+    // Sesli/serbest metin komutu: Claude niyeti çözer, sunucu uygular.
+    // WhatsApp webhook'u da aynı beyni kullanır (server/assistant.ts).
+    command: protectedProcedure
+      .input(z.object({ transcript: z.string().min(2) }))
+      .mutation(async ({ input }) => {
+        try {
+          return await executeAssistantCommand(input.transcript);
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Komut anlaşılamadı",
+          });
+        }
+      }),
+  }),
+
+  templates: router({
+    list: protectedProcedure.query(() => db.listTemplates()),
+    create: protectedProcedure
+      .input(
+        z.object({
+          kind: z.enum(["etiket_boyutu", "etiket_yazisi", "kilavuz", "guvenlik", "ambalaj", "renk", "set_paket", "hammadde_kategori", "uygulama_yontemi", "kuruma_suresi", "kat_sayisi", "test_sonucu"]),
+          name: z.string().min(1),
+          content: z.string().nullable().optional(),
+        }),
+      )
+      .mutation(({ input }) =>
+        db.createTemplate({ kind: input.kind, name: input.name, content: input.content ?? null }),
+      ),
+    update: protectedProcedure
+      .input(z.object({ id: z.number(), name: z.string().min(1), content: z.string().nullable().optional() }))
+      .mutation(({ input }) => db.updateTemplate(input.id, { name: input.name, content: input.content ?? null })),
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteTemplate(input.id)),
   }),
 
   purchases: router({

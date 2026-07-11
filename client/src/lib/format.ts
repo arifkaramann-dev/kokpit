@@ -29,11 +29,12 @@ export function num(value: string | number | null | undefined): number {
 export const MATERIAL_CATEGORIES = [
   "pigment",
   "solvent",
-  "bağlayıcı/reçine",
-  "katkı maddesi",
-  "şişe/ambalaj",
+  "selülozik boya",
+  "mix boya",
+  "akrilik boya",
+  "şişe",
   "etiket",
-  "kutu/koli",
+  "ambalaj",
   "diğer",
 ];
 

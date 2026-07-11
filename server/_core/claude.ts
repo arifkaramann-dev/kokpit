@@ -140,3 +140,99 @@ export async function extractInvoice(mediaType: string, base64: string): Promise
     .join("");
   return JSON.parse(text) as ParsedInvoice;
 }
+
+const VOICE_SCHEMA = {
+  type: "object",
+  properties: {
+    intent: { type: "string", enum: ["sale", "order", "stock_in", "stock_out", "note", "query", "unknown"] },
+    customerName: { anyOf: [{ type: "string" }, { type: "null" }] },
+    channel: { anyOf: [{ type: "string" }, { type: "null" }] },
+    items: {
+      anyOf: [
+        {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              quantity: { anyOf: [{ type: "number" }, { type: "null" }] },
+              unitPrice: { anyOf: [{ type: "number" }, { type: "null" }] },
+            },
+            required: ["name", "quantity", "unitPrice"],
+            additionalProperties: false,
+          },
+        },
+        { type: "null" },
+      ],
+    },
+    materialName: { anyOf: [{ type: "string" }, { type: "null" }] },
+    quantity: { anyOf: [{ type: "number" }, { type: "null" }] },
+    unit: { anyOf: [{ type: "string" }, { type: "null" }] },
+    noteText: { anyOf: [{ type: "string" }, { type: "null" }] },
+    reply: { type: "string" },
+  },
+  required: ["intent", "customerName", "channel", "items", "materialName", "quantity", "unit", "noteText", "reply"],
+  additionalProperties: false,
+} as const;
+
+export type VoiceCommand = {
+  intent: "sale" | "order" | "stock_in" | "stock_out" | "note" | "query" | "unknown";
+  customerName: string | null;
+  channel: string | null;
+  items: { name: string; quantity: number | null; unitPrice: number | null }[] | null;
+  materialName: string | null;
+  quantity: number | null;
+  unit: string | null;
+  noteText: string | null;
+  reply: string;
+};
+
+/** Sesli komut metnini yapılandırılmış işletme komutuna çevirir. */
+export async function parseVoiceCommand(transcript: string): Promise<VoiceCommand> {
+  if (!isClaudeConfigured()) {
+    throw new Error("Sesli komut için ANTHROPIC_API_KEY gerekli (Render > Environment'a ekleyin).");
+  }
+  const client = new Anthropic();
+  const response = await client.messages.create({
+    model: "claude-opus-4-8",
+    max_tokens: 2048,
+    thinking: { type: "adaptive" },
+    output_config: { format: { type: "json_schema", schema: VOICE_SCHEMA as never } },
+    system:
+      "Boya işletmesi yönetim uygulamasının sesli komut çözücüsüsün. Türkçe konuşma metnini işletme komutuna çevir. " +
+      "'sattım/elden satış' → sale; 'sipariş geldi/al' → order; 'stok girişi/geldi/aldım' → stock_in; 'kullandım/stoktan düş' → stock_out; 'not al' → note; " +
+      "işletme hakkında soru/rapor isteği ('kaç sipariş var', 'ciro ne kadar', 'stok durumu' gibi) → query ve soruyu noteText alanına aynen yaz. " +
+      "Ürün/malzeme adlarını sade yaz. 'reply' alanına yapılan işi tek cümlede Türkçe özetle.",
+    messages: [{ role: "user", content: transcript }],
+  });
+  if (response.stop_reason === "refusal") throw new Error("Komut işlenemedi, tekrar deneyin.");
+  const text = response.content
+    .filter((b): b is Anthropic.TextBlock => b.type === "text")
+    .map(b => b.text)
+    .join("");
+  return JSON.parse(text) as VoiceCommand;
+}
+
+/** İşletme verisi özetiyle serbest soruyu yanıtlar (WhatsApp/sesli asistan Q&A). */
+export async function answerBusinessQuestion(question: string, snapshot: string): Promise<string> {
+  if (!isClaudeConfigured()) {
+    throw new Error("AI asistan için ANTHROPIC_API_KEY gerekli (Render > Environment'a ekleyin).");
+  }
+  const client = new Anthropic();
+  const response = await client.messages.create({
+    model: "claude-opus-4-8",
+    max_tokens: 1500,
+    thinking: { type: "adaptive" },
+    system:
+      "Art of Colour boya işletmesinin kişisel asistanısın. Sana işletmenin güncel veri özeti verilir; " +
+      "soruyu SADECE bu veriye dayanarak Türkçe, kısa ve net yanıtla (WhatsApp mesajı gibi, birkaç cümle/madde). " +
+      "Veride olmayan bir şey sorulursa uydurma, 'bu bilgi elimde yok' de. Tutarları TL olarak yaz.",
+    messages: [{ role: "user", content: `İşletme veri özeti:\n${snapshot}\n\nSoru: ${question}` }],
+  });
+  if (response.stop_reason === "refusal") throw new Error("Soru yanıtlanamadı, tekrar deneyin.");
+  return response.content
+    .filter((b): b is Anthropic.TextBlock => b.type === "text")
+    .map(b => b.text)
+    .join("")
+    .trim();
+}
