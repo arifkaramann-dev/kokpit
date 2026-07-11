@@ -33,7 +33,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import { CHANNELS, formatDate, formatTL, ORDER_STATUSES, OrderStatus } from "@/lib/format";
 import { GripVertical, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 type OrderRow = {
@@ -77,6 +77,8 @@ export default function Orders() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editOrder, setEditOrder] = useState<OrderRow | null>(null);
   const [form, setForm] = useState(emptyForm);
+  const [manualSale, setManualSale] = useState(false);
+  const autoSynced = useRef(false);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
@@ -117,6 +119,30 @@ export default function Orders() {
     },
     onError: e => toast.error(e.message),
   });
+
+  // Sayfa açılınca ve açık kaldıkça 10 dk'da bir Trendyol'u sessizce çek.
+  useEffect(() => {
+    const quietSync = () => {
+      utils.client.orders.syncTrendyol
+        .mutate()
+        .then(r => {
+          if (r.imported > 0) {
+            utils.orders.list.invalidate();
+            utils.dashboard.summary.invalidate();
+            toast.success(`Trendyol: ${r.imported} yeni sipariş alındı`);
+          }
+        })
+        .catch(() => {
+          /* yapılandırılmamışsa sessiz geç */
+        });
+    };
+    if (!autoSynced.current) {
+      autoSynced.current = true;
+      quietSync();
+    }
+    const timer = setInterval(quietSync, 10 * 60 * 1000);
+    return () => clearInterval(timer);
+  }, [utils]);
 
   const syncTrendyol = trpc.orders.syncTrendyol.useMutation({
     onSuccess: r => {
@@ -161,7 +187,15 @@ export default function Orders() {
 
   function openCreate() {
     setEditOrder(null);
+    setManualSale(false);
     setForm(emptyForm);
+    setDialogOpen(true);
+  }
+
+  function openManualSale() {
+    setEditOrder(null);
+    setManualSale(true);
+    setForm({ ...emptyForm, channel: "elden", customerName: "Elden Satış" });
     setDialogOpen(true);
   }
 
@@ -205,6 +239,8 @@ export default function Orders() {
       notes: form.notes || null,
       // Kalem girildiyse toplam ve özet sunucuda satırlardan hesaplanır.
       ...(itemRows.length > 0 ? { items: itemRows } : {}),
+      // Elden satışlar doğrudan "Tamamlandı" sütununa düşer.
+      ...(manualSale && !editOrder ? { status: "done" as const } : {}),
     };
     if (editOrder) {
       updateOrder.mutate({ id: editOrder.id, data: payload });
@@ -236,6 +272,9 @@ export default function Orders() {
             <RefreshCw className={`h-4 w-4 mr-1 ${syncTrendyol.isPending ? "animate-spin" : ""}`} />
             Trendyol'dan Çek
           </Button>
+          <Button variant="outline" onClick={openManualSale}>
+            <Plus className="h-4 w-4 mr-1" /> Elden Satış
+          </Button>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
             <Button onClick={openCreate}>
@@ -244,7 +283,7 @@ export default function Orders() {
           </DialogTrigger>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
-              <DialogTitle>{editOrder ? "Siparişi Düzenle" : "Yeni Sipariş"}</DialogTitle>
+              <DialogTitle>{editOrder ? "Siparişi Düzenle" : manualSale ? "Elden Satış Ekle" : "Yeni Sipariş"}</DialogTitle>
             </DialogHeader>
             <div className="space-y-3">
               <div className="space-y-1.5">

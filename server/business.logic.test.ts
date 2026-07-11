@@ -72,3 +72,26 @@ describe("sipariş durum akışı", () => {
     }
   });
 });
+
+import { calcMarketplace } from "../client/src/pages/Costs";
+
+describe("calcMarketplace — pazaryeri ve KDV analizi", () => {
+  it("KDV, komisyon ve kesintileri doğru ayrıştırır", () => {
+    const r = calcMarketplace({
+      salePrice: 1200,
+      vatPercent: 20,
+      commissionPercent: 20,
+      fixedFee: 10,
+      shippingCost: 90,
+      productCost: 300,
+    });
+    expect(r.vat).toBeCloseTo(200, 2);
+    expect(r.commission).toBeCloseTo(240, 2);
+    expect(r.net).toBeCloseTo(1200 - 200 - 240 - 10 - 90 - 300, 2);
+  });
+
+  it("satış fiyatı 0 iken marj 0 döner", () => {
+    const r = calcMarketplace({ salePrice: 0, vatPercent: 20, commissionPercent: 20, fixedFee: 0, shippingCost: 0, productCost: 0 });
+    expect(r.margin).toBe(0);
+  });
+});

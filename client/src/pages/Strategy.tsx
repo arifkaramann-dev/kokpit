@@ -80,6 +80,8 @@ export default function Strategy() {
         },
         { label: "Pazarlama metni", ok: mktNames.has(p.name), fix: "/pazarlama" },
         { label: "Satış görmüş", ok: (soldQty.get(p.name) ?? 0) > 0, fix: "/siparisler" },
+        { label: "Etiket bilgisi", ok: Boolean(p.labelSize || p.labelText), fix: "/urunler" },
+        { label: "Kullanım kılavuzu", ok: Boolean(p.usageGuide), fix: "/urunler" },
       ];
       const done = checks.filter(c => c.ok).length;
       return { p, material, totalCost, netPrice, profit, margin, checks, done, total: checks.length };

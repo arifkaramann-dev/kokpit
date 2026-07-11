@@ -50,6 +50,7 @@ export type OrderStatus = (typeof ORDER_STATUSES)[number]["value"];
 
 export const CHANNELS = [
   "web",
+  "elden",
   "trendyol",
   "hepsiburada",
   "instagram",

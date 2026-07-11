@@ -36,6 +36,11 @@ const productInput = z.object({
   discountPercent: z.number().min(0).max(100).default(0),
   packagingCost: z.number().min(0).default(0),
   shippingCost: z.number().min(0).default(0),
+  labelSize: z.string().nullable().optional(),
+  labelText: z.string().nullable().optional(),
+  usageGuide: z.string().nullable().optional(),
+  safetyNotes: z.string().nullable().optional(),
+  extraInfo: z.string().nullable().optional(),
 });
 
 const orderItemInput = z.object({
@@ -50,6 +55,8 @@ const orderInput = z.object({
   totalAmount: z.number().min(0).default(0),
   itemsSummary: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
+  // Elden/dışarıdan satış girişleri doğrudan "Tamamlandı" olarak eklenebilir.
+  status: z.enum(["new", "production", "ready", "done"]).optional(),
   // Kalem listesi gönderilirse toplam tutar ve özet bu satırlardan türetilir.
   items: z.array(orderItemInput).optional(),
 });
@@ -165,6 +172,29 @@ export const appRouter = router({
         db.updateProduct(input.id, toDecimalFields(input.data, ["salePrice", "discountPercent", "packagingCost", "shippingCost"]) as never),
       ),
     delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteProduct(input.id)),
+    // Ana üründen seçilen yüzey tiplerini tek tıkla türev olarak üretir.
+    deriveMany: protectedProcedure
+      .input(z.object({ parentId: z.number(), types: z.array(z.string().min(1)).min(1) }))
+      .mutation(async ({ input }) => {
+        const parent = await db.getProduct(input.parentId);
+        if (!parent) throw new TRPCError({ code: "NOT_FOUND", message: "Ana ürün bulunamadı" });
+        for (const type of input.types) {
+          await db.createProduct({
+            parentId: parent.id,
+            name: `${parent.name} — ${type}`,
+            series: parent.series,
+            colorCode: parent.colorCode,
+            colorHex: parent.colorHex,
+            surfaceType: type,
+            description: parent.description,
+            salePrice: parent.salePrice,
+            discountPercent: parent.discountPercent,
+            packagingCost: parent.packagingCost,
+            shippingCost: parent.shippingCost,
+          } as never);
+        }
+        return { count: input.types.length };
+      }),
   }),
 
   formula: router({

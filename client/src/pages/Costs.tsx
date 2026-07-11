@@ -39,6 +39,26 @@ export function calcProfit(input: {
   return { netPrice, totalCost, profit, margin };
 }
 
+/**
+ * Pazaryeri satışı analizi: KDV dahil satış fiyatından KDV'yi ayırır,
+ * komisyon + sabit işlem bedeli + kargo düşer, gerçek net kârı hesaplar.
+ */
+export function calcMarketplace(input: {
+  salePrice: number;
+  vatPercent: number;
+  commissionPercent: number;
+  fixedFee: number;
+  shippingCost: number;
+  productCost: number;
+}) {
+  const vat = input.salePrice - input.salePrice / (1 + input.vatPercent / 100);
+  const commission = input.salePrice * (input.commissionPercent / 100);
+  const totalFees = commission + input.fixedFee + input.shippingCost;
+  const net = input.salePrice - vat - totalFees - input.productCost;
+  const margin = input.salePrice > 0 ? (net / input.salePrice) * 100 : 0;
+  return { vat, commission, totalFees, net, margin };
+}
+
 export default function Costs() {
   const utils = trpc.useUtils();
   const { data: products } = trpc.products.list.useQuery();
@@ -69,6 +89,11 @@ export default function Costs() {
       setShippingCost(selectedProduct.shippingCost);
     }
   }, [selectedProduct]);
+
+  const [mpVat, setMpVat] = useState("20");
+  const [mpCom, setMpCom] = useState("20");
+  const [mpFee, setMpFee] = useState("10");
+  const [mpShip, setMpShip] = useState("");
 
   const materialCost = useMemo(
     () =>
@@ -269,6 +294,64 @@ export default function Costs() {
               </p>
             </div>
           </Card>
+
+          <Card className="p-5 space-y-3 lg:col-span-2">
+            <h2 className="font-semibold">Pazaryeri & KDV Analizi</h2>
+            <p className="text-xs text-muted-foreground">
+              KDV dahil satış fiyatından KDV'yi ayırır; komisyon, işlem bedeli ve kargoyu düşerek
+              pazaryerindeki gerçek net kârını gösterir.
+            </p>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="space-y-1.5">
+                <Label>KDV Oranı (%)</Label>
+                <Input type="number" min="0" value={mpVat} onChange={e => setMpVat(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Komisyon (%)</Label>
+                <Input type="number" min="0" value={mpCom} onChange={e => setMpCom(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>İşlem Bedeli (₺)</Label>
+                <Input type="number" min="0" value={mpFee} onChange={e => setMpFee(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Pazaryeri Kargo (₺)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  value={mpShip}
+                  onChange={e => setMpShip(e.target.value)}
+                  placeholder={shippingCost || "0"}
+                />
+              </div>
+            </div>
+            {(() => {
+              const price = parseFloat(salePrice) || 0;
+              const mp = calcMarketplace({
+                salePrice: price,
+                vatPercent: parseFloat(mpVat) || 0,
+                commissionPercent: parseFloat(mpCom) || 0,
+                fixedFee: parseFloat(mpFee) || 0,
+                shippingCost: parseFloat(mpShip || shippingCost) || 0,
+                productCost: materialCost + (parseFloat(packagingCost) || 0),
+              });
+              return (
+                <div className="rounded-lg border p-3 text-sm space-y-1">
+                  <Row label="Satış fiyatı (KDV dahil)" value={formatTL(price)} />
+                  <Row label={`KDV (%${mpVat})`} value={`− ${formatTL(mp.vat)}`} />
+                  <Row label={`Pazaryeri komisyonu (%${mpCom})`} value={`− ${formatTL(mp.commission)}`} />
+                  <Row label="İşlem bedeli + kargo" value={`− ${formatTL((parseFloat(mpFee) || 0) + (parseFloat(mpShip || shippingCost) || 0))}`} />
+                  <Row label="Ürün maliyeti (hammadde + ambalaj)" value={`− ${formatTL(materialCost + (parseFloat(packagingCost) || 0))}`} />
+                  <div className="flex justify-between border-t pt-1.5 font-semibold">
+                    <span>Pazaryeri net kârı</span>
+                    <span className={mp.net >= 0 ? "text-emerald-600" : "text-rose-600"}>
+                      {formatTL(mp.net)} (%{mp.margin.toFixed(1)})
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
+          </Card>
         </div>
       )}
     </div>
@@ -280,6 +363,15 @@ function ResultRow({ label, value, muted }: { label: string; value: string; mute
     <div className="flex items-center justify-between py-1">
       <span className={`text-sm ${muted ? "text-muted-foreground" : ""}`}>{label}</span>
       <span className={`font-medium ${muted ? "text-muted-foreground" : ""}`}>{value}</span>
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between">
+      <span className="text-muted-foreground">{label}</span>
+      <span>{value}</span>
     </div>
   );
 }

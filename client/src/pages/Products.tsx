@@ -32,6 +32,11 @@ export type ProductRow = {
   discountPercent: string;
   packagingCost: string;
   shippingCost: string;
+  labelSize: string | null;
+  labelText: string | null;
+  usageGuide: string | null;
+  safetyNotes: string | null;
+  extraInfo: string | null;
   isActive: number;
 };
 
@@ -47,6 +52,11 @@ const emptyForm = {
   discountPercent: "",
   packagingCost: "",
   shippingCost: "",
+  labelSize: "",
+  labelText: "",
+  usageGuide: "",
+  safetyNotes: "",
+  extraInfo: "",
 };
 
 export default function Products() {
@@ -58,6 +68,9 @@ export default function Products() {
   const [parentForNew, setParentForNew] = useState<ProductRow | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [deriveFor, setDeriveFor] = useState<ProductRow | null>(null);
+  const [deriveTypes, setDeriveTypes] = useState<Set<string>>(new Set());
+  const [customType, setCustomType] = useState("");
 
   const mains = useMemo(
     () => ((products as ProductRow[]) ?? []).filter(p => p.parentId === null),
@@ -89,6 +102,16 @@ export default function Products() {
       utils.products.invalidate();
       toast.success("Ürün güncellendi");
       setDialogOpen(false);
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  const deriveMany = trpc.products.deriveMany.useMutation({
+    onSuccess: r => {
+      utils.products.invalidate();
+      toast.success(`${r.count} türev oluşturuldu`);
+      setDeriveFor(null);
+      setDeriveTypes(new Set());
     },
     onError: e => toast.error(e.message),
   });
@@ -145,6 +168,11 @@ export default function Products() {
       discountPercent: p.discountPercent,
       packagingCost: p.packagingCost,
       shippingCost: p.shippingCost,
+      labelSize: p.labelSize ?? "",
+      labelText: p.labelText ?? "",
+      usageGuide: p.usageGuide ?? "",
+      safetyNotes: p.safetyNotes ?? "",
+      extraInfo: p.extraInfo ?? "",
     });
     setDialogOpen(true);
   }
@@ -166,6 +194,11 @@ export default function Products() {
       discountPercent: parseFloat(form.discountPercent) || 0,
       packagingCost: parseFloat(form.packagingCost) || 0,
       shippingCost: parseFloat(form.shippingCost) || 0,
+      labelSize: form.labelSize || null,
+      labelText: form.labelText || null,
+      usageGuide: form.usageGuide || null,
+      safetyNotes: form.safetyNotes || null,
+      extraInfo: form.extraInfo || null,
     };
     if (editing) {
       updateProduct.mutate({ id: editing.id, data: payload });
@@ -236,6 +269,17 @@ export default function Products() {
                   </p>
                 </div>
                 <div className="flex items-center gap-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setDeriveFor(main);
+                      setDeriveTypes(new Set());
+                      setCustomType("");
+                    }}
+                  >
+                    <Layers className="h-3.5 w-3.5 mr-1" /> Hızlı Türet
+                  </Button>
                   <Button size="sm" variant="outline" onClick={() => openCreateVariant(main)}>
                     <Layers className="h-3.5 w-3.5 mr-1" /> Türev Ekle
                   </Button>
@@ -401,6 +445,52 @@ export default function Products() {
               </div>
             </div>
 
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Etiket Boyutu</Label>
+                <Input
+                  value={form.labelSize}
+                  onChange={e => setForm(f => ({ ...f, labelSize: e.target.value }))}
+                  placeholder="Örn. 6x9 cm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Ek Bilgiler</Label>
+                <Input
+                  value={form.extraInfo}
+                  onChange={e => setForm(f => ({ ...f, extraInfo: e.target.value }))}
+                  placeholder="Turnusol/pH testi, barkod vb."
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Etiket Yazısı</Label>
+              <Textarea
+                rows={2}
+                value={form.labelText}
+                onChange={e => setForm(f => ({ ...f, labelText: e.target.value }))}
+                placeholder="Etiketin üzerinde yazan metin"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Kullanım Kılavuzu</Label>
+              <Textarea
+                rows={3}
+                value={form.usageGuide}
+                onChange={e => setForm(f => ({ ...f, usageGuide: e.target.value }))}
+                placeholder="Uygulama adımları, karışım oranı, kuruma süresi..."
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Güvenlik / Uyarılar</Label>
+              <Textarea
+                rows={2}
+                value={form.safetyNotes}
+                onChange={e => setForm(f => ({ ...f, safetyNotes: e.target.value }))}
+                placeholder="Saklama koşulları, güvenlik uyarıları..."
+              />
+            </div>
+
             {isVariantForm && (
               <>
                 <div className="space-y-1.5">
@@ -478,6 +568,80 @@ export default function Products() {
             </Button>
             <Button onClick={submit} disabled={createProduct.isPending || updateProduct.isPending}>
               {editing ? "Kaydet" : "Ekle"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deriveFor !== null} onOpenChange={o => !o && setDeriveFor(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Hızlı Türet — {deriveFor?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Seçtiğin yüzey tipleri için tek tıkla türev ürünler oluşturulur (fiyat ve renk ana
+              üründen kopyalanır).
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {["Ahşap", "Metal", "Plastik", "Cam", "Seramik", "Jant", "3D Baskı", "Rapala / Yem", "Duvar / İç Mekan", "Airbrush"].map(t => (
+                <button
+                  key={t}
+                  onClick={() =>
+                    setDeriveTypes(prev => {
+                      const next = new Set(prev);
+                      if (next.has(t)) next.delete(t);
+                      else next.add(t);
+                      return next;
+                    })
+                  }
+                  className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                    deriveTypes.has(t)
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "text-muted-foreground"
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <Input
+                value={customType}
+                onChange={e => setCustomType(e.target.value)}
+                placeholder="Kendi tipini ekle..."
+              />
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  const t = customType.trim();
+                  if (!t) return;
+                  setDeriveTypes(prev => new Set(prev).add(t));
+                  setCustomType("");
+                }}
+              >
+                Ekle
+              </Button>
+            </div>
+            {deriveTypes.size > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Oluşturulacak: {Array.from(deriveTypes).map(t => `${deriveFor?.name} — ${t}`).join(", ")}
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeriveFor(null)}>
+              İptal
+            </Button>
+            <Button
+              disabled={deriveMany.isPending || deriveTypes.size === 0}
+              onClick={() =>
+                deriveFor &&
+                deriveMany.mutate({ parentId: deriveFor.id, types: Array.from(deriveTypes) })
+              }
+            >
+              {deriveTypes.size} Türev Oluştur
             </Button>
           </DialogFooter>
         </DialogContent>
