@@ -51,8 +51,21 @@ export type SyncResult = {
   skippedReason?: "not_configured";
 };
 
+// Aynı anda birden fazla çekme çalışırsa (otomatik + elle) aynı sipariş iki kez
+// eklenebilir (yarış durumu). Kilit: çekme sürüyorken gelen çağrılar aynı
+// sonucu paylaşır, ikinci bir çekme başlatmaz.
+let inFlight: Promise<SyncResult[]> | null = null;
+
 /** Yapılandırılmış tüm pazaryerlerinden sipariş çeker; her biri için sonuç döner. */
-export async function syncAllMarketplaces(): Promise<SyncResult[]> {
+export function syncAllMarketplaces(): Promise<SyncResult[]> {
+  if (inFlight) return inFlight;
+  inFlight = runSyncAll().finally(() => {
+    inFlight = null;
+  });
+  return inFlight;
+}
+
+async function runSyncAll(): Promise<SyncResult[]> {
   const results: SyncResult[] = [];
 
   const runners: {

@@ -204,6 +204,15 @@ export default function Orders() {
     }
   }
 
+  const dedupe = trpc.orders.dedupe.useMutation({
+    onSuccess: r => {
+      utils.orders.list.invalidate();
+      utils.dashboard.summary.invalidate();
+      toast.success(r.removed > 0 ? `${r.removed} mükerrer sipariş temizlendi` : "Mükerrer sipariş yok");
+    },
+    onError: e => toast.error(e.message),
+  });
+
   const deleteOrder = trpc.orders.delete.useMutation({
     onSuccess: () => {
       utils.orders.list.invalidate();
@@ -542,6 +551,14 @@ export default function Orders() {
               <Settings className="h-3.5 w-3.5" /> Bağlantı ayarları
             </button>
           )}
+          <button
+            onClick={() => dedupe.mutate()}
+            disabled={dedupe.isPending}
+            className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground ml-auto"
+            title="Aynı sipariş numaralı mükerrer kayıtları sil"
+          >
+            <Trash2 className="h-3.5 w-3.5" /> Mükerrerleri temizle
+          </button>
         </div>
       )}
 

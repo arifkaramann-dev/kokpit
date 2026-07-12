@@ -318,6 +318,8 @@ export const appRouter = router({
     marketplaceStatus: protectedProcedure.query(() => marketplaceStatus()),
     // Yapılandırılmış tüm pazaryerlerinden tek seferde çeker; her biri için sonuç döner.
     syncAll: protectedProcedure.mutation(() => syncAllMarketplaces()),
+    // Aynı sipariş numaralı mükerrer kayıtları temizler (eski yarış durumu artığı).
+    dedupe: protectedProcedure.mutation(() => db.dedupeOrders()),
     create: protectedProcedure.input(orderInput).mutation(async ({ input }) => {
       const { items, ...order } = input;
       if (items?.length) {

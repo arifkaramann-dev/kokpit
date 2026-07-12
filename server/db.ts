@@ -278,6 +278,29 @@ export async function getOrderByOrderNo(orderNo: string) {
   return result[0];
 }
 
+/**
+ * Aynı sipariş numarasından birden fazla varsa (eski yarış durumundan kalma
+ * mükerrerler) en eskisini (en küçük id) tutup diğerlerini siler.
+ */
+export async function dedupeOrders() {
+  const db = await requireDb();
+  const all = await db.select({ id: orders.id, orderNo: orders.orderNo }).from(orders);
+  const keep = new Map<string, number>();
+  for (const o of all) {
+    const prev = keep.get(o.orderNo);
+    if (prev === undefined || o.id < prev) keep.set(o.orderNo, o.id);
+  }
+  let removed = 0;
+  for (const o of all) {
+    if (keep.get(o.orderNo) !== o.id) {
+      await db.delete(orderItems).where(eq(orderItems.orderId, o.id));
+      await db.delete(orders).where(eq(orders.id, o.id));
+      removed++;
+    }
+  }
+  return { removed };
+}
+
 export async function listOrderItems(orderId: number) {
   const db = await requireDb();
   return db.select().from(orderItems).where(eq(orderItems.orderId, orderId)).orderBy(orderItems.id);

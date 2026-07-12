@@ -163,6 +163,8 @@ export async function syncHepsiburadaOrders() {
 
   let imported = 0;
   let skipped = 0;
+  // Aynı sipariş sayfalar arasında tekrar gelebilir; tek çekimde bir kez ekle.
+  const seen = new Set<string>();
 
   for (let page = 0; page < MAX_PAGES; page++) {
     const data = await fetchOrdersPage(page * PAGE_SIZE);
@@ -172,6 +174,12 @@ export async function syncHepsiburadaOrders() {
     for (const raw of orders) {
       const mapped = mapHbOrder(raw);
       if (!mapped) continue;
+
+      if (seen.has(mapped.orderNo)) {
+        skipped++;
+        continue;
+      }
+      seen.add(mapped.orderNo);
 
       const existing = await db.getOrderByOrderNo(mapped.orderNo);
       if (existing) {

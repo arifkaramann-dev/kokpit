@@ -145,6 +145,8 @@ export async function syncTrendyolOrders(daysBack = 14) {
 
   let imported = 0;
   let skipped = 0;
+  // Aynı sipariş sayfalar arasında tekrar gelebilir; tek çekimde bir kez ekle.
+  const seen = new Set<string>();
 
   for (let page = 0; page < MAX_PAGES; page++) {
     const data = await fetchPackagesPage(page, startDate, endDate);
@@ -153,6 +155,12 @@ export async function syncTrendyolOrders(daysBack = 14) {
     for (const pkg of packages) {
       const mapped = mapPackageToOrder(pkg);
       if (!mapped) continue; // iptal/iade — panoya alınmaz
+
+      if (seen.has(mapped.orderNo)) {
+        skipped++;
+        continue;
+      }
+      seen.add(mapped.orderNo);
 
       const existing = await db.getOrderByOrderNo(mapped.orderNo);
       if (existing) {
