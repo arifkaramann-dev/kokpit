@@ -74,6 +74,21 @@ Bu program artık sadece sipariş çekmiyor, **stok ve fiyatı Trendyol'a gönde
 > Şimdilik mevcut listelemelerin stok/fiyatını günceller. Sıfırdan ürün açma
 > (kategori, marka, görsel, özellikler) sonraki aşamada eklenecek.
 
+## Ürün görsellerini link olarak dışa aktarma
+
+Ürünlere eklediğin görseller artık **herkese açık link** olarak da kullanılabilir —
+web siten ve pazaryerleri bu linklerden görseli çeker.
+
+- Link biçimi: `https://SİTEN/api/img/{ürünId}/{tür}` (tür: `main`, `packaging`, `usage`)
+- Ürünler → **"Dışa Aktar"** CSV'sinde artık şu sütunlar var: **Ana Görsel**,
+  **Ambalaj Görseli**, **Kullanım Görseli** ve hepsi birden **Tüm Görseller**.
+- Bu linkleri Trendyol/Hepsiburada toplu ürün şablonundaki "Görsel URL" alanına
+  veya web sitene yapıştırabilirsin.
+- Görseli olmayan ürünün hücresi boş kalır (ölü link olmaz).
+
+> Görseller sunucuda saklanır ve linkten gerçek resim olarak servis edilir
+> (1 gün önbellekli). Ürün silinirse linki de kaybolur.
+
 ## Fatura kesme & gönderme
 
 Her sipariş kartındaki **belge simgesine** (📄) basınca yazdırılabilir fatura açılır:

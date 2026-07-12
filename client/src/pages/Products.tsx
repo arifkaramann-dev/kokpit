@@ -92,6 +92,7 @@ export default function Products() {
   const [deriveSets, setDeriveSets] = useState<Set<string>>(new Set());
   const [customSet, setCustomSet] = useState("");
   const { data: templateList } = trpc.templates.list.useQuery();
+  const { data: imageRefs } = trpc.products.allImageRefs.useQuery();
   const packOptions = (templateList ?? []).filter(t => t.kind === "ambalaj").map(t => t.name);
   const colorOptions = (templateList ?? []).filter(t => t.kind === "renk").map(t => t.name);
   const setOptions = (templateList ?? []).filter(t => t.kind === "set_paket").map(t => t.name);
@@ -169,19 +170,30 @@ export default function Products() {
   function exportCsv() {
     const rows = (products as ProductRow[]) ?? [];
     if (rows.length === 0) return toast.error("Dışa aktarılacak ürün yok");
+    // Görselleri herkese açık link olarak ekle (web sitesi/pazaryeri kullanabilsin).
+    const origin = window.location.origin;
+    const imgSet = new Set((imageRefs ?? []).map(r => `${r.productId}:${r.kind}`));
+    const imgUrl = (id: number, kind: "main" | "packaging" | "usage") =>
+      imgSet.has(`${id}:${kind}`) ? `${origin}/api/img/${id}/${kind}` : "";
     const cols = [
-      "Ürün Adı", "Tür", "Seri", "Renk Kodu", "Kullanım/Yüzey", "Ambalaj",
-      "Satış Fiyatı", "İndirim %", "Açıklama", "Etiket Boyutu", "Etiket Yazısı",
+      "Ürün Adı", "Tür", "Barkod", "Seri", "Renk Kodu", "Kullanım/Yüzey", "Ambalaj",
+      "Stok", "Satış Fiyatı", "İndirim %", "Açıklama", "Etiket Boyutu", "Etiket Yazısı",
       "Kullanım Kılavuzu", "Güvenlik", "Ek Bilgi",
+      "Ana Görsel", "Ambalaj Görseli", "Kullanım Görseli", "Tüm Görseller",
     ];
-    const esc = (v: string | null | undefined) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const lines = rows.map(p =>
-      [
-        p.name, p.parentId === null ? "Ana Ürün" : "Türev", p.series, p.colorCode,
-        p.surfaceType, p.packaging, p.salePrice, p.discountPercent, p.description,
+    const esc = (v: string | number | null | undefined) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const lines = rows.map(p => {
+      const main = imgUrl(p.id, "main");
+      const pack = imgUrl(p.id, "packaging");
+      const usage = imgUrl(p.id, "usage");
+      const all = [main, pack, usage].filter(Boolean).join(" | ");
+      return [
+        p.name, p.parentId === null ? "Ana Ürün" : "Türev", p.barcode, p.series, p.colorCode,
+        p.surfaceType, p.packaging, p.stockQty, p.salePrice, p.discountPercent, p.description,
         p.labelSize, p.labelText, p.usageGuide, p.safetyNotes, p.extraInfo,
-      ].map(esc).join(";"),
-    );
+        main, pack, usage, all,
+      ].map(esc).join(";");
+    });
     // BOM: Türkçe karakterler Excel'de doğru açılsın.
     const blob = new Blob(["﻿" + [cols.join(";"), ...lines].join("\r\n")], {
       type: "text/csv;charset=utf-8",

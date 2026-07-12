@@ -8,6 +8,7 @@ import { registerOAuthRoutes } from "./oauth";
 import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { registerWhatsAppRoutes } from "../whatsapp";
+import { registerImageRoutes } from "../images";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 
@@ -40,6 +41,7 @@ async function startServer() {
   registerOAuthRoutes(app);
   registerLocalAuthRoutes(app);
   registerWhatsAppRoutes(app);
+  registerImageRoutes(app);
   // Health check for hosting platforms (Render, Railway, uptime monitors).
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });

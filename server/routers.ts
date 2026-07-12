@@ -280,6 +280,8 @@ export const appRouter = router({
     images: protectedProcedure
       .input(z.object({ productId: z.number() }))
       .query(({ input }) => db.getProductImages(input.productId)),
+    // Tüm ürünlerin hangi görsellere sahip olduğunun hafif listesi (dışa aktarım linkleri için).
+    allImageRefs: protectedProcedure.query(() => db.listAllProductImageRefs()),
     setImage: protectedProcedure
       .input(z.object({ productId: z.number(), kind: z.enum(["main", "packaging", "usage"]), data: z.string().min(1) }))
       .mutation(({ input }) => db.setProductImage(input.productId, input.kind, input.data)),

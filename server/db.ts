@@ -696,6 +696,24 @@ export async function getProductImages(productId: number) {
   return db.select().from(productImages).where(eq(productImages.productId, productId));
 }
 
+export async function getProductImage(productId: number, kind: "main" | "packaging" | "usage") {
+  const db = await requireDb();
+  const rows = await db
+    .select()
+    .from(productImages)
+    .where(and(eq(productImages.productId, productId), eq(productImages.kind, kind)))
+    .limit(1);
+  return rows[0];
+}
+
+/** Tüm ürün görsellerinin hafif listesi (veri hariç): dışa aktarımda link üretmek için. */
+export async function listAllProductImageRefs() {
+  const db = await requireDb();
+  return db
+    .select({ productId: productImages.productId, kind: productImages.kind })
+    .from(productImages);
+}
+
 export async function setProductImage(productId: number, kind: "main" | "packaging" | "usage", data: string) {
   const db = await requireDb();
   await db
