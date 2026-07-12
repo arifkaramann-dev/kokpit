@@ -22,7 +22,9 @@ import {
 import { useIsMobile } from "@/hooks/useMobile";
 import VoiceButton from "@/components/VoiceButton";
 import {
+  BarChart3,
   Beaker,
+  Bot,
   CalendarDays,
   Factory,
   FlaskConical,
@@ -47,6 +49,7 @@ import LoginForm from "./LoginForm";
 
 const menuItems = [
   { icon: LayoutDashboard, label: "Kokpit", path: "/" },
+  { icon: Bot, label: "Asistan", path: "/asistan" },
   { icon: ClipboardList, label: "Sipariş Panosu", path: "/siparisler" },
   { icon: ListChecks, label: "Görevler & Eksikler", path: "/gorevler" },
   { icon: Warehouse, label: "Stok & Hammadde", path: "/stok" },
@@ -56,6 +59,7 @@ const menuItems = [
   { icon: Beaker, label: "Formül Defteri", path: "/formuller" },
   { icon: Factory, label: "Üretim", path: "/uretim" },
   { icon: Calculator, label: "Maliyet & Kar", path: "/maliyet" },
+  { icon: BarChart3, label: "Satış Analizi", path: "/analiz" },
   { icon: Sparkles, label: "AI Pazarlama", path: "/pazarlama" },
   { icon: CalendarDays, label: "Kampanya Takvimi", path: "/kampanyalar" },
   { icon: Truck, label: "Tedarikçiler", path: "/tedarikciler" },
