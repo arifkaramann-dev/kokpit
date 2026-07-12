@@ -65,7 +65,13 @@
 - [x] Giderler modülü + Kokpit'te bu ay ciro/gider/net kâr
 - [x] Komut paleti (⌘K) — sayfa + ürün/sipariş/müşteri/hammadde hızlı arama
 
+## Modül 11: Finans derinleştirme & panoda arama (eklendi)
+- [x] Strateji Kâr/Zarar: 30 gün gider + net kâr + tahsil edilecek + uyarılar
+- [x] Sipariş panosunda arama (müşteri/no/telefon) + ödeme & kanal filtresi
+- [x] Kısmi ödeme tutarı girişi (düzenleme dialogunda "Ödenen Tutar")
+- [x] Müşteri kartında sipariş geçmişi özeti (adet, toplam harcama, borç)
+
 ## Sonraki Oturuma Ertelenenler (opsiyonel geliştirmeler)
 - AI görsel üretimi modülü (ürün fotoğrafı arka plan değiştirme) — kullanıcı talebiyle eklenecek
-- Kısmi ödeme tutarı girişi (şu an kısmi durum var, tutar karttan girilmiyor)
-- Kâr/Zarar raporuna (Strateji) giderleri dahil et (veri hazır: reportData.expenses)
+- Müşteri detay görünümü: o müşterinin tüm siparişlerini listeleyen sayfa/dialog
+- Asistan/WhatsApp'a "tahsilat" ve "bu ay net" sorularını ekle

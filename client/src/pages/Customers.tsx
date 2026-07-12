@@ -10,8 +10,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { formatTL } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
-import { Contact, Mail, MapPin, Pencil, Phone, Plus, Search, Trash2 } from "lucide-react";
+import { Contact, Mail, MapPin, Pencil, Phone, Plus, Search, ShoppingBag, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -30,6 +31,23 @@ const emptyForm = { name: "", phone: "", email: "", address: "", city: "", notes
 export default function Customers() {
   const utils = trpc.useUtils();
   const { data: customers, isLoading } = trpc.customers.list.useQuery();
+  const { data: orders } = trpc.orders.list.useQuery();
+
+  // Müşteri adına göre sipariş özeti (ada göre eşleştirme; FK yok).
+  const statsByName = useMemo(() => {
+    const m = new Map<string, { count: number; total: number; due: number }>();
+    for (const o of orders ?? []) {
+      const key = o.customerName.trim().toLocaleLowerCase("tr-TR");
+      const cur = m.get(key) ?? { count: 0, total: 0, due: 0 };
+      const total = parseFloat(o.totalAmount) || 0;
+      const paid = parseFloat(o.paidAmount ?? "0") || 0;
+      cur.count += 1;
+      cur.total += total;
+      if (o.paymentStatus !== "paid") cur.due += Math.max(0, total - paid);
+      m.set(key, cur);
+    }
+    return m;
+  }, [orders]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<CustomerRow | null>(null);
   const [form, setForm] = useState(emptyForm);
@@ -181,6 +199,22 @@ export default function Customers() {
                 </p>
               )}
             </div>
+            {(() => {
+              const s = statsByName.get(c.name.trim().toLocaleLowerCase("tr-TR"));
+              if (!s) return null;
+              return (
+                <div className="flex items-center gap-2 border-t pt-2 text-xs">
+                  <ShoppingBag className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="text-muted-foreground">{s.count} sipariş</span>
+                  <span className="ml-auto font-medium">{formatTL(s.total)}</span>
+                  {s.due > 0 && (
+                    <span className="rounded-full bg-destructive/10 px-1.5 py-0.5 text-destructive">
+                      {formatTL(s.due)} borç
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
             {c.notes && <p className="text-xs rounded-md bg-muted p-2 line-clamp-3">{c.notes}</p>}
           </Card>
         ))}

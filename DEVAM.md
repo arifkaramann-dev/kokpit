@@ -33,6 +33,9 @@ https://artofcolour-kokpit.onrender.com/ (Render, ücretsiz plan). Veritabanı: 
   Kokpit'te **tahsil edilecek** toplamı. Trendyol siparişleri "ödendi" sayılır
 - **Giderler:** kira/kargo/reklam/komisyon vb. + Kokpit'te bu ay ciro/gider/net kâr
 - **Komut paleti (⌘K):** sayfa + ürün/sipariş/müşteri/hammadde arayıp gitme
+- **Strateji Kâr/Zarar:** 30 gün ciro/gider/net + tahsil edilecek + veri-güdümlü uyarılar
+- **Sipariş panosu:** arama (müşteri/no/telefon) + ödeme & kanal filtresi; kısmi ödeme tutarı;
+  müşteri kartında sipariş geçmişi (adet/harcama/borç)
 - **Asistan**: WhatsApp + uygulama içi sohbet + mikrofon; satış/stok/sipariş/görev/soru-cevap.
   **Sesli uyandırma** ("Hey Kokpit"): opt-in, sürekli dinleyip anahtar kelimeden sonra komutu
   gönderir (Web Speech API, sadece Chrome; tercih localStorage'da). Elle mikrofon uyandırma açıkken kapalı.

@@ -34,7 +34,7 @@ import { trpc } from "@/lib/trpc";
 import { CHANNELS, formatDate, formatTL, ORDER_STATUSES, OrderStatus } from "@/lib/format";
 import { printInvoice } from "@/lib/invoice";
 import { printShippingLabel } from "@/lib/shippingLabel";
-import { AlertCircle, CheckCircle2, FileText, GripVertical, Pencil, Plus, RefreshCw, Settings, Truck, Trash2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, FileText, GripVertical, Pencil, Plus, RefreshCw, Search, Settings, Truck, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
@@ -89,6 +89,7 @@ const emptyForm = {
   customerPhone: "",
   customerAddress: "",
   paymentStatus: "unpaid" as "unpaid" | "partial" | "paid",
+  paidAmount: "",
   paymentMethod: "",
   items: [] as ItemRow[],
 };
@@ -115,6 +116,9 @@ export default function Orders() {
   const [editOrder, setEditOrder] = useState<OrderRow | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [manualSale, setManualSale] = useState(false);
+  const [search, setSearch] = useState("");
+  const [payFilter, setPayFilter] = useState<"all" | "unpaid" | "paid">("all");
+  const [channelFilter, setChannelFilter] = useState<string>("all");
   const autoSynced = useRef(false);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
@@ -383,6 +387,7 @@ export default function Orders() {
       customerPhone: order.customerPhone ?? "",
       customerAddress: order.customerAddress ?? "",
       paymentStatus: order.paymentStatus ?? "unpaid",
+      paidAmount: parseFloat(order.paidAmount) > 0 ? String(parseFloat(order.paidAmount)) : "",
       paymentMethod: order.paymentMethod ?? "",
       items: [],
     });
@@ -418,8 +423,13 @@ export default function Orders() {
       customerPhone: form.customerPhone || null,
       customerAddress: form.customerAddress || null,
       paymentStatus: form.paymentStatus,
-      // "Ödendi" ise ödenen tutar = toplam; değilse 0 (kısmi düzenlemesi karttan yapılır).
-      paidAmount: form.paymentStatus === "paid" ? total : 0,
+      // Ödendi → toplam; Kısmi → girilen tutar; Bekliyor → 0.
+      paidAmount:
+        form.paymentStatus === "paid"
+          ? total
+          : form.paymentStatus === "partial"
+            ? parseFloat(form.paidAmount) || 0
+            : 0,
       paymentMethod: form.paymentMethod || null,
       // Kalem girildiyse toplam ve özet sunucuda satırlardan hesaplanır.
       ...(itemRows.length > 0 ? { items: itemRows } : {}),
@@ -437,6 +447,25 @@ export default function Orders() {
     (sum, r) => sum + r.quantity * r.unitPrice,
     0,
   );
+
+  // Arama + ödeme/kanal filtresi uygulanmış sipariş listesi.
+  const allOrders = (orders as OrderRow[]) ?? [];
+  const channels = Array.from(new Set(allOrders.map(o => o.channel ?? "diğer")));
+  const q = search.trim().toLocaleLowerCase("tr-TR");
+  const filteredOrders = allOrders.filter(o => {
+    if (payFilter === "unpaid" && o.paymentStatus === "paid") return false;
+    if (payFilter === "paid" && o.paymentStatus !== "paid") return false;
+    if (channelFilter !== "all" && (o.channel ?? "diğer") !== channelFilter) return false;
+    if (q) {
+      const hay = [o.customerName, o.orderNo, o.customerPhone, o.itemsSummary]
+        .filter(Boolean)
+        .join(" ")
+        .toLocaleLowerCase("tr-TR");
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+  const filterActive = q !== "" || payFilter !== "all" || channelFilter !== "all";
 
   return (
     <div className="space-y-4">
@@ -677,6 +706,19 @@ export default function Orders() {
                   />
                 </div>
               </div>
+              {form.paymentStatus === "partial" && (
+                <div className="space-y-1.5">
+                  <Label>Ödenen Tutar (₺)</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.paidAmount}
+                    onChange={e => setForm(f => ({ ...f, paidAmount: e.target.value }))}
+                    placeholder="Şimdiye kadar alınan tutar"
+                  />
+                </div>
+              )}
               <div className="space-y-1.5">
                 <Label>Notlar</Label>
                 <Textarea
@@ -740,6 +782,60 @@ export default function Orders() {
         </div>
       )}
 
+      {!isLoading && allOrders.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="relative flex-1 min-w-[180px] max-w-xs">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              className="pl-8 h-9"
+              placeholder="Müşteri, sipariş no, telefon ara…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+          </div>
+          <Select value={payFilter} onValueChange={v => setPayFilter(v as typeof payFilter)}>
+            <SelectTrigger className="h-9 w-[140px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Tüm ödemeler</SelectItem>
+              <SelectItem value="unpaid">Ödenmemiş</SelectItem>
+              <SelectItem value="paid">Ödenmiş</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={channelFilter} onValueChange={setChannelFilter}>
+            <SelectTrigger className="h-9 w-[140px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Tüm kanallar</SelectItem>
+              {channels.map(c => (
+                <SelectItem key={c} value={c}>
+                  {c}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {filterActive && (
+            <>
+              <span className="text-xs text-muted-foreground">{filteredOrders.length} sonuç</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-9"
+                onClick={() => {
+                  setSearch("");
+                  setPayFilter("all");
+                  setChannelFilter("all");
+                }}
+              >
+                Temizle
+              </Button>
+            </>
+          )}
+        </div>
+      )}
+
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
           {ORDER_STATUSES.map(s => (
@@ -753,7 +849,7 @@ export default function Orders() {
               <KanbanColumn
                 key={status.value}
                 status={status}
-                orders={(orders as OrderRow[])?.filter(o => o.status === status.value) ?? []}
+                orders={filteredOrders.filter(o => o.status === status.value)}
                 onEdit={openEdit}
                 onDelete={id => deleteOrder.mutate({ id })}
                 onInvoice={handleInvoice}
