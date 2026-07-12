@@ -32,8 +32,10 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import { CHANNELS, formatDate, formatTL, ORDER_STATUSES, OrderStatus } from "@/lib/format";
-import { GripVertical, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { printInvoice } from "@/lib/invoice";
+import { AlertCircle, CheckCircle2, FileText, GripVertical, Pencil, Plus, RefreshCw, Settings, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useLocation } from "wouter";
 import { toast } from "sonner";
 
 type OrderRow = {
@@ -71,8 +73,10 @@ function parseItemRows(items: ItemRow[]) {
 
 export default function Orders() {
   const utils = trpc.useUtils();
+  const [, setLocation] = useLocation();
   const { data: orders, isLoading } = trpc.orders.list.useQuery();
   const { data: products } = trpc.products.list.useQuery();
+  const { data: mpStatus } = trpc.orders.marketplaceStatus.useQuery();
   const [activeOrder, setActiveOrder] = useState<OrderRow | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editOrder, setEditOrder] = useState<OrderRow | null>(null);
@@ -120,16 +124,18 @@ export default function Orders() {
     onError: e => toast.error(e.message),
   });
 
-  // Sayfa açılınca ve açık kaldıkça 10 dk'da bir Trendyol'u sessizce çek.
+  // Sayfa açılınca ve açık kaldıkça 10 dk'da bir tüm pazaryerlerini sessizce çek.
   useEffect(() => {
     const quietSync = () => {
-      utils.client.orders.syncTrendyol
+      utils.client.orders.syncAll
         .mutate()
-        .then(r => {
-          if (r.imported > 0) {
+        .then(results => {
+          const total = results.reduce((s, r) => s + r.imported, 0);
+          if (total > 0) {
             utils.orders.list.invalidate();
             utils.dashboard.summary.invalidate();
-            toast.success(`Trendyol: ${r.imported} yeni sipariş alındı`);
+            const parts = results.filter(r => r.imported > 0).map(r => `${r.label}: ${r.imported}`);
+            toast.success(`Yeni sipariş: ${parts.join(", ")}`);
           }
         })
         .catch(() => {
@@ -144,18 +150,59 @@ export default function Orders() {
     return () => clearInterval(timer);
   }, [utils]);
 
-  const syncTrendyol = trpc.orders.syncTrendyol.useMutation({
-    onSuccess: r => {
+  const syncAll = trpc.orders.syncAll.useMutation({
+    onSuccess: results => {
       utils.orders.list.invalidate();
       utils.dashboard.summary.invalidate();
-      toast.success(
-        r.imported > 0
-          ? `Trendyol: ${r.imported} yeni sipariş alındı${r.skipped ? `, ${r.skipped} zaten kayıtlıydı` : ""}`
-          : "Trendyol: yeni sipariş yok",
-      );
+      const imported = results.reduce((s, r) => s + r.imported, 0);
+      const errors = results.filter(r => r.error);
+      const configured = results.filter(r => r.skippedReason !== "not_configured");
+      if (configured.length === 0) {
+        toast.error("Hiçbir pazaryeri bağlı değil. Ayarlar'dan API bilgilerini girin.");
+        return;
+      }
+      if (errors.length > 0) {
+        errors.forEach(e => toast.error(`${e.label}: ${e.error}`, { duration: 8000 }));
+      }
+      const okParts = configured
+        .filter(r => !r.error)
+        .map(r => `${r.label}: ${r.imported > 0 ? `${r.imported} yeni` : "yeni yok"}`);
+      if (okParts.length > 0) {
+        toast.success(imported > 0 ? `Çekildi — ${okParts.join(", ")}` : okParts.join(", "));
+      }
     },
     onError: e => toast.error(e.message),
   });
+
+  // Fatura kes: kalemleri + şirket bilgisini + sıra numarasını al, yazdır.
+  async function handleInvoice(order: OrderRow) {
+    try {
+      const [items, company] = await Promise.all([
+        utils.client.orders.items.query({ orderId: order.id }),
+        utils.client.settings.get.query(),
+      ]);
+      if (!company.companyName) {
+        toast.info("Önce Ayarlar'dan şirket/fatura bilgilerini girin (fatura başlığı için).");
+      }
+      const seq = await utils.client.settings.nextInvoiceNo.mutate();
+      const year = new Date().getFullYear();
+      const invoiceNo = `${year}-${String(seq).padStart(5, "0")}`;
+      printInvoice(
+        {
+          orderNo: order.orderNo,
+          customerName: order.customerName,
+          channel: order.channel ?? "web",
+          createdAt: order.createdAt,
+          notes: order.notes,
+        },
+        items.map(i => ({ productName: i.productName, quantity: i.quantity, unitPrice: i.unitPrice })),
+        company,
+        invoiceNo,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Fatura oluşturulamadı");
+    }
+  }
 
   const deleteOrder = trpc.orders.delete.useMutation({
     onSuccess: () => {
@@ -266,11 +313,11 @@ export default function Orders() {
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
-            onClick={() => syncTrendyol.mutate()}
-            disabled={syncTrendyol.isPending}
+            onClick={() => syncAll.mutate()}
+            disabled={syncAll.isPending}
           >
-            <RefreshCw className={`h-4 w-4 mr-1 ${syncTrendyol.isPending ? "animate-spin" : ""}`} />
-            Trendyol'dan Çek
+            <RefreshCw className={`h-4 w-4 mr-1 ${syncAll.isPending ? "animate-spin" : ""}`} />
+            Pazaryerlerinden Çek
           </Button>
           <Button variant="outline" onClick={openManualSale}>
             <Plus className="h-4 w-4 mr-1" /> Elden Satış
@@ -466,6 +513,38 @@ export default function Orders() {
         </div>
       </div>
 
+      {mpStatus && (
+        <div className="flex items-center gap-2 flex-wrap text-xs">
+          <span className="text-muted-foreground">Pazaryeri bağlantıları:</span>
+          {mpStatus.map(m => (
+            <span
+              key={m.key}
+              className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 ${
+                m.configured
+                  ? "border-emerald-500/40 text-emerald-600 dark:text-emerald-400"
+                  : "border-amber-500/40 text-amber-600 dark:text-amber-400"
+              }`}
+              title={m.configured ? "Bağlı" : `Eksik: ${m.missing.join(", ")}`}
+            >
+              {m.configured ? (
+                <CheckCircle2 className="h-3.5 w-3.5" />
+              ) : (
+                <AlertCircle className="h-3.5 w-3.5" />
+              )}
+              {m.label} — {m.configured ? "bağlı" : "bağlı değil"}
+            </span>
+          ))}
+          {mpStatus.some(m => !m.configured) && (
+            <button
+              onClick={() => setLocation("/ayarlar")}
+              className="inline-flex items-center gap-1 text-primary hover:underline"
+            >
+              <Settings className="h-3.5 w-3.5" /> Bağlantı ayarları
+            </button>
+          )}
+        </div>
+      )}
+
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
           {ORDER_STATUSES.map(s => (
@@ -482,6 +561,7 @@ export default function Orders() {
                 orders={(orders as OrderRow[])?.filter(o => o.status === status.value) ?? []}
                 onEdit={openEdit}
                 onDelete={id => deleteOrder.mutate({ id })}
+                onInvoice={handleInvoice}
               />
             ))}
           </div>
@@ -499,11 +579,13 @@ function KanbanColumn({
   orders,
   onEdit,
   onDelete,
+  onInvoice,
 }: {
   status: (typeof ORDER_STATUSES)[number];
   orders: OrderRow[];
   onEdit: (o: OrderRow) => void;
   onDelete: (id: number) => void;
+  onInvoice: (o: OrderRow) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status.value });
 
@@ -527,7 +609,7 @@ function KanbanColumn({
         </div>
       )}
       {orders.map(order => (
-        <DraggableOrderCard key={order.id} order={order} onEdit={onEdit} onDelete={onDelete} />
+        <DraggableOrderCard key={order.id} order={order} onEdit={onEdit} onDelete={onDelete} onInvoice={onInvoice} />
       ))}
     </div>
   );
@@ -537,10 +619,12 @@ function DraggableOrderCard({
   order,
   onEdit,
   onDelete,
+  onInvoice,
 }: {
   order: OrderRow;
   onEdit: (o: OrderRow) => void;
   onDelete: (id: number) => void;
+  onInvoice: (o: OrderRow) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: order.id });
 
@@ -556,6 +640,7 @@ function DraggableOrderCard({
         order={order}
         onEdit={onEdit}
         onDelete={onDelete}
+        onInvoice={onInvoice}
         dragHandle={{ attributes: attributes as unknown as React.HTMLAttributes<HTMLButtonElement>, listeners }}
       />
     </div>
@@ -566,12 +651,14 @@ function OrderCard({
   order,
   onEdit,
   onDelete,
+  onInvoice,
   overlay,
   dragHandle,
 }: {
   order: OrderRow;
   onEdit?: (o: OrderRow) => void;
   onDelete?: (id: number) => void;
+  onInvoice?: (o: OrderRow) => void;
   overlay?: boolean;
   dragHandle?: { attributes: React.HTMLAttributes<HTMLButtonElement>; listeners: Record<string, unknown> | undefined };
 }) {
@@ -604,6 +691,15 @@ function OrderCard({
         </div>
         {!overlay && (
           <div className="flex gap-0.5">
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6"
+              title="Fatura kes / yazdır"
+              onClick={() => onInvoice?.(order)}
+            >
+              <FileText className="h-3 w-3" />
+            </Button>
             <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => onEdit?.(order)}>
               <Pencil className="h-3 w-3" />
             </Button>

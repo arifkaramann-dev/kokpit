@@ -20,6 +20,7 @@ import {
   productImages,
   purchaseItems,
   purchases,
+  settings,
   tasks,
   templates,
   stockMovements,
@@ -738,4 +739,38 @@ export async function bulkUpdatePrices(percent: number, series: string | null) {
     ? await db.update(products).set(setExpr).where(eq(products.series, series))
     : await db.update(products).set(setExpr);
   return { affected: result.affectedRows ?? 0 };
+}
+
+/* ------------------------- Ayarlar (Şirket / Fatura) ------------------------- */
+
+export async function getSettings() {
+  const db = await requireDb();
+  const rows = await db.select().from(settings);
+  const out: Record<string, string> = {};
+  for (const r of rows) out[r.key] = r.value ?? "";
+  return out;
+}
+
+export async function setSettings(entries: Record<string, string>) {
+  const db = await requireDb();
+  for (const [key, value] of Object.entries(entries)) {
+    await db
+      .insert(settings)
+      .values({ key, value })
+      .onDuplicateKeyUpdate({ set: { value } });
+  }
+  return { saved: Object.keys(entries).length };
+}
+
+/** Fatura numarası sayacını 1 artırır ve yeni değeri döner (atomik değil; tek kullanıcı içindir). */
+export async function nextInvoiceNo() {
+  const db = await requireDb();
+  const rows = await db.select().from(settings).where(eq(settings.key, "invoiceCounter")).limit(1);
+  const current = rows[0]?.value ? parseInt(rows[0].value, 10) || 0 : 0;
+  const next = current + 1;
+  await db
+    .insert(settings)
+    .values({ key: "invoiceCounter", value: String(next) })
+    .onDuplicateKeyUpdate({ set: { value: String(next) } });
+  return next;
 }

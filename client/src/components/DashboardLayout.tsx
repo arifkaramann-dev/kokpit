@@ -37,6 +37,7 @@ import {
   Package,
   PanelLeft,
   ReceiptText,
+  Settings2,
   Sparkles,
   Target,
   Truck,
@@ -65,6 +66,7 @@ const menuItems = [
   { icon: Truck, label: "Tedarikçiler", path: "/tedarikciler" },
   { icon: Target, label: "Strateji & Rapor", path: "/strateji" },
   { icon: LibraryBig, label: "Şablonlar", path: "/sablonlar" },
+  { icon: Settings2, label: "Ayarlar", path: "/ayarlar" },
 ];
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";

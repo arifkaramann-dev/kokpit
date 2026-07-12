@@ -140,3 +140,24 @@ describe("parseSetCount — set adedi çıkarımı", () => {
     );
   });
 });
+
+import { mapHbOrder } from "../server/hepsiburada";
+
+describe("mapHbOrder — Hepsiburada sipariş eşleme", () => {
+  it("KDV dahil satır toplamından birim fiyatı çıkarır", () => {
+    const o = mapHbOrder({
+      orderNumber: "12345",
+      status: "Open",
+      customer: { firstName: "Ali", lastName: "Veli" },
+      items: [{ productName: "Sprey Vernik", quantity: 2, totalPrice: { amount: 500 } }],
+    });
+    expect(o?.orderNo).toBe("HB-12345");
+    expect(o?.customerName).toBe("Ali Veli");
+    expect(o?.status).toBe("new");
+    expect(o?.items[0].unitPrice).toBe(250);
+  });
+  it("iptal/iade siparişleri içe aktarılmaz (null döner)", () => {
+    expect(mapHbOrder({ orderNumber: "9", status: "Cancelled", items: [] })).toBeNull();
+    expect(mapHbOrder({ orderNumber: "10", status: "Returned", items: [] })).toBeNull();
+  });
+});

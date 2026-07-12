@@ -125,6 +125,10 @@ async function fetchPackagesPage(page: number, startDate: number, endDate: numbe
   return (await res.json()) as TrendyolOrdersResponse;
 }
 
+export function isTrendyolConfigured(): boolean {
+  return Boolean(ENV.trendyolSellerId && ENV.trendyolApiKey && ENV.trendyolApiSecret);
+}
+
 /**
  * Son `daysBack` günün Trendyol siparişlerini çekip yeni olanları panoya ekler.
  * Aynı sipariş (TY-orderNumber) ikinci kez eklenmez.

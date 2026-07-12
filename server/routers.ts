@@ -11,6 +11,7 @@ import { extractInvoice } from "./_core/claude";
 import { executeAssistantCommand, generateOrderNo } from "./assistant";
 import { buildSaleTitle, deriveCombos, parseSetCount } from "./productUtils";
 import { syncTrendyolOrders } from "./trendyol";
+import { marketplaceStatus, syncAllMarketplaces } from "./marketplace";
 
 /* ------------------------- Zod schemas ------------------------- */
 
@@ -313,6 +314,10 @@ export const appRouter = router({
         });
       }
     }),
+    // Hangi pazaryerinin bağlı olduğunu / hangi ayarın eksik olduğunu döner.
+    marketplaceStatus: protectedProcedure.query(() => marketplaceStatus()),
+    // Yapılandırılmış tüm pazaryerlerinden tek seferde çeker; her biri için sonuç döner.
+    syncAll: protectedProcedure.mutation(() => syncAllMarketplaces()),
     create: protectedProcedure.input(orderInput).mutation(async ({ input }) => {
       const { items, ...order } = input;
       if (items?.length) {
@@ -455,6 +460,15 @@ export const appRouter = router({
           });
         }
       }),
+  }),
+
+  settings: router({
+    // Şirket/fatura bilgileri (unvan, adres, vergi no, IBAN, KDV oranı vb.).
+    get: protectedProcedure.query(() => db.getSettings()),
+    save: protectedProcedure
+      .input(z.record(z.string(), z.string()))
+      .mutation(({ input }) => db.setSettings(input)),
+    nextInvoiceNo: protectedProcedure.mutation(() => db.nextInvoiceNo()),
   }),
 
   tasks: router({

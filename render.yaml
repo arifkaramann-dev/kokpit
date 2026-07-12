@@ -28,6 +28,12 @@ services:
         sync: false
       - key: TRENDYOL_API_SECRET
         sync: false
+      - key: HEPSIBURADA_MERCHANT_ID
+        sync: false # Hepsiburada Merchant ID (opsiyonel)
+      - key: HEPSIBURADA_USERNAME
+        sync: false # Hepsiburada OMS kullanıcı adı (opsiyonel)
+      - key: HEPSIBURADA_PASSWORD
+        sync: false # Hepsiburada OMS şifresi (opsiyonel)
       - key: ANTHROPIC_API_KEY
         sync: false # AI pazarlama metinleri için (opsiyonel)
       - key: WHATSAPP_VERIFY_TOKEN

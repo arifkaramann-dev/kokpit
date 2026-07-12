@@ -14,6 +14,7 @@ import Orders from "@/pages/Orders";
 import Production from "@/pages/Production";
 import Products from "@/pages/Products";
 import Purchases from "@/pages/Purchases";
+import Settings from "@/pages/Settings";
 import Stock from "@/pages/Stock";
 import Strategy from "@/pages/Strategy";
 import Suppliers from "@/pages/Suppliers";
@@ -43,6 +44,7 @@ function Router() {
         <Route path={"/tedarikciler"} component={Suppliers} />
         <Route path={"/strateji"} component={Strategy} />
         <Route path={"/sablonlar"} component={Templates} />
+        <Route path={"/ayarlar"} component={Settings} />
         <Route path={"/gorevler"} component={Tasks} />
         <Route path={"/404"} component={NotFound} />
         <Route component={NotFound} />

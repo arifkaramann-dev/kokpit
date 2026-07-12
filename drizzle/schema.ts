@@ -343,3 +343,15 @@ export const tasks = mysqlTable("tasks", {
 });
 
 export type Task = typeof tasks.$inferSelect;
+
+/**
+ * Genel ayarlar (anahtar-değer): şirket/fatura bilgileri, fatura sayaç no vb.
+ * Esnek olsun diye tek satırlık bir tablo yerine anahtar-değer tercih edildi.
+ */
+export const settings = mysqlTable("settings", {
+  key: varchar("key", { length: 128 }).primaryKey(),
+  value: text("value"),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Setting = typeof settings.$inferSelect;
