@@ -28,6 +28,10 @@ export type TrendyolPackage = {
   customerLastName?: string | null;
   status: string;
   totalPrice?: number;
+  /** Kargo takip numarası (paket kargoya verilince dolar) — resmi etiket için gerekir. */
+  cargoTrackingNumber?: number | string | null;
+  cargoProviderName?: string | null;
+  cargoTrackingLink?: string | null;
   lines: TrendyolLine[];
 };
 
@@ -62,6 +66,9 @@ export type MappedOrder = {
   totalAmount: string;
   itemsSummary: string;
   notes: string | null;
+  cargoTrackingNumber: string | null;
+  cargoProviderName: string | null;
+  cargoTrackingLink: string | null;
   items: OrderItemLike[];
 };
 
@@ -80,6 +87,11 @@ export function mapPackageToOrder(pkg: TrendyolPackage): MappedOrder | null {
     [pkg.customerFirstName, pkg.customerLastName].filter(Boolean).join(" ").trim() ||
     "Trendyol Müşterisi";
 
+  const cargoTrackingNumber =
+    pkg.cargoTrackingNumber != null && pkg.cargoTrackingNumber !== ""
+      ? String(pkg.cargoTrackingNumber)
+      : null;
+
   return {
     orderNo: `TY-${pkg.orderNumber}`,
     customerName,
@@ -88,6 +100,9 @@ export function mapPackageToOrder(pkg: TrendyolPackage): MappedOrder | null {
     totalAmount: String(pkg.totalPrice ?? itemsTotal(items)),
     itemsSummary: summarizeItems(items),
     notes: null,
+    cargoTrackingNumber,
+    cargoProviderName: pkg.cargoProviderName ?? null,
+    cargoTrackingLink: pkg.cargoTrackingLink ?? null,
     items,
   };
 }
@@ -170,6 +185,89 @@ export async function pushTrendyolStockPrice(items: StockPriceItem[]) {
   return { batchRequestId: data.batchRequestId ?? null, sent: items.length };
 }
 
+// ZPL etiketini PDF'e çeviren servis (Labelary). 8dpmm ≈ 203dpi, 10×15 cm ≈ 4×6 inç.
+const LABELARY_URL =
+  process.env.LABELARY_URL ?? "https://api.labelary.com/v1/printers/8dpmm/labels/4x6/0/";
+
+const trendyolHeaders = () => ({
+  Authorization: `Basic ${Buffer.from(`${ENV.trendyolApiKey}:${ENV.trendyolApiSecret}`).toString("base64")}`,
+  "User-Agent": `${ENV.trendyolSellerId} - SelfIntegration`,
+});
+
+/**
+ * Trendyol "ortak etiket" (common label) barkodunu üretip ZPL'i alır,
+ * ardından Labelary ile PDF'e çevirip döner.
+ *
+ * Akış: POST create-common-label (ZPL üret) → GET get-common-label (ZPL oku)
+ * → Labelary (ZPL→PDF). Yalnızca ortak etiket anlaşmalı kargolarda ve
+ * kargoya verilmiş (takip no'lu) paketlerde çalışır. Belgeler:
+ * developers.trendyol.com → Delivery Integration → Common Label.
+ */
+export async function getTrendyolCommonLabelPdf(cargoTrackingNumber: string): Promise<Buffer> {
+  if (!isTrendyolConfigured()) {
+    throw new Error("Trendyol entegrasyonu yapılandırılmamış (Satıcı ID, API Key, API Secret gerekli).");
+  }
+  if (!cargoTrackingNumber) {
+    throw new Error("Kargo takip numarası yok — sipariş henüz kargoya verilmemiş olabilir.");
+  }
+
+  const base = `${TRENDYOL_API_BASE}/integration/sellers/${ENV.trendyolSellerId}/common-label/${encodeURIComponent(cargoTrackingNumber)}`;
+
+  // 1) Etiketi oluştur (varsa Trendyol yeni oluşturmaz; hata dışı durumları geç).
+  const createRes = await fetch(base, {
+    method: "POST",
+    headers: { ...trendyolHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ format: "ZPL" }),
+  });
+  if (createRes.status === 401 || createRes.status === 403) {
+    throw new Error("Trendyol API bilgileri reddedildi (yetki hatası).");
+  }
+  // 409/400 "zaten var" olabilir; okuma adımı asıl doğrulamayı yapar.
+
+  // 2) Oluşan ZPL etiketini oku.
+  const getRes = await fetch(base, { headers: { ...trendyolHeaders(), Accept: "application/json" } });
+  if (!getRes.ok) {
+    const body = (await getRes.text()).slice(0, 300);
+    throw new Error(`Trendyol etiketi alınamadı (${getRes.status}): ${body}`);
+  }
+  const raw = await getRes.text();
+  const zpl = extractZpl(raw);
+  if (!zpl) {
+    throw new Error("Trendyol etiket içeriği (ZPL) boş döndü. Kargo sağlayıcısı ortak etiketi desteklemiyor olabilir.");
+  }
+
+  // 3) ZPL → PDF (Labelary).
+  const pdfRes = await fetch(LABELARY_URL, {
+    method: "POST",
+    headers: { Accept: "application/pdf", "Content-Type": "application/x-www-form-urlencoded" },
+    body: zpl,
+  });
+  if (!pdfRes.ok) {
+    const body = (await pdfRes.text()).slice(0, 200);
+    throw new Error(`Etiket PDF'e çevrilemedi (${pdfRes.status}): ${body}`);
+  }
+  return Buffer.from(await pdfRes.arrayBuffer());
+}
+
+/** Trendyol get-common-label yanıtından ZPL metnini çıkarır (ham ZPL ya da JSON sarmalı). */
+export function extractZpl(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  // Önce JSON sarmalını dene (içinde "^XA" geçse bile ham metin değil, alanı çıkar).
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      const data = JSON.parse(trimmed);
+      const candidate = Array.isArray(data) ? data[0] : data;
+      const value =
+        candidate?.zpl ?? candidate?.label ?? candidate?.content ?? candidate?.barcode ?? null;
+      return typeof value === "string" && value.trim() ? value : null;
+    } catch {
+      return null;
+    }
+  }
+  return trimmed; // ham ZPL (^XA...) ya da bilinmeyen ama boş değil — ZPL varsay
+}
+
 /** Bağlantı testi: gerçek istek atıp Trendyol'un döndürdüğü HTTP durumunu döner. */
 export async function testTrendyolConnection(): Promise<{ ok: boolean; status: number; body: string }> {
   if (!isTrendyolConfigured()) {
@@ -209,6 +307,7 @@ export async function syncTrendyolOrders(daysBack = 14) {
 
   let imported = 0;
   let skipped = 0;
+  let updated = 0;
   // Aynı sipariş sayfalar arasında tekrar gelebilir; tek çekimde bir kez ekle.
   const seen = new Set<string>();
 
@@ -228,7 +327,22 @@ export async function syncTrendyolOrders(daysBack = 14) {
 
       const existing = await db.getOrderByOrderNo(mapped.orderNo);
       if (existing) {
-        skipped++;
+        // Sipariş zaten var; ama kargoya verilmişse takip no/kargo bilgisi sonradan
+        // dolar. Eksik/değişmişse güncelle ki resmi etiket çekilebilsin.
+        const changed =
+          (mapped.cargoTrackingNumber && mapped.cargoTrackingNumber !== existing.cargoTrackingNumber) ||
+          (mapped.cargoProviderName && mapped.cargoProviderName !== existing.cargoProviderName) ||
+          (mapped.cargoTrackingLink && mapped.cargoTrackingLink !== existing.cargoTrackingLink);
+        if (changed) {
+          await db.updateOrder(existing.id, {
+            cargoTrackingNumber: mapped.cargoTrackingNumber,
+            cargoProviderName: mapped.cargoProviderName,
+            cargoTrackingLink: mapped.cargoTrackingLink,
+          });
+          updated++;
+        } else {
+          skipped++;
+        }
         continue;
       }
 
@@ -243,5 +357,5 @@ export async function syncTrendyolOrders(daysBack = 14) {
     if (page >= (data.totalPages ?? 1) - 1) break;
   }
 
-  return { imported, skipped };
+  return { imported, skipped, updated };
 }

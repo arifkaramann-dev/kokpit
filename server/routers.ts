@@ -10,7 +10,7 @@ import { itemsTotal, summarizeItems, toItemRows } from "./orderUtils";
 import { extractInvoice } from "./_core/claude";
 import { executeAssistantCommand, generateOrderNo } from "./assistant";
 import { buildSaleTitle, deriveCombos, parseSetCount } from "./productUtils";
-import { syncTrendyolOrders, pushTrendyolStockPrice } from "./trendyol";
+import { syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf } from "./trendyol";
 import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "./marketplace";
 
 /* ------------------------- Zod schemas ------------------------- */
@@ -357,6 +357,35 @@ export const appRouter = router({
     syncAll: protectedProcedure.mutation(() => syncAllMarketplaces()),
     // Aynı sipariş numaralı mükerrer kayıtları temizler (eski yarış durumu artığı).
     dedupe: protectedProcedure.mutation(() => db.dedupeOrders()),
+    // Pazaryerinin resmi kargo etiketini (Trendyol ortak etiket, ZPL→PDF) çeker.
+    // Base64 PDF döner; istemci yeni sekmede açıp yazdırır.
+    shippingLabel: protectedProcedure
+      .input(z.object({ orderId: z.number() }))
+      .mutation(async ({ input }) => {
+        const order = await db.getOrder(input.orderId);
+        if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "Sipariş bulunamadı" });
+        if (order.channel !== "trendyol") {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Resmi kargo etiketi yalnızca Trendyol siparişleri için çekilebilir.",
+          });
+        }
+        if (!order.cargoTrackingNumber) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Bu siparişte kargo takip numarası yok — kargoya verildikten sonra senkronla ve tekrar dene.",
+          });
+        }
+        try {
+          const pdf = await getTrendyolCommonLabelPdf(order.cargoTrackingNumber);
+          return { pdfBase64: pdf.toString("base64") };
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Etiket alınamadı",
+          });
+        }
+      }),
     // Pazaryerine gerçek istek atıp ham HTTP sonucunu döner (401 teşhisi için).
     testConnection: protectedProcedure
       .input(z.object({ key: z.enum(["trendyol", "hepsiburada"]) }))

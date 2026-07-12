@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mapPackageToOrder, type TrendyolPackage } from "./trendyol";
+import { extractZpl, mapPackageToOrder, type TrendyolPackage } from "./trendyol";
 
 function samplePackage(overrides: Partial<TrendyolPackage> = {}): TrendyolPackage {
   return {
@@ -63,5 +63,35 @@ describe("Trendyol paket → sipariş eşlemesi", () => {
   it("totalPrice yoksa toplamı kalemlerden hesaplar", () => {
     const order = mapPackageToOrder(samplePackage({ totalPrice: undefined }));
     expect(order!.totalAmount).toBe("1020");
+  });
+
+  it("kargo takip bilgisini (varsa) yakalar, yoksa null bırakır", () => {
+    const withCargo = mapPackageToOrder(
+      samplePackage({ cargoTrackingNumber: 7263849201, cargoProviderName: "Trendyol Express", cargoTrackingLink: "https://ty.gl/abc" }),
+    );
+    expect(withCargo!.cargoTrackingNumber).toBe("7263849201");
+    expect(withCargo!.cargoProviderName).toBe("Trendyol Express");
+    expect(withCargo!.cargoTrackingLink).toBe("https://ty.gl/abc");
+
+    const without = mapPackageToOrder(samplePackage());
+    expect(without!.cargoTrackingNumber).toBeNull();
+    expect(without!.cargoProviderName).toBeNull();
+  });
+});
+
+describe("extractZpl", () => {
+  it("ham ZPL içeriğini olduğu gibi döner", () => {
+    expect(extractZpl("^XA^FO50,50^A0N,50^FDtest^FS^XZ")).toBe("^XA^FO50,50^A0N,50^FDtest^FS^XZ");
+  });
+
+  it("JSON sarmalından ZPL alanını çıkarır", () => {
+    expect(extractZpl('{"zpl":"^XA...^XZ"}')).toBe("^XA...^XZ");
+    expect(extractZpl('[{"label":"^XAlabel^XZ"}]')).toBe("^XAlabel^XZ");
+  });
+
+  it("boş/geçersiz içerik için null döner", () => {
+    expect(extractZpl("   ")).toBeNull();
+    expect(extractZpl("{}")).toBeNull();
+    expect(extractZpl('{"zpl":""}')).toBeNull();
   });
 });

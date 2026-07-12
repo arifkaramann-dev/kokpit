@@ -48,10 +48,32 @@ type OrderRow = {
   totalAmount: string;
   itemsSummary: string | null;
   notes: string | null;
+  cargoTrackingNumber: string | null;
+  cargoTrackingLink: string | null;
   createdAt: Date;
 };
 
 type ItemRow = { productName: string; quantity: string; unitPrice: string };
+
+/** Base64 PDF'i tarayıcıda blob olarak açar ve yazdırma penceresini tetikler. */
+function openPdfBase64(base64: string, filename: string) {
+  const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+  const blob = new Blob([bytes], { type: "application/pdf" });
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, "_blank");
+  if (win) {
+    win.document.title = filename;
+    win.addEventListener("load", () => {
+      try {
+        win.print();
+      } catch {
+        /* kullanıcı elle yazdırabilir */
+      }
+    });
+  }
+  // Belleği bir süre sonra bırak (sekme açılmış olmalı).
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
 
 const emptyForm = {
   customerName: "",
@@ -205,26 +227,47 @@ export default function Orders() {
     }
   }
 
-  // Kargo etiketi: kalemleri + şirket bilgisini al, taranabilir barkodlu etiketi yazdır.
+  // Kendi (uygulama) kargo etiketimizi yazdırır — pazaryeri etiketi yoksa/başarısızsa.
+  async function printOwnLabel(order: OrderRow) {
+    const [items, company] = await Promise.all([
+      utils.client.orders.items.query({ orderId: order.id }),
+      utils.client.settings.get.query(),
+    ]);
+    printShippingLabel(
+      {
+        orderNo: order.orderNo,
+        customerName: order.customerName,
+        channel: order.channel ?? "web",
+        createdAt: order.createdAt,
+        totalAmount: order.totalAmount,
+        itemsSummary: order.itemsSummary,
+        notes: order.notes,
+      },
+      items.map(i => ({ productName: i.productName, quantity: i.quantity })),
+      company,
+    );
+  }
+
+  // Kargo etiketi: Trendyol siparişinde takip no varsa resmi etiketi (PDF) çeker;
+  // yoksa/başarısızsa kendi barkodlu etiketimizi yazdırır.
   async function handleShippingLabel(order: OrderRow) {
+    const canOfficial = order.channel === "trendyol" && !!order.cargoTrackingNumber;
+    if (canOfficial) {
+      const t = toast.loading("Trendyol resmi kargo etiketi alınıyor…");
+      try {
+        const { pdfBase64 } = await utils.client.orders.shippingLabel.mutate({ orderId: order.id });
+        openPdfBase64(pdfBase64, `kargo-${order.orderNo}.pdf`);
+        toast.success("Resmi kargo etiketi hazır", { id: t });
+        return;
+      } catch (e) {
+        toast.error(
+          `${e instanceof Error ? e.message : "Resmi etiket alınamadı"} — kendi etiketimiz açılıyor.`,
+          { id: t },
+        );
+      }
+    }
     try {
-      const [items, company] = await Promise.all([
-        utils.client.orders.items.query({ orderId: order.id }),
-        utils.client.settings.get.query(),
-      ]);
-      printShippingLabel(
-        {
-          orderNo: order.orderNo,
-          customerName: order.customerName,
-          channel: order.channel ?? "web",
-          createdAt: order.createdAt,
-          totalAmount: order.totalAmount,
-          itemsSummary: order.itemsSummary,
-          notes: order.notes,
-        },
-        items.map(i => ({ productName: i.productName, quantity: i.quantity })),
-        company,
-      );
+      await printOwnLabel(order);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Kargo etiketi oluşturulamadı");
     }

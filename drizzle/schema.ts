@@ -125,6 +125,10 @@ export const orders = mysqlTable("orders", {
   totalAmount: decimal("totalAmount", { precision: 12, scale: 2 }).notNull().default("0"),
   itemsSummary: text("itemsSummary"),
   notes: text("notes"),
+  // Pazaryeri kargo bilgileri (Trendyol vb.): resmi etiket çekmek ve takip için.
+  cargoTrackingNumber: varchar("cargoTrackingNumber", { length: 64 }),
+  cargoProviderName: varchar("cargoProviderName", { length: 128 }),
+  cargoTrackingLink: varchar("cargoTrackingLink", { length: 512 }),
   sortOrder: int("sortOrder").notNull().default(0),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),

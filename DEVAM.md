@@ -33,6 +33,10 @@ https://artofcolour-kokpit.onrender.com/ (Render, ücretsiz plan). Veritabanı: 
   kilidi, "Mükerrerleri temizle", "Bağlantıyı Test Et", **Trendyol'a stok/fiyat gönderme**
 - **Kargo etiketi/barkod:** her sipariş kartından yazdırılabilir 10×15 cm kargo etiketi
   (gönderen/alıcı + taranabilir **Code 128 barkod**, sipariş no'dan; harici kütüphane yok)
+- **Trendyol resmi kargo etiketi:** Trendyol siparişinde kargo takip no varsa "ortak etiket"
+  API'sinden ZPL çekilir, **Labelary** ile PDF'e çevrilip yazdırılır; takip no yoksa/başarısızsa
+  kendi barkodlu etiketimize düşer. Senkron artık kargo takip no/sağlayıcı/link'i saklar
+  (orders tablosuna `cargoTrackingNumber/ProviderName/TrackingLink` eklendi, migration 0011).
 
 ## Açık işler / sırada ne var
 1. **Hepsiburada 401:** Hepsiburada API bilgileri Render'a girilmeli. Hepsiburada
@@ -42,10 +46,15 @@ https://artofcolour-kokpit.onrender.com/ (Render, ücretsiz plan). Veritabanı: 
    "Bağlantıyı Test Et" ile HTTP durumunu gör, (c) Servis Anahtarı gerekiyorsa koda ekle.
 2. **Trendyol'u canlıda tam oturt:** Render'a Trendyol bilgileri girilince
    "Bağlantıyı Test Et" HTTP 200 dönmeli; sipariş akışı + "Trendyol'a Gönder" (stok/fiyat) doğrulanmalı.
-3. **Sonraki entegratör adımları:** Hepsiburada'ya stok/fiyat gönderme, sıfırdan ürün
+3. **Trendyol resmi etiketini canlıda doğrula:** Sipariş kargoya verilip senkron çalışınca
+   `cargoTrackingNumber` dolmalı; kart → kamyon butonu resmi PDF etiketi getirmeli. Yalnızca
+   "ortak etiket" anlaşmalı kargolarda çalışır. Bu ortam Trendyol'a/Labelary'ye çıkamadığı için
+   **canlıda test edilmedi**. Not: common-label şu an sadece ZPL veriyor; PDF'e Labelary ile çeviriyoruz
+   (gerekirse `LABELARY_URL` env ile değiştirilebilir).
+4. **Sonraki entegratör adımları:** Hepsiburada'ya stok/fiyat gönderme, sıfırdan ürün
    açma (kategori/marka/görsel/özellik), N11 / Çiçeksepeti eklemek.
-   (Kargo barkodu ✔ yapıldı — kendi etiketimiz. İleride pazaryerinin resmi kargo
-   etiketi API'sinden PDF çekmek ayrı bir adım olabilir.)
+5. **Sesli uyandırma ("Hey ..." komutu):** Asistanı el değmeden başlatmak için tarayıcıda
+   sürekli dinleyip anahtar kelimeyle tetikleme (Web Speech API). Gerçek wake-word için ayrı motor.
 
 ## Teknik notlar (yeni sohbet için)
 - Branch: `claude/web-site-development-tx6n7h` ama **doğrudan main'e** push ediliyor.
