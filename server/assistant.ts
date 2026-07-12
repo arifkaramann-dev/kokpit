@@ -20,6 +20,37 @@ function formatCmdItems(items: { productName: string; quantity: number }[]) {
   return items.map(i => `${i.quantity}× ${i.productName}`).join(", ") || "kalemsiz";
 }
 
+const STATUS_LABELS: Record<string, string> = {
+  new: "Yeni",
+  production: "Üretimde",
+  ready: "Kargoya Hazır",
+  done: "Tamamlandı",
+};
+
+const HELP_TEXT = [
+  "Yapabildiklerim 👇",
+  "",
+  "🛒 *Satış / Sipariş*",
+  '• "Elden satış ekle, 2 adet sprey vernik, tanesi 250 lira"',
+  '• "Sipariş geldi: Ahmet, 3 kutu jant astarı, tanesi 400"',
+  '• "Son siparişi kargoya hazır yap" / "AOC-... tamamlandı"',
+  "",
+  "📦 *Stok*",
+  '• "10 kg beyaz pigment geldi, stok girişi"',
+  '• "2 litre tiner kullandım, stoktan düş"',
+  "",
+  "📝 *Eksikler & Görevler*",
+  '• "Eksik listesine ekle: etiket, 400 ml kutu"',
+  '• "Bugün neler alınacaktı?" · "Etiket aldım"',
+  '• "Görev ekle: kargocuyu ara" · "Görevlerim neler?"',
+  "",
+  "📊 *Soru-Cevap*",
+  '• "Bugün kaç sipariş var? Ciro ne kadar?"',
+  '• "Stok durumu nasıl?" · "Projeler ne durumda?"',
+  "",
+  '🗒️ "Not al: ..." ile hızlı not bırakabilirsin.',
+].join("\n");
+
 /** Soru-cevap için işletmenin güncel verilerinden kompakt Türkçe özet üretir. */
 export async function buildBusinessSnapshot(): Promise<string> {
   const [statusCounts, today, critical, materials, products, orders, openTasks] = await Promise.all([
@@ -42,7 +73,10 @@ export async function buildBusinessSnapshot(): Promise<string> {
     `Bugünkü sipariş: ${today?.count ?? 0} adet, ${today?.total ?? 0} TL`,
     `Sipariş durumları: ${statusCounts.map(s => `${s.status}: ${s.count}`).join(", ") || "yok"}`,
     `Son 30 gün ciro: ${revenue30.toFixed(2)} TL (${last30.length} sipariş)`,
-    `Ürün sayısı: ${products.length}`,
+    `Ürünler (ad | satış fiyatı): ${products
+      .slice(0, 40)
+      .map(p => `${p.name} | ${p.salePrice} TL`)
+      .join("; ") || "yok"}`,
     `Hammadde sayısı: ${materials.length}`,
     `Kritik stok altındaki hammaddeler: ${critical.map(m => `${m.name} (${m.stockQty} ${m.unit})`).join(", ") || "yok"}`,
     `Stok listesi (ad | miktar | birim maliyet): ${materials
@@ -109,11 +143,14 @@ export async function executeAssistantCommand(transcript: string): Promise<{ mes
       throw new Error(`"${cmd.materialName}" adında hammadde bulamadım.`);
     }
     await db.adjustStock(found.id, cmd.intent === "stock_in" ? "in" : "out", cmd.quantity, "Asistan komutu");
-    return {
-      message:
-        cmd.reply ||
-        `${found.name}: ${cmd.quantity} ${found.unit} ${cmd.intent === "stock_in" ? "girişi" : "çıkışı"} yapıldı`,
-    };
+    const oldQty = parseFloat(String(found.stockQty)) || 0;
+    const newQty = cmd.intent === "stock_in" ? oldQty + cmd.quantity : Math.max(0, oldQty - cmd.quantity);
+    const critical = parseFloat(String(found.criticalQty)) || 0;
+    let message = `${found.name}: ${cmd.quantity} ${found.unit} ${cmd.intent === "stock_in" ? "girişi" : "çıkışı"} yapıldı. Kalan: ${newQty} ${found.unit}`;
+    if (critical > 0 && newQty <= critical) {
+      message += `\n⚠️ Dikkat: kritik seviyenin altında (eşik ${critical} ${found.unit}). Eksik listesine ekleyeyim mi dersen "eksik listesine ekle: ${found.name}" yaz.`;
+    }
+    return { message };
   }
 
   if (cmd.intent === "note") {
@@ -181,6 +218,32 @@ export async function executeAssistantCommand(transcript: string): Promise<{ mes
     return { message: parts.join("\n") || "Listede eşleşen madde bulamadım." };
   }
 
+  if (cmd.intent === "order_status") {
+    if (!cmd.orderStatus) throw new Error("Siparişi hangi duruma alacağımı anlayamadım (yeni/üretimde/hazır/tamamlandı).");
+    const orders = await db.listOrders();
+    if (orders.length === 0) throw new Error("Kayıtlı sipariş yok.");
+    const ref = (cmd.orderRef ?? "son").trim().toLowerCase();
+    let target;
+    if (ref === "son" || ref === "") {
+      // "Son sipariş" = en yeni kayıt.
+      target = [...orders].sort((a, b) => new Date(b.createdAt as never).getTime() - new Date(a.createdAt as never).getTime())[0];
+    } else {
+      target =
+        orders.find(o => o.orderNo.toLowerCase() === ref) ??
+        orders.find(o => o.orderNo.toLowerCase().includes(ref)) ??
+        orders.find(o => o.customerName.toLowerCase().includes(ref));
+    }
+    if (!target) throw new Error(`"${cmd.orderRef}" ile eşleşen sipariş bulamadım. Sipariş no veya müşteri adı söyleyebilirsin.`);
+    await db.updateOrder(target.id, { status: cmd.orderStatus });
+    return {
+      message: `${target.orderNo} (${target.customerName}) → ${STATUS_LABELS[cmd.orderStatus]} olarak güncellendi ✅`,
+    };
+  }
+
+  if (cmd.intent === "help") {
+    return { message: HELP_TEXT };
+  }
+
   if (cmd.intent === "query") {
     const snapshot = await buildBusinessSnapshot();
     const answer = await answerBusinessQuestion(cmd.noteText ?? transcript, snapshot);
@@ -190,6 +253,6 @@ export async function executeAssistantCommand(transcript: string): Promise<{ mes
   return {
     message:
       cmd.reply ||
-      "Bunu anlayamadım. 'Elden satış ekle', 'stok girişi', 'eksik listesine ekle', 'bugün neler alınacaktı', 'görev ekle', 'not al' diyebilir veya işletmenle ilgili soru sorabilirsin.",
+      'Bunu anlayamadım. "yardım" yazarsan yapabildiğim her şeyi tek mesajda gönderirim.',
   };
 }

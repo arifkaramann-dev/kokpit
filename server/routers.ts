@@ -577,13 +577,14 @@ Türkçe yaz. Sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, o
 
   dashboard: router({
     summary: protectedProcedure.query(async () => {
-      const [today, statusCounts, critical, upcoming] = await Promise.all([
+      const [today, statusCounts, critical, upcoming, openTasks] = await Promise.all([
         db.countOrdersToday(),
         db.orderStatusCounts(),
         db.listCriticalMaterials(),
         db.upcomingCampaigns(30),
+        db.listTasks(undefined, "open"),
       ]);
-      return { today, statusCounts, critical, upcoming };
+      return { today, statusCounts, critical, upcoming, openTasks };
     }),
   }),
 });

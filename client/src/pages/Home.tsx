@@ -8,7 +8,9 @@ import {
   ArrowRight,
   CalendarDays,
   ClipboardList,
+  ListChecks,
   Package,
+  ShoppingBasket,
   ShoppingCart,
   Sparkles,
   TrendingUp,
@@ -143,6 +145,42 @@ export default function Home() {
                   </span>
                 </div>
               ))}
+            </div>
+          )}
+        </Card>
+
+        {/* Görevler & eksik listesi */}
+        <Card className="p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold flex items-center gap-2">
+              <ListChecks className="h-4 w-4 text-emerald-600" /> Görevler & Eksikler
+            </h2>
+            <Button variant="ghost" size="sm" onClick={() => setLocation("/gorevler")}>
+              Listeye Git <ArrowRight className="h-3.5 w-3.5 ml-1" />
+            </Button>
+          </div>
+          {(data?.openTasks ?? []).length === 0 ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">
+              Açık görev ve eksik yok. 🎉
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {(data?.openTasks ?? []).slice(0, 6).map(t => (
+                <div key={t.id} className="flex items-center gap-2 text-sm">
+                  {t.kind === "eksik" ? (
+                    <ShoppingBasket className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                  ) : (
+                    <ListChecks className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                  )}
+                  <span className="flex-1 truncate">{t.title}</span>
+                  <Badge variant="outline">{t.kind === "eksik" ? "alınacak" : "görev"}</Badge>
+                </div>
+              ))}
+              {(data?.openTasks ?? []).length > 6 && (
+                <p className="text-xs text-muted-foreground">
+                  +{(data?.openTasks ?? []).length - 6} madde daha...
+                </p>
+              )}
             </div>
           )}
         </Card>

@@ -176,7 +176,10 @@ const VOICE_SCHEMA = {
   properties: {
     intent: {
       type: "string",
-      enum: ["sale", "order", "stock_in", "stock_out", "note", "query", "task_add", "task_list", "task_done", "unknown"],
+      enum: [
+        "sale", "order", "stock_in", "stock_out", "note", "query",
+        "task_add", "task_list", "task_done", "order_status", "help", "unknown",
+      ],
     },
     customerName: { anyOf: [{ type: "string" }, { type: "null" }] },
     channel: { anyOf: [{ type: "string" }, { type: "null" }] },
@@ -205,11 +208,13 @@ const VOICE_SCHEMA = {
     taskKind: { anyOf: [{ type: "string", enum: ["eksik", "gorev"] }, { type: "null" }] },
     taskItems: { anyOf: [{ type: "array", items: { type: "string" } }, { type: "null" }] },
     listKind: { anyOf: [{ type: "string", enum: ["eksik", "gorev", "proje"] }, { type: "null" }] },
+    orderRef: { anyOf: [{ type: "string" }, { type: "null" }] },
+    orderStatus: { anyOf: [{ type: "string", enum: ["new", "production", "ready", "done"] }, { type: "null" }] },
     reply: { type: "string" },
   },
   required: [
     "intent", "customerName", "channel", "items", "materialName", "quantity", "unit",
-    "noteText", "taskKind", "taskItems", "listKind", "reply",
+    "noteText", "taskKind", "taskItems", "listKind", "orderRef", "orderStatus", "reply",
   ],
   additionalProperties: false,
 } as const;
@@ -217,7 +222,7 @@ const VOICE_SCHEMA = {
 export type VoiceCommand = {
   intent:
     | "sale" | "order" | "stock_in" | "stock_out" | "note" | "query"
-    | "task_add" | "task_list" | "task_done" | "unknown";
+    | "task_add" | "task_list" | "task_done" | "order_status" | "help" | "unknown";
   customerName: string | null;
   channel: string | null;
   items: { name: string; quantity: number | null; unitPrice: number | null }[] | null;
@@ -228,6 +233,8 @@ export type VoiceCommand = {
   taskKind: "eksik" | "gorev" | null;
   taskItems: string[] | null;
   listKind: "eksik" | "gorev" | "proje" | null;
+  orderRef: string | null;
+  orderStatus: "new" | "production" | "ready" | "done" | null;
   reply: string;
 };
 
@@ -253,6 +260,9 @@ export async function parseVoiceCommand(transcript: string): Promise<VoiceComman
         "'görevlerim / yapılacaklar neler' → task_list, listKind=gorev; " +
         "'projeler ne durumda / geliştirmeler' → task_list, listKind=proje; " +
         "'X aldım / X tamamlandı / listeden çıkar' → task_done, tamamlanan maddeleri taskItems dizisine yaz. " +
+        "Sipariş durumu değiştirme ('AOC-... kargoya hazır', 'son siparişi tamamla', 'Ahmet'in siparişi üretimde') → order_status; " +
+        "orderRef alanına sipariş no / müşteri adı / 'son' yaz, orderStatus alanına new|production|ready|done. " +
+        "'yardım / ne yapabilirsin / komutlar' → help. " +
         "Ürün/malzeme adlarını sade yaz. 'reply' alanına yapılan işi tek cümlede Türkçe özetle.",
       messages: [{ role: "user", content: transcript }],
     })
