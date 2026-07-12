@@ -530,7 +530,7 @@ export async function getChosenDevTrialItems(projectId: number) {
 /** Rapor sayfasının tek seferde ihtiyaç duyduğu tüm veri kümeleri. */
 export async function reportData() {
   const db = await requireDb();
-  const [allProducts, formulaRows, textRows, allOrders, allOrderItems, allMaterials, allCampaigns] =
+  const [allProducts, formulaRows, textRows, allOrders, allOrderItems, allMaterials, allCampaigns, imageRows] =
     await Promise.all([
       db.select().from(products),
       db
@@ -546,6 +546,8 @@ export async function reportData() {
       db.select().from(orderItems),
       db.select().from(materials),
       db.select().from(campaigns),
+      // Görsel verisinin kendisi ağır (base64); tamamlama kontrolü için kimlikler yeter.
+      db.select({ productId: productImages.productId, kind: productImages.kind }).from(productImages),
     ]);
   return {
     products: allProducts,
@@ -555,6 +557,7 @@ export async function reportData() {
     orderItems: allOrderItems,
     materials: allMaterials,
     campaigns: allCampaigns,
+    productImages: imageRows,
   };
 }
 

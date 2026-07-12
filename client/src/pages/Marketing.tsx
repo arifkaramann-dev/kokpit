@@ -273,7 +273,8 @@ export default function Marketing() {
               <div key={h.id} className="rounded-lg border p-3 space-y-1.5">
                 <div className="flex items-center gap-2 flex-wrap">
                   <Badge variant="secondary">
-                    {CONTENT_TYPES.find(t => t.value === h.contentType)?.label ?? h.contentType}
+                    {CONTENT_TYPES.find(t => t.value === h.contentType)?.label ??
+                      (h.contentType === "not" ? "Not (Asistan)" : h.contentType)}
                   </Badge>
                   {h.productName && <span className="text-sm font-medium">{h.productName}</span>}
                   <span className="text-xs text-muted-foreground ml-auto">

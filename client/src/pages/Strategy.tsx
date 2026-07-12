@@ -37,7 +37,8 @@ export default function Strategy() {
 
   const model = useMemo(() => {
     if (!data) return null;
-    const { products, formulas, marketingTexts, orders, orderItems, materials, campaigns } = data;
+    const { products, formulas, marketingTexts, orders, orderItems, materials, campaigns, productImages } = data;
+    const imagedProducts = new Set(productImages.map(i => i.productId));
 
     // Ürün başına hammadde maliyeti (formülden)
     const matCost = new Map<number, number>();
@@ -82,6 +83,8 @@ export default function Strategy() {
         { label: "Satış görmüş", ok: (soldQty.get(p.name) ?? 0) > 0, fix: "/siparisler" },
         { label: "Etiket bilgisi", ok: Boolean(p.labelSize || p.labelText), fix: "/urunler" },
         { label: "Kullanım kılavuzu", ok: Boolean(p.usageGuide), fix: "/urunler" },
+        { label: "Ambalaj bilgisi", ok: Boolean(p.packaging), fix: "/urunler" },
+        { label: "Ürün görseli", ok: imagedProducts.has(p.id), fix: "/urunler" },
       ];
       const done = checks.filter(c => c.ok).length;
       return { p, material, totalCost, netPrice, profit, margin, checks, done, total: checks.length };

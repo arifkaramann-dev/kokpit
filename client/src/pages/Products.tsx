@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { formatTL } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
-import { Beaker, ChevronDown, ChevronRight, Layers, Package, Pencil, Plus, Trash2 } from "lucide-react";
+import { Beaker, ChevronDown, ChevronRight, Download, Layers, Package, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import TemplatePicker from "@/components/TemplatePicker";
 import { toast } from "sonner";
@@ -99,10 +99,8 @@ export default function Products() {
     onSuccess: () => utils.products.images.invalidate(),
   });
 
-  const mains = useMemo(
-    () => ((products as ProductRow[]) ?? []).filter(p => p.parentId === null),
-    [products],
-  );
+  const [search, setSearch] = useState("");
+
   const childrenOf = useMemo(() => {
     const map = new Map<number, ProductRow[]>();
     for (const p of (products as ProductRow[]) ?? []) {
@@ -114,6 +112,48 @@ export default function Products() {
     }
     return map;
   }, [products]);
+
+  // Arama: ana ürünün kendisi ya da türevlerinden biri eşleşirse göster.
+  const mains = useMemo(() => {
+    const all = ((products as ProductRow[]) ?? []).filter(p => p.parentId === null);
+    const q = search.trim().toLowerCase();
+    if (!q) return all;
+    return all.filter(
+      p =>
+        p.name.toLowerCase().includes(q) ||
+        (p.series ?? "").toLowerCase().includes(q) ||
+        (childrenOf.get(p.id) ?? []).some(c => c.name.toLowerCase().includes(q)),
+    );
+  }, [products, search, childrenOf]);
+
+  // Satışa hazır katalog dosyası: Excel/pazaryeri şablonlarına yapıştırılabilir.
+  function exportCsv() {
+    const rows = (products as ProductRow[]) ?? [];
+    if (rows.length === 0) return toast.error("Dışa aktarılacak ürün yok");
+    const cols = [
+      "Ürün Adı", "Tür", "Seri", "Renk Kodu", "Kullanım/Yüzey", "Ambalaj",
+      "Satış Fiyatı", "İndirim %", "Açıklama", "Etiket Boyutu", "Etiket Yazısı",
+      "Kullanım Kılavuzu", "Güvenlik", "Ek Bilgi",
+    ];
+    const esc = (v: string | null | undefined) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const lines = rows.map(p =>
+      [
+        p.name, p.parentId === null ? "Ana Ürün" : "Türev", p.series, p.colorCode,
+        p.surfaceType, p.packaging, p.salePrice, p.discountPercent, p.description,
+        p.labelSize, p.labelText, p.usageGuide, p.safetyNotes, p.extraInfo,
+      ].map(esc).join(";"),
+    );
+    // BOM: Türkçe karakterler Excel'de doğru açılsın.
+    const blob = new Blob(["﻿" + [cols.join(";"), ...lines].join("\r\n")], {
+      type: "text/csv;charset=utf-8",
+    });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `artofcolour-katalog-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast.success(`${rows.length} ürün dışa aktarıldı`);
+  }
 
   const createProduct = trpc.products.create.useMutation({
     onSuccess: () => {
@@ -247,9 +287,24 @@ export default function Products() {
             Önce ana boyayı tanımlayın, ardından istediğiniz yüzey veya kullanım alanı için sınırsız türev ekleyin.
           </p>
         </div>
-        <Button onClick={openCreateMain}>
-          <Plus className="h-4 w-4 mr-1" /> Yeni Ana Ürün
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={exportCsv}>
+            <Download className="h-4 w-4 mr-1" /> Dışa Aktar
+          </Button>
+          <Button onClick={openCreateMain}>
+            <Plus className="h-4 w-4 mr-1" /> Yeni Ana Ürün
+          </Button>
+        </div>
+      </div>
+
+      <div className="relative max-w-sm">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Ürün veya türev ara..."
+          className="pl-8"
+        />
       </div>
 
       {isLoading && <div className="h-40 rounded-xl bg-muted animate-pulse" />}
@@ -257,9 +312,11 @@ export default function Products() {
       {!isLoading && mains.length === 0 && (
         <Card className="p-10 text-center space-y-2">
           <Package className="h-10 w-10 mx-auto text-muted-foreground/50" />
-          <p className="font-medium">Henüz ürün yok</p>
+          <p className="font-medium">{search ? "Aramayla eşleşen ürün yok" : "Henüz ürün yok"}</p>
           <p className="text-sm text-muted-foreground">
-            "Yeni Ana Ürün" ile ilk boyanızı (örn. Siyah Boya) tanımlayın; sonra jant, araba, 3D baskı, ahşap gibi istediğiniz türevleri ekleyin.
+            {search
+              ? "Farklı bir kelime dene veya aramayı temizle."
+              : '"Yeni Ana Ürün" ile ilk boyanızı (örn. Siyah Boya) tanımlayın; sonra jant, araba, 3D baskı, ahşap gibi istediğiniz türevleri ekleyin.'}
           </p>
         </Card>
       )}

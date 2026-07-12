@@ -223,6 +223,17 @@ export const appRouter = router({
             extraInfo: parent.extraInfo,
           } as never);
           await db.copyProductImages(parent.id, Number(id));
+          // Reçete de kopyalanır ki türevin maliyet analizi boş kalmasın;
+          // set/paket türevlerinde malzeme miktarları adetle çarpılır.
+          const formula = await db.listFormulaItems(parent.id);
+          for (const item of formula) {
+            await db.addFormulaItem(
+              Number(id),
+              item.materialId,
+              (parseFloat(String(item.qty)) || 0) * setCount,
+              item.note ?? undefined,
+            );
+          }
         }
         return { count: combos.length };
       }),
