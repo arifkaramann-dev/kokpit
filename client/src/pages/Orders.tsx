@@ -48,6 +48,11 @@ type OrderRow = {
   totalAmount: string;
   itemsSummary: string | null;
   notes: string | null;
+  customerPhone: string | null;
+  customerAddress: string | null;
+  paymentStatus: "unpaid" | "partial" | "paid";
+  paidAmount: string;
+  paymentMethod: string | null;
   cargoTrackingNumber: string | null;
   cargoTrackingLink: string | null;
   createdAt: Date;
@@ -81,6 +86,10 @@ const emptyForm = {
   totalAmount: "",
   itemsSummary: "",
   notes: "",
+  customerPhone: "",
+  customerAddress: "",
+  paymentStatus: "unpaid" as "unpaid" | "partial" | "paid",
+  paymentMethod: "",
   items: [] as ItemRow[],
 };
 
@@ -99,6 +108,7 @@ export default function Orders() {
   const [, setLocation] = useLocation();
   const { data: orders, isLoading } = trpc.orders.list.useQuery();
   const { data: products } = trpc.products.list.useQuery();
+  const { data: customersList } = trpc.customers.list.useQuery();
   const { data: mpStatus } = trpc.orders.marketplaceStatus.useQuery();
   const [activeOrder, setActiveOrder] = useState<OrderRow | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -217,6 +227,8 @@ export default function Orders() {
           channel: order.channel ?? "web",
           createdAt: order.createdAt,
           notes: order.notes,
+          address: order.customerAddress,
+          phone: order.customerPhone,
         },
         items.map(i => ({ productName: i.productName, quantity: i.quantity, unitPrice: i.unitPrice })),
         company,
@@ -242,6 +254,8 @@ export default function Orders() {
         totalAmount: order.totalAmount,
         itemsSummary: order.itemsSummary,
         notes: order.notes,
+        address: order.customerAddress,
+        phone: order.customerPhone,
       },
       items.map(i => ({ productName: i.productName, quantity: i.quantity })),
       company,
@@ -291,6 +305,25 @@ export default function Orders() {
     onError: e => toast.error(e.message),
   });
 
+  const setPayment = trpc.orders.setPayment.useMutation({
+    onSuccess: () => {
+      utils.orders.list.invalidate();
+      utils.dashboard.summary.invalidate();
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  // Kart üzerinden hızlı tahsilat: bekleyen → ödendi (tam tutar), ödendi → bekliyor.
+  function handleTogglePaid(order: OrderRow) {
+    const paid = order.paymentStatus === "paid";
+    setPayment.mutate({
+      id: order.id,
+      paymentStatus: paid ? "unpaid" : "paid",
+      paidAmount: paid ? 0 : parseFloat(order.totalAmount) || 0,
+      paymentMethod: order.paymentMethod,
+    });
+  }
+
   function handleDragStart(event: DragStartEvent) {
     const order = orders?.find(o => o.id === event.active.id);
     if (order) setActiveOrder(order as OrderRow);
@@ -320,8 +353,23 @@ export default function Orders() {
   function openManualSale() {
     setEditOrder(null);
     setManualSale(true);
-    setForm({ ...emptyForm, channel: "elden", customerName: "Elden Satış" });
+    // Elden satış genelde peşin → ödendi varsayılır.
+    setForm({ ...emptyForm, channel: "elden", customerName: "Elden Satış", paymentStatus: "paid" });
     setDialogOpen(true);
+  }
+
+  // Müşteri adı yazıldıkça kayıtlı müşteriyle eşleşirse telefon/adresi otomatik doldur.
+  function applyCustomerByName(name: string) {
+    const match = ((customersList as { name: string; phone: string | null; address: string | null }[]) ?? []).find(
+      c => c.name.trim().toLocaleLowerCase("tr-TR") === name.trim().toLocaleLowerCase("tr-TR"),
+    );
+    if (match) {
+      setForm(f => ({
+        ...f,
+        customerPhone: match.phone ?? f.customerPhone,
+        customerAddress: match.address ?? f.customerAddress,
+      }));
+    }
   }
 
   async function openEdit(order: OrderRow) {
@@ -332,6 +380,10 @@ export default function Orders() {
       totalAmount: order.totalAmount,
       itemsSummary: order.itemsSummary ?? "",
       notes: order.notes ?? "",
+      customerPhone: order.customerPhone ?? "",
+      customerAddress: order.customerAddress ?? "",
+      paymentStatus: order.paymentStatus ?? "unpaid",
+      paymentMethod: order.paymentMethod ?? "",
       items: [],
     });
     setDialogOpen(true);
@@ -356,12 +408,19 @@ export default function Orders() {
       return;
     }
     const itemRows = parseItemRows(form.items);
+    const total = itemRows.length > 0 ? itemsTotal : parseFloat(form.totalAmount) || 0;
     const payload = {
       customerName: form.customerName.trim(),
       channel: form.channel,
       totalAmount: parseFloat(form.totalAmount) || 0,
       itemsSummary: form.itemsSummary || null,
       notes: form.notes || null,
+      customerPhone: form.customerPhone || null,
+      customerAddress: form.customerAddress || null,
+      paymentStatus: form.paymentStatus,
+      // "Ödendi" ise ödenen tutar = toplam; değilse 0 (kısmi düzenlemesi karttan yapılır).
+      paidAmount: form.paymentStatus === "paid" ? total : 0,
+      paymentMethod: form.paymentMethod || null,
       // Kalem girildiyse toplam ve özet sunucuda satırlardan hesaplanır.
       ...(itemRows.length > 0 ? { items: itemRows } : {}),
       // Elden satışlar doğrudan "Tamamlandı" sütununa düşer.
@@ -414,12 +473,27 @@ export default function Orders() {
               <div className="space-y-1.5">
                 <Label>Müşteri Adı *</Label>
                 <Input
+                  list="customer-names"
                   value={form.customerName}
                   onChange={e => setForm(f => ({ ...f, customerName: e.target.value }))}
-                  placeholder="Örn. Mehmet Yılmaz"
+                  onBlur={e => applyCustomerByName(e.target.value)}
+                  placeholder="Örn. Mehmet Yılmaz (kayıtlıysa seç)"
                 />
+                <datalist id="customer-names">
+                  {((customersList as { id: number; name: string }[]) ?? []).map(c => (
+                    <option key={c.id} value={c.name} />
+                  ))}
+                </datalist>
               </div>
               <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Telefon</Label>
+                  <Input
+                    value={form.customerPhone}
+                    onChange={e => setForm(f => ({ ...f, customerPhone: e.target.value }))}
+                    placeholder="05xx xxx xx xx"
+                  />
+                </div>
                 <div className="space-y-1.5">
                   <Label>Kanal</Label>
                   <Select value={form.channel} onValueChange={v => setForm(f => ({ ...f, channel: v }))}>
@@ -569,6 +643,41 @@ export default function Orders() {
                 </div>
               )}
               <div className="space-y-1.5">
+                <Label>Teslimat Adresi</Label>
+                <Textarea
+                  value={form.customerAddress}
+                  onChange={e => setForm(f => ({ ...f, customerAddress: e.target.value }))}
+                  placeholder="Kargo etiketi ve faturaya yazılır"
+                  rows={2}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Ödeme Durumu</Label>
+                  <Select
+                    value={form.paymentStatus}
+                    onValueChange={v => setForm(f => ({ ...f, paymentStatus: v as typeof f.paymentStatus }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="unpaid">Bekliyor</SelectItem>
+                      <SelectItem value="partial">Kısmi</SelectItem>
+                      <SelectItem value="paid">Ödendi</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Ödeme Yöntemi</Label>
+                  <Input
+                    value={form.paymentMethod}
+                    onChange={e => setForm(f => ({ ...f, paymentMethod: e.target.value }))}
+                    placeholder="Nakit / Havale / Kart"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
                 <Label>Notlar</Label>
                 <Textarea
                   value={form.notes}
@@ -649,6 +758,7 @@ export default function Orders() {
                 onDelete={id => deleteOrder.mutate({ id })}
                 onInvoice={handleInvoice}
                 onShippingLabel={handleShippingLabel}
+                onTogglePaid={handleTogglePaid}
               />
             ))}
           </div>
@@ -668,6 +778,7 @@ function KanbanColumn({
   onDelete,
   onInvoice,
   onShippingLabel,
+  onTogglePaid,
 }: {
   status: (typeof ORDER_STATUSES)[number];
   orders: OrderRow[];
@@ -675,6 +786,7 @@ function KanbanColumn({
   onDelete: (id: number) => void;
   onInvoice: (o: OrderRow) => void;
   onShippingLabel: (o: OrderRow) => void;
+  onTogglePaid: (o: OrderRow) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status.value });
 
@@ -698,7 +810,7 @@ function KanbanColumn({
         </div>
       )}
       {orders.map(order => (
-        <DraggableOrderCard key={order.id} order={order} onEdit={onEdit} onDelete={onDelete} onInvoice={onInvoice} onShippingLabel={onShippingLabel} />
+        <DraggableOrderCard key={order.id} order={order} onEdit={onEdit} onDelete={onDelete} onInvoice={onInvoice} onShippingLabel={onShippingLabel} onTogglePaid={onTogglePaid} />
       ))}
     </div>
   );
@@ -710,12 +822,14 @@ function DraggableOrderCard({
   onDelete,
   onInvoice,
   onShippingLabel,
+  onTogglePaid,
 }: {
   order: OrderRow;
   onEdit: (o: OrderRow) => void;
   onDelete: (id: number) => void;
   onInvoice: (o: OrderRow) => void;
   onShippingLabel: (o: OrderRow) => void;
+  onTogglePaid: (o: OrderRow) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: order.id });
 
@@ -733,6 +847,7 @@ function DraggableOrderCard({
         onDelete={onDelete}
         onInvoice={onInvoice}
         onShippingLabel={onShippingLabel}
+        onTogglePaid={onTogglePaid}
         dragHandle={{ attributes: attributes as unknown as React.HTMLAttributes<HTMLButtonElement>, listeners }}
       />
     </div>
@@ -745,6 +860,7 @@ function OrderCard({
   onDelete,
   onInvoice,
   onShippingLabel,
+  onTogglePaid,
   overlay,
   dragHandle,
 }: {
@@ -753,9 +869,11 @@ function OrderCard({
   onDelete?: (id: number) => void;
   onInvoice?: (o: OrderRow) => void;
   onShippingLabel?: (o: OrderRow) => void;
+  onTogglePaid?: (o: OrderRow) => void;
   overlay?: boolean;
   dragHandle?: { attributes: React.HTMLAttributes<HTMLButtonElement>; listeners: Record<string, unknown> | undefined };
 }) {
+  const paid = order.paymentStatus === "paid";
   return (
     <Card className={`p-3 space-y-1.5 ${overlay ? "shadow-xl rotate-2" : "shadow-sm"}`}>
       <div className="flex items-start gap-1.5">
@@ -781,6 +899,21 @@ function OrderCard({
           <Badge variant="outline" className="text-[10px] px-1.5 py-0">
             {order.channel}
           </Badge>
+          {!overlay && (
+            <button
+              onClick={() => onTogglePaid?.(order)}
+              title={paid ? "Ödendi (bekliyor yap)" : "Ödendi olarak işaretle"}
+              className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0 text-[10px] font-medium transition-colors ${
+                paid
+                  ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                  : order.paymentStatus === "partial"
+                    ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                    : "bg-destructive/10 text-destructive hover:bg-destructive/20"
+              }`}
+            >
+              {paid ? "Ödendi" : order.paymentStatus === "partial" ? "Kısmi" : "Bekliyor"}
+            </button>
+          )}
           <span className="text-[10px] text-muted-foreground">{formatDate(order.createdAt)}</span>
         </div>
         {!overlay && (

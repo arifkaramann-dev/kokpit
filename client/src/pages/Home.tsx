@@ -6,14 +6,20 @@ import { trpc } from "@/lib/trpc";
 import {
   AlertTriangle,
   ArrowRight,
+  Banknote,
   CalendarDays,
   ClipboardList,
+  Contact,
   ListChecks,
   Package,
+  PiggyBank,
+  Receipt,
   ShoppingBasket,
   ShoppingCart,
   Sparkles,
+  TrendingDown,
   TrendingUp,
+  Wallet,
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -24,6 +30,8 @@ export default function Home() {
   const statusMap = new Map((data?.statusCounts ?? []).map(s => [s.status, Number(s.count)]));
   const activeOrders =
     (statusMap.get("new") ?? 0) + (statusMap.get("production") ?? 0) + (statusMap.get("ready") ?? 0);
+  const finance = data?.finance;
+  const netPositive = (finance?.monthNet ?? 0) >= 0;
 
   return (
     <div className="space-y-5">
@@ -63,6 +71,46 @@ export default function Home() {
           value={isLoading ? "..." : String(data?.upcoming?.length ?? 0)}
           sub="Önümüzdeki 30 gün"
           color="text-violet-600 bg-violet-50 dark:bg-violet-950/40"
+        />
+      </div>
+
+      {/* Finans özeti */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <button className="text-left" onClick={() => setLocation("/siparisler")}>
+          <StatCard
+            icon={<Wallet className="h-5 w-5" />}
+            label="Tahsil Edilecek"
+            value={isLoading ? "..." : formatTL(finance?.receivables ?? 0)}
+            sub="Bekleyen + kısmi ödemeler"
+            color="text-rose-600 bg-rose-50 dark:bg-rose-950/40"
+          />
+        </button>
+        <StatCard
+          icon={<Banknote className="h-5 w-5" />}
+          label="Bu Ay Ciro"
+          value={isLoading ? "..." : formatTL(finance?.monthRevenue ?? 0)}
+          sub="Bu ayki siparişler"
+          color="text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40"
+        />
+        <button className="text-left" onClick={() => setLocation("/giderler")}>
+          <StatCard
+            icon={<TrendingDown className="h-5 w-5" />}
+            label="Bu Ay Gider"
+            value={isLoading ? "..." : formatTL(finance?.monthExpense ?? 0)}
+            sub="Giderler + alış faturaları"
+            color="text-amber-600 bg-amber-50 dark:bg-amber-950/40"
+          />
+        </button>
+        <StatCard
+          icon={<PiggyBank className="h-5 w-5" />}
+          label="Bu Ay Net"
+          value={isLoading ? "..." : formatTL(finance?.monthNet ?? 0)}
+          sub={netPositive ? "Ciro − gider" : "Zarar (ciro − gider)"}
+          color={
+            netPositive
+              ? "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40"
+              : "text-rose-600 bg-rose-50 dark:bg-rose-950/40"
+          }
         />
       </div>
 
@@ -198,6 +246,16 @@ export default function Home() {
               icon={<Package className="h-4 w-4" />}
               label="Ürün Ekle"
               onClick={() => setLocation("/urunler")}
+            />
+            <QuickAction
+              icon={<Contact className="h-4 w-4" />}
+              label="Müşteriler"
+              onClick={() => setLocation("/musteriler")}
+            />
+            <QuickAction
+              icon={<Receipt className="h-4 w-4" />}
+              label="Gider Ekle"
+              onClick={() => setLocation("/giderler")}
             />
             <QuickAction
               icon={<Sparkles className="h-4 w-4" />}

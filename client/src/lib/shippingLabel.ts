@@ -9,6 +9,8 @@ export type LabelOrder = {
   totalAmount?: string | number | null;
   itemsSummary?: string | null;
   notes?: string | null;
+  phone?: string | null;
+  address?: string | null;
 };
 
 export type LabelItem = {
@@ -65,10 +67,12 @@ export function printShippingLabel(
       ? formatTL(order.totalAmount)
       : "";
 
-  // Alıcı adres alanı: not varsa göster, yoksa el yazısı için çizgili alan.
-  const recipientAddr = order.notes
-    ? `<div class="addr">${esc(order.notes)}</div>`
-    : `<div class="addr blank"><span></span><span></span><span></span></div>`;
+  // Alıcı adres alanı: yapısal adres > not > el yazısı için çizgili alan.
+  const addrText = order.address || order.notes;
+  const phoneLine = order.phone ? `<div class="phone">☎ ${esc(order.phone)}</div>` : "";
+  const recipientAddr = addrText
+    ? `<div class="addr">${esc(addrText)}</div>${phoneLine}`
+    : `<div class="addr blank"><span></span><span></span><span></span></div>${phoneLine}`;
 
   const win = window.open("", "_blank", "width=520,height=760");
   if (!win) return;
@@ -91,6 +95,7 @@ export function printShippingLabel(
   .recipient .k { font-size: 0.26cm; text-transform: uppercase; letter-spacing: 0.05cm; color: #555; }
   .recipient .name { font-size: 0.6cm; font-weight: 800; line-height: 1.1; margin-top: 0.05cm; }
   .addr { font-size: 0.32cm; line-height: 1.4; margin-top: 0.15cm; min-height: 1.6cm; }
+  .phone { font-size: 0.3cm; font-weight: 700; margin-top: 0.08cm; }
   .addr.blank span { display: block; border-bottom: 1px solid #999; height: 0.55cm; }
   .barcode { text-align: center; margin: 0.25cm 0; }
   .barcode svg { max-width: 100%; height: auto; }

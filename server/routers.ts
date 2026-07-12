@@ -62,10 +62,32 @@ const orderInput = z.object({
   totalAmount: z.number().min(0).default(0),
   itemsSummary: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
+  customerPhone: z.string().nullable().optional(),
+  customerAddress: z.string().nullable().optional(),
+  paymentStatus: z.enum(["unpaid", "partial", "paid"]).optional(),
+  paidAmount: z.number().min(0).optional(),
+  paymentMethod: z.string().nullable().optional(),
   // Elden/dışarıdan satış girişleri doğrudan "Tamamlandı" olarak eklenebilir.
   status: z.enum(["new", "production", "ready", "done"]).optional(),
   // Kalem listesi gönderilirse toplam tutar ve özet bu satırlardan türetilir.
   items: z.array(orderItemInput).optional(),
+});
+
+const customerInput = z.object({
+  name: z.string().min(1),
+  phone: z.string().nullable().optional(),
+  email: z.string().nullable().optional(),
+  address: z.string().nullable().optional(),
+  city: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+});
+
+const expenseInput = z.object({
+  category: z.string().min(1).default("diğer"),
+  description: z.string().nullable().optional(),
+  amount: z.number().min(0).default(0),
+  expenseDate: z.string().nullable().optional(),
+  note: z.string().nullable().optional(),
 });
 
 export { itemsTotal, summarizeItems } from "./orderUtils";
@@ -398,7 +420,7 @@ export const appRouter = router({
         order.itemsSummary = summarizeItems(items);
       }
       const id = await db.createOrder({
-        ...(toDecimalFields(order, ["totalAmount"]) as never as object),
+        ...(toDecimalFields(order, ["totalAmount", "paidAmount"]) as never as object),
         orderNo: generateOrderNo(),
       } as never);
       if (items?.length) {
@@ -415,11 +437,28 @@ export const appRouter = router({
           order.itemsSummary = items.length ? summarizeItems(items) : null;
           await db.replaceOrderItems(input.id, toItemRows(items));
         }
-        await db.updateOrder(input.id, toDecimalFields(order, ["totalAmount"]) as never);
+        await db.updateOrder(input.id, toDecimalFields(order, ["totalAmount", "paidAmount"]) as never);
       }),
     setStatus: protectedProcedure
       .input(z.object({ id: z.number(), status: z.enum(["new", "production", "ready", "done"]) }))
       .mutation(({ input }) => db.updateOrder(input.id, { status: input.status })),
+    // Ödeme durumu/tutarı: kart üzerinden hızlı tahsilat işaretleme.
+    setPayment: protectedProcedure
+      .input(
+        z.object({
+          id: z.number(),
+          paymentStatus: z.enum(["unpaid", "partial", "paid"]),
+          paidAmount: z.number().min(0).default(0),
+          paymentMethod: z.string().nullable().optional(),
+        }),
+      )
+      .mutation(({ input }) =>
+        db.setOrderPayment(input.id, {
+          paymentStatus: input.paymentStatus,
+          paidAmount: String(input.paidAmount),
+          paymentMethod: input.paymentMethod ?? null,
+        }),
+      ),
     delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteOrder(input.id)),
   }),
 
@@ -632,6 +671,27 @@ export const appRouter = router({
     data: protectedProcedure.query(() => db.reportData()),
   }),
 
+  customers: router({
+    list: protectedProcedure.query(() => db.listCustomers()),
+    create: protectedProcedure.input(customerInput).mutation(({ input }) => db.createCustomer(input as never)),
+    update: protectedProcedure
+      .input(z.object({ id: z.number(), data: customerInput.partial() }))
+      .mutation(({ input }) => db.updateCustomer(input.id, input.data as never)),
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteCustomer(input.id)),
+  }),
+
+  expenses: router({
+    list: protectedProcedure.query(() => db.listExpenses()),
+    create: protectedProcedure.input(expenseInput).mutation(({ input }) => {
+      const { expenseDate, ...rest } = input;
+      return db.createExpense({
+        ...(toDecimalFields(rest, ["amount"]) as never as object),
+        expenseDate: expenseDate ? new Date(expenseDate) : new Date(),
+      } as never);
+    }),
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteExpense(input.id)),
+  }),
+
   suppliers: router({
     list: protectedProcedure.query(() => db.listSuppliers()),
     create: protectedProcedure.input(supplierInput).mutation(({ input }) => db.createSupplier(input as never)),
@@ -722,14 +782,15 @@ Türkçe yaz. Sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, o
 
   dashboard: router({
     summary: protectedProcedure.query(async () => {
-      const [today, statusCounts, critical, upcoming, openTasks] = await Promise.all([
+      const [today, statusCounts, critical, upcoming, openTasks, finance] = await Promise.all([
         db.countOrdersToday(),
         db.orderStatusCounts(),
         db.listCriticalMaterials(),
         db.upcomingCampaigns(30),
         db.listTasks(undefined, "open"),
+        db.financeSummary(),
       ]);
-      return { today, statusCounts, critical, upcoming, openTasks };
+      return { today, statusCounts, critical, upcoming, openTasks, finance };
     }),
   }),
 });

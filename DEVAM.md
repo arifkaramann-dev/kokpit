@@ -27,6 +27,12 @@ https://artofcolour-kokpit.onrender.com/ (Render, ücretsiz plan). Veritabanı: 
 - Şablon kütüphanesi, Ürün Geliştirme sihirbazı, Formül defteri, Üretim planlayıcı
 - Stok/hammadde, fatura girişi (AI fatura okuma), Maliyet & KDV, Strateji & Rapor
 - **Satış Analizi** (grafikler), **Görevler & Eksikler**
+- **Müşteriler (CRM):** ad/telefon/adres kaydı; sipariş formunda seçince telefon+adres
+  otomatik gelir, fatura ve kargo etiketine yapısal adres/telefon yazılır
+- **Ödeme & Tahsilat:** siparişte ödendi/kısmi/bekliyor, kartta hızlı "Ödendi" + rozet;
+  Kokpit'te **tahsil edilecek** toplamı. Trendyol siparişleri "ödendi" sayılır
+- **Giderler:** kira/kargo/reklam/komisyon vb. + Kokpit'te bu ay ciro/gider/net kâr
+- **Komut paleti (⌘K):** sayfa + ürün/sipariş/müşteri/hammadde arayıp gitme
 - **Asistan**: WhatsApp + uygulama içi sohbet + mikrofon; satış/stok/sipariş/görev/soru-cevap.
   **Sesli uyandırma** ("Hey Kokpit"): opt-in, sürekli dinleyip anahtar kelimeden sonra komutu
   gönderir (Web Speech API, sadece Chrome; tercih localStorage'da). Elle mikrofon uyandırma açıkken kapalı.
@@ -72,4 +78,6 @@ https://artofcolour-kokpit.onrender.com/ (Render, ücretsiz plan). Veritabanı: 
   `WHATSAPP_*`, `DATABASE_URL`, `JWT_SECRET`, `OWNER_EMAIL/PASSWORD/NAME`.
 - İlgili dosyalar: `server/{trendyol,hepsiburada,marketplace,assistant,whatsapp,images}.ts`,
   `server/routers.ts`, `server/db.ts`, `drizzle/schema.ts`, `client/src/pages/*`.
+- Yeni: `client/src/pages/{Customers,Expenses}.tsx`, `client/src/components/CommandPalette.tsx`.
+  Migration 0012 (customers, expenses tabloları + orders'a ödeme/adres alanları).
 - Kurulum rehberleri: `PAZARYERI.md` (pazaryeri + fatura + görsel link), `WHATSAPP.md`.

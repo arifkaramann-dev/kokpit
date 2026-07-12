@@ -58,6 +58,14 @@
 - [x] Ekran görüntüleriyle görsel doğrulama
 - [x] Checkpoint + teslim
 
+## Modül 10: Müşteriler & Tahsilat & Giderler (eklendi)
+- [x] Müşteriler (CRM): ad/telefon/adres kaydı, sipariş formunda seçince otomatik dolum
+- [x] Sipariş ödeme durumu (ödendi/kısmi/bekliyor) + kartta hızlı "Ödendi" + tahsilat toplamı
+- [x] Kargo etiketi ve faturaya yapısal müşteri adres/telefon
+- [x] Giderler modülü + Kokpit'te bu ay ciro/gider/net kâr
+- [x] Komut paleti (⌘K) — sayfa + ürün/sipariş/müşteri/hammadde hızlı arama
+
 ## Sonraki Oturuma Ertelenenler (opsiyonel geliştirmeler)
 - AI görsel üretimi modülü (ürün fotoğrafı arka plan değiştirme) — kullanıcı talebiyle eklenecek
-- Sipariş kalemleri için detaylı satır bazı CRUD (şu an özet metin alanı kullanılıyor) — kullanıcı talebiyle eklenecek
+- Kısmi ödeme tutarı girişi (şu an kısmi durum var, tutar karttan girilmiyor)
+- Kâr/Zarar raporuna (Strateji) giderleri dahil et (veri hazır: reportData.expenses)

@@ -66,6 +66,7 @@ export type MappedOrder = {
   totalAmount: string;
   itemsSummary: string;
   notes: string | null;
+  paymentStatus: "paid";
   cargoTrackingNumber: string | null;
   cargoProviderName: string | null;
   cargoTrackingLink: string | null;
@@ -100,6 +101,8 @@ export function mapPackageToOrder(pkg: TrendyolPackage): MappedOrder | null {
     totalAmount: String(pkg.totalPrice ?? itemsTotal(items)),
     itemsSummary: summarizeItems(items),
     notes: null,
+    // Pazaryeri ödemeyi tahsil eder; bu siparişler alacak sayılmaz.
+    paymentStatus: "paid",
     cargoTrackingNumber,
     cargoProviderName: pkg.cargoProviderName ?? null,
     cargoTrackingLink: pkg.cargoTrackingLink ?? null,

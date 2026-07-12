@@ -5,6 +5,8 @@ import Analytics from "@/pages/Analytics";
 import Assistant from "@/pages/Assistant";
 import Campaigns from "@/pages/Campaigns";
 import Costs from "@/pages/Costs";
+import Customers from "@/pages/Customers";
+import Expenses from "@/pages/Expenses";
 import Development from "@/pages/Development";
 import Formulas from "@/pages/Formulas";
 import Home from "@/pages/Home";
@@ -30,6 +32,8 @@ function Router() {
       <Switch>
         <Route path={"/"} component={Home} />
         <Route path={"/siparisler"} component={Orders} />
+        <Route path={"/musteriler"} component={Customers} />
+        <Route path={"/giderler"} component={Expenses} />
         <Route path={"/stok"} component={Stock} />
         <Route path={"/faturalar"} component={Purchases} />
         <Route path={"/urunler"} component={Products} />

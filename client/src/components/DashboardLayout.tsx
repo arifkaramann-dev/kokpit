@@ -21,11 +21,13 @@ import {
 } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/useMobile";
 import VoiceButton from "@/components/VoiceButton";
+import CommandPalette from "@/components/CommandPalette";
 import {
   BarChart3,
   Beaker,
   Bot,
   CalendarDays,
+  Contact,
   Factory,
   FlaskConical,
   Calculator,
@@ -37,9 +39,11 @@ import {
   Package,
   PanelLeft,
   ReceiptText,
+  Search,
   Settings2,
   Sparkles,
   Target,
+  TrendingDown,
   Truck,
   Warehouse,
 } from "lucide-react";
@@ -52,9 +56,11 @@ const menuItems = [
   { icon: LayoutDashboard, label: "Kokpit", path: "/" },
   { icon: Bot, label: "Asistan", path: "/asistan" },
   { icon: ClipboardList, label: "Sipariş Panosu", path: "/siparisler" },
+  { icon: Contact, label: "Müşteriler", path: "/musteriler" },
   { icon: ListChecks, label: "Görevler & Eksikler", path: "/gorevler" },
   { icon: Warehouse, label: "Stok & Hammadde", path: "/stok" },
   { icon: ReceiptText, label: "Fatura Girişi", path: "/faturalar" },
+  { icon: TrendingDown, label: "Giderler", path: "/giderler" },
   { icon: Package, label: "Ürünler & Türevler", path: "/urunler" },
   { icon: FlaskConical, label: "Ürün Geliştirme", path: "/gelistirme" },
   { icon: Beaker, label: "Formül Defteri", path: "/formuller" },
@@ -194,6 +200,18 @@ function DashboardLayoutContent({
           </SidebarHeader>
 
           <SidebarContent className="gap-0">
+            {!isCollapsed && (
+              <div className="px-3 pt-2 pb-1">
+                <button
+                  onClick={() => window.dispatchEvent(new Event("open-command-palette"))}
+                  className="flex w-full items-center gap-2 rounded-lg border bg-background px-2.5 py-1.5 text-sm text-muted-foreground hover:bg-accent transition-colors"
+                >
+                  <Search className="h-4 w-4" />
+                  <span>Ara…</span>
+                  <kbd className="ml-auto rounded border bg-muted px-1.5 text-[10px]">⌘K</kbd>
+                </button>
+              </div>
+            )}
             <SidebarMenu className="px-2 py-1">
               {menuItems.map(item => {
                 const isActive = location === item.path;
@@ -274,6 +292,7 @@ function DashboardLayoutContent({
         )}
         <main className="flex-1 p-4">{children}</main>
         <VoiceButton />
+        <CommandPalette />
       </SidebarInset>
     </>
   );
