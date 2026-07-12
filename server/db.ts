@@ -726,3 +726,16 @@ export async function deleteTask(id: number) {
   const db = await requireDb();
   await db.delete(tasks).where(eq(tasks.id, id));
 }
+
+/* ------------------------- Toplu Fiyat Güncelleme ------------------------- */
+
+/** Tüm ürünlerin (ya da bir serinin) satış fiyatını yüzdeyle günceller. */
+export async function bulkUpdatePrices(percent: number, series: string | null) {
+  const db = await requireDb();
+  const factor = 1 + percent / 100;
+  const setExpr = { salePrice: sql`ROUND(${products.salePrice} * ${factor}, 2)` };
+  const [result] = series
+    ? await db.update(products).set(setExpr).where(eq(products.series, series))
+    : await db.update(products).set(setExpr);
+  return { affected: result.affectedRows ?? 0 };
+}

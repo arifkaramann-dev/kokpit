@@ -10,10 +10,17 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { formatTL } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
-import { Beaker, ChevronDown, ChevronRight, Download, Layers, Package, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { Beaker, ChevronDown, ChevronRight, Download, Layers, Package, Pencil, Percent, Plus, Printer, Search, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import TemplatePicker from "@/components/TemplatePicker";
 import { toast } from "sonner";
@@ -125,6 +132,25 @@ export default function Products() {
         (childrenOf.get(p.id) ?? []).some(c => c.name.toLowerCase().includes(q)),
     );
   }, [products, search, childrenOf]);
+
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkPercent, setBulkPercent] = useState("10");
+  const [bulkSeries, setBulkSeries] = useState<string>("__all__");
+  const seriesList = useMemo(
+    () =>
+      Array.from(
+        new Set(((products as ProductRow[]) ?? []).map(p => p.series).filter((s): s is string => Boolean(s))),
+      ),
+    [products],
+  );
+  const bulkPrice = trpc.products.bulkPrice.useMutation({
+    onSuccess: r => {
+      utils.products.invalidate();
+      setBulkOpen(false);
+      toast.success(`${r.affected} ürünün fiyatı güncellendi`);
+    },
+    onError: e => toast.error(e.message),
+  });
 
   // Satışa hazır katalog dosyası: Excel/pazaryeri şablonlarına yapıştırılabilir.
   function exportCsv() {
@@ -287,7 +313,10 @@ export default function Products() {
             Önce ana boyayı tanımlayın, ardından istediğiniz yüzey veya kullanım alanı için sınırsız türev ekleyin.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button variant="outline" onClick={() => setBulkOpen(true)}>
+            <Percent className="h-4 w-4 mr-1" /> Toplu Fiyat
+          </Button>
           <Button variant="outline" onClick={exportCsv}>
             <Download className="h-4 w-4 mr-1" /> Dışa Aktar
           </Button>
@@ -378,6 +407,15 @@ export default function Products() {
                   >
                     <Beaker className="h-3.5 w-3.5" />
                   </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-8 w-8"
+                    title="Etiket yazdır"
+                    onClick={() => printLabel(main)}
+                  >
+                    <Printer className="h-3.5 w-3.5" />
+                  </Button>
                   <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openEdit(main)}>
                     <Pencil className="h-3.5 w-3.5" />
                   </Button>
@@ -429,6 +467,15 @@ export default function Products() {
                       </div>
                       <span className="text-sm font-medium whitespace-nowrap">{formatTL(v.salePrice)}</span>
                       <div className="flex items-center gap-0.5">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7"
+                          title="Etiket yazdır"
+                          onClick={() => printLabel(v)}
+                        >
+                          <Printer className="h-3.5 w-3.5" />
+                        </Button>
                         <Button
                           size="icon"
                           variant="ghost"
@@ -801,8 +848,115 @@ export default function Products() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={bulkOpen} onOpenChange={setBulkOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Toplu Fiyat Güncelleme</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Tüm ürünlerin (veya bir serinin) satış fiyatını yüzdeyle artır ya da azalt.
+              Örn. %10 zam için 10, %5 indirim için -5 yaz.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Yüzde (%)</Label>
+                <Input
+                  type="number"
+                  value={bulkPercent}
+                  onChange={e => setBulkPercent(e.target.value)}
+                  placeholder="10"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Kapsam</Label>
+                <Select value={bulkSeries} onValueChange={setBulkSeries}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">Tüm ürünler</SelectItem>
+                    {seriesList.map(s => (
+                      <SelectItem key={s} value={s}>
+                        Seri: {s}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            {(() => {
+              const pct = parseFloat(bulkPercent.replace(",", "."));
+              if (isNaN(pct) || pct === 0) return null;
+              const count =
+                bulkSeries === "__all__"
+                  ? ((products as ProductRow[]) ?? []).length
+                  : ((products as ProductRow[]) ?? []).filter(p => p.series === bulkSeries).length;
+              return (
+                <p className="text-xs font-medium">
+                  {count} ürünün fiyatı {pct > 0 ? `%${pct} artacak` : `%${Math.abs(pct)} düşecek`}.
+                </p>
+              );
+            })()}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkOpen(false)}>
+              İptal
+            </Button>
+            <Button
+              disabled={bulkPrice.isPending}
+              onClick={() => {
+                const pct = parseFloat(bulkPercent.replace(",", "."));
+                if (isNaN(pct) || pct === 0) return toast.error("Geçerli bir yüzde gir");
+                if (pct < -90 || pct > 500) return toast.error("Yüzde -90 ile 500 arasında olmalı");
+                bulkPrice.mutate({
+                  percent: pct,
+                  series: bulkSeries === "__all__" ? null : bulkSeries,
+                });
+              }}
+            >
+              Uygula
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
+}
+
+/** Ürün etiketini yazdırma penceresinde açar; boyutu etiket boyutundan (örn. "6x9 cm") alır. */
+function printLabel(p: ProductRow) {
+  const dims = (p.labelSize ?? "").match(/(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)/i);
+  const w = dims ? dims[1].replace(",", ".") : "6";
+  const h = dims ? dims[2].replace(",", ".") : "9";
+  const esc = (s: string | null | undefined) =>
+    String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n/g, "<br/>");
+  const win = window.open("", "_blank", "width=640,height=800");
+  if (!win) return;
+  win.document.write(`<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>Etiket — ${esc(p.name)}</title>
+<style>
+  @page { size: ${w}cm ${h}cm; margin: 0; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: Arial, sans-serif; }
+  .label { width: ${w}cm; height: ${h}cm; padding: 0.25cm; display: flex; flex-direction: column; border: 1px dashed #bbb; overflow: hidden; }
+  @media print { .label { border: none; } }
+  .brand { font-size: 0.32cm; font-weight: 800; letter-spacing: 0.06cm; text-transform: uppercase; }
+  .name { font-size: 0.42cm; font-weight: 700; margin-top: 0.12cm; line-height: 1.15; }
+  .pack { font-size: 0.28cm; color: #333; margin-top: 0.06cm; }
+  .text { font-size: 0.24cm; margin-top: 0.15cm; line-height: 1.3; flex: 1; overflow: hidden; }
+  .safety { font-size: 0.19cm; color: #444; margin-top: 0.12cm; border-top: 0.5px solid #999; padding-top: 0.08cm; line-height: 1.25; }
+</style></head><body>
+<div class="label">
+  <div class="brand">Art of Colour</div>
+  <div class="name">${esc(p.name)}</div>
+  ${p.packaging || p.colorCode ? `<div class="pack">${esc([p.packaging, p.colorCode].filter(Boolean).join(" · "))}</div>` : ""}
+  ${p.labelText ? `<div class="text">${esc(p.labelText)}</div>` : ""}
+  ${p.safetyNotes ? `<div class="safety">${esc(p.safetyNotes)}</div>` : ""}
+</div>
+<script>window.onload = () => window.print();</script>
+</body></html>`);
+  win.document.close();
 }
 
 function ChipGroup({

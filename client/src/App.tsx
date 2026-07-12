@@ -9,6 +9,7 @@ import Home from "@/pages/Home";
 import Marketing from "@/pages/Marketing";
 import NotFound from "@/pages/NotFound";
 import Orders from "@/pages/Orders";
+import Production from "@/pages/Production";
 import Products from "@/pages/Products";
 import Purchases from "@/pages/Purchases";
 import Stock from "@/pages/Stock";
@@ -31,6 +32,7 @@ function Router() {
         <Route path={"/urunler"} component={Products} />
         <Route path={"/gelistirme"} component={Development} />
         <Route path={"/formuller"} component={Formulas} />
+        <Route path={"/uretim"} component={Production} />
         <Route path={"/maliyet"} component={Costs} />
         <Route path={"/pazarlama"} component={Marketing} />
         <Route path={"/kampanyalar"} component={Campaigns} />

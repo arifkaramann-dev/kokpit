@@ -237,6 +237,10 @@ export const appRouter = router({
         }
         return { count: combos.length };
       }),
+    // Toplu zam/indirim: tüm ürünlerin (veya bir serinin) fiyatı yüzdeyle güncellenir.
+    bulkPrice: protectedProcedure
+      .input(z.object({ percent: z.number().min(-90).max(500), series: z.string().nullable().optional() }))
+      .mutation(({ input }) => db.bulkUpdatePrices(input.percent, input.series ?? null)),
     images: protectedProcedure
       .input(z.object({ productId: z.number() }))
       .query(({ input }) => db.getProductImages(input.productId)),
@@ -246,6 +250,41 @@ export const appRouter = router({
     deleteImage: protectedProcedure
       .input(z.object({ productId: z.number(), kind: z.enum(["main", "packaging", "usage"]) }))
       .mutation(({ input }) => db.deleteProductImage(input.productId, input.kind)),
+  }),
+
+  production: router({
+    // Üretim kaydı: reçete × adet kadar hammadde stoktan düşülür (hareket notuyla).
+    produce: protectedProcedure
+      .input(z.object({ productId: z.number(), qty: z.number().positive(), force: z.boolean().default(false) }))
+      .mutation(async ({ input }) => {
+        const product = await db.getProduct(input.productId);
+        if (!product) throw new TRPCError({ code: "NOT_FOUND", message: "Ürün bulunamadı" });
+        const formula = await db.listFormulaItems(input.productId);
+        if (formula.length === 0) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Bu ürünün reçetesi yok — önce Formül Defteri'nden ekleyin." });
+        }
+        const mats = await db.listMaterials();
+        const byId = new Map(mats.map(m => [m.id, m]));
+        const missing: string[] = [];
+        for (const f of formula) {
+          const m = byId.get(f.materialId);
+          const need = input.qty * (parseFloat(String(f.qty)) || 0);
+          const stock = m ? parseFloat(String(m.stockQty)) || 0 : 0;
+          if (!m || stock < need) {
+            missing.push(`${f.materialName ?? "?"} (gereken ${need}, stok ${stock})`);
+          }
+        }
+        if (missing.length > 0 && !input.force) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: `Stok yetersiz: ${missing.join(", ")}` });
+        }
+        for (const f of formula) {
+          const need = input.qty * (parseFloat(String(f.qty)) || 0);
+          if (need > 0) {
+            await db.adjustStock(f.materialId, "out", need, `Üretim: ${input.qty}× ${product.name}`);
+          }
+        }
+        return { deducted: formula.length, missing };
+      }),
   }),
 
   formula: router({

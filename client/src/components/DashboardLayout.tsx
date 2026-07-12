@@ -24,6 +24,7 @@ import VoiceButton from "@/components/VoiceButton";
 import {
   Beaker,
   CalendarDays,
+  Factory,
   FlaskConical,
   Calculator,
   ClipboardList,
@@ -53,6 +54,7 @@ const menuItems = [
   { icon: Package, label: "Ürünler & Türevler", path: "/urunler" },
   { icon: FlaskConical, label: "Ürün Geliştirme", path: "/gelistirme" },
   { icon: Beaker, label: "Formül Defteri", path: "/formuller" },
+  { icon: Factory, label: "Üretim", path: "/uretim" },
   { icon: Calculator, label: "Maliyet & Kar", path: "/maliyet" },
   { icon: Sparkles, label: "AI Pazarlama", path: "/pazarlama" },
   { icon: CalendarDays, label: "Kampanya Takvimi", path: "/kampanyalar" },
