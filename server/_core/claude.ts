@@ -17,6 +17,32 @@ function contentToText(content: Message["content"]): string {
   return "";
 }
 
+/** Sık görülen Claude API hatalarını kullanıcıya anlaşılır Türkçe mesaja çevirir. */
+export function translateApiError(error: unknown): Error {
+  const raw = error instanceof Error ? error.message : String(error);
+  if (raw.includes("credit balance is too low")) {
+    return new Error(
+      "Anthropic API kredisi bitti. console.anthropic.com > Plans & Billing'den kredi yükleyin; yükleyince kendiliğinden çalışır."
+    );
+  }
+  if (raw.includes("invalid x-api-key") || raw.includes("authentication_error")) {
+    return new Error("ANTHROPIC_API_KEY geçersiz görünüyor. Render > Environment'taki anahtarı kontrol edin.");
+  }
+  if (raw.includes("overloaded_error") || raw.includes("rate_limit")) {
+    return new Error("AI şu an çok yoğun, 1 dakika sonra tekrar deneyin.");
+  }
+  return error instanceof Error ? error : new Error(raw);
+}
+
+/** API çağrısını sarar; hata olursa Türkçeleştirip fırlatır. */
+async function callClaude<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    throw translateApiError(error);
+  }
+}
+
 export async function invokeClaude(params: InvokeParams): Promise<InvokeResult> {
   const client = new Anthropic();
 
@@ -33,13 +59,15 @@ export async function invokeClaude(params: InvokeParams): Promise<InvokeResult> 
     messages.push({ role: "user", content: "Devam et." });
   }
 
-  const response = await client.messages.create({
-    model: params.model ?? "claude-opus-4-8",
-    max_tokens: params.maxTokens ?? params.max_tokens ?? 4096,
-    thinking: { type: "adaptive" },
-    system: systemParts.length > 0 ? systemParts.join("\n\n") : undefined,
-    messages,
-  });
+  const response = await callClaude(() =>
+    client.messages.create({
+      model: params.model ?? "claude-opus-4-8",
+      max_tokens: params.maxTokens ?? params.max_tokens ?? 4096,
+      thinking: { type: "adaptive" },
+      system: systemParts.length > 0 ? systemParts.join("\n\n") : undefined,
+      messages,
+    })
+  );
 
   if (response.stop_reason === "refusal") {
     throw new Error("AI bu isteği güvenlik nedeniyle yanıtlamadı. İfadeyi değiştirip tekrar deneyin.");
@@ -113,24 +141,26 @@ export async function extractInvoice(mediaType: string, base64: string): Promise
       ? ({ type: "document", source } as Anthropic.DocumentBlockParam)
       : ({ type: "image", source } as Anthropic.ImageBlockParam);
 
-  const response = await client.messages.create({
-    model: "claude-opus-4-8",
-    max_tokens: 8192,
-    thinking: { type: "adaptive" },
-    output_config: { format: { type: "json_schema", schema: INVOICE_SCHEMA as never } },
-    messages: [
-      {
-        role: "user",
-        content: [
-          block,
-          {
-            type: "text",
-            text: "Bu bir satın alma faturası/irsaliye. Tedarikçi adını, fatura numarasını ve tüm kalemleri çıkar. Her kalem için: malzeme adı (Türkçe, sade), miktar (sayı), birim (kg/gr/lt/ml/adet gibi), KDV hariç birim fiyat (sayı). Kargo/iskonto satırlarını kaleme dahil etme.",
-          },
-        ],
-      },
-    ],
-  });
+  const response = await callClaude(() =>
+    client.messages.create({
+      model: "claude-opus-4-8",
+      max_tokens: 8192,
+      thinking: { type: "adaptive" },
+      output_config: { format: { type: "json_schema", schema: INVOICE_SCHEMA as never } },
+      messages: [
+        {
+          role: "user",
+          content: [
+            block,
+            {
+              type: "text",
+              text: "Bu bir satın alma faturası/irsaliye. Tedarikçi adını, fatura numarasını ve tüm kalemleri çıkar. Her kalem için: malzeme adı (Türkçe, sade), miktar (sayı), birim (kg/gr/lt/ml/adet gibi), KDV hariç birim fiyat (sayı). Kargo/iskonto satırlarını kaleme dahil etme.",
+            },
+          ],
+        },
+      ],
+    })
+  );
   if (response.stop_reason === "refusal") {
     throw new Error("AI bu belgeyi işleyemedi. Kalemleri elle girebilirsiniz.");
   }
@@ -193,18 +223,20 @@ export async function parseVoiceCommand(transcript: string): Promise<VoiceComman
     throw new Error("Sesli komut için ANTHROPIC_API_KEY gerekli (Render > Environment'a ekleyin).");
   }
   const client = new Anthropic();
-  const response = await client.messages.create({
-    model: "claude-opus-4-8",
-    max_tokens: 2048,
-    thinking: { type: "adaptive" },
-    output_config: { format: { type: "json_schema", schema: VOICE_SCHEMA as never } },
-    system:
-      "Boya işletmesi yönetim uygulamasının sesli komut çözücüsüsün. Türkçe konuşma metnini işletme komutuna çevir. " +
-      "'sattım/elden satış' → sale; 'sipariş geldi/al' → order; 'stok girişi/geldi/aldım' → stock_in; 'kullandım/stoktan düş' → stock_out; 'not al' → note; " +
-      "işletme hakkında soru/rapor isteği ('kaç sipariş var', 'ciro ne kadar', 'stok durumu' gibi) → query ve soruyu noteText alanına aynen yaz. " +
-      "Ürün/malzeme adlarını sade yaz. 'reply' alanına yapılan işi tek cümlede Türkçe özetle.",
-    messages: [{ role: "user", content: transcript }],
-  });
+  const response = await callClaude(() =>
+    client.messages.create({
+      model: "claude-opus-4-8",
+      max_tokens: 2048,
+      thinking: { type: "adaptive" },
+      output_config: { format: { type: "json_schema", schema: VOICE_SCHEMA as never } },
+      system:
+        "Boya işletmesi yönetim uygulamasının sesli komut çözücüsüsün. Türkçe konuşma metnini işletme komutuna çevir. " +
+        "'sattım/elden satış' → sale; 'sipariş geldi/al' → order; 'stok girişi/geldi/aldım' → stock_in; 'kullandım/stoktan düş' → stock_out; 'not al' → note; " +
+        "işletme hakkında soru/rapor isteği ('kaç sipariş var', 'ciro ne kadar', 'stok durumu' gibi) → query ve soruyu noteText alanına aynen yaz. " +
+        "Ürün/malzeme adlarını sade yaz. 'reply' alanına yapılan işi tek cümlede Türkçe özetle.",
+      messages: [{ role: "user", content: transcript }],
+    })
+  );
   if (response.stop_reason === "refusal") throw new Error("Komut işlenemedi, tekrar deneyin.");
   const text = response.content
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
@@ -219,16 +251,18 @@ export async function answerBusinessQuestion(question: string, snapshot: string)
     throw new Error("AI asistan için ANTHROPIC_API_KEY gerekli (Render > Environment'a ekleyin).");
   }
   const client = new Anthropic();
-  const response = await client.messages.create({
-    model: "claude-opus-4-8",
-    max_tokens: 1500,
-    thinking: { type: "adaptive" },
-    system:
-      "Art of Colour boya işletmesinin kişisel asistanısın. Sana işletmenin güncel veri özeti verilir; " +
-      "soruyu SADECE bu veriye dayanarak Türkçe, kısa ve net yanıtla (WhatsApp mesajı gibi, birkaç cümle/madde). " +
-      "Veride olmayan bir şey sorulursa uydurma, 'bu bilgi elimde yok' de. Tutarları TL olarak yaz.",
-    messages: [{ role: "user", content: `İşletme veri özeti:\n${snapshot}\n\nSoru: ${question}` }],
-  });
+  const response = await callClaude(() =>
+    client.messages.create({
+      model: "claude-opus-4-8",
+      max_tokens: 1500,
+      thinking: { type: "adaptive" },
+      system:
+        "Art of Colour boya işletmesinin kişisel asistanısın. Sana işletmenin güncel veri özeti verilir; " +
+        "soruyu SADECE bu veriye dayanarak Türkçe, kısa ve net yanıtla (WhatsApp mesajı gibi, birkaç cümle/madde). " +
+        "Veride olmayan bir şey sorulursa uydurma, 'bu bilgi elimde yok' de. Tutarları TL olarak yaz.",
+      messages: [{ role: "user", content: `İşletme veri özeti:\n${snapshot}\n\nSoru: ${question}` }],
+    })
+  );
   if (response.stop_reason === "refusal") throw new Error("Soru yanıtlanamadı, tekrar deneyin.");
   return response.content
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
