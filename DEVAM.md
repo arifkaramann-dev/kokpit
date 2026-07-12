@@ -27,7 +27,9 @@ https://artofcolour-kokpit.onrender.com/ (Render, ücretsiz plan). Veritabanı: 
 - Şablon kütüphanesi, Ürün Geliştirme sihirbazı, Formül defteri, Üretim planlayıcı
 - Stok/hammadde, fatura girişi (AI fatura okuma), Maliyet & KDV, Strateji & Rapor
 - **Satış Analizi** (grafikler), **Görevler & Eksikler**
-- **Asistan**: WhatsApp + uygulama içi sohbet + mikrofon; satış/stok/sipariş/görev/soru-cevap
+- **Asistan**: WhatsApp + uygulama içi sohbet + mikrofon; satış/stok/sipariş/görev/soru-cevap.
+  **Sesli uyandırma** ("Hey Kokpit"): opt-in, sürekli dinleyip anahtar kelimeden sonra komutu
+  gönderir (Web Speech API, sadece Chrome; tercih localStorage'da). Elle mikrofon uyandırma açıkken kapalı.
 - **Fatura kesme** (KDV dökümlü, yazdırılabilir) + Ayarlar (şirket bilgileri)
 - **Pazaryeri:** Trendyol + Hepsiburada sipariş çekme, birleşik senkron, yarış durumu
   kilidi, "Mükerrerleri temizle", "Bağlantıyı Test Et", **Trendyol'a stok/fiyat gönderme**
@@ -53,8 +55,9 @@ https://artofcolour-kokpit.onrender.com/ (Render, ücretsiz plan). Veritabanı: 
    (gerekirse `LABELARY_URL` env ile değiştirilebilir).
 4. **Sonraki entegratör adımları:** Hepsiburada'ya stok/fiyat gönderme, sıfırdan ürün
    açma (kategori/marka/görsel/özellik), N11 / Çiçeksepeti eklemek.
-5. **Sesli uyandırma ("Hey ..." komutu):** Asistanı el değmeden başlatmak için tarayıcıda
-   sürekli dinleyip anahtar kelimeyle tetikleme (Web Speech API). Gerçek wake-word için ayrı motor.
+5. **Sesli uyandırma** ✔ yapıldı (Asistan sayfası, "Hey Kokpit"). Not: Web Speech API sürekli
+   dinleme sadece sekme açıkken ve Chrome'da çalışır; gerçek arka plan "Hey Siri" seviyesi için
+   ayrı bir wake-word motoru (ör. Picovoice Porcupine) gerekir — istenirse ayrı adım.
 
 ## Teknik notlar (yeni sohbet için)
 - Branch: `claude/web-site-development-tx6n7h` ama **doğrudan main'e** push ediliyor.
