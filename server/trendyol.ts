@@ -129,6 +129,70 @@ export function isTrendyolConfigured(): boolean {
   return Boolean(ENV.trendyolSellerId && ENV.trendyolApiKey && ENV.trendyolApiSecret);
 }
 
+export type StockPriceItem = {
+  barcode: string;
+  quantity: number;
+  salePrice: number;
+  listPrice: number;
+};
+
+/**
+ * Trendyol'a stok ve fiyat gönderir (mevcut listelemeleri günceller).
+ * Barkodla eşleşen ürünlerin adet ve fiyatı güncellenir.
+ * Belgeler: fiyat ve stok güncelleme (price-and-inventory).
+ */
+export async function pushTrendyolStockPrice(items: StockPriceItem[]) {
+  if (!isTrendyolConfigured()) {
+    throw new Error("Trendyol entegrasyonu yapılandırılmamış (Satıcı ID, API Key, API Secret gerekli).");
+  }
+  if (items.length === 0) throw new Error("Gönderilecek ürün yok (barkodlu ürün gerekli).");
+
+  const url = `${TRENDYOL_API_BASE}/integration/inventory/sellers/${ENV.trendyolSellerId}/products/price-and-inventory`;
+  const auth = Buffer.from(`${ENV.trendyolApiKey}:${ENV.trendyolApiSecret}`).toString("base64");
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${auth}`,
+      "User-Agent": `${ENV.trendyolSellerId} - SelfIntegration`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ items }),
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    throw new Error("Trendyol API bilgileri reddedildi (yetki hatası). API Key/Secret ve Satıcı ID'yi kontrol edin.");
+  }
+  if (!res.ok) {
+    const body = (await res.text()).slice(0, 300);
+    throw new Error(`Trendyol stok/fiyat gönderimi başarısız (${res.status}): ${body}`);
+  }
+  const data = (await res.json()) as { batchRequestId?: string };
+  return { batchRequestId: data.batchRequestId ?? null, sent: items.length };
+}
+
+/** Bağlantı testi: gerçek istek atıp Trendyol'un döndürdüğü HTTP durumunu döner. */
+export async function testTrendyolConnection(): Promise<{ ok: boolean; status: number; body: string }> {
+  if (!isTrendyolConfigured()) {
+    return { ok: false, status: 0, body: "Ayarlar eksik (Satıcı ID, API Key, API Secret)." };
+  }
+  const url = new URL(`${TRENDYOL_API_BASE}/integration/order/sellers/${ENV.trendyolSellerId}/orders`);
+  url.searchParams.set("size", "1");
+  const auth = Buffer.from(`${ENV.trendyolApiKey}:${ENV.trendyolApiSecret}`).toString("base64");
+  try {
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Basic ${auth}`,
+        "User-Agent": `${ENV.trendyolSellerId} - SelfIntegration`,
+        Accept: "application/json",
+      },
+    });
+    const body = (await res.text()).slice(0, 300);
+    return { ok: res.ok, status: res.status, body };
+  } catch (error) {
+    return { ok: false, status: 0, body: error instanceof Error ? error.message : "Bağlantı hatası" };
+  }
+}
+
 /**
  * Son `daysBack` günün Trendyol siparişlerini çekip yeni olanları panoya ekler.
  * Aynı sipariş (TY-orderNumber) ikinci kez eklenmez.

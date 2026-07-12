@@ -28,6 +28,13 @@ export default function Settings() {
   const { data: settings } = trpc.settings.get.useQuery();
   const { data: mpStatus } = trpc.orders.marketplaceStatus.useQuery();
   const [form, setForm] = useState<Record<string, string>>({});
+  const [testResult, setTestResult] = useState<Record<string, { ok: boolean; status: number; body: string }>>({});
+
+  const testConn = trpc.orders.testConnection.useMutation({
+    onSuccess: (r, vars) => setTestResult(s => ({ ...s, [vars.key]: r })),
+    onError: (e, vars) =>
+      setTestResult(s => ({ ...s, [vars.key]: { ok: false, status: 0, body: e.message } })),
+  });
 
   useEffect(() => {
     if (settings) setForm(settings);
@@ -111,6 +118,32 @@ export default function Settings() {
                   Render → Environment'a şu değişkenleri ekleyin:{" "}
                   <span className="font-mono">{m.missing.join(", ")}</span>
                 </p>
+              )}
+              {m.configured && (
+                <div className="mt-2 space-y-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={testConn.isPending}
+                    onClick={() => testConn.mutate({ key: m.key })}
+                  >
+                    Bağlantıyı Test Et
+                  </Button>
+                  {testResult[m.key] && (
+                    <div
+                      className={`text-xs rounded-md border p-2 font-mono break-all ${
+                        testResult[m.key].ok
+                          ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-400"
+                          : "border-rose-500/40 text-rose-700 dark:text-rose-400"
+                      }`}
+                    >
+                      HTTP {testResult[m.key].status} {testResult[m.key].ok ? "✓ Başarılı" : "✗ Hata"}
+                      {testResult[m.key].body && (
+                        <div className="mt-1 opacity-80">{testResult[m.key].body}</div>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           ))}

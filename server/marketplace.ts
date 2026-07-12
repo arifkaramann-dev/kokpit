@@ -1,6 +1,6 @@
 import { ENV } from "./_core/env";
-import { isHepsiburadaConfigured, syncHepsiburadaOrders } from "./hepsiburada";
-import { isTrendyolConfigured, syncTrendyolOrders } from "./trendyol";
+import { isHepsiburadaConfigured, syncHepsiburadaOrders, testHepsiburadaConnection } from "./hepsiburada";
+import { isTrendyolConfigured, syncTrendyolOrders, testTrendyolConnection } from "./trendyol";
 
 /**
  * Pazaryeri entegrasyonlarının ortak yönetimi: durum teşhisi ve toplu çekme.
@@ -39,6 +39,13 @@ export function marketplaceStatus(): MarketplaceStatus[] {
       ].filter((x): x is string => Boolean(x)),
     },
   ];
+}
+
+/** Bir pazaryerine gerçek istek atıp ham HTTP sonucunu döner (teşhis için). */
+export async function testMarketplaceConnection(
+  key: "trendyol" | "hepsiburada",
+): Promise<{ ok: boolean; status: number; body: string }> {
+  return key === "trendyol" ? testTrendyolConnection() : testHepsiburadaConnection();
 }
 
 export type SyncResult = {

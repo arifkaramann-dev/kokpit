@@ -20,7 +20,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { formatTL } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
-import { Beaker, ChevronDown, ChevronRight, Download, Layers, Package, Pencil, Percent, Plus, Printer, Search, Trash2 } from "lucide-react";
+import { Beaker, ChevronDown, ChevronRight, Download, Layers, Package, Pencil, Percent, Plus, Printer, Search, Store, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import TemplatePicker from "@/components/TemplatePicker";
 import { toast } from "sonner";
@@ -41,6 +41,8 @@ export type ProductRow = {
   packagingCost: string;
   shippingCost: string;
   packaging: string | null;
+  barcode: string | null;
+  stockQty: number;
   labelSize: string | null;
   labelText: string | null;
   usageGuide: string | null;
@@ -62,6 +64,8 @@ const emptyForm = {
   packagingCost: "",
   shippingCost: "",
   packaging: "",
+  barcode: "",
+  stockQty: "",
   labelSize: "",
   labelText: "",
   usageGuide: "",
@@ -150,6 +154,15 @@ export default function Products() {
       toast.success(`${r.affected} ürünün fiyatı güncellendi`);
     },
     onError: e => toast.error(e.message),
+  });
+
+  const pushTrendyol = trpc.products.pushToTrendyol.useMutation({
+    onSuccess: r =>
+      toast.success(
+        `Trendyol'a ${r.sent} ürünün stok/fiyatı gönderildi${r.batchRequestId ? ` (parti: ${r.batchRequestId})` : ""}`,
+        { duration: 8000 },
+      ),
+    onError: e => toast.error(e.message, { duration: 8000 }),
   });
 
   // Satışa hazır katalog dosyası: Excel/pazaryeri şablonlarına yapıştırılabilir.
@@ -262,6 +275,8 @@ export default function Products() {
       packagingCost: p.packagingCost,
       shippingCost: p.shippingCost,
       packaging: p.packaging ?? "",
+      barcode: p.barcode ?? "",
+      stockQty: p.stockQty != null ? String(p.stockQty) : "",
       labelSize: p.labelSize ?? "",
       labelText: p.labelText ?? "",
       usageGuide: p.usageGuide ?? "",
@@ -289,6 +304,8 @@ export default function Products() {
       packagingCost: parseFloat(form.packagingCost) || 0,
       shippingCost: parseFloat(form.shippingCost) || 0,
       packaging: form.packaging || null,
+      barcode: form.barcode.trim() || null,
+      stockQty: parseInt(form.stockQty, 10) || 0,
       labelSize: form.labelSize || null,
       labelText: form.labelText || null,
       usageGuide: form.usageGuide || null,
@@ -314,6 +331,14 @@ export default function Products() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant="outline"
+            onClick={() => pushTrendyol.mutate({})}
+            disabled={pushTrendyol.isPending}
+            title="Barkodlu ürünlerin stok ve fiyatını Trendyol'a gönder"
+          >
+            <Store className="h-4 w-4 mr-1" /> Trendyol'a Gönder
+          </Button>
           <Button variant="outline" onClick={() => setBulkOpen(true)}>
             <Percent className="h-4 w-4 mr-1" /> Toplu Fiyat
           </Button>
@@ -574,6 +599,27 @@ export default function Products() {
                   value={form.salePrice}
                   onChange={e => setForm(f => ({ ...f, salePrice: e.target.value }))}
                   placeholder="0,00"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Barkod (pazaryeri eşleştirme)</Label>
+                <Input
+                  value={form.barcode}
+                  onChange={e => setForm(f => ({ ...f, barcode: e.target.value }))}
+                  placeholder="Trendyol/HB barkodu"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Stok Adedi</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  value={form.stockQty}
+                  onChange={e => setForm(f => ({ ...f, stockQty: e.target.value }))}
+                  placeholder="0"
                 />
               </div>
             </div>

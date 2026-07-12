@@ -153,6 +153,34 @@ export function isHepsiburadaConfigured(): boolean {
   return Boolean(ENV.hepsiburadaMerchantId && ENV.hepsiburadaUsername && ENV.hepsiburadaPassword);
 }
 
+/**
+ * Bağlantı testi: gerçek bir istek atıp Hepsiburada'nın döndürdüğü HTTP
+ * durumunu ve yanıt gövdesinin başını döner. 401 hatasının gerçek sebebini
+ * (kullanıcı adı/şifre/endpoint) görmek için — canlıda çalıştırılır.
+ */
+export async function testHepsiburadaConnection(): Promise<{ ok: boolean; status: number; body: string }> {
+  if (!isHepsiburadaConfigured()) {
+    return { ok: false, status: 0, body: "Ayarlar eksik (Merchant ID, kullanıcı adı, şifre)." };
+  }
+  const url = new URL(`${HB_API_BASE}/orders/merchantid/${ENV.hepsiburadaMerchantId}`);
+  url.searchParams.set("offset", "0");
+  url.searchParams.set("limit", "1");
+  const auth = Buffer.from(`${ENV.hepsiburadaUsername}:${ENV.hepsiburadaPassword}`).toString("base64");
+  try {
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Basic ${auth}`,
+        "User-Agent": ENV.hepsiburadaMerchantId,
+        Accept: "application/json",
+      },
+    });
+    const body = (await res.text()).slice(0, 300);
+    return { ok: res.ok, status: res.status, body };
+  } catch (error) {
+    return { ok: false, status: 0, body: error instanceof Error ? error.message : "Bağlantı hatası" };
+  }
+}
+
 /** Hepsiburada siparişlerini çekip yeni olanları panoya ekler. */
 export async function syncHepsiburadaOrders() {
   if (!isHepsiburadaConfigured()) {

@@ -10,8 +10,8 @@ import { itemsTotal, summarizeItems, toItemRows } from "./orderUtils";
 import { extractInvoice } from "./_core/claude";
 import { executeAssistantCommand, generateOrderNo } from "./assistant";
 import { buildSaleTitle, deriveCombos, parseSetCount } from "./productUtils";
-import { syncTrendyolOrders } from "./trendyol";
-import { marketplaceStatus, syncAllMarketplaces } from "./marketplace";
+import { syncTrendyolOrders, pushTrendyolStockPrice } from "./trendyol";
+import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "./marketplace";
 
 /* ------------------------- Zod schemas ------------------------- */
 
@@ -40,6 +40,8 @@ const productInput = z.object({
   packagingCost: z.number().min(0).default(0),
   shippingCost: z.number().min(0).default(0),
   packaging: z.string().nullable().optional(),
+  barcode: z.string().nullable().optional(),
+  stockQty: z.number().min(0).optional(),
   labelSize: z.string().nullable().optional(),
   labelText: z.string().nullable().optional(),
   usageGuide: z.string().nullable().optional(),
@@ -242,6 +244,39 @@ export const appRouter = router({
     bulkPrice: protectedProcedure
       .input(z.object({ percent: z.number().min(-90).max(500), series: z.string().nullable().optional() }))
       .mutation(({ input }) => db.bulkUpdatePrices(input.percent, input.series ?? null)),
+    // Barkodlu ürünlerin stok ve fiyatını Trendyol'a gönderir (mevcut listelemeleri günceller).
+    pushToTrendyol: protectedProcedure
+      .input(z.object({ ids: z.array(z.number()).optional() }))
+      .mutation(async ({ input }) => {
+        const all = await db.listProducts();
+        const chosen = input.ids?.length ? all.filter(p => input.ids!.includes(p.id)) : all;
+        const items = chosen
+          .filter(p => p.barcode && p.barcode.trim())
+          .map(p => {
+            const list = parseFloat(String(p.salePrice)) || 0;
+            const disc = parseFloat(String(p.discountPercent)) || 0;
+            return {
+              barcode: p.barcode!.trim(),
+              quantity: p.stockQty ?? 0,
+              listPrice: list,
+              salePrice: +(list * (1 - disc / 100)).toFixed(2),
+            };
+          });
+        if (items.length === 0) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Barkodu olan ürün yok. Ürün düzenlemede barkod girin, sonra tekrar deneyin.",
+          });
+        }
+        try {
+          return await pushTrendyolStockPrice(items);
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Trendyol'a gönderim başarısız",
+          });
+        }
+      }),
     images: protectedProcedure
       .input(z.object({ productId: z.number() }))
       .query(({ input }) => db.getProductImages(input.productId)),
@@ -320,6 +355,10 @@ export const appRouter = router({
     syncAll: protectedProcedure.mutation(() => syncAllMarketplaces()),
     // Aynı sipariş numaralı mükerrer kayıtları temizler (eski yarış durumu artığı).
     dedupe: protectedProcedure.mutation(() => db.dedupeOrders()),
+    // Pazaryerine gerçek istek atıp ham HTTP sonucunu döner (401 teşhisi için).
+    testConnection: protectedProcedure
+      .input(z.object({ key: z.enum(["trendyol", "hepsiburada"]) }))
+      .mutation(({ input }) => testMarketplaceConnection(input.key)),
     create: protectedProcedure.input(orderInput).mutation(async ({ input }) => {
       const { items, ...order } = input;
       if (items?.length) {

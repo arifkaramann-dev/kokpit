@@ -40,6 +40,40 @@ Bağlantı durumunu **Ayarlar** sayfasından da görebilirsin.
 > ve "Pazaryerlerinden Çek" ile elle tetiklenebilir. Aynı sipariş iki kez eklenmez.
 > İptal/iade siparişleri panoya alınmaz.
 
+## Hepsiburada 401 (yetki hatası) çözümü
+
+401 = Hepsiburada kullanıcı adı/şifreni reddetti. Mimari doğru; sorun **girilen
+değerlerde**. Sırayla kontrol et:
+
+1. **Ayarlar → Pazaryeri Bağlantıları → "Bağlantıyı Test Et"** butonuna bas.
+   Hepsiburada'nın döndürdüğü **tam HTTP yanıtını** gösterir (ör. `HTTP 401 ...`).
+   Bu yanıtı bana iletirsen kesin sebebi söylerim.
+2. En sık hata: `HEPSIBURADA_USERNAME` alanına **panel e-postanı** veya **Merchant
+   ID**'yi yazmak. Buraya Hepsiburada'nın verdiği **entegrasyon/API kullanıcı adı**
+   girilmeli (panel → Kullanıcı Yönetimi / Entegrasyon bilgileri).
+3. `HEPSIBURADA_MERCHANT_ID` bir **GUID**'dir (uzun harf-rakam dizisi), müşteri
+   numarası değil.
+4. Değişkenleri Render → Environment'a girdikten sonra servisin yeniden başladığından
+   emin ol.
+
+> Not: Doğru değerleri canlıda "Bağlantıyı Test Et" ile doğrulayabilirsin; bu araç
+> gerçek istek atıp Hepsiburada'nın cevabını aynen gösterir.
+
+## Trendyol'a stok & fiyat gönderme (entegratör özelliği)
+
+Bu program artık sadece sipariş çekmiyor, **stok ve fiyatı Trendyol'a gönderiyor**:
+
+1. Ürün düzenlemede **Barkod** ve **Stok Adedi** alanlarını doldur (Trendyol ürünü
+   barkodla eşler).
+2. Ürünler sayfasında **"Trendyol'a Gönder"** butonuna bas — barkodu olan tüm
+   ürünlerin adet ve fiyatı Trendyol'daki listelemelere işlenir (indirimli fiyat
+   `salePrice`, etiket fiyatı `listPrice` olarak).
+3. Trendyol bir **parti numarası (batchRequestId)** döner; güncelleme birkaç dakikada
+   yayılır.
+
+> Şimdilik mevcut listelemelerin stok/fiyatını günceller. Sıfırdan ürün açma
+> (kategori, marka, görsel, özellikler) sonraki aşamada eklenecek.
+
 ## Fatura kesme & gönderme
 
 Her sipariş kartındaki **belge simgesine** (📄) basınca yazdırılabilir fatura açılır:

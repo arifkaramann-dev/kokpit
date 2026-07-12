@@ -83,6 +83,9 @@ export const products = mysqlTable("products", {
   packagingCost: decimal("packagingCost", { precision: 12, scale: 2 }).notNull().default("0"),
   shippingCost: decimal("shippingCost", { precision: 12, scale: 2 }).notNull().default("0"),
   packaging: varchar("packaging", { length: 128 }),
+  // Pazaryeri eşleştirmesi için barkod (Trendyol/Hepsiburada bununla eşler).
+  barcode: varchar("barcode", { length: 64 }),
+  stockQty: int("stockQty").notNull().default(0),
   labelSize: varchar("labelSize", { length: 64 }),
   labelText: text("labelText"),
   usageGuide: text("usageGuide"),
