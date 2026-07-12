@@ -27,6 +27,7 @@ import {
   FlaskConical,
   Calculator,
   ClipboardList,
+  ListChecks,
   LayoutDashboard,
   LibraryBig,
   LogOut,
@@ -46,6 +47,7 @@ import LoginForm from "./LoginForm";
 const menuItems = [
   { icon: LayoutDashboard, label: "Kokpit", path: "/" },
   { icon: ClipboardList, label: "Sipariş Panosu", path: "/siparisler" },
+  { icon: ListChecks, label: "Görevler & Eksikler", path: "/gorevler" },
   { icon: Warehouse, label: "Stok & Hammadde", path: "/stok" },
   { icon: ReceiptText, label: "Fatura Girişi", path: "/faturalar" },
   { icon: Package, label: "Ürünler & Türevler", path: "/urunler" },

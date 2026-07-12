@@ -174,7 +174,10 @@ export async function extractInvoice(mediaType: string, base64: string): Promise
 const VOICE_SCHEMA = {
   type: "object",
   properties: {
-    intent: { type: "string", enum: ["sale", "order", "stock_in", "stock_out", "note", "query", "unknown"] },
+    intent: {
+      type: "string",
+      enum: ["sale", "order", "stock_in", "stock_out", "note", "query", "task_add", "task_list", "task_done", "unknown"],
+    },
     customerName: { anyOf: [{ type: "string" }, { type: "null" }] },
     channel: { anyOf: [{ type: "string" }, { type: "null" }] },
     items: {
@@ -199,14 +202,22 @@ const VOICE_SCHEMA = {
     quantity: { anyOf: [{ type: "number" }, { type: "null" }] },
     unit: { anyOf: [{ type: "string" }, { type: "null" }] },
     noteText: { anyOf: [{ type: "string" }, { type: "null" }] },
+    taskKind: { anyOf: [{ type: "string", enum: ["eksik", "gorev"] }, { type: "null" }] },
+    taskItems: { anyOf: [{ type: "array", items: { type: "string" } }, { type: "null" }] },
+    listKind: { anyOf: [{ type: "string", enum: ["eksik", "gorev", "proje"] }, { type: "null" }] },
     reply: { type: "string" },
   },
-  required: ["intent", "customerName", "channel", "items", "materialName", "quantity", "unit", "noteText", "reply"],
+  required: [
+    "intent", "customerName", "channel", "items", "materialName", "quantity", "unit",
+    "noteText", "taskKind", "taskItems", "listKind", "reply",
+  ],
   additionalProperties: false,
 } as const;
 
 export type VoiceCommand = {
-  intent: "sale" | "order" | "stock_in" | "stock_out" | "note" | "query" | "unknown";
+  intent:
+    | "sale" | "order" | "stock_in" | "stock_out" | "note" | "query"
+    | "task_add" | "task_list" | "task_done" | "unknown";
   customerName: string | null;
   channel: string | null;
   items: { name: string; quantity: number | null; unitPrice: number | null }[] | null;
@@ -214,6 +225,9 @@ export type VoiceCommand = {
   quantity: number | null;
   unit: string | null;
   noteText: string | null;
+  taskKind: "eksik" | "gorev" | null;
+  taskItems: string[] | null;
+  listKind: "eksik" | "gorev" | "proje" | null;
   reply: string;
 };
 
@@ -233,6 +247,12 @@ export async function parseVoiceCommand(transcript: string): Promise<VoiceComman
         "Boya işletmesi yönetim uygulamasının sesli komut çözücüsüsün. Türkçe konuşma metnini işletme komutuna çevir. " +
         "'sattım/elden satış' → sale; 'sipariş geldi/al' → order; 'stok girişi/geldi/aldım' → stock_in; 'kullandım/stoktan düş' → stock_out; 'not al' → note; " +
         "işletme hakkında soru/rapor isteği ('kaç sipariş var', 'ciro ne kadar', 'stok durumu' gibi) → query ve soruyu noteText alanına aynen yaz. " +
+        "'eksik listesine ekle / alınacaklara yaz / bitti, almam lazım' → task_add, taskKind=eksik, her kalemi taskItems dizisine ayrı yaz; " +
+        "'görev ekle / yapılacaklara ekle / hatırlat' → task_add, taskKind=gorev; " +
+        "'eksik listesi / bugün neler alınacaktı / alınacaklar neler' → task_list, listKind=eksik; " +
+        "'görevlerim / yapılacaklar neler' → task_list, listKind=gorev; " +
+        "'projeler ne durumda / geliştirmeler' → task_list, listKind=proje; " +
+        "'X aldım / X tamamlandı / listeden çıkar' → task_done, tamamlanan maddeleri taskItems dizisine yaz. " +
         "Ürün/malzeme adlarını sade yaz. 'reply' alanına yapılan işi tek cümlede Türkçe özetle.",
       messages: [{ role: "user", content: transcript }],
     })

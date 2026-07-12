@@ -22,13 +22,14 @@ function formatCmdItems(items: { productName: string; quantity: number }[]) {
 
 /** Soru-cevap için işletmenin güncel verilerinden kompakt Türkçe özet üretir. */
 export async function buildBusinessSnapshot(): Promise<string> {
-  const [statusCounts, today, critical, materials, products, orders] = await Promise.all([
+  const [statusCounts, today, critical, materials, products, orders, openTasks] = await Promise.all([
     db.orderStatusCounts(),
     db.countOrdersToday(),
     db.listCriticalMaterials(),
     db.listMaterials(),
     db.listProducts(),
     db.listOrders(),
+    db.listTasks(undefined, "open"),
   ]);
   const since30 = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const last30 = orders.filter(o => new Date(o.createdAt as unknown as string).getTime() >= since30);
@@ -48,6 +49,8 @@ export async function buildBusinessSnapshot(): Promise<string> {
       .slice(0, 40)
       .map(m => `${m.name} | ${m.stockQty} ${m.unit} | ${m.unitCost} TL`)
       .join("; ")}`,
+    `Eksik listesi (alınacaklar): ${openTasks.filter(t => t.kind === "eksik").map(t => t.title).join(", ") || "boş"}`,
+    `Açık görevler: ${openTasks.filter(t => t.kind === "gorev").map(t => t.title).join(", ") || "yok"}`,
     `Son siparişler:`,
     ...recent,
   ];
@@ -123,6 +126,61 @@ export async function executeAssistantCommand(transcript: string): Promise<{ mes
     return { message: "Not kaydedildi (Pazarlama > Arşiv)" };
   }
 
+  if (cmd.intent === "task_add") {
+    const kind = cmd.taskKind ?? "gorev";
+    const titles = (cmd.taskItems ?? []).map(t => t.trim()).filter(Boolean);
+    if (titles.length === 0 && cmd.noteText) titles.push(cmd.noteText);
+    if (titles.length === 0) throw new Error("Ne ekleyeceğimi anlayamadım, tekrar söyler misin?");
+    for (const title of titles) await db.createTask({ kind, title });
+    const label = kind === "eksik" ? "eksik listesine" : "görevlere";
+    return { message: `${titles.map(t => `"${t}"`).join(", ")} ${label} eklendi ✅ (${titles.length} madde)` };
+  }
+
+  if (cmd.intent === "task_list") {
+    if (cmd.listKind === "proje") {
+      const projects = await db.listDevProjects();
+      const active = projects.filter(p => p.status === "active");
+      if (active.length === 0) return { message: "Aktif geliştirme projesi yok." };
+      const lines = active.map(p => `• ${p.name} — adım ${p.currentStep}/5${p.targetUse ? ` (${p.targetUse})` : ""}`);
+      return { message: `Aktif projeler (${active.length}):\n${lines.join("\n")}` };
+    }
+    const kind = cmd.listKind === "gorev" ? "gorev" : "eksik";
+    const open = await db.listTasks(kind, "open");
+    if (open.length === 0) {
+      return { message: kind === "eksik" ? "Eksik listesi boş, alınacak bir şey yok 🎉" : "Açık görev yok 🎉" };
+    }
+    const lines = open.map(t => `☐ ${t.title}${t.note ? ` — ${t.note}` : ""}`);
+    return {
+      message: `${kind === "eksik" ? "Alınacaklar" : "Görevler"} (${open.length}):\n${lines.join("\n")}`,
+    };
+  }
+
+  if (cmd.intent === "task_done") {
+    const names = (cmd.taskItems ?? []).map(t => t.trim()).filter(Boolean);
+    if (names.length === 0 && cmd.noteText) names.push(cmd.noteText);
+    if (names.length === 0) throw new Error("Hangi maddeyi kapatacağımı anlayamadım.");
+    const open = await db.listTasks(undefined, "open");
+    const closed: string[] = [];
+    const missing: string[] = [];
+    for (const name of names) {
+      const needle = name.toLowerCase();
+      const hit =
+        open.find(t => t.title.trim().toLowerCase() === needle) ??
+        open.find(t => t.title.toLowerCase().includes(needle)) ??
+        open.find(t => needle.includes(t.title.trim().toLowerCase()));
+      if (hit) {
+        await db.setTaskStatus(hit.id, "done");
+        closed.push(hit.title);
+      } else {
+        missing.push(name);
+      }
+    }
+    const parts = [];
+    if (closed.length) parts.push(`Tamamlandı: ${closed.join(", ")} ✅`);
+    if (missing.length) parts.push(`Listede bulamadım: ${missing.join(", ")}`);
+    return { message: parts.join("\n") || "Listede eşleşen madde bulamadım." };
+  }
+
   if (cmd.intent === "query") {
     const snapshot = await buildBusinessSnapshot();
     const answer = await answerBusinessQuestion(cmd.noteText ?? transcript, snapshot);
@@ -132,6 +190,6 @@ export async function executeAssistantCommand(transcript: string): Promise<{ mes
   return {
     message:
       cmd.reply ||
-      "Bunu anlayamadım. 'Elden satış ekle', 'stok girişi', 'not al' diyebilir veya işletmenle ilgili soru sorabilirsin.",
+      "Bunu anlayamadım. 'Elden satış ekle', 'stok girişi', 'eksik listesine ekle', 'bugün neler alınacaktı', 'görev ekle', 'not al' diyebilir veya işletmenle ilgili soru sorabilirsin.",
   };
 }

@@ -327,3 +327,19 @@ export const productImages = mysqlTable("productImages", {
 });
 
 export type ProductImage = typeof productImages.$inferSelect;
+
+/**
+ * Görevler ve eksik (alınacaklar) listesi: uygulamadan elle veya
+ * WhatsApp/sesli asistanla ("eksik listesine ekle...") yönetilir.
+ */
+export const tasks = mysqlTable("tasks", {
+  id: int("id").autoincrement().primaryKey(),
+  kind: mysqlEnum("kind", ["eksik", "gorev"]).notNull().default("gorev"),
+  title: varchar("title", { length: 500 }).notNull(),
+  note: text("note"),
+  status: mysqlEnum("status", ["open", "done"]).notNull().default("open"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  doneAt: timestamp("doneAt"),
+});
+
+export type Task = typeof tasks.$inferSelect;

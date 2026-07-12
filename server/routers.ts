@@ -407,6 +407,17 @@ export const appRouter = router({
       }),
   }),
 
+  tasks: router({
+    list: protectedProcedure.query(() => db.listTasks()),
+    create: protectedProcedure
+      .input(z.object({ kind: z.enum(["eksik", "gorev"]), title: z.string().min(1), note: z.string().nullable().optional() }))
+      .mutation(({ input }) => db.createTask(input)),
+    setStatus: protectedProcedure
+      .input(z.object({ id: z.number(), status: z.enum(["open", "done"]) }))
+      .mutation(({ input }) => db.setTaskStatus(input.id, input.status)),
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteTask(input.id)),
+  }),
+
   templates: router({
     list: protectedProcedure.query(() => db.listTemplates()),
     create: protectedProcedure

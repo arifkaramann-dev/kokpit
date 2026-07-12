@@ -20,6 +20,7 @@ import {
   productImages,
   purchaseItems,
   purchases,
+  tasks,
   templates,
   stockMovements,
   suppliers,
@@ -689,4 +690,36 @@ export async function copyProductImages(fromProductId: number, toProductId: numb
   for (const row of rows) {
     await db.insert(productImages).values({ productId: toProductId, kind: row.kind, data: row.data });
   }
+}
+
+/* ------------------------- Görevler & Eksik Listesi ------------------------- */
+
+export async function listTasks(kind?: "eksik" | "gorev", status?: "open" | "done") {
+  const db = await requireDb();
+  const conds = [];
+  if (kind) conds.push(eq(tasks.kind, kind));
+  if (status) conds.push(eq(tasks.status, status));
+  const query = db.select().from(tasks);
+  const rows = conds.length ? await query.where(and(...conds)) : await query;
+  // Açık olanlar üstte, sonra en yeniler.
+  return rows.sort((a, b) => {
+    if (a.status !== b.status) return a.status === "open" ? -1 : 1;
+    return b.createdAt.getTime() - a.createdAt.getTime();
+  });
+}
+
+export async function createTask(data: { kind: "eksik" | "gorev"; title: string; note?: string | null }) {
+  const db = await requireDb();
+  const [res] = await db.insert(tasks).values({ kind: data.kind, title: data.title, note: data.note ?? null });
+  return Number(res.insertId);
+}
+
+export async function setTaskStatus(id: number, status: "open" | "done") {
+  const db = await requireDb();
+  await db.update(tasks).set({ status, doneAt: status === "done" ? new Date() : null }).where(eq(tasks.id, id));
+}
+
+export async function deleteTask(id: number) {
+  const db = await requireDb();
+  await db.delete(tasks).where(eq(tasks.id, id));
 }

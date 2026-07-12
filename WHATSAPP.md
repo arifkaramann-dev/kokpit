@@ -6,6 +6,11 @@ Kokpit'e WhatsApp'tan mesaj atarak iş yaptırabilirsin:
 - **"10 kg beyaz pigment geldi, stok girişi"** → stok artar
 - **"Bugün kaç sipariş var? Ciro ne kadar?"** → verilerden cevap verir
 - **"Not al: yarın etiket siparişi ver"** → not kaydedilir
+- **"Eksik listesine ekle: beyaz pigment, 400 ml kutu, etiket"** → alınacaklara yazılır
+- **"Bugün neler alınacaktı?"** → açık eksik listesi gelir
+- **"Beyaz pigment aldım"** → listeden düşülür
+- **"Görev ekle: kargo firmasını ara"** / **"Görevlerim neler?"** → yapılacaklar
+- **"Projeler ne durumda?"** → aktif geliştirme projeleri ve adımları
 
 Sesli kullanım: WhatsApp klavyesindeki **mikrofon (dikte)** ile konuşarak
 yazdır — mesaj yazı olarak gider, asistan aynı şekilde işler.
