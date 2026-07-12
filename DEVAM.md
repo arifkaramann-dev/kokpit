@@ -31,6 +31,8 @@ https://artofcolour-kokpit.onrender.com/ (Render, ücretsiz plan). Veritabanı: 
 - **Fatura kesme** (KDV dökümlü, yazdırılabilir) + Ayarlar (şirket bilgileri)
 - **Pazaryeri:** Trendyol + Hepsiburada sipariş çekme, birleşik senkron, yarış durumu
   kilidi, "Mükerrerleri temizle", "Bağlantıyı Test Et", **Trendyol'a stok/fiyat gönderme**
+- **Kargo etiketi/barkod:** her sipariş kartından yazdırılabilir 10×15 cm kargo etiketi
+  (gönderen/alıcı + taranabilir **Code 128 barkod**, sipariş no'dan; harici kütüphane yok)
 
 ## Açık işler / sırada ne var
 1. **Hepsiburada 401:** Hepsiburada API bilgileri Render'a girilmeli. Hepsiburada
@@ -41,7 +43,9 @@ https://artofcolour-kokpit.onrender.com/ (Render, ücretsiz plan). Veritabanı: 
 2. **Trendyol'u canlıda tam oturt:** Render'a Trendyol bilgileri girilince
    "Bağlantıyı Test Et" HTTP 200 dönmeli; sipariş akışı + "Trendyol'a Gönder" (stok/fiyat) doğrulanmalı.
 3. **Sonraki entegratör adımları:** Hepsiburada'ya stok/fiyat gönderme, sıfırdan ürün
-   açma (kategori/marka/görsel/özellik), N11 / Çiçeksepeti eklemek, kargo barkodu.
+   açma (kategori/marka/görsel/özellik), N11 / Çiçeksepeti eklemek.
+   (Kargo barkodu ✔ yapıldı — kendi etiketimiz. İleride pazaryerinin resmi kargo
+   etiketi API'sinden PDF çekmek ayrı bir adım olabilir.)
 
 ## Teknik notlar (yeni sohbet için)
 - Branch: `claude/web-site-development-tx6n7h` ama **doğrudan main'e** push ediliyor.

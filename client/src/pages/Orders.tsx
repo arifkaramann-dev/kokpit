@@ -33,7 +33,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import { CHANNELS, formatDate, formatTL, ORDER_STATUSES, OrderStatus } from "@/lib/format";
 import { printInvoice } from "@/lib/invoice";
-import { AlertCircle, CheckCircle2, FileText, GripVertical, Pencil, Plus, RefreshCw, Settings, Trash2 } from "lucide-react";
+import { printShippingLabel } from "@/lib/shippingLabel";
+import { AlertCircle, CheckCircle2, FileText, GripVertical, Pencil, Plus, RefreshCw, Settings, Truck, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
@@ -201,6 +202,31 @@ export default function Orders() {
       );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Fatura oluşturulamadı");
+    }
+  }
+
+  // Kargo etiketi: kalemleri + şirket bilgisini al, taranabilir barkodlu etiketi yazdır.
+  async function handleShippingLabel(order: OrderRow) {
+    try {
+      const [items, company] = await Promise.all([
+        utils.client.orders.items.query({ orderId: order.id }),
+        utils.client.settings.get.query(),
+      ]);
+      printShippingLabel(
+        {
+          orderNo: order.orderNo,
+          customerName: order.customerName,
+          channel: order.channel ?? "web",
+          createdAt: order.createdAt,
+          totalAmount: order.totalAmount,
+          itemsSummary: order.itemsSummary,
+          notes: order.notes,
+        },
+        items.map(i => ({ productName: i.productName, quantity: i.quantity })),
+        company,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Kargo etiketi oluşturulamadı");
     }
   }
 
@@ -579,6 +605,7 @@ export default function Orders() {
                 onEdit={openEdit}
                 onDelete={id => deleteOrder.mutate({ id })}
                 onInvoice={handleInvoice}
+                onShippingLabel={handleShippingLabel}
               />
             ))}
           </div>
@@ -597,12 +624,14 @@ function KanbanColumn({
   onEdit,
   onDelete,
   onInvoice,
+  onShippingLabel,
 }: {
   status: (typeof ORDER_STATUSES)[number];
   orders: OrderRow[];
   onEdit: (o: OrderRow) => void;
   onDelete: (id: number) => void;
   onInvoice: (o: OrderRow) => void;
+  onShippingLabel: (o: OrderRow) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status.value });
 
@@ -626,7 +655,7 @@ function KanbanColumn({
         </div>
       )}
       {orders.map(order => (
-        <DraggableOrderCard key={order.id} order={order} onEdit={onEdit} onDelete={onDelete} onInvoice={onInvoice} />
+        <DraggableOrderCard key={order.id} order={order} onEdit={onEdit} onDelete={onDelete} onInvoice={onInvoice} onShippingLabel={onShippingLabel} />
       ))}
     </div>
   );
@@ -637,11 +666,13 @@ function DraggableOrderCard({
   onEdit,
   onDelete,
   onInvoice,
+  onShippingLabel,
 }: {
   order: OrderRow;
   onEdit: (o: OrderRow) => void;
   onDelete: (id: number) => void;
   onInvoice: (o: OrderRow) => void;
+  onShippingLabel: (o: OrderRow) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: order.id });
 
@@ -658,6 +689,7 @@ function DraggableOrderCard({
         onEdit={onEdit}
         onDelete={onDelete}
         onInvoice={onInvoice}
+        onShippingLabel={onShippingLabel}
         dragHandle={{ attributes: attributes as unknown as React.HTMLAttributes<HTMLButtonElement>, listeners }}
       />
     </div>
@@ -669,6 +701,7 @@ function OrderCard({
   onEdit,
   onDelete,
   onInvoice,
+  onShippingLabel,
   overlay,
   dragHandle,
 }: {
@@ -676,6 +709,7 @@ function OrderCard({
   onEdit?: (o: OrderRow) => void;
   onDelete?: (id: number) => void;
   onInvoice?: (o: OrderRow) => void;
+  onShippingLabel?: (o: OrderRow) => void;
   overlay?: boolean;
   dragHandle?: { attributes: React.HTMLAttributes<HTMLButtonElement>; listeners: Record<string, unknown> | undefined };
 }) {
@@ -708,6 +742,15 @@ function OrderCard({
         </div>
         {!overlay && (
           <div className="flex gap-0.5">
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6"
+              title="Kargo etiketi / barkod yazdır"
+              onClick={() => onShippingLabel?.(order)}
+            >
+              <Truck className="h-3 w-3" />
+            </Button>
             <Button
               size="icon"
               variant="ghost"
