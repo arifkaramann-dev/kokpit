@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
+import type { WakeWord } from "@/lib/wakeword";
 import { Bot, Ear, Loader2, Mic, Send } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -12,6 +13,15 @@ const WAKE_KEY = "aoc-assistant-wake";
 
 // "Hey Kokpit" gibi uyandırma kelimeleri (Türkçe STT'nin yazabileceği varyantlarla).
 const WAKE_PHRASES = ["hey kokpit", "hey kokpît", "hey kabin", "kokpit", "kokpît", "hey asistan", "asistan"];
+
+/** Porcupine için tarayıcı desteği (ağır modülü yüklemeden kontrol). */
+function wakeSupported(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof WebAssembly !== "undefined" &&
+    !!navigator.mediaDevices?.getUserMedia
+  );
+}
 
 /** Tarayıcının SpeechRecognition sınıfını döner (yoksa null). */
 function getSpeechRecognition(): (new () => SpeechRecognitionLike) | null {
@@ -72,9 +82,20 @@ export default function Assistant() {
   const [armed, setArmed] = useState(false); // uyandırıldı, komut bekleniyor
   const endRef = useRef<HTMLDivElement>(null);
   const wakeRecRef = useRef<SpeechRecognitionLike | null>(null);
+  const porcupineRef = useRef<WakeWord | null>(null);
+
+  // Picovoice yapılandırması (AccessKey vb.) sunucudan; varsa Porcupine kullanılır.
+  const { data: wakeCfg } = trpc.assistant.wakeConfig.useQuery(undefined, { staleTime: Infinity });
+  const usePorcupine = !!wakeCfg?.accessKey && wakeSupported();
+  const wakePhrase = usePorcupine
+    ? wakeCfg?.keywordPath
+      ? wakeCfg.keywordLabel || "Hey Kokpit"
+      : "Jarvis"
+    : "Hey Kokpit";
 
   // Callback'lerin bayat closure yakalamaması için son değerleri ref'te tut.
   const sendRef = useRef<(t: string) => void>(() => {});
+  const captureRef = useRef<() => Promise<void>>(async () => {});
   const busyRef = useRef(busy);
   const wakeRef = useRef(wake);
   const armedRef = useRef(armed);
@@ -91,10 +112,54 @@ export default function Assistant() {
     localStorage.setItem(WAKE_KEY, wake ? "1" : "0");
   }, [wake]);
 
-  // Sesli uyandırma dinleyicisi: açıkken sürekli dinler, "Hey Kokpit" duyunca
-  // aynı cümledeki komutu gönderir; komut yoksa bir sonraki cümleyi komut sayar.
+  // Porcupine (Picovoice) uyandırma: AccessKey varsa cihaz-üstü, güvenilir tetikleme.
+  // Kelime algılanınca mikrofonu bırakıp tek-seferlik komut tanımayı çalıştırır.
   useEffect(() => {
-    if (!wake) return;
+    if (!wake || !usePorcupine || !wakeCfg) return;
+    let disposed = false;
+    // Ağır Picovoice modülünü yalnızca uyandırma açılınca yükle (tembel import).
+    import("@/lib/wakeword")
+      .then(async ({ WakeWord }) => {
+        if (disposed) return;
+        const ww = new WakeWord();
+        porcupineRef.current = ww;
+        await ww.start(
+          {
+            accessKey: wakeCfg.accessKey,
+            keywordPath: wakeCfg.keywordPath,
+            keywordLabel: wakeCfg.keywordLabel,
+            modelPath: wakeCfg.modelPath,
+          },
+          async () => {
+            if (disposed || busyRef.current || armedRef.current) return;
+            setArmed(true);
+            try {
+              await ww.pause();
+              await captureRef.current();
+            } finally {
+              setArmed(false);
+              if (!disposed) await ww.resume().catch(() => {});
+            }
+          },
+        );
+      })
+      .catch(err => {
+        toast.error(`Sesli uyandırma başlatılamadı: ${err?.message ?? err}`);
+        setWake(false);
+      });
+    return () => {
+      disposed = true;
+      const ww = porcupineRef.current;
+      porcupineRef.current = null;
+      setArmed(false);
+      ww?.stop().catch(() => {});
+    };
+  }, [wake, usePorcupine, wakeCfg]);
+
+  // Web Speech uyandırma (Porcupine yoksa yedek): açıkken sürekli dinler, "Hey Kokpit"
+  // duyunca aynı cümledeki komutu gönderir; komut yoksa bir sonraki cümleyi komut sayar.
+  useEffect(() => {
+    if (!wake || usePorcupine) return;
     const SR = getSpeechRecognition();
     if (!SR) {
       toast.error("Bu tarayıcı sesli uyandırmayı desteklemiyor (Chrome kullan).");
@@ -154,7 +219,7 @@ export default function Assistant() {
         /* yoksay */
       }
     };
-  }, [wake]);
+  }, [wake, usePorcupine]);
 
   function send(text: string) {
     const t = text.trim();
@@ -178,30 +243,40 @@ export default function Assistant() {
   }
   sendRef.current = send;
 
-  function startMic() {
-    const SR =
-      (window as unknown as Record<string, unknown>).SpeechRecognition ||
-      (window as unknown as Record<string, unknown>).webkitSpeechRecognition;
-    if (!SR) return toast.error("Bu tarayıcı sesli girişi desteklemiyor (Chrome kullan).");
-    const rec = new (SR as new () => {
-      lang: string;
-      interimResults: boolean;
-      onresult: (e: { results: { [i: number]: { [j: number]: { transcript: string } } } }) => void;
-      onerror: (e: { error: string }) => void;
-      onend: () => void;
-      start: () => void;
-    })();
-    rec.lang = "tr-TR";
-    rec.interimResults = false;
-    rec.onresult = e => send(e.results[0][0].transcript);
-    rec.onerror = e => {
-      setListening(false);
-      if (e.error === "not-allowed") toast.error("Mikrofon izni gerekli.");
-    };
-    rec.onend = () => setListening(false);
-    setListening(true);
-    rec.start();
+  // Tek seferlik komut tanıma (Web Speech): mikrofonla bir cümle alıp gönderir.
+  // Hem elle mikrofon butonu hem de Porcupine uyandırması sonrası kullanılır.
+  function runOneShot(): Promise<void> {
+    return new Promise(resolve => {
+      const SR = getSpeechRecognition();
+      if (!SR) {
+        toast.error("Bu tarayıcı sesli girişi desteklemiyor (Chrome kullan).");
+        return resolve();
+      }
+      const rec = new SR();
+      rec.lang = "tr-TR";
+      rec.continuous = false;
+      rec.interimResults = false;
+      rec.onresult = e => {
+        const r = e.results[e.results.length - 1];
+        if (r?.isFinal) sendRef.current(r[0].transcript);
+      };
+      rec.onerror = ev => {
+        if (ev.error === "not-allowed") toast.error("Mikrofon izni gerekli.");
+      };
+      rec.onend = () => {
+        setListening(false);
+        resolve();
+      };
+      setListening(true);
+      try {
+        rec.start();
+      } catch {
+        setListening(false);
+        resolve();
+      }
+    });
   }
+  captureRef.current = runOneShot;
 
   return (
     <div className="flex flex-col h-[calc(100dvh-8rem)] max-w-3xl mx-auto">
@@ -254,7 +329,9 @@ export default function Assistant() {
               <span className={`absolute inline-flex h-full w-full rounded-full ${armed ? "bg-primary animate-ping" : "bg-emerald-500"} opacity-75`} />
               <span className={`relative inline-flex h-2 w-2 rounded-full ${armed ? "bg-primary" : "bg-emerald-500"}`} />
             </span>
-            {armed ? "Dinliyorum — komutu söyle…" : "Sesli uyandırma açık — “Hey Kokpit” de, sonra komutunu söyle."}
+            {armed
+              ? "Dinliyorum — komutu söyle…"
+              : `Sesli uyandırma açık — “${wakePhrase}” de, sonra komutunu söyle.`}
           </div>
         )}
         <div className="flex gap-1.5 flex-wrap">
@@ -281,7 +358,7 @@ export default function Assistant() {
             variant={wake ? "default" : "outline"}
             size="icon"
             onClick={() => setWake(w => !w)}
-            title={wake ? "Sesli uyandırmayı kapat" : "Sesli uyandırmayı aç (“Hey Kokpit”)"}
+            title={wake ? "Sesli uyandırmayı kapat" : `Sesli uyandırmayı aç (“${wakePhrase}”)`}
           >
             <Ear className={`h-4 w-4 ${wake ? "animate-pulse" : ""}`} />
           </Button>
@@ -289,7 +366,7 @@ export default function Assistant() {
             type="button"
             variant={listening ? "destructive" : "outline"}
             size="icon"
-            onClick={startMic}
+            onClick={() => runOneShot()}
             disabled={wake}
             title={wake ? "Uyandırma açıkken elle mikrofon kapalı" : "Sesle söyle"}
           >

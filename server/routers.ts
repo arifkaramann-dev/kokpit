@@ -12,6 +12,7 @@ import { executeAssistantCommand, generateOrderNo } from "./assistant";
 import { buildSaleTitle, deriveCombos, parseSetCount } from "./productUtils";
 import { syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf } from "./trendyol";
 import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "./marketplace";
+import { ENV } from "./_core/env";
 
 /* ------------------------- Zod schemas ------------------------- */
 
@@ -518,6 +519,14 @@ export const appRouter = router({
   }),
 
   assistant: router({
+    // Sesli uyandırma (Picovoice) yapılandırması. AccessKey varsa istemci
+    // Porcupine'i başlatır; yoksa Web Speech tabanlı uyandırmaya düşer.
+    wakeConfig: protectedProcedure.query(() => ({
+      accessKey: ENV.picovoiceAccessKey,
+      keywordPath: ENV.picovoiceKeywordPath,
+      keywordLabel: ENV.picovoiceKeywordLabel,
+      modelPath: ENV.picovoiceModelPath,
+    })),
     // Sesli/serbest metin komutu: Claude niyeti çözer, sunucu uygular.
     // WhatsApp webhook'u da aynı beyni kullanır (server/assistant.ts).
     command: protectedProcedure

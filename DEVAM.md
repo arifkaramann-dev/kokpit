@@ -55,9 +55,12 @@ https://artofcolour-kokpit.onrender.com/ (Render, ücretsiz plan). Veritabanı: 
    (gerekirse `LABELARY_URL` env ile değiştirilebilir).
 4. **Sonraki entegratör adımları:** Hepsiburada'ya stok/fiyat gönderme, sıfırdan ürün
    açma (kategori/marka/görsel/özellik), N11 / Çiçeksepeti eklemek.
-5. **Sesli uyandırma** ✔ yapıldı (Asistan sayfası, "Hey Kokpit"). Not: Web Speech API sürekli
-   dinleme sadece sekme açıkken ve Chrome'da çalışır; gerçek arka plan "Hey Siri" seviyesi için
-   ayrı bir wake-word motoru (ör. Picovoice Porcupine) gerekir — istenirse ayrı adım.
+5. **Sesli uyandırma** ✔ yapıldı. İki motor: **Picovoice Porcupine** (AccessKey girilince,
+   cihaz-üstü, güvenilir) + **Web Speech** yedeği. AccessKey yoksa Web Speech "Hey Kokpit"
+   dinler; AccessKey varsa hazır "Jarvis" ya da özel "Hey Kokpit" `.ppn`. Kurulum: **SESLI.md**.
+   Env: `PICOVOICE_ACCESS_KEY` (+ opsiyonel `PICOVOICE_KEYWORD_PATH/LABEL`, `PICOVOICE_MODEL_PATH`).
+   Picovoice bundle'ı tembel yüklenir (uyandırma açılınca). **Canlıda AccessKey ile test edilmeli.**
+   Gerçek arka plan "Hey Siri" için native uygulama gerekir (ayrı iş).
 
 ## Teknik notlar (yeni sohbet için)
 - Branch: `claude/web-site-development-tx6n7h` ama **doğrudan main'e** push ediliyor.
