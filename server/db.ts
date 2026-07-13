@@ -159,11 +159,36 @@ export async function deleteMaterial(id: number) {
 export async function adjustStock(materialId: number, type: "in" | "out", qty: number, note?: string) {
   const db = await requireDb();
   const delta = type === "in" ? qty : -qty;
-  await db.insert(stockMovements).values({ materialId, type, qty: String(qty), note });
-  await db
-    .update(materials)
-    .set({ stockQty: sql`GREATEST(${materials.stockQty} + ${delta}, 0)` })
-    .where(eq(materials.id, materialId));
+  // Hareket kaydı ve bakiye güncellemesi tek transaction'da: biri başarısız
+  // olursa ikisi de geri alınır (stok hareketi ile bakiye asla uyuşmaz kalmaz).
+  await db.transaction(async tx => {
+    await tx.insert(stockMovements).values({ materialId, type, qty: String(qty), note });
+    await tx
+      .update(materials)
+      .set({ stockQty: sql`GREATEST(${materials.stockQty} + ${delta}, 0)` })
+      .where(eq(materials.id, materialId));
+  });
+}
+
+/**
+ * Üretim için birden çok hammaddeyi tek transaction'da stoktan düşer. Yarıda
+ * kesilirse (API hatası/bağlantı kopması) hiçbiri düşmez — kısmi düşüm olmaz.
+ */
+export async function deductStockBatch(
+  deductions: { materialId: number; qty: number; note?: string }[],
+) {
+  const items = deductions.filter(d => d.qty > 0);
+  if (items.length === 0) return;
+  const db = await requireDb();
+  await db.transaction(async tx => {
+    for (const d of items) {
+      await tx.insert(stockMovements).values({ materialId: d.materialId, type: "out", qty: String(d.qty), note: d.note });
+      await tx
+        .update(materials)
+        .set({ stockQty: sql`GREATEST(${materials.stockQty} - ${d.qty}, 0)` })
+        .where(eq(materials.id, d.materialId));
+    }
+  });
 }
 
 export async function listStockMovements(materialId: number) {
@@ -432,14 +457,18 @@ export async function transferBetweenAccounts(fromId: number, toId: number, amou
   const [from] = await db.select().from(accounts).where(eq(accounts.id, fromId)).limit(1);
   const [to] = await db.select().from(accounts).where(eq(accounts.id, toId)).limit(1);
   const now = new Date();
-  await db.insert(transactions).values({
-    txnDate: now, accountId: fromId, direction: "out", amount: String(amount), category: "transfer",
-    description: `Transfer → ${to?.name ?? ""}`, note,
-  } as never);
-  await db.insert(transactions).values({
-    txnDate: now, accountId: toId, direction: "in", amount: String(amount), category: "transfer",
-    description: `Transfer ← ${from?.name ?? ""}`, note,
-  } as never);
+  // Çıkış ve giriş hareketi tek transaction'da: biri başarısız olursa para bir
+  // hesaptan düşülüp diğerine eklenmeden "kaybolmaz".
+  await db.transaction(async tx => {
+    await tx.insert(transactions).values({
+      txnDate: now, accountId: fromId, direction: "out", amount: String(amount), category: "transfer",
+      description: `Transfer → ${to?.name ?? ""}`, note,
+    } as never);
+    await tx.insert(transactions).values({
+      txnDate: now, accountId: toId, direction: "in", amount: String(amount), category: "transfer",
+      description: `Transfer ← ${from?.name ?? ""}`, note,
+    } as never);
+  });
 }
 
 /**
@@ -756,10 +785,14 @@ export async function replaceOrderItems(
   items: Omit<InsertOrderItem, "orderId">[]
 ) {
   const db = await requireDb();
-  await db.delete(orderItems).where(eq(orderItems.orderId, orderId));
-  if (items.length > 0) {
-    await db.insert(orderItems).values(items.map(item => ({ ...item, orderId })));
-  }
+  // Sil + yeniden ekle tek transaction'da: insert başarısız olursa eski
+  // kalemler geri gelir (sipariş kalemsiz/tutarsız kalmaz).
+  await db.transaction(async tx => {
+    await tx.delete(orderItems).where(eq(orderItems.orderId, orderId));
+    if (items.length > 0) {
+      await tx.insert(orderItems).values(items.map(item => ({ ...item, orderId })));
+    }
+  });
 }
 
 export async function countOrdersToday() {
@@ -1049,62 +1082,66 @@ export async function createPurchase(
 ) {
   const db = await requireDb();
   const total = items.reduce((s, i) => s + i.qty * i.unitCost, 0);
-  const [res] = await db.insert(purchases).values({
-    supplierName: header.supplierName,
-    invoiceNo: header.invoiceNo,
-    invoiceDate: header.invoiceDate,
-    note: header.note,
-    totalAmount: String(total),
-  });
-  const purchaseId = Number(res.insertId);
+  // Fatura başlığı + hammadde güncelleme/oluşturma + stok hareketi + kalemler
+  // tek transaction'da: yarıda kesilirse fatura ile stok/maliyet tutarsız kalmaz.
+  return db.transaction(async tx => {
+    const [res] = await tx.insert(purchases).values({
+      supplierName: header.supplierName,
+      invoiceNo: header.invoiceNo,
+      invoiceDate: header.invoiceDate,
+      note: header.note,
+      totalAmount: String(total),
+    });
+    const purchaseId = Number(res.insertId);
 
-  const existing = await db.select().from(materials);
-  const byName = new Map(existing.map(m => [m.name.trim().toLowerCase(), m]));
-  let createdCount = 0;
-  let updatedCount = 0;
+    const existing = await tx.select().from(materials);
+    const byName = new Map(existing.map(m => [m.name.trim().toLowerCase(), m]));
+    let createdCount = 0;
+    let updatedCount = 0;
 
-  for (const item of items) {
-    const name = item.name.trim();
-    const found = byName.get(name.toLowerCase());
-    let materialId: number;
-    if (!found) {
-      const [r] = await db.insert(materials).values({
+    for (const item of items) {
+      const name = item.name.trim();
+      const found = byName.get(name.toLowerCase());
+      let materialId: number;
+      if (!found) {
+        const [r] = await tx.insert(materials).values({
+          name,
+          category: "diğer",
+          unit: item.unit || "adet",
+          stockQty: String(item.qty),
+          criticalQty: "0",
+          unitCost: String(item.unitCost),
+        });
+        materialId = Number(r.insertId);
+        createdCount++;
+      } else {
+        materialId = found.id;
+        await tx
+          .update(materials)
+          .set({
+            stockQty: sql`${materials.stockQty} + ${item.qty}`,
+            unitCost: String(item.unitCost),
+          })
+          .where(eq(materials.id, found.id));
+        updatedCount++;
+      }
+      await tx.insert(stockMovements).values({
+        materialId,
+        type: "in",
+        qty: String(item.qty),
+        note: `Fatura girişi${header.invoiceNo ? ` (${header.invoiceNo})` : ""}${header.supplierName ? ` — ${header.supplierName}` : ""}`,
+      });
+      await tx.insert(purchaseItems).values({
+        purchaseId,
+        materialId,
         name,
-        category: "diğer",
+        qty: String(item.qty),
         unit: item.unit || "adet",
-        stockQty: String(item.qty),
-        criticalQty: "0",
         unitCost: String(item.unitCost),
       });
-      materialId = Number(r.insertId);
-      createdCount++;
-    } else {
-      materialId = found.id;
-      await db
-        .update(materials)
-        .set({
-          stockQty: sql`${materials.stockQty} + ${item.qty}`,
-          unitCost: String(item.unitCost),
-        })
-        .where(eq(materials.id, found.id));
-      updatedCount++;
     }
-    await db.insert(stockMovements).values({
-      materialId,
-      type: "in",
-      qty: String(item.qty),
-      note: `Fatura girişi${header.invoiceNo ? ` (${header.invoiceNo})` : ""}${header.supplierName ? ` — ${header.supplierName}` : ""}`,
-    });
-    await db.insert(purchaseItems).values({
-      purchaseId,
-      materialId,
-      name,
-      qty: String(item.qty),
-      unit: item.unit || "adet",
-      unitCost: String(item.unitCost),
-    });
-  }
-  return { purchaseId, createdCount, updatedCount };
+    return { purchaseId, createdCount, updatedCount };
+  });
 }
 
 export async function listPurchases() {

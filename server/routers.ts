@@ -9,7 +9,7 @@ import * as db from "./db";
 import { itemsTotal, summarizeItems, toItemRows } from "./orderUtils";
 import { extractInvoice } from "./_core/claude";
 import { executeAssistantCommand, generateOrderNo } from "./assistant";
-import { buildSaleTitle, deriveCombos, parseSetCount } from "./productUtils";
+import { buildSaleTitle, deriveCombos, parseSetCount, planProduction } from "./productUtils";
 import { syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf } from "./trendyol";
 import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "./marketplace";
 import { ENV } from "./_core/env";
@@ -348,26 +348,15 @@ export const appRouter = router({
           throw new TRPCError({ code: "BAD_REQUEST", message: "Bu ürünün reçetesi yok — önce Formül Defteri'nden ekleyin." });
         }
         const mats = await db.listMaterials();
-        const byId = new Map(mats.map(m => [m.id, m]));
-        const missing: string[] = [];
-        for (const f of formula) {
-          const m = byId.get(f.materialId);
-          const need = input.qty * (parseFloat(String(f.qty)) || 0);
-          const stock = m ? parseFloat(String(m.stockQty)) || 0 : 0;
-          if (!m || stock < need) {
-            missing.push(`${f.materialName ?? "?"} (gereken ${need}, stok ${stock})`);
-          }
-        }
+        const { deductions, missing } = planProduction(formula, mats, input.qty);
         if (missing.length > 0 && !input.force) {
           throw new TRPCError({ code: "BAD_REQUEST", message: `Stok yetersiz: ${missing.join(", ")}` });
         }
-        for (const f of formula) {
-          const need = input.qty * (parseFloat(String(f.qty)) || 0);
-          if (need > 0) {
-            await db.adjustStock(f.materialId, "out", need, `Üretim: ${input.qty}× ${product.name}`);
-          }
-        }
-        return { deducted: formula.length, missing };
+        // Tüm hammadde düşümleri tek transaction'da uygulanır (atomik).
+        await db.deductStockBatch(
+          deductions.map(d => ({ ...d, note: `Üretim: ${input.qty}× ${product.name}` })),
+        );
+        return { deducted: deductions.length, missing };
       }),
   }),
 

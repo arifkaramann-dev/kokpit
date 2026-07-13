@@ -118,6 +118,14 @@ Pazaryeri (Qukasoft):
 - [x] Asistan/WhatsApp: "en kârlı ürünüm ne?", "kim uzun süredir sipariş vermedi?" (snapshot'a eklendi)
 - [x] Saf, test edilmiş motor: `shared/analytics.ts` + `server/analytics.test.ts` (11 test)
 
+## Modül 15: İşlem bütünlüğü — DB transaction'ları (eklendi)
+- [x] `adjustStock`: stok hareketi + bakiye güncellemesi atomik (transaction)
+- [x] `deductStockBatch`: üretimde çok hammadde düşümü tek transaction'da (kısmi düşüm olmaz)
+- [x] `transferBetweenAccounts`: çıkış + giriş atomik (para "kaybolmaz")
+- [x] `createPurchase`: fatura + hammadde + stok hareketi + kalemler atomik
+- [x] `replaceOrderItems`: sil + ekle atomik (sipariş kalemsiz kalmaz)
+- [x] Üretim planı saf fonksiyona ayrıldı: `planProduction` (productUtils) + `server/production.test.ts` (5 test)
+
 ## Sonraki Oturuma Ertelenenler (opsiyonel geliştirmeler)
 - AI görsel üretimi modülü (ürün fotoğrafı arka plan değiştirme) — kullanıcı talebiyle eklenecek
 - Asistanla sesli "gider ekle" / "tahsilat aldım" komutu (parseVoiceCommand intent)
