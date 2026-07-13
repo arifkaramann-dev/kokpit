@@ -13,6 +13,7 @@ import { buildSaleTitle, deriveCombos, parseSetCount } from "./productUtils";
 import { syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf } from "./trendyol";
 import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "./marketplace";
 import { ENV } from "./_core/env";
+import { customerInsights, productProfitability } from "@shared/analytics";
 
 /* ------------------------- Zod schemas ------------------------- */
 
@@ -884,16 +885,33 @@ Türkçe yaz. Sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, o
 
   dashboard: router({
     summary: protectedProcedure.query(async () => {
-      const [today, statusCounts, critical, upcoming, openTasks, finance, unpaid] = await Promise.all([
-        db.countOrdersToday(),
-        db.orderStatusCounts(),
-        db.listCriticalMaterials(),
-        db.upcomingCampaigns(30),
-        db.listTasks(undefined, "open"),
-        db.financeSummary(),
-        db.listUnpaidOrders(6),
-      ]);
-      return { today, statusCounts, critical, upcoming, openTasks, finance, unpaid };
+      const [today, statusCounts, critical, upcoming, openTasks, finance, unpaid, orders, orderItems, products, formulas] =
+        await Promise.all([
+          db.countOrdersToday(),
+          db.orderStatusCounts(),
+          db.listCriticalMaterials(),
+          db.upcomingCampaigns(30),
+          db.listTasks(undefined, "open"),
+          db.financeSummary(),
+          db.listUnpaidOrders(6),
+          db.listOrders(),
+          db.listAllOrderItems(),
+          db.listProducts(),
+          db.formulaCostRows(),
+        ]);
+
+      // İş zekâsı sinyalleri: en kârlı ürünler + değere göre uykuda müşteriler.
+      const profit = productProfitability({ products, formulas, orders, orderItems }, { sinceDays: 90 });
+      const topProfit = profit.rows
+        .filter(r => r.matched)
+        .slice(0, 3)
+        .map(r => ({ name: r.name, profit: r.profit ?? 0, margin: r.margin ?? 0 }));
+      const insights = customerInsights(orders, { sleepingDays: 60 });
+      const sleeping = insights.sleeping
+        .slice(0, 5)
+        .map(c => ({ name: c.name, totalSpent: c.totalSpent, daysSinceLast: c.daysSinceLast }));
+
+      return { today, statusCounts, critical, upcoming, openTasks, finance, unpaid, topProfit, sleeping };
     }),
   }),
 });

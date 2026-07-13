@@ -1,6 +1,7 @@
 import { answerBusinessQuestion, parseVoiceCommand } from "./_core/claude";
 import * as db from "./db";
 import { itemsTotal, summarizeItems, toItemRows } from "./orderUtils";
+import { customerInsights, productProfitability } from "@shared/analytics";
 
 /**
  * Sesli komut / WhatsApp asistanının ortak beyni: serbest Türkçe metni
@@ -55,7 +56,7 @@ const HELP_TEXT = [
 
 /** Soru-cevap için işletmenin güncel verilerinden kompakt Türkçe özet üretir. */
 export async function buildBusinessSnapshot(): Promise<string> {
-  const [statusCounts, today, critical, materials, products, orders, openTasks, finance, expenses] = await Promise.all([
+  const [statusCounts, today, critical, materials, products, orders, openTasks, finance, expenses, orderItems, formulas] = await Promise.all([
     db.orderStatusCounts(),
     db.countOrdersToday(),
     db.listCriticalMaterials(),
@@ -65,6 +66,8 @@ export async function buildBusinessSnapshot(): Promise<string> {
     db.listTasks(undefined, "open"),
     db.financeSummary(),
     db.listExpenses(50),
+    db.listAllOrderItems(),
+    db.formulaCostRows(),
   ]);
   const since30 = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const last30 = orders.filter(o => new Date(o.createdAt as unknown as string).getTime() >= since30);
@@ -88,6 +91,28 @@ export async function buildBusinessSnapshot(): Promise<string> {
     const date = o.createdAt instanceof Date ? o.createdAt.toISOString().slice(0, 10) : String(o.createdAt).slice(0, 10);
     return `- ${date} ${o.orderNo} | ${o.customerName} | ${o.channel} | ${o.status} | ${o.totalAmount} TL | ${o.itemsSummary ?? ""}`;
   });
+
+  // Ürün kârlılığı (son 90 gün): en kârlı ürünler + zarar/düşük marj uyarıları.
+  const profit = productProfitability(
+    { products, formulas, orders, orderItems },
+    { sinceDays: 90 },
+  );
+  const topProfit = profit.rows.filter(r => r.matched).slice(0, 5);
+  const profitLine = topProfit.length
+    ? topProfit.map(r => `${r.name} (kâr ${Math.round(r.profit ?? 0)} TL, marj %${Math.round(r.margin ?? 0)}, ${Math.round(r.qty)} adet)`).join("; ")
+    : "yeterli veri yok";
+  const lossLine = profit.lowMargin.length
+    ? profit.lowMargin.slice(0, 5).map(r => `${r.name} (kâr ${Math.round(r.profit ?? 0)} TL, marj %${Math.round(r.margin ?? 0)})`).join("; ")
+    : "yok";
+
+  // Uykuda müşteriler (60+ gündür sipariş vermeyen), değerine göre.
+  const insights = customerInsights(orders, { sleepingDays: 60 });
+  const sleepingLine = insights.sleeping.length
+    ? insights.sleeping.slice(0, 8).map(c => `${c.name} (${c.daysSinceLast} gün, toplam ${Math.round(c.totalSpent)} TL)`).join("; ")
+    : "yok";
+  const topCustomersLine = insights.top.length
+    ? insights.top.slice(0, 5).map(c => `${c.name} (${c.orderCount} sipariş, ${Math.round(c.totalSpent)} TL)`).join("; ")
+    : "yok";
   const lines = [
     `Bugünkü sipariş: ${today?.count ?? 0} adet, ${today?.total ?? 0} TL`,
     `Sipariş durumları: ${statusCounts.map(s => `${s.status}: ${s.count}`).join(", ") || "yok"}`,
@@ -107,6 +132,10 @@ export async function buildBusinessSnapshot(): Promise<string> {
       .slice(0, 40)
       .map(m => `${m.name} | ${m.stockQty} ${m.unit} | ${m.unitCost} TL`)
       .join("; ")}`,
+    `En kârlı ürünler (son 90 gün): ${profitLine}`,
+    `Zarar eden / düşük marjlı ürünler: ${lossLine}`,
+    `En değerli müşteriler: ${topCustomersLine}`,
+    `Uykuda müşteriler (60+ gün sipariş yok): ${sleepingLine}`,
     `Eksik listesi (alınacaklar): ${openTasks.filter(t => t.kind === "eksik").map(t => t.title).join(", ") || "boş"}`,
     `Açık görevler: ${openTasks.filter(t => t.kind === "gorev").map(t => t.title).join(", ") || "yok"}`,
     `Son siparişler:`,

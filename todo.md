@@ -107,6 +107,17 @@ Pazaryeri (Qukasoft):
 - [ ] İade yönetimi, müşteri soru-cevap yönetimi
 - [ ] Sıfırdan ürün açma (kategori/marka/özellik/görsel) — çoklu pazaryeri
 
+## Modül 14: İş Zekâsı — Kârlılık & Müşteri (eklendi)
+- [x] Ürün kârlılığı: ciro − (reçete + ambalaj + kargo) → ürün bazında kâr/marj (son 90 gün)
+- [x] "Fiyatı gözden geçir" uyarısı: zarar eden / düşük marjlı (%15 altı) ürünler ayrı liste
+- [x] Maliyet kapsamı: adı reçeteyle eşleşmeyen satışlar "maliyeti bilinmiyor" işaretlenir (toplam sessizce yanılmaz)
+- [x] Müşteri zekâsı: en değerli müşteriler (harcama/sipariş/alacak) + bu ay yeni müşteriler
+- [x] "Uykuda müşteriler" (60+ gün sipariş yok, değere göre) + tek tık WhatsApp "geri kazan" mesajı
+- [x] Analiz ekranı sekmeli: Satış / Kârlılık / Müşteriler
+- [x] Kokpit ana sayfada "En Kârlı Ürünler" + "Uykuda Müşteriler" kartları
+- [x] Asistan/WhatsApp: "en kârlı ürünüm ne?", "kim uzun süredir sipariş vermedi?" (snapshot'a eklendi)
+- [x] Saf, test edilmiş motor: `shared/analytics.ts` + `server/analytics.test.ts` (11 test)
+
 ## Sonraki Oturuma Ertelenenler (opsiyonel geliştirmeler)
 - AI görsel üretimi modülü (ürün fotoğrafı arka plan değiştirme) — kullanıcı talebiyle eklenecek
 - Asistanla sesli "gider ekle" / "tahsilat aldım" komutu (parseVoiceCommand intent)

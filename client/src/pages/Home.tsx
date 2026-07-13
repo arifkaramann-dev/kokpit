@@ -11,6 +11,7 @@ import {
   ClipboardList,
   Contact,
   ListChecks,
+  Moon,
   Package,
   PiggyBank,
   Receipt,
@@ -19,6 +20,7 @@ import {
   Sparkles,
   TrendingDown,
   TrendingUp,
+  Trophy,
   Wallet,
 } from "lucide-react";
 import { useLocation } from "wouter";
@@ -229,6 +231,62 @@ export default function Home() {
                   </span>
                 </div>
               ))}
+            </div>
+          )}
+        </Card>
+
+        {/* En kârlı ürünler */}
+        <Card className="p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold flex items-center gap-2">
+              <Trophy className="h-4 w-4 text-amber-500" /> En Kârlı Ürünler
+            </h2>
+            <Button variant="ghost" size="sm" onClick={() => setLocation("/analiz")}>
+              Analize Git <ArrowRight className="h-3.5 w-3.5 ml-1" />
+            </Button>
+          </div>
+          {(data?.topProfit ?? []).length === 0 ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">
+              Kâr hesabı için sipariş ve reçete verisi gerekiyor.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {(data?.topProfit ?? []).map(p => (
+                <div key={p.name} className="flex items-center gap-2 text-sm">
+                  <span className="flex-1 truncate" title={p.name}>{p.name}</span>
+                  <Badge variant="outline">%{Math.round(p.margin)}</Badge>
+                  <span className="font-semibold text-emerald-600 whitespace-nowrap">{formatTL(p.profit)}</span>
+                </div>
+              ))}
+              <p className="text-[11px] text-muted-foreground/70">Son 90 gün · kâr = ciro − reçete/ambalaj/kargo</p>
+            </div>
+          )}
+        </Card>
+
+        {/* Uykuda müşteriler */}
+        <Card className="p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold flex items-center gap-2">
+              <Moon className="h-4 w-4 text-indigo-500" /> Uykuda Müşteriler
+            </h2>
+            <Button variant="ghost" size="sm" onClick={() => setLocation("/analiz")}>
+              Geri Kazan <ArrowRight className="h-3.5 w-3.5 ml-1" />
+            </Button>
+          </div>
+          {(data?.sleeping ?? []).length === 0 ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">
+              Uykuda müşteri yok — herkes aktif. 👍
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {(data?.sleeping ?? []).map(c => (
+                <div key={c.name} className="flex items-center gap-2 text-sm">
+                  <span className="flex-1 truncate font-medium">{c.name}</span>
+                  <span className="text-[11px] text-muted-foreground whitespace-nowrap">{c.daysSinceLast} gün</span>
+                  <span className="font-semibold whitespace-nowrap">{formatTL(c.totalSpent)}</span>
+                </div>
+              ))}
+              <p className="text-[11px] text-muted-foreground/70">60+ gündür sipariş vermeyenler · en değerli önce</p>
             </div>
           )}
         </Card>

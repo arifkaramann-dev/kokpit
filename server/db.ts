@@ -731,6 +731,25 @@ export async function listOrderItems(orderId: number) {
   return db.select().from(orderItems).where(eq(orderItems.orderId, orderId)).orderBy(orderItems.id);
 }
 
+/** Tüm sipariş kalemleri (kârlılık analizi için toplu okuma). */
+export async function listAllOrderItems() {
+  const db = await requireDb();
+  return db.select().from(orderItems);
+}
+
+/** Ürün bazında reçete maliyet satırları (hammadde miktarı × birim maliyet). */
+export async function formulaCostRows() {
+  const db = await requireDb();
+  return db
+    .select({
+      productId: formulaItems.productId,
+      qty: formulaItems.qty,
+      unitCost: materials.unitCost,
+    })
+    .from(formulaItems)
+    .leftJoin(materials, eq(formulaItems.materialId, materials.id));
+}
+
 /** Siparişin kalemlerini komple değiştirir (sil + yeniden ekle). */
 export async function replaceOrderItems(
   orderId: number,
