@@ -11,6 +11,7 @@ import Expenses from "@/pages/Expenses";
 import Development from "@/pages/Development";
 import Formulas from "@/pages/Formulas";
 import Home from "@/pages/Home";
+import Ledgers from "@/pages/Ledgers";
 import Marketing from "@/pages/Marketing";
 import NotFound from "@/pages/NotFound";
 import Orders from "@/pages/Orders";
@@ -36,6 +37,7 @@ function Router() {
         <Route path={"/musteriler"} component={Customers} />
         <Route path={"/giderler"} component={Expenses} />
         <Route path={"/kasa"} component={Accounts} />
+        <Route path={"/cari"} component={Ledgers} />
         <Route path={"/stok"} component={Stock} />
         <Route path={"/faturalar"} component={Purchases} />
         <Route path={"/urunler"} component={Products} />

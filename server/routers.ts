@@ -692,6 +692,7 @@ export const appRouter = router({
   report: router({
     data: protectedProcedure.query(() => db.reportData()),
     vat: protectedProcedure.query(() => db.vatReport()),
+    cashflow: protectedProcedure.query(() => db.cashflowReport()),
   }),
 
   customers: router({

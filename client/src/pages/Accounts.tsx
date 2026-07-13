@@ -17,8 +17,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatDate, formatTL } from "@/lib/format";
+import { printReceipt } from "@/lib/receipt";
 import { trpc } from "@/lib/trpc";
-import { ArrowDownLeft, ArrowUpRight, ArrowLeftRight, Banknote, Landmark, Plus, Trash2, Wallet } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, ArrowLeftRight, Banknote, Landmark, Plus, Printer, Trash2, Wallet } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -118,6 +119,24 @@ export default function Accounts() {
   const txnRows = (txns as TxnRow[]) ?? [];
   const totalCash = accountRows.reduce((s, a) => s + a.balance, 0);
   const accName = (id: number | null) => accountRows.find(a => a.id === id)?.name ?? "—";
+
+  // Tahsilat/ödeme makbuzu yazdır (şirket bilgisini alıp).
+  async function printTxnReceipt(t: TxnRow) {
+    const company = await utils.client.settings.get.query();
+    printReceipt(
+      {
+        no: t.id,
+        date: t.txnDate,
+        direction: t.direction,
+        amount: t.amount,
+        category: t.category,
+        party: t.customerName,
+        account: accName(t.accountId),
+        description: t.description,
+      },
+      company,
+    );
+  }
 
   function submitTxn() {
     const amount = parseFloat(txn.amount);
@@ -281,6 +300,11 @@ export default function Accounts() {
                   {isIn ? "+" : "−"}
                   {formatTL(t.amount)}
                 </span>
+                {(t.category === "tahsilat" || t.category === "odeme") && (
+                  <Button size="icon" variant="ghost" className="h-7 w-7" title="Makbuz yazdır" onClick={() => printTxnReceipt(t)}>
+                    <Printer className="h-3.5 w-3.5" />
+                  </Button>
+                )}
                 <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => deleteTxn.mutate({ id: t.id })}>
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
