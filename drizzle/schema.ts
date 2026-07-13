@@ -225,6 +225,7 @@ export const transactions = mysqlTable("transactions", {
   amount: decimal("amount", { precision: 14, scale: 2 }).notNull().default("0"),
   category: varchar("category", { length: 48 }).notNull().default("diğer"),
   customerName: varchar("customerName", { length: 255 }),
+  supplierName: varchar("supplierName", { length: 255 }),
   orderId: int("orderId"),
   orderNo: varchar("orderNo", { length: 32 }),
   description: varchar("description", { length: 255 }),

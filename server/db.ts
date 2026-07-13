@@ -527,6 +527,52 @@ export async function vatReport() {
   return { rate, month: calc(monthStart), year: calc(yearStart) };
 }
 
+/**
+ * Tedarikçi cari bakiyeleri (küçük harf ada göre): alış faturaları (borç)
+ * − tedarikçiye ödemeler. Pozitif = biz tedarikçiye borçluyuz.
+ */
+export async function supplierBalances(): Promise<Record<string, number>> {
+  const db = await requireDb();
+  const [purs, txns] = await Promise.all([
+    db.select({ name: purchases.supplierName, total: purchases.totalAmount }).from(purchases),
+    db.select({ name: transactions.supplierName, direction: transactions.direction, amount: transactions.amount }).from(transactions),
+  ]);
+  const key = (n: string) => n.trim().toLocaleLowerCase("tr-TR");
+  const out: Record<string, number> = {};
+  for (const p of purs) if (p.name) out[key(p.name)] = (out[key(p.name)] ?? 0) + toNum(p.total);
+  for (const t of txns) {
+    if (!t.name) continue;
+    // Tedarikçiye ödeme (out) borcumuzu azaltır.
+    out[key(t.name)] = (out[key(t.name)] ?? 0) - (t.direction === "out" ? toNum(t.amount) : -toNum(t.amount));
+  }
+  return out;
+}
+
+/** Tedarikçi cari ekstresi: alış faturaları (borç) + ödemeler (alacak) + bakiye. */
+export async function supplierLedger(name: string) {
+  const db = await requireDb();
+  const [purs, txns] = await Promise.all([
+    db.select().from(purchases).where(eq(purchases.supplierName, name)),
+    db.select().from(transactions).where(eq(transactions.supplierName, name)),
+  ]);
+  type Entry = { date: Date; label: string; debit: number; credit: number; ref: string };
+  const entries: Entry[] = [];
+  for (const p of purs) {
+    entries.push({ date: new Date((p.invoiceDate ?? p.createdAt) as never), label: "Alış Faturası", debit: toNum(p.totalAmount), credit: 0, ref: p.invoiceNo ?? "" });
+  }
+  for (const t of txns) {
+    const isOut = t.direction === "out";
+    entries.push({ date: new Date(t.txnDate), label: isOut ? "Ödeme" : t.description || t.category, debit: 0, credit: isOut ? toNum(t.amount) : -toNum(t.amount), ref: "" });
+  }
+  entries.sort((a, b) => a.date.getTime() - b.date.getTime());
+  let running = 0;
+  const rows = entries.map(e => {
+    running += e.debit - e.credit;
+    return { ...e, balance: running };
+  });
+  return { rows, balance: running };
+}
+
 /** Ödenmemiş/kısmi ödenmiş siparişleri kalan borca göre döner (tahsilat takibi). */
 export async function listUnpaidOrders(limit = 8) {
   const db = await requireDb();
