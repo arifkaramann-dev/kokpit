@@ -104,6 +104,7 @@ const transactionInput = z.object({
   amount: z.number().min(0).default(0),
   category: z.string().min(1).default("diğer"),
   customerName: z.string().nullable().optional(),
+  supplierName: z.string().nullable().optional(),
   orderId: z.number().nullable().optional(),
   orderNo: z.string().nullable().optional(),
   description: z.string().nullable().optional(),
@@ -767,6 +768,9 @@ export const appRouter = router({
       .input(z.object({ id: z.number(), data: supplierInput.partial() }))
       .mutation(({ input }) => db.updateSupplier(input.id, input.data as never)),
     delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteSupplier(input.id)),
+    // Tedarikçi cari: alış faturaları (borç) − ödemeler (alacak).
+    ledger: protectedProcedure.input(z.object({ name: z.string() })).query(({ input }) => db.supplierLedger(input.name)),
+    balances: protectedProcedure.query(() => db.supplierBalances()),
   }),
 
   campaigns: router({

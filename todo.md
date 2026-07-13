@@ -89,7 +89,7 @@
 
 ## Rakip paritesi için yol haritası (Bizimhesap + Qukasoft'u geçmek)
 Ön muhasebe (Bizimhesap):
-- [ ] Tedarikçi carisi (alış faturaları → tedarikçi borcu, ödeme) — cari'yi tedarikçiye genişlet
+- [x] Tedarikçi carisi (alış faturaları → borç, ödeme → alacak, ekstre + bakiye)
 - [x] Kasa/banka: hesaplar arası transfer
 - [x] KDV raporu (satış/alış KDV özeti, bu ay/bu yıl)
 - [x] Müşteri cari bakiyesi tahsilatları da içerir (customers.balances)
