@@ -19,6 +19,7 @@ import Orders from "@/pages/Orders";
 import Production from "@/pages/Production";
 import Products from "@/pages/Products";
 import Purchases from "@/pages/Purchases";
+import Quotes from "@/pages/Quotes";
 import Settings from "@/pages/Settings";
 import Stock from "@/pages/Stock";
 import Strategy from "@/pages/Strategy";
@@ -35,6 +36,7 @@ function Router() {
       <Switch>
         <Route path={"/"} component={Home} />
         <Route path={"/siparisler"} component={Orders} />
+        <Route path={"/teklifler"} component={Quotes} />
         <Route path={"/musteriler"} component={Customers} />
         <Route path={"/giderler"} component={Expenses} />
         <Route path={"/kasa"} component={Accounts} />

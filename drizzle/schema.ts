@@ -164,6 +164,45 @@ export type OrderItem = typeof orderItems.$inferSelect;
 export type InsertOrderItem = typeof orderItems.$inferInsert;
 
 /**
+ * Teklifler (quote): müşteriye satıştan önce verilen fiyat teklifi.
+ * Kabul edilince tek tıkla siparişe dönüştürülür (convertedOrderId dolar).
+ */
+export const quotes = mysqlTable("quotes", {
+  id: int("id").autoincrement().primaryKey(),
+  quoteNo: varchar("quoteNo", { length: 32 }).notNull(),
+  customerName: varchar("customerName", { length: 255 }).notNull(),
+  customerPhone: varchar("customerPhone", { length: 64 }),
+  customerAddress: varchar("customerAddress", { length: 512 }),
+  validUntil: timestamp("validUntil"),
+  status: mysqlEnum("status", ["draft", "sent", "accepted", "rejected", "converted"])
+    .notNull()
+    .default("draft"),
+  totalAmount: decimal("totalAmount", { precision: 12, scale: 2 }).notNull().default("0"),
+  itemsSummary: text("itemsSummary"),
+  notes: text("notes"),
+  // Siparişe dönüştürülünce oluşan siparişin id'si (tekrar dönüştürmeyi engeller).
+  convertedOrderId: int("convertedOrderId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Quote = typeof quotes.$inferSelect;
+export type InsertQuote = typeof quotes.$inferInsert;
+
+/** Teklif kalemleri: ürün/hizmet + miktar + birim fiyat (orderItems ile aynı yapı). */
+export const quoteItems = mysqlTable("quoteItems", {
+  id: int("id").autoincrement().primaryKey(),
+  quoteId: int("quoteId").notNull(),
+  productName: varchar("productName", { length: 255 }).notNull(),
+  quantity: decimal("quantity", { precision: 12, scale: 2 }).notNull().default("1"),
+  unitPrice: decimal("unitPrice", { precision: 12, scale: 2 }).notNull().default("0"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type QuoteItem = typeof quoteItems.$inferSelect;
+export type InsertQuoteItem = typeof quoteItems.$inferInsert;
+
+/**
  * Müşteriler (CRM): elden/web satışlarda tekrar kullanılan ad, telefon, adres.
  * Sipariş formunda seçilince iletişim/teslimat bilgisi siparişe kopyalanır.
  */

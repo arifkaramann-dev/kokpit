@@ -8,7 +8,7 @@ import { TRPCError } from "@trpc/server";
 import * as db from "./db";
 import { itemsTotal, summarizeItems, toItemRows } from "./orderUtils";
 import { extractInvoice } from "./_core/claude";
-import { executeAssistantCommand, generateOrderNo } from "./assistant";
+import { executeAssistantCommand, generateOrderNo, generateQuoteNo } from "./assistant";
 import { buildSaleTitle, deriveCombos, parseSetCount } from "./productUtils";
 import { syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf } from "./trendyol";
 import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "./marketplace";
@@ -71,6 +71,16 @@ const orderInput = z.object({
   // Elden/dışarıdan satış girişleri doğrudan "Tamamlandı" olarak eklenebilir.
   status: z.enum(["new", "production", "ready", "done"]).optional(),
   // Kalem listesi gönderilirse toplam tutar ve özet bu satırlardan türetilir.
+  items: z.array(orderItemInput).optional(),
+});
+
+const quoteInput = z.object({
+  customerName: z.string().min(1),
+  customerPhone: z.string().nullable().optional(),
+  customerAddress: z.string().nullable().optional(),
+  validUntil: z.string().nullable().optional(),
+  status: z.enum(["draft", "sent", "accepted", "rejected", "converted"]).optional(),
+  notes: z.string().nullable().optional(),
   items: z.array(orderItemInput).optional(),
 });
 
@@ -483,6 +493,72 @@ export const appRouter = router({
         }),
       ),
     delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteOrder(input.id)),
+  }),
+
+  // Teklifler: müşteriye fiyat teklifi → kabul edilince siparişe dönüştürme.
+  quotes: router({
+    list: protectedProcedure.query(() => db.listQuotes()),
+    items: protectedProcedure
+      .input(z.object({ quoteId: z.number() }))
+      .query(({ input }) => db.listQuoteItems(input.quoteId)),
+    create: protectedProcedure.input(quoteInput).mutation(async ({ input }) => {
+      const { items, validUntil, ...quote } = input;
+      const totalAmount = items?.length ? itemsTotal(items) : 0;
+      const itemsSummary = items?.length ? summarizeItems(items) : null;
+      const id = await db.createQuote({
+        ...(toDecimalFields({ ...quote, totalAmount }, ["totalAmount"]) as never as object),
+        itemsSummary,
+        validUntil: validUntil ? new Date(validUntil) : null,
+        quoteNo: generateQuoteNo(),
+      } as never);
+      if (items?.length) await db.replaceQuoteItems(Number(id), toItemRows(items));
+      return id;
+    }),
+    update: protectedProcedure
+      .input(z.object({ id: z.number(), data: quoteInput.partial() }))
+      .mutation(async ({ input }) => {
+        const { items, validUntil, ...quote } = input.data;
+        const patch: Record<string, unknown> = { ...quote };
+        if (items !== undefined) {
+          patch.totalAmount = itemsTotal(items);
+          patch.itemsSummary = items.length ? summarizeItems(items) : null;
+          await db.replaceQuoteItems(input.id, toItemRows(items));
+        }
+        if (validUntil !== undefined) patch.validUntil = validUntil ? new Date(validUntil) : null;
+        await db.updateQuote(input.id, toDecimalFields(patch, ["totalAmount"]) as never);
+      }),
+    setStatus: protectedProcedure
+      .input(z.object({ id: z.number(), status: z.enum(["draft", "sent", "accepted", "rejected", "converted"]) }))
+      .mutation(({ input }) => db.updateQuote(input.id, { status: input.status })),
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteQuote(input.id)),
+    // Teklifi siparişe dönüştürür: yeni sipariş + kalemleri oluşur, teklif "converted" olur.
+    convert: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+      const quote = await db.getQuote(input.id);
+      if (!quote) throw new TRPCError({ code: "NOT_FOUND", message: "Teklif bulunamadı" });
+      if (quote.convertedOrderId) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Bu teklif zaten siparişe dönüştürülmüş" });
+      }
+      const items = await db.listQuoteItems(input.id);
+      const orderId = await db.createOrder({
+        orderNo: generateOrderNo(),
+        customerName: quote.customerName,
+        channel: "teklif",
+        status: "new",
+        totalAmount: quote.totalAmount,
+        itemsSummary: quote.itemsSummary,
+        notes: quote.notes,
+        customerPhone: quote.customerPhone,
+        customerAddress: quote.customerAddress,
+      } as never);
+      if (items.length) {
+        await db.replaceOrderItems(
+          Number(orderId),
+          items.map(i => ({ productName: i.productName, quantity: i.quantity, unitPrice: i.unitPrice })),
+        );
+      }
+      await db.updateQuote(input.id, { status: "converted", convertedOrderId: Number(orderId) });
+      return { orderId: Number(orderId) };
+    }),
   }),
 
   dev: router({

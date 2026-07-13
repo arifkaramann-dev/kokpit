@@ -13,6 +13,7 @@ import {
   CalendarDays,
   ClipboardList,
   Contact,
+  FileText,
   FlaskConical,
   Package,
   Receipt,
@@ -27,6 +28,7 @@ import { useLocation } from "wouter";
 const PAGES: { label: string; path: string; icon: React.ReactNode; keywords?: string }[] = [
   { label: "Kokpit (Ana Sayfa)", path: "/", icon: <Target className="h-4 w-4" />, keywords: "dashboard özet" },
   { label: "Sipariş Panosu", path: "/siparisler", icon: <ClipboardList className="h-4 w-4" />, keywords: "kanban sipariş" },
+  { label: "Teklifler", path: "/teklifler", icon: <FileText className="h-4 w-4" />, keywords: "teklif quote fiyat" },
   { label: "Müşteriler", path: "/musteriler", icon: <Contact className="h-4 w-4" />, keywords: "müşteri crm adres" },
   { label: "Giderler", path: "/giderler", icon: <Receipt className="h-4 w-4" />, keywords: "gider masraf" },
   { label: "Stok & Hammadde", path: "/stok", icon: <Warehouse className="h-4 w-4" />, keywords: "stok hammadde" },

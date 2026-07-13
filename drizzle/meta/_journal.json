@@ -120,6 +120,13 @@
       "when": 1783965304050,
       "tag": "0016_common_micromax",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "5",
+      "when": 1783965794846,
+      "tag": "0017_oval_mad_thinker",
+      "breakpoints": true
     }
   ]
 }

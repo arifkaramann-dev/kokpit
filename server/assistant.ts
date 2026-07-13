@@ -16,6 +16,14 @@ export function generateOrderNo() {
   return `AOC-${ymd}-${rand}`;
 }
 
+/** Teklif numarası: TKF-YYYYMMDD-XXXX. */
+export function generateQuoteNo() {
+  const d = new Date();
+  const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+  const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
+  return `TKF-${ymd}-${rand}`;
+}
+
 function formatCmdItems(items: { productName: string; quantity: number }[]) {
   return items.map(i => `${i.quantity}× ${i.productName}`).join(", ") || "kalemsiz";
 }

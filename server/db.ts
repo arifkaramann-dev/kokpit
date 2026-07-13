@@ -30,6 +30,10 @@ import {
   productImages,
   purchaseItems,
   purchases,
+  quotes,
+  quoteItems,
+  InsertQuote,
+  InsertQuoteItem,
   settings,
   tasks,
   templates,
@@ -316,6 +320,49 @@ export async function setOrderPayment(
 ) {
   const db = await requireDb();
   await db.update(orders).set(data).where(eq(orders.id, id));
+}
+
+/* ------------------------- Teklifler (Quotes) ------------------------- */
+
+export async function listQuotes() {
+  const db = await requireDb();
+  return db.select().from(quotes).orderBy(desc(quotes.createdAt));
+}
+
+export async function getQuote(id: number) {
+  const db = await requireDb();
+  const rows = await db.select().from(quotes).where(eq(quotes.id, id)).limit(1);
+  return rows[0];
+}
+
+export async function listQuoteItems(quoteId: number) {
+  const db = await requireDb();
+  return db.select().from(quoteItems).where(eq(quoteItems.quoteId, quoteId));
+}
+
+export async function createQuote(data: InsertQuote) {
+  const db = await requireDb();
+  const [result] = await db.insert(quotes).values(data);
+  return result.insertId;
+}
+
+export async function updateQuote(id: number, data: Partial<InsertQuote>) {
+  const db = await requireDb();
+  await db.update(quotes).set(data).where(eq(quotes.id, id));
+}
+
+export async function deleteQuote(id: number) {
+  const db = await requireDb();
+  await db.delete(quoteItems).where(eq(quoteItems.quoteId, id));
+  await db.delete(quotes).where(eq(quotes.id, id));
+}
+
+export async function replaceQuoteItems(quoteId: number, items: Omit<InsertQuoteItem, "quoteId">[]) {
+  const db = await requireDb();
+  await db.delete(quoteItems).where(eq(quoteItems.quoteId, quoteId));
+  if (items.length > 0) {
+    await db.insert(quoteItems).values(items.map(item => ({ ...item, quoteId })));
+  }
 }
 
 /* ------------------------- Müşteriler (CRM) ------------------------- */
