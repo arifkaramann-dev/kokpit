@@ -333,9 +333,37 @@ export async function createExpense(data: InsertExpense) {
   return Number(res.insertId);
 }
 
+export async function updateExpense(id: number, data: Partial<InsertExpense>) {
+  const db = await requireDb();
+  await db.update(expenses).set(data).where(eq(expenses.id, id));
+}
+
 export async function deleteExpense(id: number) {
   const db = await requireDb();
   await db.delete(expenses).where(eq(expenses.id, id));
+}
+
+/** Ödenmemiş/kısmi ödenmiş siparişleri kalan borca göre döner (tahsilat takibi). */
+export async function listUnpaidOrders(limit = 8) {
+  const db = await requireDb();
+  const rows = await db
+    .select({
+      id: orders.id,
+      orderNo: orders.orderNo,
+      customerName: orders.customerName,
+      totalAmount: orders.totalAmount,
+      paidAmount: orders.paidAmount,
+      paymentStatus: orders.paymentStatus,
+      createdAt: orders.createdAt,
+    })
+    .from(orders)
+    .where(sql`${orders.paymentStatus} <> 'paid'`);
+  const num = (v: string | null) => parseFloat(v ?? "0") || 0;
+  return rows
+    .map(o => ({ ...o, due: Math.max(0, num(o.totalAmount) - num(o.paidAmount)) }))
+    .filter(o => o.due > 0)
+    .sort((a, b) => b.due - a.due)
+    .slice(0, limit);
 }
 
 /**

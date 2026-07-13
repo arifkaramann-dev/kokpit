@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/select";
 import { formatDate, formatTL } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
-import { Plus, Receipt, Trash2, TrendingDown } from "lucide-react";
+import { Pencil, Plus, Receipt, Trash2, TrendingDown, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -32,16 +32,42 @@ export default function Expenses() {
   const utils = trpc.useUtils();
   const { data: expenses, isLoading } = trpc.expenses.list.useQuery();
   const [form, setForm] = useState({ category: "diğer", description: "", amount: "", expenseDate: todayStr(), note: "" });
+  const [editingId, setEditingId] = useState<number | null>(null);
+
+  const resetForm = () => {
+    setEditingId(null);
+    setForm(f => ({ ...f, description: "", amount: "", note: "" }));
+  };
 
   const createExpense = trpc.expenses.create.useMutation({
     onSuccess: () => {
       utils.expenses.invalidate();
       utils.dashboard.summary.invalidate();
       toast.success("Gider eklendi");
-      setForm(f => ({ ...f, description: "", amount: "", note: "" }));
+      resetForm();
     },
     onError: e => toast.error(e.message),
   });
+  const updateExpense = trpc.expenses.update.useMutation({
+    onSuccess: () => {
+      utils.expenses.invalidate();
+      utils.dashboard.summary.invalidate();
+      toast.success("Gider güncellendi");
+      resetForm();
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  function startEdit(e: ExpenseRow) {
+    setEditingId(e.id);
+    setForm({
+      category: e.category,
+      description: e.description ?? "",
+      amount: String(parseFloat(e.amount)),
+      expenseDate: new Date(e.expenseDate).toISOString().slice(0, 10),
+      note: e.note ?? "",
+    });
+  }
   const deleteExpense = trpc.expenses.delete.useMutation({
     onSuccess: () => {
       utils.expenses.invalidate();
@@ -67,14 +93,29 @@ export default function Expenses() {
       toast.error("Geçerli bir tutar girin");
       return;
     }
-    createExpense.mutate({
+    const payload = {
       category: form.category,
       description: form.description || null,
       amount,
       expenseDate: form.expenseDate || null,
       note: form.note || null,
-    });
+    };
+    if (editingId) updateExpense.mutate({ id: editingId, data: payload });
+    else createExpense.mutate(payload);
   }
+
+  // Bu ayki giderlerin kategori kırılımı (en yüksekten).
+  const monthByCategory = useMemo(() => {
+    const start = new Date();
+    start.setDate(1);
+    start.setHours(0, 0, 0, 0);
+    const m = new Map<string, number>();
+    for (const e of rows) {
+      if (new Date(e.expenseDate) < start) continue;
+      m.set(e.category, (m.get(e.category) ?? 0) + (parseFloat(e.amount) || 0));
+    }
+    return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
+  }, [rows]);
 
   return (
     <div className="space-y-4">
@@ -137,11 +178,44 @@ export default function Expenses() {
               onChange={e => setForm(f => ({ ...f, expenseDate: e.target.value }))}
             />
           </div>
-          <Button onClick={submit} disabled={createExpense.isPending}>
-            <Plus className="h-4 w-4 mr-1" /> Ekle
-          </Button>
+          <div className="flex gap-1.5">
+            <Button onClick={submit} disabled={createExpense.isPending || updateExpense.isPending} className="flex-1">
+              {editingId ? (
+                <>
+                  <Pencil className="h-4 w-4 mr-1" /> Kaydet
+                </>
+              ) : (
+                <>
+                  <Plus className="h-4 w-4 mr-1" /> Ekle
+                </>
+              )}
+            </Button>
+            {editingId && (
+              <Button variant="outline" size="icon" onClick={resetForm} title="Vazgeç">
+                <X className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
         </div>
       </Card>
+
+      {monthByCategory.length > 0 && (
+        <Card className="p-4 space-y-2">
+          <p className="text-sm font-medium">Bu ay kategoriye göre</p>
+          {monthByCategory.map(([cat, amt]) => {
+            const pct = monthByCategory[0][1] > 0 ? (amt / monthByCategory[0][1]) * 100 : 0;
+            return (
+              <div key={cat} className="flex items-center gap-2 text-xs">
+                <span className="w-20 capitalize shrink-0">{cat}</span>
+                <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
+                  <div className="h-full rounded-full bg-amber-500" style={{ width: `${pct}%` }} />
+                </div>
+                <span className="w-24 text-right font-medium">{formatTL(amt)}</span>
+              </div>
+            );
+          })}
+        </Card>
+      )}
 
       {isLoading && <div className="h-40 rounded-xl bg-muted animate-pulse" />}
 
@@ -165,6 +239,9 @@ export default function Expenses() {
                 <p className="text-[11px] text-muted-foreground">{formatDate(e.expenseDate)}</p>
               </div>
               <span className="font-semibold whitespace-nowrap">{formatTL(e.amount)}</span>
+              <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => startEdit(e)} title="Düzenle">
+                <Pencil className="h-3.5 w-3.5" />
+              </Button>
               <Button
                 size="icon"
                 variant="ghost"

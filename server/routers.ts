@@ -689,6 +689,15 @@ export const appRouter = router({
         expenseDate: expenseDate ? new Date(expenseDate) : new Date(),
       } as never);
     }),
+    update: protectedProcedure
+      .input(z.object({ id: z.number(), data: expenseInput.partial() }))
+      .mutation(({ input }) => {
+        const { expenseDate, ...rest } = input.data;
+        return db.updateExpense(input.id, {
+          ...(toDecimalFields(rest, ["amount"]) as never as object),
+          ...(expenseDate ? { expenseDate: new Date(expenseDate) } : {}),
+        } as never);
+      }),
     delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteExpense(input.id)),
   }),
 
@@ -782,15 +791,16 @@ Türkçe yaz. Sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, o
 
   dashboard: router({
     summary: protectedProcedure.query(async () => {
-      const [today, statusCounts, critical, upcoming, openTasks, finance] = await Promise.all([
+      const [today, statusCounts, critical, upcoming, openTasks, finance, unpaid] = await Promise.all([
         db.countOrdersToday(),
         db.orderStatusCounts(),
         db.listCriticalMaterials(),
         db.upcomingCampaigns(30),
         db.listTasks(undefined, "open"),
         db.financeSummary(),
+        db.listUnpaidOrders(6),
       ]);
-      return { today, statusCounts, critical, upcoming, openTasks, finance };
+      return { today, statusCounts, critical, upcoming, openTasks, finance, unpaid };
     }),
   }),
 });

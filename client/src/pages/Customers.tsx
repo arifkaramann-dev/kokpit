@@ -10,9 +10,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { formatTL } from "@/lib/format";
+import { formatDate, formatTL } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
-import { Contact, Mail, MapPin, Pencil, Phone, Plus, Search, ShoppingBag, Trash2 } from "lucide-react";
+import { Contact, Mail, MapPin, MessageCircle, Pencil, Phone, Plus, Search, ShoppingBag, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -50,6 +50,7 @@ export default function Customers() {
   }, [orders]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<CustomerRow | null>(null);
+  const [detail, setDetail] = useState<CustomerRow | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [search, setSearch] = useState("");
 
@@ -136,14 +137,23 @@ export default function Customers() {
         </Button>
       </div>
 
-      <div className="relative max-w-sm">
-        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-        <Input
-          className="pl-8"
-          placeholder="Ad, telefon, şehir ara…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-        />
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative max-w-sm flex-1 min-w-[180px]">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            className="pl-8"
+            placeholder="Ad, telefon, şehir ara…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+        </div>
+        <span className="text-xs text-muted-foreground">
+          {((customers as CustomerRow[]) ?? []).length} müşteri
+          {(() => {
+            const totalDue = Array.from(statsByName.values()).reduce((s, v) => s + v.due, 0);
+            return totalDue > 0 ? ` · ${formatTL(totalDue)} toplam alacak` : "";
+          })()}
+        </span>
       </div>
 
       {isLoading && <div className="h-40 rounded-xl bg-muted animate-pulse" />}
@@ -184,9 +194,20 @@ export default function Customers() {
             </div>
             <div className="space-y-1 text-xs">
               {c.phone && (
-                <a href={`tel:${c.phone}`} className="flex items-center gap-1.5 text-primary hover:underline">
-                  <Phone className="h-3 w-3" /> {c.phone}
-                </a>
+                <div className="flex items-center gap-2">
+                  <a href={`tel:${c.phone}`} className="flex items-center gap-1.5 text-primary hover:underline">
+                    <Phone className="h-3 w-3" /> {c.phone}
+                  </a>
+                  <a
+                    href={`https://wa.me/${c.phone.replace(/\D/g, "")}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1 text-emerald-600 hover:underline"
+                    title="WhatsApp'tan yaz"
+                  >
+                    <MessageCircle className="h-3 w-3" /> WhatsApp
+                  </a>
+                </div>
               )}
               {c.email && (
                 <a href={`mailto:${c.email}`} className="flex items-center gap-1.5 text-primary hover:underline">
@@ -203,7 +224,11 @@ export default function Customers() {
               const s = statsByName.get(c.name.trim().toLocaleLowerCase("tr-TR"));
               if (!s) return null;
               return (
-                <div className="flex items-center gap-2 border-t pt-2 text-xs">
+                <button
+                  onClick={() => setDetail(c)}
+                  className="flex w-full items-center gap-2 border-t pt-2 text-xs hover:text-primary transition-colors"
+                  title="Sipariş geçmişini gör"
+                >
                   <ShoppingBag className="h-3.5 w-3.5 text-muted-foreground" />
                   <span className="text-muted-foreground">{s.count} sipariş</span>
                   <span className="ml-auto font-medium">{formatTL(s.total)}</span>
@@ -212,13 +237,48 @@ export default function Customers() {
                       {formatTL(s.due)} borç
                     </span>
                   )}
-                </div>
+                </button>
               );
             })()}
             {c.notes && <p className="text-xs rounded-md bg-muted p-2 line-clamp-3">{c.notes}</p>}
           </Card>
         ))}
       </div>
+
+      <Dialog open={!!detail} onOpenChange={o => !o && setDetail(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{detail?.name} — Sipariş Geçmişi</DialogTitle>
+          </DialogHeader>
+          {detail && (
+            <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+              {(orders ?? [])
+                .filter(o => o.customerName.trim().toLocaleLowerCase("tr-TR") === detail.name.trim().toLocaleLowerCase("tr-TR"))
+                .map(o => (
+                  <div key={o.id} className="flex items-center gap-2 rounded-lg border p-2.5 text-sm">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium truncate">{o.orderNo}</p>
+                      <p className="text-[11px] text-muted-foreground">{formatDate(o.createdAt)} · {o.channel}</p>
+                    </div>
+                    <span
+                      className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+                        o.paymentStatus === "paid"
+                          ? "bg-emerald-500/15 text-emerald-600"
+                          : "bg-destructive/10 text-destructive"
+                      }`}
+                    >
+                      {o.paymentStatus === "paid" ? "Ödendi" : o.paymentStatus === "partial" ? "Kısmi" : "Bekliyor"}
+                    </span>
+                    <span className="font-semibold whitespace-nowrap">{formatTL(o.totalAmount)}</span>
+                  </div>
+                ))}
+              {(orders ?? []).filter(o => o.customerName.trim().toLocaleLowerCase("tr-TR") === detail.name.trim().toLocaleLowerCase("tr-TR")).length === 0 && (
+                <p className="text-sm text-muted-foreground text-center py-6">Bu müşteriye ait sipariş yok.</p>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="sm:max-w-md">

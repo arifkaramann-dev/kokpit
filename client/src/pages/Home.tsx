@@ -168,6 +168,33 @@ export default function Home() {
           )}
         </Card>
 
+        {/* Bekleyen tahsilatlar */}
+        <Card className="p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold flex items-center gap-2">
+              <Wallet className="h-4 w-4 text-rose-500" /> Bekleyen Tahsilatlar
+            </h2>
+            <Button variant="ghost" size="sm" onClick={() => setLocation("/siparisler")}>
+              Siparişlere Git <ArrowRight className="h-3.5 w-3.5 ml-1" />
+            </Button>
+          </div>
+          {(data?.unpaid ?? []).length === 0 ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">
+              Bekleyen tahsilat yok. 💰
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {(data?.unpaid ?? []).map(o => (
+                <div key={o.id} className="flex items-center gap-2 text-sm">
+                  <span className="flex-1 truncate">{o.customerName}</span>
+                  <span className="text-[11px] text-muted-foreground">{o.orderNo}</span>
+                  <span className="font-semibold text-rose-600 whitespace-nowrap">{formatTL(o.due)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+
         {/* Yaklaşan kampanyalar */}
         <Card className="p-5 space-y-3">
           <div className="flex items-center justify-between">

@@ -34,7 +34,7 @@ import { trpc } from "@/lib/trpc";
 import { CHANNELS, formatDate, formatTL, ORDER_STATUSES, OrderStatus } from "@/lib/format";
 import { printInvoice } from "@/lib/invoice";
 import { printShippingLabel } from "@/lib/shippingLabel";
-import { AlertCircle, CheckCircle2, FileText, GripVertical, Pencil, Plus, RefreshCw, Search, Settings, Truck, Trash2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, FileText, GripVertical, MapPin, MessageCircle, Pencil, Plus, RefreshCw, Search, Settings, Truck, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
@@ -908,6 +908,20 @@ function KanbanColumn({
       {orders.map(order => (
         <DraggableOrderCard key={order.id} order={order} onEdit={onEdit} onDelete={onDelete} onInvoice={onInvoice} onShippingLabel={onShippingLabel} onTogglePaid={onTogglePaid} />
       ))}
+      {orders.length > 0 &&
+        (() => {
+          const num = (v: string) => parseFloat(v) || 0;
+          const total = orders.reduce((s, o) => s + num(o.totalAmount), 0);
+          const due = orders
+            .filter(o => o.paymentStatus !== "paid")
+            .reduce((s, o) => s + Math.max(0, num(o.totalAmount) - num(o.paidAmount)), 0);
+          return (
+            <div className="mt-auto border-t pt-2 text-[11px] text-muted-foreground flex items-center justify-between">
+              <span>Toplam {formatTL(total)}</span>
+              {due > 0 && <span className="text-destructive font-medium">{formatTL(due)} bekliyor</span>}
+            </div>
+          );
+        })()}
     </div>
   );
 }
@@ -982,7 +996,10 @@ function OrderCard({
           <GripVertical className="h-4 w-4" />
         </button>
         <div className="flex-1 min-w-0">
-          <p className="font-medium text-sm truncate">{order.customerName}</p>
+          <p className="font-medium text-sm truncate flex items-center gap-1">
+            {order.customerName}
+            {order.customerAddress && <MapPin className="h-3 w-3 text-muted-foreground shrink-0" />}
+          </p>
           <p className="text-[11px] text-muted-foreground">{order.orderNo}</p>
         </div>
         <span className="font-semibold text-sm whitespace-nowrap">{formatTL(order.totalAmount)}</span>
@@ -1014,6 +1031,19 @@ function OrderCard({
         </div>
         {!overlay && (
           <div className="flex gap-0.5">
+            {order.customerPhone && (
+              <a
+                href={`https://wa.me/${order.customerPhone.replace(/\D/g, "")}?text=${encodeURIComponent(
+                  `Merhaba ${order.customerName}, ${order.orderNo} numaralı siparişiniz hakkında bilgi vermek istedik.`,
+                )}`}
+                target="_blank"
+                rel="noreferrer"
+                title="Müşteriye WhatsApp'tan yaz"
+                className="inline-flex h-6 w-6 items-center justify-center rounded-md text-emerald-600 hover:bg-accent"
+              >
+                <MessageCircle className="h-3 w-3" />
+              </a>
+            )}
             <Button
               size="icon"
               variant="ghost"

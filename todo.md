@@ -71,7 +71,16 @@
 - [x] Kısmi ödeme tutarı girişi (düzenleme dialogunda "Ödenen Tutar")
 - [x] Müşteri kartında sipariş geçmişi özeti (adet, toplam harcama, borç)
 
+## Modül 12: İşlevsellik & finans batch'i (eklendi)
+- [x] Asistan/WhatsApp: tahsilat, borçlu müşteri, bu ay ciro/gider/net soru-cevabı (snapshot)
+- [x] Giderler: düzenleme + bu ay kategori kırılımı (çubuklar)
+- [x] Müşteriler: sipariş geçmişi detay dialogu + WhatsApp linki + başlıkta toplam alacak
+- [x] Sipariş panosu: sütun altı toplam + bekleyen tutar; kartta WhatsApp butonu + adres ikonu
+- [x] Kokpit: Bekleyen Tahsilatlar kartı (en yüksek borçlu siparişler)
+- [x] Ürünler: kartta stok + düşük/sıfır stok renklendirmesi
+- [x] Satış Analizi: 30 gün gider / net / tahsilat / kâr marjı KPI'ları
+
 ## Sonraki Oturuma Ertelenenler (opsiyonel geliştirmeler)
 - AI görsel üretimi modülü (ürün fotoğrafı arka plan değiştirme) — kullanıcı talebiyle eklenecek
-- Müşteri detay görünümü: o müşterinin tüm siparişlerini listeleyen sayfa/dialog
-- Asistan/WhatsApp'a "tahsilat" ve "bu ay net" sorularını ekle
+- Asistanla sesli "gider ekle" komutu (parseVoiceCommand'a intent eklemek)
+- Ürünlerde kritik stok eşiği alanı + düşük stok filtresi
