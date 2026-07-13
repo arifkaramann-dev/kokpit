@@ -1,6 +1,7 @@
 import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
+  accounts,
   campaigns,
   customers,
   devProjects,
@@ -8,10 +9,13 @@ import {
   devTrials,
   expenses,
   formulaItems,
+  transactions,
+  InsertAccount,
   InsertCustomer,
   InsertDevProject,
   InsertExpense,
   InsertMaterial,
+  InsertTransaction,
   InsertOrder,
   InsertOrderItem,
   InsertProduct,
@@ -343,6 +347,117 @@ export async function deleteExpense(id: number) {
   await db.delete(expenses).where(eq(expenses.id, id));
 }
 
+/* ------------------------- Kasa & Banka + Cari (ön muhasebe) ------------------------- */
+
+const toNum = (v: string | null | undefined) => parseFloat(v ?? "0") || 0;
+
+/** Hesapları, güncel bakiyeleriyle (açılış + gelen − giden) birlikte döner. */
+export async function listAccounts() {
+  const db = await requireDb();
+  const [accs, txns] = await Promise.all([
+    db.select().from(accounts).orderBy(accounts.name),
+    db.select({ accountId: transactions.accountId, direction: transactions.direction, amount: transactions.amount }).from(transactions),
+  ]);
+  return accs.map(a => {
+    let bal = toNum(a.openingBalance);
+    for (const t of txns) {
+      if (t.accountId !== a.id) continue;
+      bal += t.direction === "in" ? toNum(t.amount) : -toNum(t.amount);
+    }
+    return { ...a, balance: bal };
+  });
+}
+
+export async function createAccount(data: InsertAccount) {
+  const db = await requireDb();
+  const [res] = await db.insert(accounts).values(data);
+  return Number(res.insertId);
+}
+
+export async function updateAccount(id: number, data: Partial<InsertAccount>) {
+  const db = await requireDb();
+  await db.update(accounts).set(data).where(eq(accounts.id, id));
+}
+
+export async function deleteAccount(id: number) {
+  const db = await requireDb();
+  await db.update(transactions).set({ accountId: null }).where(eq(transactions.accountId, id));
+  await db.delete(accounts).where(eq(accounts.id, id));
+}
+
+/** Para/cari hareketlerini (en yeni önce) döner; müşteri/hesaba göre süzülebilir. */
+export async function listTransactions(filter?: { customerName?: string; accountId?: number; limit?: number }) {
+  const db = await requireDb();
+  const conds = [];
+  if (filter?.customerName) conds.push(eq(transactions.customerName, filter.customerName));
+  if (filter?.accountId) conds.push(eq(transactions.accountId, filter.accountId));
+  const q = db.select().from(transactions);
+  const rows = conds.length ? await q.where(and(...conds)) : await q;
+  return rows.sort((a, b) => new Date(b.txnDate).getTime() - new Date(a.txnDate).getTime()).slice(0, filter?.limit ?? 300);
+}
+
+/**
+ * Hareket ekler. Tahsilat/ödeme bir siparişe bağlıysa (orderId) o siparişin
+ * ödenen tutarı ve ödeme durumu otomatik güncellenir (mevcut model korunur).
+ */
+export async function createTransaction(data: InsertTransaction) {
+  const db = await requireDb();
+  const [res] = await db.insert(transactions).values(data);
+  if (data.orderId && data.category === "tahsilat" && data.direction === "in") {
+    const [ord] = await db.select().from(orders).where(eq(orders.id, data.orderId)).limit(1);
+    if (ord) {
+      const collected = (await db.select({ amount: transactions.amount, direction: transactions.direction, category: transactions.category })
+        .from(transactions)
+        .where(eq(transactions.orderId, data.orderId)))
+        .filter(t => t.category === "tahsilat")
+        .reduce((s, t) => s + (t.direction === "in" ? toNum(t.amount) : -toNum(t.amount)), 0);
+      const total = toNum(ord.totalAmount);
+      const status = collected <= 0 ? "unpaid" : collected + 0.001 >= total ? "paid" : "partial";
+      await db.update(orders).set({ paidAmount: String(Math.max(0, collected)), paymentStatus: status }).where(eq(orders.id, data.orderId));
+    }
+  }
+  return Number(res.insertId);
+}
+
+export async function deleteTransaction(id: number) {
+  const db = await requireDb();
+  await db.delete(transactions).where(eq(transactions.id, id));
+}
+
+/**
+ * Bir müşterinin cari ekstresi: siparişleri (borç) + tahsilatları (alacak/ödeme)
+ * tarih sırasıyla, yürüyen bakiyeyle. Bakiye > 0 → müşteri bize borçlu.
+ */
+export async function customerLedger(name: string) {
+  const db = await requireDb();
+  const [ords, txns] = await Promise.all([
+    db.select().from(orders).where(eq(orders.customerName, name)),
+    db.select().from(transactions).where(eq(transactions.customerName, name)),
+  ]);
+  type Entry = { date: Date; label: string; debit: number; credit: number; ref: string };
+  const entries: Entry[] = [];
+  for (const o of ords) {
+    entries.push({ date: new Date(o.createdAt), label: "Sipariş", debit: toNum(o.totalAmount), credit: 0, ref: o.orderNo });
+  }
+  for (const t of txns) {
+    const isIn = t.direction === "in";
+    entries.push({
+      date: new Date(t.txnDate),
+      label: t.category === "tahsilat" ? "Tahsilat" : t.description || t.category,
+      debit: isIn ? 0 : toNum(t.amount),
+      credit: isIn ? toNum(t.amount) : 0,
+      ref: t.orderNo ?? "",
+    });
+  }
+  entries.sort((a, b) => a.date.getTime() - b.date.getTime());
+  let running = 0;
+  const rows = entries.map(e => {
+    running += e.debit - e.credit;
+    return { ...e, balance: running };
+  });
+  return { rows, balance: running };
+}
+
 /** Ödenmemiş/kısmi ödenmiş siparişleri kalan borca göre döner (tahsilat takibi). */
 export async function listUnpaidOrders(limit = 8) {
   const db = await requireDb();
@@ -395,11 +510,16 @@ export async function financeSummary() {
   for (const e of expenseRows) if (e.date && e.date >= start) monthExpense += num(e.amount);
   for (const p of purchaseRows) if (p.date && p.date >= start) monthExpense += num(p.amount);
 
+  // Kasa/banka toplam bakiyesi (açılış + gelen − giden).
+  const accs = await listAccounts();
+  const cashTotal = accs.reduce((s, a) => s + a.balance, 0);
+
   return {
     receivables,
     monthRevenue,
     monthExpense,
     monthNet: monthRevenue - monthExpense,
+    cashTotal,
   };
 }
 

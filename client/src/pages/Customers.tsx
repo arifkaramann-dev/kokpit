@@ -32,6 +32,7 @@ export default function Customers() {
   const utils = trpc.useUtils();
   const { data: customers, isLoading } = trpc.customers.list.useQuery();
   const { data: orders } = trpc.orders.list.useQuery();
+  const [collectAmount, setCollectAmount] = useState("");
 
   // Müşteri adına göre sipariş özeti (ada göre eşleştirme; FK yok).
   const statsByName = useMemo(() => {
@@ -74,6 +75,19 @@ export default function Customers() {
     onSuccess: () => {
       utils.customers.invalidate();
       toast.success("Müşteri silindi");
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  const ledgerQ = trpc.customers.ledger.useQuery({ name: detail?.name ?? "" }, { enabled: !!detail });
+  const collect = trpc.transactions.create.useMutation({
+    onSuccess: () => {
+      utils.customers.ledger.invalidate();
+      utils.orders.list.invalidate();
+      utils.dashboard.summary.invalidate();
+      utils.accounts.invalidate();
+      setCollectAmount("");
+      toast.success("Tahsilat kaydedildi");
     },
     onError: e => toast.error(e.message),
   });
@@ -248,33 +262,65 @@ export default function Customers() {
       <Dialog open={!!detail} onOpenChange={o => !o && setDetail(null)}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>{detail?.name} — Sipariş Geçmişi</DialogTitle>
+            <DialogTitle>{detail?.name} — Cari Ekstre</DialogTitle>
           </DialogHeader>
           {detail && (
-            <div className="space-y-2 max-h-[60vh] overflow-y-auto">
-              {(orders ?? [])
-                .filter(o => o.customerName.trim().toLocaleLowerCase("tr-TR") === detail.name.trim().toLocaleLowerCase("tr-TR"))
-                .map(o => (
-                  <div key={o.id} className="flex items-center gap-2 rounded-lg border p-2.5 text-sm">
-                    <div className="min-w-0 flex-1">
-                      <p className="font-medium truncate">{o.orderNo}</p>
-                      <p className="text-[11px] text-muted-foreground">{formatDate(o.createdAt)} · {o.channel}</p>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between rounded-lg border p-3">
+                <span className="text-sm text-muted-foreground">Güncel bakiye (borç)</span>
+                <span className={`text-lg font-bold ${(ledgerQ.data?.balance ?? 0) > 0 ? "text-rose-600" : "text-emerald-600"}`}>
+                  {formatTL(ledgerQ.data?.balance ?? 0)}
+                </span>
+              </div>
+
+              {/* Tahsilat girişi */}
+              <div className="flex items-end gap-2">
+                <div className="flex-1 space-y-1">
+                  <Label className="text-xs">Tahsilat tutarı</Label>
+                  <Input
+                    type="number"
+                    value={collectAmount}
+                    onChange={e => setCollectAmount(e.target.value)}
+                    placeholder="Alınan tutar"
+                  />
+                </div>
+                <Button
+                  onClick={() => {
+                    const amount = parseFloat(collectAmount);
+                    if (!amount || amount <= 0) return toast.error("Geçerli tutar girin");
+                    collect.mutate({ direction: "in", category: "tahsilat", amount, customerName: detail.name });
+                  }}
+                  disabled={collect.isPending}
+                >
+                  Tahsilat Ekle
+                </Button>
+              </div>
+
+              <div className="space-y-1 max-h-[45vh] overflow-y-auto">
+                <div className="grid grid-cols-[1fr_auto_auto] gap-2 text-[11px] text-muted-foreground px-1">
+                  <span>İşlem</span>
+                  <span className="text-right w-20">Tutar</span>
+                  <span className="text-right w-24">Bakiye</span>
+                </div>
+                {(ledgerQ.data?.rows ?? []).map((r, i) => (
+                  <div key={i} className="grid grid-cols-[1fr_auto_auto] gap-2 items-center border-b py-1.5 text-sm">
+                    <div className="min-w-0">
+                      <p className="truncate">
+                        {r.label}
+                        {r.ref ? <span className="text-muted-foreground"> · {r.ref}</span> : ""}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">{formatDate(r.date)}</p>
                     </div>
-                    <span
-                      className={`rounded-full px-1.5 py-0.5 text-[10px] ${
-                        o.paymentStatus === "paid"
-                          ? "bg-emerald-500/15 text-emerald-600"
-                          : "bg-destructive/10 text-destructive"
-                      }`}
-                    >
-                      {o.paymentStatus === "paid" ? "Ödendi" : o.paymentStatus === "partial" ? "Kısmi" : "Bekliyor"}
+                    <span className={`text-right w-20 ${r.debit > 0 ? "text-rose-600" : "text-emerald-600"}`}>
+                      {r.debit > 0 ? formatTL(r.debit) : `−${formatTL(r.credit)}`}
                     </span>
-                    <span className="font-semibold whitespace-nowrap">{formatTL(o.totalAmount)}</span>
+                    <span className="text-right w-24 font-medium">{formatTL(r.balance)}</span>
                   </div>
                 ))}
-              {(orders ?? []).filter(o => o.customerName.trim().toLocaleLowerCase("tr-TR") === detail.name.trim().toLocaleLowerCase("tr-TR")).length === 0 && (
-                <p className="text-sm text-muted-foreground text-center py-6">Bu müşteriye ait sipariş yok.</p>
-              )}
+                {(ledgerQ.data?.rows ?? []).length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-6">Bu müşteriye ait hareket yok.</p>
+                )}
+              </div>
             </div>
           )}
         </DialogContent>

@@ -80,7 +80,27 @@
 - [x] Ürünler: kartta stok + düşük/sıfır stok renklendirmesi
 - [x] Satış Analizi: 30 gün gider / net / tahsilat / kâr marjı KPI'ları
 
+## Modül 13: Ön muhasebe — Kasa & Cari (eklendi, Bizimhesap yönü)
+- [x] Kasa & Banka hesapları + güncel bakiye (açılış + gelen − giden)
+- [x] Birleşik para hareketleri: tahsilat / ödeme / gelir / gider (+ hesaba işleme)
+- [x] Müşteri cari ekstresi (sipariş=borç, tahsilat=alacak, yürüyen bakiye)
+- [x] Karttan "Tahsilat Ekle" → siparişin ödeme durumu otomatik güncellenir
+- [x] Kokpit'te Kasa/Banka bakiye kartı + asistan snapshot'ta kasa bakiyesi
+
+## Rakip paritesi için yol haritası (Bizimhesap + Qukasoft'u geçmek)
+Ön muhasebe (Bizimhesap):
+- [ ] Tedarikçi carisi (alış faturaları → tedarikçi borcu, ödeme) — cari'yi tedarikçiye genişlet
+- [ ] Kasa/banka: hesaplar arası transfer + tarih aralıklı ekstre/rapor
+- [ ] KDV raporu (satış/alış KDV özeti, dönemsel)
+- [ ] e-Fatura/e-Arşiv (entegratör: Foriba/İzibiz/Uyumsoft) — dış entegrasyon
+- [ ] Çek/senet takibi, tahsilat/ödeme makbuzu yazdırma
+Pazaryeri (Qukasoft):
+- [ ] N11 + Çiçeksepeti entegratörleri (sipariş çekme + stok/fiyat)
+- [ ] Komisyon/kesinti bazlı net kâr raporu (pazaryeri bazında)
+- [ ] İade yönetimi, müşteri soru-cevap yönetimi
+- [ ] Sıfırdan ürün açma (kategori/marka/özellik/görsel) — çoklu pazaryeri
+
 ## Sonraki Oturuma Ertelenenler (opsiyonel geliştirmeler)
 - AI görsel üretimi modülü (ürün fotoğrafı arka plan değiştirme) — kullanıcı talebiyle eklenecek
-- Asistanla sesli "gider ekle" komutu (parseVoiceCommand'a intent eklemek)
+- Asistanla sesli "gider ekle" / "tahsilat aldım" komutu (parseVoiceCommand intent)
 - Ürünlerde kritik stok eşiği alanı + düşük stok filtresi

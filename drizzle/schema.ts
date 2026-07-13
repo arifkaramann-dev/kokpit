@@ -197,6 +197,46 @@ export type Expense = typeof expenses.$inferSelect;
 export type InsertExpense = typeof expenses.$inferInsert;
 
 /**
+ * Kasa & Banka hesapları (ön muhasebe). Her para hareketi bir hesaba işlenir;
+ * bakiye = açılış + gelen − giden.
+ */
+export const accounts = mysqlTable("accounts", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 128 }).notNull(),
+  kind: mysqlEnum("kind", ["kasa", "banka"]).notNull().default("kasa"),
+  openingBalance: decimal("openingBalance", { precision: 14, scale: 2 }).notNull().default("0"),
+  note: text("note"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type Account = typeof accounts.$inferSelect;
+export type InsertAccount = typeof accounts.$inferInsert;
+
+/**
+ * Birleşik para/cari hareketi: tahsilat, ödeme, gider, gelir, transfer.
+ * direction in=giren (tahsilat/gelir), out=çıkan (ödeme/gider).
+ * customerName ile cari (müşteri) ekstresine, orderId ile siparişe bağlanır.
+ */
+export const transactions = mysqlTable("transactions", {
+  id: int("id").autoincrement().primaryKey(),
+  txnDate: timestamp("txnDate").defaultNow().notNull(),
+  accountId: int("accountId"),
+  direction: mysqlEnum("direction", ["in", "out"]).notNull(),
+  amount: decimal("amount", { precision: 14, scale: 2 }).notNull().default("0"),
+  category: varchar("category", { length: 48 }).notNull().default("diğer"),
+  customerName: varchar("customerName", { length: 255 }),
+  orderId: int("orderId"),
+  orderNo: varchar("orderNo", { length: 32 }),
+  description: varchar("description", { length: 255 }),
+  method: varchar("method", { length: 64 }),
+  note: text("note"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type Transaction = typeof transactions.$inferSelect;
+export type InsertTransaction = typeof transactions.$inferInsert;
+
+/**
  * Ürün geliştirme projeleri — fikirden bitmiş ürüne 5 adımlı rehberli akış.
  * currentStep: 1 Tanım, 2 Reçete Denemeleri, 3 Test, 4 Maliyet/Fiyat, 5 Ürünleştirme.
  */
