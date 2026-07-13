@@ -39,6 +39,10 @@ const HELP_TEXT = [
   '• "10 kg beyaz pigment geldi, stok girişi"',
   '• "2 litre tiner kullandım, stoktan düş"',
   "",
+  "💸 *Gider & Tahsilat*",
+  '• "Reklama 500 lira harcadım" · "Kira ödedim 8000"',
+  '• "Ahmet 200 lira ödedi" · "AOC-123\'ten 500 tahsil ettim"',
+  "",
   "📝 *Eksikler & Görevler*",
   '• "Eksik listesine ekle: etiket, 400 ml kutu"',
   '• "Bugün neler alınacaktı?" · "Etiket aldım"',
@@ -240,6 +244,78 @@ export async function executeAssistantCommand(transcript: string): Promise<{ mes
     if (closed.length) parts.push(`Tamamlandı: ${closed.join(", ")} ✅`);
     if (missing.length) parts.push(`Listede bulamadım: ${missing.join(", ")}`);
     return { message: parts.join("\n") || "Listede eşleşen madde bulamadım." };
+  }
+
+  if (cmd.intent === "expense_add") {
+    if (!cmd.amount || cmd.amount <= 0) {
+      throw new Error("Gider tutarını anlayamadım, 'reklama 500 lira harcadım' gibi söyler misin?");
+    }
+    const category = (cmd.expenseCategory ?? "diğer").trim() || "diğer";
+    const description = cmd.noteText?.trim() || category;
+    // P&L gideri (Giderler modülü)
+    await db.createExpense({
+      category,
+      description,
+      amount: String(cmd.amount),
+      note: "Asistan komutu",
+    } as never);
+    // Varsa kasadan çıkış olarak da işle (kasa/banka bakiyesi güncellensin)
+    const accs = await db.listAccounts();
+    const acc = accs.find(a => a.kind === "kasa") ?? accs[0];
+    let cashNote = "";
+    if (acc) {
+      await db.createTransaction({
+        accountId: acc.id,
+        direction: "out",
+        amount: String(cmd.amount),
+        category: "gider",
+        description,
+        note: "Asistan komutu",
+      } as never);
+      cashNote = ` · ${acc.name} kasasından düşüldü`;
+    }
+    return {
+      message: cmd.reply || `Gider kaydedildi: ${description} — ${cmd.amount} TL (${category})${cashNote}`,
+    };
+  }
+
+  if (cmd.intent === "collection_add") {
+    if (!cmd.amount || cmd.amount <= 0) {
+      throw new Error("Tahsilat tutarını anlayamadım, 'Ahmet 200 lira ödedi' gibi söyler misin?");
+    }
+    if (!cmd.customerName?.trim() && !cmd.orderRef?.trim()) {
+      throw new Error("Kimden tahsilat aldığını anlayamadım, müşteri adını söyler misin?");
+    }
+    const needle = (cmd.customerName ?? "").trim().toLowerCase();
+    const ref = (cmd.orderRef ?? "").trim().toLowerCase();
+    // Sipariş no ile ya da müşterinin en yüksek borçlu açık siparişiyle eşle
+    const unpaid = await db.listUnpaidOrders(500);
+    const matched =
+      (ref && unpaid.find(o => o.orderNo.toLowerCase() === ref)) ||
+      (needle &&
+        unpaid
+          .filter(o => o.customerName.toLowerCase().includes(needle))
+          .sort((a, b) => b.due - a.due)[0]) ||
+      null;
+    const customerName = cmd.customerName?.trim() || matched?.customerName || null;
+    const accs = await db.listAccounts();
+    const acc = accs.find(a => a.kind === "kasa") ?? accs[0];
+    await db.createTransaction({
+      accountId: acc?.id ?? null,
+      direction: "in",
+      amount: String(cmd.amount),
+      category: "tahsilat",
+      customerName,
+      orderId: matched?.id ?? null,
+      orderNo: matched?.orderNo ?? null,
+      description: matched ? `${matched.orderNo} tahsilatı` : "Tahsilat",
+      note: "Asistan komutu",
+    } as never);
+    const who = customerName ?? "Müşteri";
+    let msg = `Tahsilat alındı: ${who} — ${cmd.amount} TL`;
+    if (matched) msg += ` (${matched.orderNo} siparişine işlendi, kalan borç güncellendi)`;
+    if (acc) msg += ` · ${acc.name} kasasına girdi`;
+    return { message: cmd.reply || msg };
   }
 
   if (cmd.intent === "order_status") {

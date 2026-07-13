@@ -179,6 +179,7 @@ const VOICE_SCHEMA = {
       enum: [
         "sale", "order", "stock_in", "stock_out", "note", "query",
         "task_add", "task_list", "task_done", "order_status", "help", "unknown",
+        "expense_add", "collection_add",
       ],
     },
     customerName: { anyOf: [{ type: "string" }, { type: "null" }] },
@@ -210,11 +211,14 @@ const VOICE_SCHEMA = {
     listKind: { anyOf: [{ type: "string", enum: ["eksik", "gorev", "proje"] }, { type: "null" }] },
     orderRef: { anyOf: [{ type: "string" }, { type: "null" }] },
     orderStatus: { anyOf: [{ type: "string", enum: ["new", "production", "ready", "done"] }, { type: "null" }] },
+    amount: { anyOf: [{ type: "number" }, { type: "null" }] },
+    expenseCategory: { anyOf: [{ type: "string" }, { type: "null" }] },
     reply: { type: "string" },
   },
   required: [
     "intent", "customerName", "channel", "items", "materialName", "quantity", "unit",
-    "noteText", "taskKind", "taskItems", "listKind", "orderRef", "orderStatus", "reply",
+    "noteText", "taskKind", "taskItems", "listKind", "orderRef", "orderStatus",
+    "amount", "expenseCategory", "reply",
   ],
   additionalProperties: false,
 } as const;
@@ -222,7 +226,8 @@ const VOICE_SCHEMA = {
 export type VoiceCommand = {
   intent:
     | "sale" | "order" | "stock_in" | "stock_out" | "note" | "query"
-    | "task_add" | "task_list" | "task_done" | "order_status" | "help" | "unknown";
+    | "task_add" | "task_list" | "task_done" | "order_status" | "help" | "unknown"
+    | "expense_add" | "collection_add";
   customerName: string | null;
   channel: string | null;
   items: { name: string; quantity: number | null; unitPrice: number | null }[] | null;
@@ -235,6 +240,8 @@ export type VoiceCommand = {
   listKind: "eksik" | "gorev" | "proje" | null;
   orderRef: string | null;
   orderStatus: "new" | "production" | "ready" | "done" | null;
+  amount: number | null;
+  expenseCategory: string | null;
   reply: string;
 };
 
@@ -262,6 +269,10 @@ export async function parseVoiceCommand(transcript: string): Promise<VoiceComman
         "'X aldım / X tamamlandı / listeden çıkar' → task_done, tamamlanan maddeleri taskItems dizisine yaz. " +
         "Sipariş durumu değiştirme ('AOC-... kargoya hazır', 'son siparişi tamamla', 'Ahmet'in siparişi üretimde') → order_status; " +
         "orderRef alanına sipariş no / müşteri adı / 'son' yaz, orderStatus alanına new|production|ready|done. " +
+        "Gider/masraf kaydı ('reklama 500 lira harcadım', 'kira ödedim 8000', 'kargoya 250 verdim', 'X için Y lira gider') → expense_add; " +
+        "amount alanına tutarı (TL), expenseCategory alanına kategoriyi (kira|kargo|reklam|komisyon|maaş|fatura|diğer) yaz, açıklamayı noteText'e yaz. " +
+        "Tahsilat/ödeme alma ('Ahmet 200 lira ödedi', 'X'ten 500 tahsil ettim', 'müşteri parayı yatırdı') → collection_add; " +
+        "customerName alanına müşteri adını, amount alanına tutarı yaz; sipariş no biliniyorsa orderRef'e yaz. " +
         "'yardım / ne yapabilirsin / komutlar' → help. " +
         "Ürün/malzeme adlarını sade yaz. 'reply' alanına yapılan işi tek cümlede Türkçe özetle.",
       messages: [{ role: "user", content: transcript }],
