@@ -238,6 +238,27 @@ export type Transaction = typeof transactions.$inferSelect;
 export type InsertTransaction = typeof transactions.$inferInsert;
 
 /**
+ * Çek & Senet portföyü. direction alinan=müşteriden aldığımız (tahsil edilecek),
+ * verilen=tedarikçiye verdiğimiz (ödeyeceğimiz). status ile durum izlenir.
+ */
+export const cheques = mysqlTable("cheques", {
+  id: int("id").autoincrement().primaryKey(),
+  type: mysqlEnum("type", ["cek", "senet"]).notNull().default("cek"),
+  direction: mysqlEnum("direction", ["alinan", "verilen"]).notNull().default("alinan"),
+  partyName: varchar("partyName", { length: 255 }),
+  bank: varchar("bank", { length: 128 }),
+  serialNo: varchar("serialNo", { length: 64 }),
+  amount: decimal("amount", { precision: 14, scale: 2 }).notNull().default("0"),
+  dueDate: timestamp("dueDate"),
+  status: mysqlEnum("status", ["portfoyde", "tahsil", "odendi", "karsiliksiz", "iade"]).notNull().default("portfoyde"),
+  note: text("note"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type Cheque = typeof cheques.$inferSelect;
+export type InsertCheque = typeof cheques.$inferInsert;
+
+/**
  * Ürün geliştirme projeleri — fikirden bitmiş ürüne 5 adımlı rehberli akış.
  * currentStep: 1 Tanım, 2 Reçete Denemeleri, 3 Test, 4 Maliyet/Fiyat, 5 Ürünleştirme.
  */

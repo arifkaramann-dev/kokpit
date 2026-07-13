@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/mysql2";
 import {
   accounts,
   campaigns,
+  cheques,
   customers,
   devProjects,
   devTrialItems,
@@ -11,6 +12,7 @@ import {
   formulaItems,
   transactions,
   InsertAccount,
+  InsertCheque,
   InsertCustomer,
   InsertDevProject,
   InsertExpense,
@@ -611,6 +613,29 @@ export async function cashflowReport() {
     .sort((a, b) => b.in + b.out - (a.in + a.out));
 
   return { month: sum(monthStart), year: sum(yearStart), categories };
+}
+
+/* ------------------------- Çek & Senet ------------------------- */
+
+export async function listCheques() {
+  const db = await requireDb();
+  return db.select().from(cheques).orderBy(cheques.dueDate);
+}
+
+export async function createCheque(data: InsertCheque) {
+  const db = await requireDb();
+  const [res] = await db.insert(cheques).values(data);
+  return Number(res.insertId);
+}
+
+export async function updateCheque(id: number, data: Partial<InsertCheque>) {
+  const db = await requireDb();
+  await db.update(cheques).set(data).where(eq(cheques.id, id));
+}
+
+export async function deleteCheque(id: number) {
+  const db = await requireDb();
+  await db.delete(cheques).where(eq(cheques.id, id));
 }
 
 /** Ödenmemiş/kısmi ödenmiş siparişleri kalan borca göre döner (tahsilat takibi). */
