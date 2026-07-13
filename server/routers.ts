@@ -708,6 +708,35 @@ export const appRouter = router({
     balances: protectedProcedure.query(() => db.customerBalances()),
   }),
 
+  // Çek & Senet portföyü.
+  cheques: router({
+    list: protectedProcedure.query(() => db.listCheques()),
+    create: protectedProcedure
+      .input(
+        z.object({
+          type: z.enum(["cek", "senet"]).default("cek"),
+          direction: z.enum(["alinan", "verilen"]).default("alinan"),
+          partyName: z.string().nullable().optional(),
+          bank: z.string().nullable().optional(),
+          serialNo: z.string().nullable().optional(),
+          amount: z.number().min(0).default(0),
+          dueDate: z.string().nullable().optional(),
+          note: z.string().nullable().optional(),
+        }),
+      )
+      .mutation(({ input }) => {
+        const { dueDate, ...rest } = input;
+        return db.createCheque({
+          ...(toDecimalFields(rest, ["amount"]) as never as object),
+          dueDate: dueDate ? new Date(dueDate) : null,
+        } as never);
+      }),
+    setStatus: protectedProcedure
+      .input(z.object({ id: z.number(), status: z.enum(["portfoyde", "tahsil", "odendi", "karsiliksiz", "iade"]) }))
+      .mutation(({ input }) => db.updateCheque(input.id, { status: input.status })),
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteCheque(input.id)),
+  }),
+
   // Kasa & Banka hesapları (ön muhasebe).
   accounts: router({
     list: protectedProcedure.query(() => db.listAccounts()),

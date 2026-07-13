@@ -5,6 +5,7 @@ import Accounts from "@/pages/Accounts";
 import Analytics from "@/pages/Analytics";
 import Assistant from "@/pages/Assistant";
 import Campaigns from "@/pages/Campaigns";
+import Cheques from "@/pages/Cheques";
 import Costs from "@/pages/Costs";
 import Customers from "@/pages/Customers";
 import Expenses from "@/pages/Expenses";
@@ -38,6 +39,7 @@ function Router() {
         <Route path={"/giderler"} component={Expenses} />
         <Route path={"/kasa"} component={Accounts} />
         <Route path={"/cari"} component={Ledgers} />
+        <Route path={"/cek-senet"} component={Cheques} />
         <Route path={"/stok"} component={Stock} />
         <Route path={"/faturalar"} component={Purchases} />
         <Route path={"/urunler"} component={Products} />

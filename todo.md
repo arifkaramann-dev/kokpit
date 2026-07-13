@@ -96,8 +96,9 @@
 - [x] Tahsilat/Ödeme makbuzu yazdırma (printReceipt)
 - [x] Cari Hesaplar genel bakış sayfası (/cari) — alacak/borç/net
 - [x] Nakit Akışı raporu (Strateji sekmesi) — giriş/çıkış/net + kategori
-- [ ] Çek/senet takibi
+- [x] Çek/senet takibi (/cek-senet) — portföy, vade, durum, vadesi geçen uyarısı
 - [ ] e-Fatura/e-Arşiv (entegratör — dış servis + anlaşma)
+- [ ] Teklif (quote) → siparişe dönüştürme; ürün/hizmet ayrımı
 - [ ] e-Fatura/e-Arşiv (entegratör: Foriba/İzibiz/Uyumsoft) — dış entegrasyon
 - [ ] Çek/senet takibi, tahsilat/ödeme makbuzu yazdırma
 Pazaryeri (Qukasoft):
