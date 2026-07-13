@@ -2,11 +2,15 @@ import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   campaigns,
+  customers,
   devProjects,
   devTrialItems,
   devTrials,
+  expenses,
   formulaItems,
+  InsertCustomer,
   InsertDevProject,
+  InsertExpense,
   InsertMaterial,
   InsertOrder,
   InsertOrderItem,
@@ -272,10 +276,131 @@ export async function deleteOrder(id: number) {
   await db.delete(orders).where(eq(orders.id, id));
 }
 
+export async function getOrder(id: number) {
+  const db = await requireDb();
+  const result = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
+  return result[0];
+}
+
 export async function getOrderByOrderNo(orderNo: string) {
   const db = await requireDb();
   const result = await db.select().from(orders).where(eq(orders.orderNo, orderNo)).limit(1);
   return result[0];
+}
+
+/** Siparişin ödeme durumu/tutarı/yöntemini günceller. */
+export async function setOrderPayment(
+  id: number,
+  data: { paymentStatus: "unpaid" | "partial" | "paid"; paidAmount: string; paymentMethod: string | null },
+) {
+  const db = await requireDb();
+  await db.update(orders).set(data).where(eq(orders.id, id));
+}
+
+/* ------------------------- Müşteriler (CRM) ------------------------- */
+
+export async function listCustomers() {
+  const db = await requireDb();
+  return db.select().from(customers).orderBy(customers.name);
+}
+
+export async function createCustomer(data: InsertCustomer) {
+  const db = await requireDb();
+  const [res] = await db.insert(customers).values(data);
+  return Number(res.insertId);
+}
+
+export async function updateCustomer(id: number, data: Partial<InsertCustomer>) {
+  const db = await requireDb();
+  await db.update(customers).set(data).where(eq(customers.id, id));
+}
+
+export async function deleteCustomer(id: number) {
+  const db = await requireDb();
+  await db.delete(customers).where(eq(customers.id, id));
+}
+
+/* ------------------------- Giderler ------------------------- */
+
+export async function listExpenses(limit = 200) {
+  const db = await requireDb();
+  return db.select().from(expenses).orderBy(desc(expenses.expenseDate)).limit(limit);
+}
+
+export async function createExpense(data: InsertExpense) {
+  const db = await requireDb();
+  const [res] = await db.insert(expenses).values(data);
+  return Number(res.insertId);
+}
+
+export async function updateExpense(id: number, data: Partial<InsertExpense>) {
+  const db = await requireDb();
+  await db.update(expenses).set(data).where(eq(expenses.id, id));
+}
+
+export async function deleteExpense(id: number) {
+  const db = await requireDb();
+  await db.delete(expenses).where(eq(expenses.id, id));
+}
+
+/** Ödenmemiş/kısmi ödenmiş siparişleri kalan borca göre döner (tahsilat takibi). */
+export async function listUnpaidOrders(limit = 8) {
+  const db = await requireDb();
+  const rows = await db
+    .select({
+      id: orders.id,
+      orderNo: orders.orderNo,
+      customerName: orders.customerName,
+      totalAmount: orders.totalAmount,
+      paidAmount: orders.paidAmount,
+      paymentStatus: orders.paymentStatus,
+      createdAt: orders.createdAt,
+    })
+    .from(orders)
+    .where(sql`${orders.paymentStatus} <> 'paid'`);
+  const num = (v: string | null) => parseFloat(v ?? "0") || 0;
+  return rows
+    .map(o => ({ ...o, due: Math.max(0, num(o.totalAmount) - num(o.paidAmount)) }))
+    .filter(o => o.due > 0)
+    .sort((a, b) => b.due - a.due)
+    .slice(0, limit);
+}
+
+/**
+ * Kokpit için finans özeti: tahsil edilecek (alacak) toplamı ve bu ayın
+ * cirosu/gideri/net kârı. Gider = giderler + alış faturaları (hammadde).
+ */
+export async function financeSummary() {
+  const db = await requireDb();
+  const start = new Date();
+  start.setDate(1);
+  start.setHours(0, 0, 0, 0);
+  const num = (v: string | null | undefined) => parseFloat(v ?? "0") || 0;
+
+  const [orderRows, expenseRows, purchaseRows] = await Promise.all([
+    db
+      .select({ total: orders.totalAmount, paid: orders.paidAmount, status: orders.paymentStatus, createdAt: orders.createdAt })
+      .from(orders),
+    db.select({ amount: expenses.amount, date: expenses.expenseDate }).from(expenses),
+    db.select({ amount: purchases.totalAmount, date: purchases.createdAt }).from(purchases),
+  ]);
+
+  let receivables = 0;
+  let monthRevenue = 0;
+  for (const o of orderRows) {
+    if (o.status !== "paid") receivables += Math.max(0, num(o.total) - num(o.paid));
+    if (o.createdAt && o.createdAt >= start) monthRevenue += num(o.total);
+  }
+  let monthExpense = 0;
+  for (const e of expenseRows) if (e.date && e.date >= start) monthExpense += num(e.amount);
+  for (const p of purchaseRows) if (p.date && p.date >= start) monthExpense += num(p.amount);
+
+  return {
+    receivables,
+    monthRevenue,
+    monthExpense,
+    monthNet: monthRevenue - monthExpense,
+  };
 }
 
 /**
@@ -554,7 +679,7 @@ export async function getChosenDevTrialItems(projectId: number) {
 /** Rapor sayfasının tek seferde ihtiyaç duyduğu tüm veri kümeleri. */
 export async function reportData() {
   const db = await requireDb();
-  const [allProducts, formulaRows, textRows, allOrders, allOrderItems, allMaterials, allCampaigns, imageRows] =
+  const [allProducts, formulaRows, textRows, allOrders, allOrderItems, allMaterials, allCampaigns, imageRows, expenseRows] =
     await Promise.all([
       db.select().from(products),
       db
@@ -572,6 +697,7 @@ export async function reportData() {
       db.select().from(campaigns),
       // Görsel verisinin kendisi ağır (base64); tamamlama kontrolü için kimlikler yeter.
       db.select({ productId: productImages.productId, kind: productImages.kind }).from(productImages),
+      db.select().from(expenses),
     ]);
   return {
     products: allProducts,
@@ -582,6 +708,7 @@ export async function reportData() {
     materials: allMaterials,
     campaigns: allCampaigns,
     productImages: imageRows,
+    expenses: expenseRows,
   };
 }
 

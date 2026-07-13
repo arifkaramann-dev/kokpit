@@ -27,10 +27,31 @@ https://artofcolour-kokpit.onrender.com/ (Render, ücretsiz plan). Veritabanı: 
 - Şablon kütüphanesi, Ürün Geliştirme sihirbazı, Formül defteri, Üretim planlayıcı
 - Stok/hammadde, fatura girişi (AI fatura okuma), Maliyet & KDV, Strateji & Rapor
 - **Satış Analizi** (grafikler), **Görevler & Eksikler**
-- **Asistan**: WhatsApp + uygulama içi sohbet + mikrofon; satış/stok/sipariş/görev/soru-cevap
+- **Müşteriler (CRM):** ad/telefon/adres kaydı; sipariş formunda seçince telefon+adres
+  otomatik gelir, fatura ve kargo etiketine yapısal adres/telefon yazılır
+- **Ödeme & Tahsilat:** siparişte ödendi/kısmi/bekliyor, kartta hızlı "Ödendi" + rozet;
+  Kokpit'te **tahsil edilecek** toplamı. Trendyol siparişleri "ödendi" sayılır
+- **Giderler:** kira/kargo/reklam/komisyon vb. + Kokpit'te bu ay ciro/gider/net kâr
+- **Komut paleti (⌘K):** sayfa + ürün/sipariş/müşteri/hammadde arayıp gitme
+- **Strateji Kâr/Zarar:** 30 gün ciro/gider/net + tahsil edilecek + veri-güdümlü uyarılar
+- **Sipariş panosu:** arama (müşteri/no/telefon) + ödeme & kanal filtresi; kısmi ödeme tutarı;
+  sütun altı toplam+bekleyen; kartta WhatsApp butonu + adres ikonu
+- **Asistan/WhatsApp finans:** tahsilat, borçlu müşteri, bu ay ciro/gider/net soru-cevabı
+- **Giderler:** düzenleme + kategori kırılımı · **Müşteriler:** sipariş geçmişi + WhatsApp
+- **Kokpit:** Bekleyen Tahsilatlar kartı · **Analiz:** gider/net/tahsilat/marj KPI'ları
+- **Ürünler:** kartta stok + düşük/sıfır stok renklendirmesi
+- **Asistan**: WhatsApp + uygulama içi sohbet + mikrofon; satış/stok/sipariş/görev/soru-cevap.
+  **Sesli uyandırma** ("Hey Kokpit"): opt-in, sürekli dinleyip anahtar kelimeden sonra komutu
+  gönderir (Web Speech API, sadece Chrome; tercih localStorage'da). Elle mikrofon uyandırma açıkken kapalı.
 - **Fatura kesme** (KDV dökümlü, yazdırılabilir) + Ayarlar (şirket bilgileri)
 - **Pazaryeri:** Trendyol + Hepsiburada sipariş çekme, birleşik senkron, yarış durumu
   kilidi, "Mükerrerleri temizle", "Bağlantıyı Test Et", **Trendyol'a stok/fiyat gönderme**
+- **Kargo etiketi/barkod:** her sipariş kartından yazdırılabilir 10×15 cm kargo etiketi
+  (gönderen/alıcı + taranabilir **Code 128 barkod**, sipariş no'dan; harici kütüphane yok)
+- **Trendyol resmi kargo etiketi:** Trendyol siparişinde kargo takip no varsa "ortak etiket"
+  API'sinden ZPL çekilir, **Labelary** ile PDF'e çevrilip yazdırılır; takip no yoksa/başarısızsa
+  kendi barkodlu etiketimize düşer. Senkron artık kargo takip no/sağlayıcı/link'i saklar
+  (orders tablosuna `cargoTrackingNumber/ProviderName/TrackingLink` eklendi, migration 0011).
 
 ## Açık işler / sırada ne var
 1. **Hepsiburada 401:** Hepsiburada API bilgileri Render'a girilmeli. Hepsiburada
@@ -40,8 +61,19 @@ https://artofcolour-kokpit.onrender.com/ (Render, ücretsiz plan). Veritabanı: 
    "Bağlantıyı Test Et" ile HTTP durumunu gör, (c) Servis Anahtarı gerekiyorsa koda ekle.
 2. **Trendyol'u canlıda tam oturt:** Render'a Trendyol bilgileri girilince
    "Bağlantıyı Test Et" HTTP 200 dönmeli; sipariş akışı + "Trendyol'a Gönder" (stok/fiyat) doğrulanmalı.
-3. **Sonraki entegratör adımları:** Hepsiburada'ya stok/fiyat gönderme, sıfırdan ürün
-   açma (kategori/marka/görsel/özellik), N11 / Çiçeksepeti eklemek, kargo barkodu.
+3. **Trendyol resmi etiketini canlıda doğrula:** Sipariş kargoya verilip senkron çalışınca
+   `cargoTrackingNumber` dolmalı; kart → kamyon butonu resmi PDF etiketi getirmeli. Yalnızca
+   "ortak etiket" anlaşmalı kargolarda çalışır. Bu ortam Trendyol'a/Labelary'ye çıkamadığı için
+   **canlıda test edilmedi**. Not: common-label şu an sadece ZPL veriyor; PDF'e Labelary ile çeviriyoruz
+   (gerekirse `LABELARY_URL` env ile değiştirilebilir).
+4. **Sonraki entegratör adımları:** Hepsiburada'ya stok/fiyat gönderme, sıfırdan ürün
+   açma (kategori/marka/görsel/özellik), N11 / Çiçeksepeti eklemek.
+5. **Sesli uyandırma** ✔ yapıldı. İki motor: **Picovoice Porcupine** (AccessKey girilince,
+   cihaz-üstü, güvenilir) + **Web Speech** yedeği. AccessKey yoksa Web Speech "Hey Kokpit"
+   dinler; AccessKey varsa hazır "Jarvis" ya da özel "Hey Kokpit" `.ppn`. Kurulum: **SESLI.md**.
+   Env: `PICOVOICE_ACCESS_KEY` (+ opsiyonel `PICOVOICE_KEYWORD_PATH/LABEL`, `PICOVOICE_MODEL_PATH`).
+   Picovoice bundle'ı tembel yüklenir (uyandırma açılınca). **Canlıda AccessKey ile test edilmeli.**
+   Gerçek arka plan "Hey Siri" için native uygulama gerekir (ayrı iş).
 
 ## Teknik notlar (yeni sohbet için)
 - Branch: `claude/web-site-development-tx6n7h` ama **doğrudan main'e** push ediliyor.
@@ -53,4 +85,6 @@ https://artofcolour-kokpit.onrender.com/ (Render, ücretsiz plan). Veritabanı: 
   `WHATSAPP_*`, `DATABASE_URL`, `JWT_SECRET`, `OWNER_EMAIL/PASSWORD/NAME`.
 - İlgili dosyalar: `server/{trendyol,hepsiburada,marketplace,assistant,whatsapp,images}.ts`,
   `server/routers.ts`, `server/db.ts`, `drizzle/schema.ts`, `client/src/pages/*`.
+- Yeni: `client/src/pages/{Customers,Expenses}.tsx`, `client/src/components/CommandPalette.tsx`.
+  Migration 0012 (customers, expenses tabloları + orders'a ödeme/adres alanları).
 - Kurulum rehberleri: `PAZARYERI.md` (pazaryeri + fatura + görsel link), `WHATSAPP.md`.

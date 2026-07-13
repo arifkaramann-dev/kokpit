@@ -44,3 +44,11 @@ services:
         sync: false # WhatsApp asistanı: Cloud API numara kimliği (opsiyonel)
       - key: WHATSAPP_ALLOWED_NUMBERS
         sync: false # Cevap verilecek numaralar, virgülle: 90555... (opsiyonel)
+      - key: PICOVOICE_ACCESS_KEY
+        sync: false # Sesli uyandırma (Porcupine) AccessKey — console.picovoice.ai (opsiyonel)
+      - key: PICOVOICE_KEYWORD_PATH
+        sync: false # Özel "Hey Kokpit" .ppn yolu, ör. /wake/hey-kokpit.ppn (opsiyonel)
+      - key: PICOVOICE_KEYWORD_LABEL
+        sync: false # Özel kelime etiketi, ör. Hey Kokpit (opsiyonel)
+      - key: PICOVOICE_MODEL_PATH
+        sync: false # Özel Türkçe .pv model yolu, ör. /wake/porcupine_params_tr.pv (opsiyonel)

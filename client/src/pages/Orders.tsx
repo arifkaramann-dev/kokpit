@@ -33,7 +33,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import { CHANNELS, formatDate, formatTL, ORDER_STATUSES, OrderStatus } from "@/lib/format";
 import { printInvoice } from "@/lib/invoice";
-import { AlertCircle, CheckCircle2, FileText, GripVertical, Pencil, Plus, RefreshCw, Settings, Trash2 } from "lucide-react";
+import { printShippingLabel } from "@/lib/shippingLabel";
+import { AlertCircle, CheckCircle2, FileText, GripVertical, MapPin, MessageCircle, Pencil, Plus, RefreshCw, Search, Settings, Truck, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
@@ -47,10 +48,37 @@ type OrderRow = {
   totalAmount: string;
   itemsSummary: string | null;
   notes: string | null;
+  customerPhone: string | null;
+  customerAddress: string | null;
+  paymentStatus: "unpaid" | "partial" | "paid";
+  paidAmount: string;
+  paymentMethod: string | null;
+  cargoTrackingNumber: string | null;
+  cargoTrackingLink: string | null;
   createdAt: Date;
 };
 
 type ItemRow = { productName: string; quantity: string; unitPrice: string };
+
+/** Base64 PDF'i tarayıcıda blob olarak açar ve yazdırma penceresini tetikler. */
+function openPdfBase64(base64: string, filename: string) {
+  const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+  const blob = new Blob([bytes], { type: "application/pdf" });
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, "_blank");
+  if (win) {
+    win.document.title = filename;
+    win.addEventListener("load", () => {
+      try {
+        win.print();
+      } catch {
+        /* kullanıcı elle yazdırabilir */
+      }
+    });
+  }
+  // Belleği bir süre sonra bırak (sekme açılmış olmalı).
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
 
 const emptyForm = {
   customerName: "",
@@ -58,6 +86,11 @@ const emptyForm = {
   totalAmount: "",
   itemsSummary: "",
   notes: "",
+  customerPhone: "",
+  customerAddress: "",
+  paymentStatus: "unpaid" as "unpaid" | "partial" | "paid",
+  paidAmount: "",
+  paymentMethod: "",
   items: [] as ItemRow[],
 };
 
@@ -76,12 +109,16 @@ export default function Orders() {
   const [, setLocation] = useLocation();
   const { data: orders, isLoading } = trpc.orders.list.useQuery();
   const { data: products } = trpc.products.list.useQuery();
+  const { data: customersList } = trpc.customers.list.useQuery();
   const { data: mpStatus } = trpc.orders.marketplaceStatus.useQuery();
   const [activeOrder, setActiveOrder] = useState<OrderRow | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editOrder, setEditOrder] = useState<OrderRow | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [manualSale, setManualSale] = useState(false);
+  const [search, setSearch] = useState("");
+  const [payFilter, setPayFilter] = useState<"all" | "unpaid" | "paid">("all");
+  const [channelFilter, setChannelFilter] = useState<string>("all");
   const autoSynced = useRef(false);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
@@ -194,6 +231,8 @@ export default function Orders() {
           channel: order.channel ?? "web",
           createdAt: order.createdAt,
           notes: order.notes,
+          address: order.customerAddress,
+          phone: order.customerPhone,
         },
         items.map(i => ({ productName: i.productName, quantity: i.quantity, unitPrice: i.unitPrice })),
         company,
@@ -201,6 +240,54 @@ export default function Orders() {
       );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Fatura oluşturulamadı");
+    }
+  }
+
+  // Kendi (uygulama) kargo etiketimizi yazdırır — pazaryeri etiketi yoksa/başarısızsa.
+  async function printOwnLabel(order: OrderRow) {
+    const [items, company] = await Promise.all([
+      utils.client.orders.items.query({ orderId: order.id }),
+      utils.client.settings.get.query(),
+    ]);
+    printShippingLabel(
+      {
+        orderNo: order.orderNo,
+        customerName: order.customerName,
+        channel: order.channel ?? "web",
+        createdAt: order.createdAt,
+        totalAmount: order.totalAmount,
+        itemsSummary: order.itemsSummary,
+        notes: order.notes,
+        address: order.customerAddress,
+        phone: order.customerPhone,
+      },
+      items.map(i => ({ productName: i.productName, quantity: i.quantity })),
+      company,
+    );
+  }
+
+  // Kargo etiketi: Trendyol siparişinde takip no varsa resmi etiketi (PDF) çeker;
+  // yoksa/başarısızsa kendi barkodlu etiketimizi yazdırır.
+  async function handleShippingLabel(order: OrderRow) {
+    const canOfficial = order.channel === "trendyol" && !!order.cargoTrackingNumber;
+    if (canOfficial) {
+      const t = toast.loading("Trendyol resmi kargo etiketi alınıyor…");
+      try {
+        const { pdfBase64 } = await utils.client.orders.shippingLabel.mutate({ orderId: order.id });
+        openPdfBase64(pdfBase64, `kargo-${order.orderNo}.pdf`);
+        toast.success("Resmi kargo etiketi hazır", { id: t });
+        return;
+      } catch (e) {
+        toast.error(
+          `${e instanceof Error ? e.message : "Resmi etiket alınamadı"} — kendi etiketimiz açılıyor.`,
+          { id: t },
+        );
+      }
+    }
+    try {
+      await printOwnLabel(order);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Kargo etiketi oluşturulamadı");
     }
   }
 
@@ -221,6 +308,25 @@ export default function Orders() {
     },
     onError: e => toast.error(e.message),
   });
+
+  const setPayment = trpc.orders.setPayment.useMutation({
+    onSuccess: () => {
+      utils.orders.list.invalidate();
+      utils.dashboard.summary.invalidate();
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  // Kart üzerinden hızlı tahsilat: bekleyen → ödendi (tam tutar), ödendi → bekliyor.
+  function handleTogglePaid(order: OrderRow) {
+    const paid = order.paymentStatus === "paid";
+    setPayment.mutate({
+      id: order.id,
+      paymentStatus: paid ? "unpaid" : "paid",
+      paidAmount: paid ? 0 : parseFloat(order.totalAmount) || 0,
+      paymentMethod: order.paymentMethod,
+    });
+  }
 
   function handleDragStart(event: DragStartEvent) {
     const order = orders?.find(o => o.id === event.active.id);
@@ -251,8 +357,23 @@ export default function Orders() {
   function openManualSale() {
     setEditOrder(null);
     setManualSale(true);
-    setForm({ ...emptyForm, channel: "elden", customerName: "Elden Satış" });
+    // Elden satış genelde peşin → ödendi varsayılır.
+    setForm({ ...emptyForm, channel: "elden", customerName: "Elden Satış", paymentStatus: "paid" });
     setDialogOpen(true);
+  }
+
+  // Müşteri adı yazıldıkça kayıtlı müşteriyle eşleşirse telefon/adresi otomatik doldur.
+  function applyCustomerByName(name: string) {
+    const match = ((customersList as { name: string; phone: string | null; address: string | null }[]) ?? []).find(
+      c => c.name.trim().toLocaleLowerCase("tr-TR") === name.trim().toLocaleLowerCase("tr-TR"),
+    );
+    if (match) {
+      setForm(f => ({
+        ...f,
+        customerPhone: match.phone ?? f.customerPhone,
+        customerAddress: match.address ?? f.customerAddress,
+      }));
+    }
   }
 
   async function openEdit(order: OrderRow) {
@@ -263,6 +384,11 @@ export default function Orders() {
       totalAmount: order.totalAmount,
       itemsSummary: order.itemsSummary ?? "",
       notes: order.notes ?? "",
+      customerPhone: order.customerPhone ?? "",
+      customerAddress: order.customerAddress ?? "",
+      paymentStatus: order.paymentStatus ?? "unpaid",
+      paidAmount: parseFloat(order.paidAmount) > 0 ? String(parseFloat(order.paidAmount)) : "",
+      paymentMethod: order.paymentMethod ?? "",
       items: [],
     });
     setDialogOpen(true);
@@ -287,12 +413,24 @@ export default function Orders() {
       return;
     }
     const itemRows = parseItemRows(form.items);
+    const total = itemRows.length > 0 ? itemsTotal : parseFloat(form.totalAmount) || 0;
     const payload = {
       customerName: form.customerName.trim(),
       channel: form.channel,
       totalAmount: parseFloat(form.totalAmount) || 0,
       itemsSummary: form.itemsSummary || null,
       notes: form.notes || null,
+      customerPhone: form.customerPhone || null,
+      customerAddress: form.customerAddress || null,
+      paymentStatus: form.paymentStatus,
+      // Ödendi → toplam; Kısmi → girilen tutar; Bekliyor → 0.
+      paidAmount:
+        form.paymentStatus === "paid"
+          ? total
+          : form.paymentStatus === "partial"
+            ? parseFloat(form.paidAmount) || 0
+            : 0,
+      paymentMethod: form.paymentMethod || null,
       // Kalem girildiyse toplam ve özet sunucuda satırlardan hesaplanır.
       ...(itemRows.length > 0 ? { items: itemRows } : {}),
       // Elden satışlar doğrudan "Tamamlandı" sütununa düşer.
@@ -309,6 +447,25 @@ export default function Orders() {
     (sum, r) => sum + r.quantity * r.unitPrice,
     0,
   );
+
+  // Arama + ödeme/kanal filtresi uygulanmış sipariş listesi.
+  const allOrders = (orders as OrderRow[]) ?? [];
+  const channels = Array.from(new Set(allOrders.map(o => o.channel ?? "diğer")));
+  const q = search.trim().toLocaleLowerCase("tr-TR");
+  const filteredOrders = allOrders.filter(o => {
+    if (payFilter === "unpaid" && o.paymentStatus === "paid") return false;
+    if (payFilter === "paid" && o.paymentStatus !== "paid") return false;
+    if (channelFilter !== "all" && (o.channel ?? "diğer") !== channelFilter) return false;
+    if (q) {
+      const hay = [o.customerName, o.orderNo, o.customerPhone, o.itemsSummary]
+        .filter(Boolean)
+        .join(" ")
+        .toLocaleLowerCase("tr-TR");
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+  const filterActive = q !== "" || payFilter !== "all" || channelFilter !== "all";
 
   return (
     <div className="space-y-4">
@@ -345,12 +502,27 @@ export default function Orders() {
               <div className="space-y-1.5">
                 <Label>Müşteri Adı *</Label>
                 <Input
+                  list="customer-names"
                   value={form.customerName}
                   onChange={e => setForm(f => ({ ...f, customerName: e.target.value }))}
-                  placeholder="Örn. Mehmet Yılmaz"
+                  onBlur={e => applyCustomerByName(e.target.value)}
+                  placeholder="Örn. Mehmet Yılmaz (kayıtlıysa seç)"
                 />
+                <datalist id="customer-names">
+                  {((customersList as { id: number; name: string }[]) ?? []).map(c => (
+                    <option key={c.id} value={c.name} />
+                  ))}
+                </datalist>
               </div>
               <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Telefon</Label>
+                  <Input
+                    value={form.customerPhone}
+                    onChange={e => setForm(f => ({ ...f, customerPhone: e.target.value }))}
+                    placeholder="05xx xxx xx xx"
+                  />
+                </div>
                 <div className="space-y-1.5">
                   <Label>Kanal</Label>
                   <Select value={form.channel} onValueChange={v => setForm(f => ({ ...f, channel: v }))}>
@@ -500,6 +672,54 @@ export default function Orders() {
                 </div>
               )}
               <div className="space-y-1.5">
+                <Label>Teslimat Adresi</Label>
+                <Textarea
+                  value={form.customerAddress}
+                  onChange={e => setForm(f => ({ ...f, customerAddress: e.target.value }))}
+                  placeholder="Kargo etiketi ve faturaya yazılır"
+                  rows={2}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Ödeme Durumu</Label>
+                  <Select
+                    value={form.paymentStatus}
+                    onValueChange={v => setForm(f => ({ ...f, paymentStatus: v as typeof f.paymentStatus }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="unpaid">Bekliyor</SelectItem>
+                      <SelectItem value="partial">Kısmi</SelectItem>
+                      <SelectItem value="paid">Ödendi</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Ödeme Yöntemi</Label>
+                  <Input
+                    value={form.paymentMethod}
+                    onChange={e => setForm(f => ({ ...f, paymentMethod: e.target.value }))}
+                    placeholder="Nakit / Havale / Kart"
+                  />
+                </div>
+              </div>
+              {form.paymentStatus === "partial" && (
+                <div className="space-y-1.5">
+                  <Label>Ödenen Tutar (₺)</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.paidAmount}
+                    onChange={e => setForm(f => ({ ...f, paidAmount: e.target.value }))}
+                    placeholder="Şimdiye kadar alınan tutar"
+                  />
+                </div>
+              )}
+              <div className="space-y-1.5">
                 <Label>Notlar</Label>
                 <Textarea
                   value={form.notes}
@@ -562,6 +782,60 @@ export default function Orders() {
         </div>
       )}
 
+      {!isLoading && allOrders.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="relative flex-1 min-w-[180px] max-w-xs">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              className="pl-8 h-9"
+              placeholder="Müşteri, sipariş no, telefon ara…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+          </div>
+          <Select value={payFilter} onValueChange={v => setPayFilter(v as typeof payFilter)}>
+            <SelectTrigger className="h-9 w-[140px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Tüm ödemeler</SelectItem>
+              <SelectItem value="unpaid">Ödenmemiş</SelectItem>
+              <SelectItem value="paid">Ödenmiş</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={channelFilter} onValueChange={setChannelFilter}>
+            <SelectTrigger className="h-9 w-[140px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Tüm kanallar</SelectItem>
+              {channels.map(c => (
+                <SelectItem key={c} value={c}>
+                  {c}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {filterActive && (
+            <>
+              <span className="text-xs text-muted-foreground">{filteredOrders.length} sonuç</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-9"
+                onClick={() => {
+                  setSearch("");
+                  setPayFilter("all");
+                  setChannelFilter("all");
+                }}
+              >
+                Temizle
+              </Button>
+            </>
+          )}
+        </div>
+      )}
+
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
           {ORDER_STATUSES.map(s => (
@@ -575,10 +849,12 @@ export default function Orders() {
               <KanbanColumn
                 key={status.value}
                 status={status}
-                orders={(orders as OrderRow[])?.filter(o => o.status === status.value) ?? []}
+                orders={filteredOrders.filter(o => o.status === status.value)}
                 onEdit={openEdit}
                 onDelete={id => deleteOrder.mutate({ id })}
                 onInvoice={handleInvoice}
+                onShippingLabel={handleShippingLabel}
+                onTogglePaid={handleTogglePaid}
               />
             ))}
           </div>
@@ -597,12 +873,16 @@ function KanbanColumn({
   onEdit,
   onDelete,
   onInvoice,
+  onShippingLabel,
+  onTogglePaid,
 }: {
   status: (typeof ORDER_STATUSES)[number];
   orders: OrderRow[];
   onEdit: (o: OrderRow) => void;
   onDelete: (id: number) => void;
   onInvoice: (o: OrderRow) => void;
+  onShippingLabel: (o: OrderRow) => void;
+  onTogglePaid: (o: OrderRow) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status.value });
 
@@ -626,8 +906,22 @@ function KanbanColumn({
         </div>
       )}
       {orders.map(order => (
-        <DraggableOrderCard key={order.id} order={order} onEdit={onEdit} onDelete={onDelete} onInvoice={onInvoice} />
+        <DraggableOrderCard key={order.id} order={order} onEdit={onEdit} onDelete={onDelete} onInvoice={onInvoice} onShippingLabel={onShippingLabel} onTogglePaid={onTogglePaid} />
       ))}
+      {orders.length > 0 &&
+        (() => {
+          const num = (v: string) => parseFloat(v) || 0;
+          const total = orders.reduce((s, o) => s + num(o.totalAmount), 0);
+          const due = orders
+            .filter(o => o.paymentStatus !== "paid")
+            .reduce((s, o) => s + Math.max(0, num(o.totalAmount) - num(o.paidAmount)), 0);
+          return (
+            <div className="mt-auto border-t pt-2 text-[11px] text-muted-foreground flex items-center justify-between">
+              <span>Toplam {formatTL(total)}</span>
+              {due > 0 && <span className="text-destructive font-medium">{formatTL(due)} bekliyor</span>}
+            </div>
+          );
+        })()}
     </div>
   );
 }
@@ -637,11 +931,15 @@ function DraggableOrderCard({
   onEdit,
   onDelete,
   onInvoice,
+  onShippingLabel,
+  onTogglePaid,
 }: {
   order: OrderRow;
   onEdit: (o: OrderRow) => void;
   onDelete: (id: number) => void;
   onInvoice: (o: OrderRow) => void;
+  onShippingLabel: (o: OrderRow) => void;
+  onTogglePaid: (o: OrderRow) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: order.id });
 
@@ -658,6 +956,8 @@ function DraggableOrderCard({
         onEdit={onEdit}
         onDelete={onDelete}
         onInvoice={onInvoice}
+        onShippingLabel={onShippingLabel}
+        onTogglePaid={onTogglePaid}
         dragHandle={{ attributes: attributes as unknown as React.HTMLAttributes<HTMLButtonElement>, listeners }}
       />
     </div>
@@ -669,6 +969,8 @@ function OrderCard({
   onEdit,
   onDelete,
   onInvoice,
+  onShippingLabel,
+  onTogglePaid,
   overlay,
   dragHandle,
 }: {
@@ -676,9 +978,12 @@ function OrderCard({
   onEdit?: (o: OrderRow) => void;
   onDelete?: (id: number) => void;
   onInvoice?: (o: OrderRow) => void;
+  onShippingLabel?: (o: OrderRow) => void;
+  onTogglePaid?: (o: OrderRow) => void;
   overlay?: boolean;
   dragHandle?: { attributes: React.HTMLAttributes<HTMLButtonElement>; listeners: Record<string, unknown> | undefined };
 }) {
+  const paid = order.paymentStatus === "paid";
   return (
     <Card className={`p-3 space-y-1.5 ${overlay ? "shadow-xl rotate-2" : "shadow-sm"}`}>
       <div className="flex items-start gap-1.5">
@@ -691,7 +996,10 @@ function OrderCard({
           <GripVertical className="h-4 w-4" />
         </button>
         <div className="flex-1 min-w-0">
-          <p className="font-medium text-sm truncate">{order.customerName}</p>
+          <p className="font-medium text-sm truncate flex items-center gap-1">
+            {order.customerName}
+            {order.customerAddress && <MapPin className="h-3 w-3 text-muted-foreground shrink-0" />}
+          </p>
           <p className="text-[11px] text-muted-foreground">{order.orderNo}</p>
         </div>
         <span className="font-semibold text-sm whitespace-nowrap">{formatTL(order.totalAmount)}</span>
@@ -704,10 +1012,47 @@ function OrderCard({
           <Badge variant="outline" className="text-[10px] px-1.5 py-0">
             {order.channel}
           </Badge>
+          {!overlay && (
+            <button
+              onClick={() => onTogglePaid?.(order)}
+              title={paid ? "Ödendi (bekliyor yap)" : "Ödendi olarak işaretle"}
+              className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0 text-[10px] font-medium transition-colors ${
+                paid
+                  ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                  : order.paymentStatus === "partial"
+                    ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                    : "bg-destructive/10 text-destructive hover:bg-destructive/20"
+              }`}
+            >
+              {paid ? "Ödendi" : order.paymentStatus === "partial" ? "Kısmi" : "Bekliyor"}
+            </button>
+          )}
           <span className="text-[10px] text-muted-foreground">{formatDate(order.createdAt)}</span>
         </div>
         {!overlay && (
           <div className="flex gap-0.5">
+            {order.customerPhone && (
+              <a
+                href={`https://wa.me/${order.customerPhone.replace(/\D/g, "")}?text=${encodeURIComponent(
+                  `Merhaba ${order.customerName}, ${order.orderNo} numaralı siparişiniz hakkında bilgi vermek istedik.`,
+                )}`}
+                target="_blank"
+                rel="noreferrer"
+                title="Müşteriye WhatsApp'tan yaz"
+                className="inline-flex h-6 w-6 items-center justify-center rounded-md text-emerald-600 hover:bg-accent"
+              >
+                <MessageCircle className="h-3 w-3" />
+              </a>
+            )}
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6"
+              title="Kargo etiketi / barkod yazdır"
+              onClick={() => onShippingLabel?.(order)}
+            >
+              <Truck className="h-3 w-3" />
+            </Button>
             <Button
               size="icon"
               variant="ghost"

@@ -417,7 +417,10 @@ export default function Products() {
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    {variants.length} türev · Satış: {formatTL(main.salePrice)}
+                    {variants.length} türev · Satış: {formatTL(main.salePrice)} · Stok:{" "}
+                    <span className={main.stockQty <= 0 ? "text-rose-600 font-medium" : main.stockQty < 5 ? "text-amber-600 font-medium" : ""}>
+                      {main.stockQty}
+                    </span>
                   </p>
                 </div>
                 <div className="flex items-center gap-1">

@@ -59,7 +59,7 @@ export default function Analytics() {
 
   const model = useMemo(() => {
     if (!data) return null;
-    const { orders, orderItems } = data;
+    const { orders, orderItems, expenses } = data;
     const now = Date.now();
     const day = 86400000;
 
@@ -116,7 +116,16 @@ export default function Analytics() {
       .sort((a, b) => b.ciro - a.ciro)
       .slice(0, 5);
 
-    return { weeks, revenue30, orders30: recent.length, avgOrder, channels, bestChannel, topProducts };
+    // Finans: 30 gün gider, net, bekleyen tahsilat
+    const expense30 = (expenses ?? [])
+      .filter(e => now - new Date(e.expenseDate).getTime() <= 30 * day)
+      .reduce((s, e) => s + num(e.amount), 0);
+    const net30 = revenue30 - expense30;
+    const receivables = orders
+      .filter(o => o.paymentStatus !== "paid")
+      .reduce((s, o) => s + Math.max(0, num(o.totalAmount) - num(o.paidAmount)), 0);
+
+    return { weeks, revenue30, orders30: recent.length, avgOrder, channels, bestChannel, topProducts, expense30, net30, receivables };
   }, [data]);
 
   return (
@@ -138,6 +147,12 @@ export default function Analytics() {
             <Kpi label="Sipariş (30 gün)" value={String(model.orders30)} />
             <Kpi label="Ortalama Sipariş" value={formatTL(model.avgOrder)} />
             <Kpi label="En İyi Kanal" value={model.bestChannel} />
+          </div>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <Kpi label="Gider (30 gün)" value={formatTL(model.expense30)} />
+            <Kpi label="Net (30 gün)" value={formatTL(model.net30)} />
+            <Kpi label="Tahsil Edilecek" value={formatTL(model.receivables)} />
+            <Kpi label="Kâr Marjı" value={model.revenue30 > 0 ? `%${Math.round((model.net30 / model.revenue30) * 100)}` : "-"} />
           </div>
 
           <Card className="p-5 space-y-2">

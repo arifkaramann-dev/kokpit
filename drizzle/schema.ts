@@ -125,6 +125,17 @@ export const orders = mysqlTable("orders", {
   totalAmount: decimal("totalAmount", { precision: 12, scale: 2 }).notNull().default("0"),
   itemsSummary: text("itemsSummary"),
   notes: text("notes"),
+  // Müşteri iletişim/teslimat bilgisi (kargo etiketi ve fatura için).
+  customerPhone: varchar("customerPhone", { length: 64 }),
+  customerAddress: varchar("customerAddress", { length: 512 }),
+  // Ödeme & tahsilat: bekleyen alacakları takip etmek için.
+  paymentStatus: mysqlEnum("paymentStatus", ["unpaid", "partial", "paid"]).notNull().default("unpaid"),
+  paidAmount: decimal("paidAmount", { precision: 12, scale: 2 }).notNull().default("0"),
+  paymentMethod: varchar("paymentMethod", { length: 64 }),
+  // Pazaryeri kargo bilgileri (Trendyol vb.): resmi etiket çekmek ve takip için.
+  cargoTrackingNumber: varchar("cargoTrackingNumber", { length: 64 }),
+  cargoProviderName: varchar("cargoProviderName", { length: 128 }),
+  cargoTrackingLink: varchar("cargoTrackingLink", { length: 512 }),
   sortOrder: int("sortOrder").notNull().default(0),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -148,6 +159,42 @@ export const orderItems = mysqlTable("orderItems", {
 
 export type OrderItem = typeof orderItems.$inferSelect;
 export type InsertOrderItem = typeof orderItems.$inferInsert;
+
+/**
+ * Müşteriler (CRM): elden/web satışlarda tekrar kullanılan ad, telefon, adres.
+ * Sipariş formunda seçilince iletişim/teslimat bilgisi siparişe kopyalanır.
+ */
+export const customers = mysqlTable("customers", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  phone: varchar("phone", { length: 64 }),
+  email: varchar("email", { length: 320 }),
+  address: varchar("address", { length: 512 }),
+  city: varchar("city", { length: 128 }),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Customer = typeof customers.$inferSelect;
+export type InsertCustomer = typeof customers.$inferInsert;
+
+/**
+ * Giderler: hammadde/alış dışındaki işletme masrafları (kira, kargo, reklam,
+ * komisyon vb.). Kâr/zarar raporu bunları cirodan düşer.
+ */
+export const expenses = mysqlTable("expenses", {
+  id: int("id").autoincrement().primaryKey(),
+  expenseDate: timestamp("expenseDate").defaultNow().notNull(),
+  category: varchar("category", { length: 64 }).notNull().default("diğer"),
+  description: varchar("description", { length: 255 }),
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  note: text("note"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type Expense = typeof expenses.$inferSelect;
+export type InsertExpense = typeof expenses.$inferInsert;
 
 /**
  * Ürün geliştirme projeleri — fikirden bitmiş ürüne 5 adımlı rehberli akış.

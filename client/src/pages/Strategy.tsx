@@ -37,7 +37,7 @@ export default function Strategy() {
 
   const model = useMemo(() => {
     if (!data) return null;
-    const { products, formulas, marketingTexts, orders, orderItems, materials, campaigns, productImages } = data;
+    const { products, formulas, marketingTexts, orders, orderItems, materials, campaigns, productImages, expenses } = data;
     const imagedProducts = new Set(productImages.map(i => i.productId));
 
     // Ürün başına hammadde maliyeti (formülden)
@@ -100,6 +100,15 @@ export default function Strategy() {
       const cur = byChannel.get(ch) ?? { count: 0, revenue: 0 };
       byChannel.set(ch, { count: cur.count + 1, revenue: cur.revenue + num(o.totalAmount) });
     }
+    // Son 30 gün giderleri + net kâr (ciro − gider) ve bekleyen tahsilat.
+    const expense30 = (expenses ?? [])
+      .filter(e => new Date(e.expenseDate).getTime() >= cutoff)
+      .reduce((s, e) => s + num(e.amount), 0);
+    const net30 = revenue30 - expense30;
+    const receivables = orders
+      .filter(o => o.paymentStatus !== "paid")
+      .reduce((s, o) => s + Math.max(0, num(o.totalAmount) - num(o.paidAmount)), 0);
+
     const critical = materials.filter(m => num(m.stockQty) <= num(m.criticalQty));
     const stockValue = materials.reduce((s, m) => s + num(m.stockQty) * num(m.unitCost), 0);
     const upcomingCampaigns = campaigns.filter(
@@ -160,12 +169,27 @@ export default function Strategy() {
           text: `Siparişlerin %${Math.round((topStats.count / totalRecent) * 100)}'i tek kanaldan (${topCh}) geliyor. Kanal çeşitlendirmek riski azaltır.`,
         });
     }
+    if (net30 < 0 && revenue30 > 0)
+      tips.push({
+        severity: "high",
+        text: `Son 30 günde giderler (${formatTL(expense30)}) ciroyu (${formatTL(revenue30)}) aştı — net zarar ${formatTL(net30)}. Gider kalemlerini gözden geçir veya satışı artır.`,
+        go: "/giderler",
+      });
+    if (receivables > 0)
+      tips.push({
+        severity: receivables > revenue30 * 0.3 ? "mid" : "low",
+        text: `${formatTL(receivables)} tahsilat bekliyor. Ödenmemiş siparişleri takip et; nakit akışını rahatlatır.`,
+        go: "/siparisler",
+      });
     if (tips.length === 0)
       tips.push({ severity: "low", text: "Şu an kritik bir uyarı yok — veriler gayet sağlıklı görünüyor. 👏" });
 
     return {
       productRows: productRows.sort((a, b) => a.done / a.total - b.done / b.total),
       revenue30,
+      expense30,
+      net30,
+      receivables,
       recentCount: recent.length,
       byChannel: Array.from(byChannel.entries()).sort((a, b) => b[1].revenue - a[1].revenue),
       critical,
@@ -277,6 +301,19 @@ export default function Strategy() {
         <div className="space-y-4">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <Stat label="30 Gün Ciro" value={formatTL(model.revenue30)} />
+            <Stat label="30 Gün Gider" value={formatTL(model.expense30)} tone="text-amber-600" />
+            <Stat
+              label="30 Gün Net"
+              value={formatTL(model.net30)}
+              tone={model.net30 >= 0 ? "text-emerald-600" : "text-rose-600"}
+            />
+            <Stat
+              label="Tahsil Edilecek"
+              value={formatTL(model.receivables)}
+              tone={model.receivables > 0 ? "text-rose-600" : "text-emerald-600"}
+            />
+          </div>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <Stat label="30 Gün Sipariş" value={String(model.recentCount)} />
             <Stat label="Stok Değeri" value={formatTL(model.stockValue)} />
             <Stat
@@ -284,6 +321,7 @@ export default function Strategy() {
               value={String(model.critical.length)}
               tone={model.critical.length > 0 ? "text-rose-600" : "text-emerald-600"}
             />
+            <Stat label="Yaklaşan Kampanya" value={String(model.upcomingCampaigns.length)} />
           </div>
 
           <Card className="p-5 space-y-3">

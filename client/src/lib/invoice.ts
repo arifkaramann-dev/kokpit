@@ -6,6 +6,8 @@ export type InvoiceOrder = {
   channel: string;
   createdAt: string | Date;
   notes?: string | null;
+  phone?: string | null;
+  address?: string | null;
 };
 
 export type InvoiceItem = {
@@ -126,6 +128,8 @@ export function printInvoice(
 <div class="party">
   <div class="h">Sayın (Alıcı)</div>
   <div class="name">${esc(order.customerName)}</div>
+  ${order.address ? `<div style="font-size:11px;color:#333;margin-top:3px">${esc(order.address)}</div>` : ""}
+  ${order.phone ? `<div style="font-size:11px;color:#333">Tel: ${esc(order.phone)}</div>` : ""}
 </div>
 
 <table>

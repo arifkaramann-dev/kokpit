@@ -58,6 +58,29 @@
 - [x] Ekran görüntüleriyle görsel doğrulama
 - [x] Checkpoint + teslim
 
+## Modül 10: Müşteriler & Tahsilat & Giderler (eklendi)
+- [x] Müşteriler (CRM): ad/telefon/adres kaydı, sipariş formunda seçince otomatik dolum
+- [x] Sipariş ödeme durumu (ödendi/kısmi/bekliyor) + kartta hızlı "Ödendi" + tahsilat toplamı
+- [x] Kargo etiketi ve faturaya yapısal müşteri adres/telefon
+- [x] Giderler modülü + Kokpit'te bu ay ciro/gider/net kâr
+- [x] Komut paleti (⌘K) — sayfa + ürün/sipariş/müşteri/hammadde hızlı arama
+
+## Modül 11: Finans derinleştirme & panoda arama (eklendi)
+- [x] Strateji Kâr/Zarar: 30 gün gider + net kâr + tahsil edilecek + uyarılar
+- [x] Sipariş panosunda arama (müşteri/no/telefon) + ödeme & kanal filtresi
+- [x] Kısmi ödeme tutarı girişi (düzenleme dialogunda "Ödenen Tutar")
+- [x] Müşteri kartında sipariş geçmişi özeti (adet, toplam harcama, borç)
+
+## Modül 12: İşlevsellik & finans batch'i (eklendi)
+- [x] Asistan/WhatsApp: tahsilat, borçlu müşteri, bu ay ciro/gider/net soru-cevabı (snapshot)
+- [x] Giderler: düzenleme + bu ay kategori kırılımı (çubuklar)
+- [x] Müşteriler: sipariş geçmişi detay dialogu + WhatsApp linki + başlıkta toplam alacak
+- [x] Sipariş panosu: sütun altı toplam + bekleyen tutar; kartta WhatsApp butonu + adres ikonu
+- [x] Kokpit: Bekleyen Tahsilatlar kartı (en yüksek borçlu siparişler)
+- [x] Ürünler: kartta stok + düşük/sıfır stok renklendirmesi
+- [x] Satış Analizi: 30 gün gider / net / tahsilat / kâr marjı KPI'ları
+
 ## Sonraki Oturuma Ertelenenler (opsiyonel geliştirmeler)
 - AI görsel üretimi modülü (ürün fotoğrafı arka plan değiştirme) — kullanıcı talebiyle eklenecek
-- Sipariş kalemleri için detaylı satır bazı CRUD (şu an özet metin alanı kullanılıyor) — kullanıcı talebiyle eklenecek
+- Asistanla sesli "gider ekle" komutu (parseVoiceCommand'a intent eklemek)
+- Ürünlerde kritik stok eşiği alanı + düşük stok filtresi
