@@ -32,7 +32,9 @@ export default function Customers() {
   const utils = trpc.useUtils();
   const { data: customers, isLoading } = trpc.customers.list.useQuery();
   const { data: orders } = trpc.orders.list.useQuery();
+  const { data: balances } = trpc.customers.balances.useQuery();
   const [collectAmount, setCollectAmount] = useState("");
+  const balanceOf = (name: string) => (balances ?? {})[name.trim().toLocaleLowerCase("tr-TR")] ?? 0;
 
   // Müşteri adına göre sipariş özeti (ada göre eşleştirme; FK yok).
   const statsByName = useMemo(() => {
@@ -83,9 +85,11 @@ export default function Customers() {
   const collect = trpc.transactions.create.useMutation({
     onSuccess: () => {
       utils.customers.ledger.invalidate();
+      utils.customers.balances.invalidate();
       utils.orders.list.invalidate();
       utils.dashboard.summary.invalidate();
       utils.accounts.invalidate();
+      utils.transactions.invalidate();
       setCollectAmount("");
       toast.success("Tahsilat kaydedildi");
     },
@@ -164,8 +168,8 @@ export default function Customers() {
         <span className="text-xs text-muted-foreground">
           {((customers as CustomerRow[]) ?? []).length} müşteri
           {(() => {
-            const totalDue = Array.from(statsByName.values()).reduce((s, v) => s + v.due, 0);
-            return totalDue > 0 ? ` · ${formatTL(totalDue)} toplam alacak` : "";
+            const totalDue = Object.values(balances ?? {}).reduce((s, v) => s + Math.max(0, v), 0);
+            return totalDue > 0.01 ? ` · ${formatTL(totalDue)} toplam alacak` : "";
           })()}
         </span>
       </div>
@@ -246,9 +250,9 @@ export default function Customers() {
                   <ShoppingBag className="h-3.5 w-3.5 text-muted-foreground" />
                   <span className="text-muted-foreground">{s.count} sipariş</span>
                   <span className="ml-auto font-medium">{formatTL(s.total)}</span>
-                  {s.due > 0 && (
+                  {balanceOf(c.name) > 0.01 && (
                     <span className="rounded-full bg-destructive/10 px-1.5 py-0.5 text-destructive">
-                      {formatTL(s.due)} borç
+                      {formatTL(balanceOf(c.name))} borç
                     </span>
                   )}
                 </button>

@@ -424,6 +424,42 @@ export async function deleteTransaction(id: number) {
   await db.delete(transactions).where(eq(transactions.id, id));
 }
 
+/** İki hesap arasında transfer: kaynaktan çıkış + hedefe giriş (iki hareket). */
+export async function transferBetweenAccounts(fromId: number, toId: number, amount: number, note: string | null) {
+  const db = await requireDb();
+  const [from] = await db.select().from(accounts).where(eq(accounts.id, fromId)).limit(1);
+  const [to] = await db.select().from(accounts).where(eq(accounts.id, toId)).limit(1);
+  const now = new Date();
+  await db.insert(transactions).values({
+    txnDate: now, accountId: fromId, direction: "out", amount: String(amount), category: "transfer",
+    description: `Transfer → ${to?.name ?? ""}`, note,
+  } as never);
+  await db.insert(transactions).values({
+    txnDate: now, accountId: toId, direction: "in", amount: String(amount), category: "transfer",
+    description: `Transfer ← ${from?.name ?? ""}`, note,
+  } as never);
+}
+
+/**
+ * Tüm müşterilerin cari bakiyesi (küçük harf ada göre): sipariş toplamı (borç)
+ * − tahsilat (alacak). Pozitif = müşteri bize borçlu.
+ */
+export async function customerBalances(): Promise<Record<string, number>> {
+  const db = await requireDb();
+  const [ords, txns] = await Promise.all([
+    db.select({ name: orders.customerName, total: orders.totalAmount }).from(orders),
+    db.select({ name: transactions.customerName, direction: transactions.direction, amount: transactions.amount, category: transactions.category }).from(transactions),
+  ]);
+  const key = (n: string) => n.trim().toLocaleLowerCase("tr-TR");
+  const out: Record<string, number> = {};
+  for (const o of ords) out[key(o.name)] = (out[key(o.name)] ?? 0) + toNum(o.total);
+  for (const t of txns) {
+    if (!t.name || t.category !== "tahsilat") continue;
+    out[key(t.name)] = (out[key(t.name)] ?? 0) - (t.direction === "in" ? toNum(t.amount) : -toNum(t.amount));
+  }
+  return out;
+}
+
 /**
  * Bir müşterinin cari ekstresi: siparişleri (borç) + tahsilatları (alacak/ödeme)
  * tarih sırasıyla, yürüyen bakiyeyle. Bakiye > 0 → müşteri bize borçlu.
@@ -456,6 +492,39 @@ export async function customerLedger(name: string) {
     return { ...e, balance: running };
   });
   return { rows, balance: running };
+}
+
+/**
+ * KDV raporu: satış KDV'si (siparişler, KDV dahil kabul) − alış KDV'si
+ * (alış faturaları) = ödenecek KDV. Bu ay ve bu yıl için ayrı hesaplar.
+ */
+export async function vatReport() {
+  const db = await requireDb();
+  const [vatRow, ords, purs] = await Promise.all([
+    db.select().from(settings).where(eq(settings.key, "vatRate")).limit(1),
+    db.select({ total: orders.totalAmount, date: orders.createdAt }).from(orders),
+    db.select({ total: purchases.totalAmount, date: purchases.invoiceDate, created: purchases.createdAt }).from(purchases),
+  ]);
+  const rate = parseFloat(vatRow[0]?.value ?? "") || 20;
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  const yearStart = new Date(now.getFullYear(), 0, 1).getTime();
+  const vatOf = (gross: number) => gross - gross / (1 + rate / 100);
+
+  const calc = (since: number) => {
+    let salesGross = 0;
+    for (const o of ords) if (new Date(o.date).getTime() >= since) salesGross += toNum(o.total);
+    let buyGross = 0;
+    for (const p of purs) {
+      const t = new Date((p.date ?? p.created) as never).getTime();
+      if (t >= since) buyGross += toNum(p.total);
+    }
+    const salesVat = vatOf(salesGross);
+    const buyVat = vatOf(buyGross);
+    return { salesGross, salesVat, buyGross, buyVat, payable: salesVat - buyVat };
+  };
+
+  return { rate, month: calc(monthStart), year: calc(yearStart) };
 }
 
 /** Ödenmemiş/kısmi ödenmiş siparişleri kalan borca göre döner (tahsilat takibi). */
