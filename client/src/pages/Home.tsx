@@ -101,6 +101,15 @@ export default function Home() {
             color="text-amber-600 bg-amber-50 dark:bg-amber-950/40"
           />
         </button>
+        <button className="text-left" onClick={() => setLocation("/kasa")}>
+          <StatCard
+            icon={<Wallet className="h-5 w-5" />}
+            label="Kasa/Banka"
+            value={isLoading ? "..." : formatTL(finance?.cashTotal ?? 0)}
+            sub="Toplam nakit + banka"
+            color="text-blue-600 bg-blue-50 dark:bg-blue-950/40"
+          />
+        </button>
         <StatCard
           icon={<PiggyBank className="h-5 w-5" />}
           label="Bu Ay Net"

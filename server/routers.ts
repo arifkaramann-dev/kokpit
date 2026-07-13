@@ -90,6 +90,27 @@ const expenseInput = z.object({
   note: z.string().nullable().optional(),
 });
 
+const accountInput = z.object({
+  name: z.string().min(1),
+  kind: z.enum(["kasa", "banka"]).default("kasa"),
+  openingBalance: z.number().default(0),
+  note: z.string().nullable().optional(),
+});
+
+const transactionInput = z.object({
+  txnDate: z.string().nullable().optional(),
+  accountId: z.number().nullable().optional(),
+  direction: z.enum(["in", "out"]),
+  amount: z.number().min(0).default(0),
+  category: z.string().min(1).default("diğer"),
+  customerName: z.string().nullable().optional(),
+  orderId: z.number().nullable().optional(),
+  orderNo: z.string().nullable().optional(),
+  description: z.string().nullable().optional(),
+  method: z.string().nullable().optional(),
+  note: z.string().nullable().optional(),
+});
+
 export { itemsTotal, summarizeItems } from "./orderUtils";
 
 const devProjectInput = z.object({
@@ -678,6 +699,35 @@ export const appRouter = router({
       .input(z.object({ id: z.number(), data: customerInput.partial() }))
       .mutation(({ input }) => db.updateCustomer(input.id, input.data as never)),
     delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteCustomer(input.id)),
+    // Müşteri cari ekstresi: siparişler (borç) + tahsilatlar (alacak) + bakiye.
+    ledger: protectedProcedure.input(z.object({ name: z.string() })).query(({ input }) => db.customerLedger(input.name)),
+  }),
+
+  // Kasa & Banka hesapları (ön muhasebe).
+  accounts: router({
+    list: protectedProcedure.query(() => db.listAccounts()),
+    create: protectedProcedure.input(accountInput).mutation(({ input }) =>
+      db.createAccount(toDecimalFields(input, ["openingBalance"]) as never),
+    ),
+    update: protectedProcedure
+      .input(z.object({ id: z.number(), data: accountInput.partial() }))
+      .mutation(({ input }) => db.updateAccount(input.id, toDecimalFields(input.data, ["openingBalance"]) as never)),
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteAccount(input.id)),
+  }),
+
+  // Para/cari hareketleri: tahsilat, ödeme, gelir, gider, transfer.
+  transactions: router({
+    list: protectedProcedure
+      .input(z.object({ customerName: z.string().optional(), accountId: z.number().optional(), limit: z.number().optional() }).optional())
+      .query(({ input }) => db.listTransactions(input ?? undefined)),
+    create: protectedProcedure.input(transactionInput).mutation(({ input }) => {
+      const { txnDate, ...rest } = input;
+      return db.createTransaction({
+        ...(toDecimalFields(rest, ["amount"]) as never as object),
+        txnDate: txnDate ? new Date(txnDate) : new Date(),
+      } as never);
+    }),
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteTransaction(input.id)),
   }),
 
   expenses: router({

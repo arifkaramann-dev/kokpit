@@ -94,6 +94,7 @@ export async function buildBusinessSnapshot(): Promise<string> {
     `Son 30 gün ciro: ${revenue30.toFixed(2)} TL (${last30.length} sipariş)`,
     `Bu ay: ciro ${finance.monthRevenue.toFixed(2)} TL, gider ${finance.monthExpense.toFixed(2)} TL, net kâr ${finance.monthNet.toFixed(2)} TL`,
     `Toplam tahsil edilecek (alacak): ${finance.receivables.toFixed(2)} TL`,
+    `Kasa/banka toplam bakiye: ${finance.cashTotal.toFixed(2)} TL`,
     `Borçlu müşteriler (ad | kalan): ${debtors.slice(0, 15).map(d => `${d.name} | ${d.due.toFixed(2)} TL`).join("; ") || "yok"}`,
     `Bu ay giderler (kategori | tutar): ${Array.from(byCategory.entries()).map(([k, v]) => `${k} | ${v.toFixed(2)} TL`).join("; ") || "yok"}`,
     `Ürünler (ad | satış fiyatı): ${products

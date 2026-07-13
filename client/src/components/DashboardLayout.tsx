@@ -45,6 +45,7 @@ import {
   Target,
   TrendingDown,
   Truck,
+  Wallet,
   Warehouse,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
@@ -61,6 +62,7 @@ const menuItems = [
   { icon: Warehouse, label: "Stok & Hammadde", path: "/stok" },
   { icon: ReceiptText, label: "Fatura Girişi", path: "/faturalar" },
   { icon: TrendingDown, label: "Giderler", path: "/giderler" },
+  { icon: Wallet, label: "Kasa & Banka", path: "/kasa" },
   { icon: Package, label: "Ürünler & Türevler", path: "/urunler" },
   { icon: FlaskConical, label: "Ürün Geliştirme", path: "/gelistirme" },
   { icon: Beaker, label: "Formül Defteri", path: "/formuller" },

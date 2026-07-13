@@ -40,6 +40,10 @@ https://artofcolour-kokpit.onrender.com/ (Render, ücretsiz plan). Veritabanı: 
 - **Giderler:** düzenleme + kategori kırılımı · **Müşteriler:** sipariş geçmişi + WhatsApp
 - **Kokpit:** Bekleyen Tahsilatlar kartı · **Analiz:** gider/net/tahsilat/marj KPI'ları
 - **Ürünler:** kartta stok + düşük/sıfır stok renklendirmesi
+- **Ön muhasebe — Kasa & Cari (yeni):** Kasa/Banka hesapları + bakiye, birleşik para
+  hareketleri (tahsilat/ödeme/gelir/gider), müşteri **cari ekstresi** (borç-alacak-bakiye),
+  karttan **Tahsilat Ekle** (siparişin ödeme durumunu otomatik günceller), Kokpit'te kasa kartı.
+  Tablolar: `accounts`, `transactions` (migration 0013).
 - **Asistan**: WhatsApp + uygulama içi sohbet + mikrofon; satış/stok/sipariş/görev/soru-cevap.
   **Sesli uyandırma** ("Hey Kokpit"): opt-in, sürekli dinleyip anahtar kelimeden sonra komutu
   gönderir (Web Speech API, sadece Chrome; tercih localStorage'da). Elle mikrofon uyandırma açıkken kapalı.

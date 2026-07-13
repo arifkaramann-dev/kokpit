@@ -1,6 +1,7 @@
 import DashboardLayout from "@/components/DashboardLayout";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import Accounts from "@/pages/Accounts";
 import Analytics from "@/pages/Analytics";
 import Assistant from "@/pages/Assistant";
 import Campaigns from "@/pages/Campaigns";
@@ -34,6 +35,7 @@ function Router() {
         <Route path={"/siparisler"} component={Orders} />
         <Route path={"/musteriler"} component={Customers} />
         <Route path={"/giderler"} component={Expenses} />
+        <Route path={"/kasa"} component={Accounts} />
         <Route path={"/stok"} component={Stock} />
         <Route path={"/faturalar"} component={Purchases} />
         <Route path={"/urunler"} component={Products} />
