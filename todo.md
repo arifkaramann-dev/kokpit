@@ -93,6 +93,11 @@
 - [x] Kasa/banka: hesaplar arası transfer
 - [x] KDV raporu (satış/alış KDV özeti, bu ay/bu yıl)
 - [x] Müşteri cari bakiyesi tahsilatları da içerir (customers.balances)
+- [x] Tahsilat/Ödeme makbuzu yazdırma (printReceipt)
+- [x] Cari Hesaplar genel bakış sayfası (/cari) — alacak/borç/net
+- [x] Nakit Akışı raporu (Strateji sekmesi) — giriş/çıkış/net + kategori
+- [ ] Çek/senet takibi
+- [ ] e-Fatura/e-Arşiv (entegratör — dış servis + anlaşma)
 - [ ] e-Fatura/e-Arşiv (entegratör: Foriba/İzibiz/Uyumsoft) — dış entegrasyon
 - [ ] Çek/senet takibi, tahsilat/ödeme makbuzu yazdırma
 Pazaryeri (Qukasoft):

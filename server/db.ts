@@ -573,6 +573,46 @@ export async function supplierLedger(name: string) {
   return { rows, balance: running };
 }
 
+/**
+ * Nakit akışı raporu: kasa/banka hareketlerinden girişler/çıkışlar/net,
+ * bu ay ve bu yıl için, ayrıca bu ayın kategori kırılımı.
+ */
+export async function cashflowReport() {
+  const db = await requireDb();
+  const rows = await db
+    .select({ date: transactions.txnDate, direction: transactions.direction, amount: transactions.amount, category: transactions.category })
+    .from(transactions);
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  const yearStart = new Date(now.getFullYear(), 0, 1).getTime();
+
+  const sum = (since: number) => {
+    let inflow = 0;
+    let outflow = 0;
+    for (const r of rows) {
+      if (new Date(r.date).getTime() < since) continue;
+      if (r.direction === "in") inflow += toNum(r.amount);
+      else outflow += toNum(r.amount);
+    }
+    return { inflow, outflow, net: inflow - outflow };
+  };
+
+  // Bu ay kategori kırılımı (transfer hariç, iç hareket olduğundan).
+  const catMap = new Map<string, { in: number; out: number }>();
+  for (const r of rows) {
+    if (new Date(r.date).getTime() < monthStart || r.category === "transfer") continue;
+    const cur = catMap.get(r.category) ?? { in: 0, out: 0 };
+    if (r.direction === "in") cur.in += toNum(r.amount);
+    else cur.out += toNum(r.amount);
+    catMap.set(r.category, cur);
+  }
+  const categories = Array.from(catMap.entries())
+    .map(([category, v]) => ({ category, ...v }))
+    .sort((a, b) => b.in + b.out - (a.in + a.out));
+
+  return { month: sum(monthStart), year: sum(yearStart), categories };
+}
+
 /** Ödenmemiş/kısmi ödenmiş siparişleri kalan borca göre döner (tahsilat takibi). */
 export async function listUnpaidOrders(limit = 8) {
   const db = await requireDb();
