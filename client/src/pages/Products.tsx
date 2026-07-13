@@ -20,7 +20,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { formatTL } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
-import { Beaker, ChevronDown, ChevronRight, Download, Layers, Package, Pencil, Percent, Plus, Printer, Search, Store, Trash2 } from "lucide-react";
+import { AlertTriangle, Beaker, ChevronDown, ChevronRight, Download, Layers, Package, Pencil, Percent, Plus, Printer, Search, Store, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import TemplatePicker from "@/components/TemplatePicker";
 import { toast } from "sonner";
@@ -43,6 +43,7 @@ export type ProductRow = {
   packaging: string | null;
   barcode: string | null;
   stockQty: number;
+  criticalStock: number;
   labelSize: string | null;
   labelText: string | null;
   usageGuide: string | null;
@@ -66,12 +67,20 @@ const emptyForm = {
   packaging: "",
   barcode: "",
   stockQty: "",
+  criticalStock: "",
   labelSize: "",
   labelText: "",
   usageGuide: "",
   safetyNotes: "",
   extraInfo: "",
 };
+
+/** Ürünün stok durumu: eşik varsa ona göre, yoksa 0 kontrolü. */
+function stockLevel(p: { stockQty: number; criticalStock: number }): "out" | "low" | "ok" {
+  if (p.stockQty <= 0) return "out";
+  if (p.criticalStock > 0 && p.stockQty <= p.criticalStock) return "low";
+  return "ok";
+}
 
 export default function Products() {
   const utils = trpc.useUtils();
@@ -112,6 +121,7 @@ export default function Products() {
   });
 
   const [search, setSearch] = useState("");
+  const [lowStockOnly, setLowStockOnly] = useState(false);
 
   const childrenOf = useMemo(() => {
     const map = new Map<number, ProductRow[]>();
@@ -125,9 +135,20 @@ export default function Products() {
     return map;
   }, [products]);
 
-  // Arama: ana ürünün kendisi ya da türevlerinden biri eşleşirse göster.
+  // Düşük stoklu ürün sayısı (ana + türev), filtre butonunda ve rozet için.
+  const lowStockCount = useMemo(
+    () => ((products as ProductRow[]) ?? []).filter(p => stockLevel(p) !== "ok").length,
+    [products],
+  );
+
+  // Arama + düşük stok filtresi: ana ürünün kendisi ya da türevlerinden biri eşleşirse göster.
   const mains = useMemo(() => {
-    const all = ((products as ProductRow[]) ?? []).filter(p => p.parentId === null);
+    let all = ((products as ProductRow[]) ?? []).filter(p => p.parentId === null);
+    if (lowStockOnly) {
+      all = all.filter(
+        p => stockLevel(p) !== "ok" || (childrenOf.get(p.id) ?? []).some(c => stockLevel(c) !== "ok"),
+      );
+    }
     const q = search.trim().toLowerCase();
     if (!q) return all;
     return all.filter(
@@ -136,7 +157,7 @@ export default function Products() {
         (p.series ?? "").toLowerCase().includes(q) ||
         (childrenOf.get(p.id) ?? []).some(c => c.name.toLowerCase().includes(q)),
     );
-  }, [products, search, childrenOf]);
+  }, [products, search, childrenOf, lowStockOnly]);
 
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkPercent, setBulkPercent] = useState("10");
@@ -289,6 +310,7 @@ export default function Products() {
       packaging: p.packaging ?? "",
       barcode: p.barcode ?? "",
       stockQty: p.stockQty != null ? String(p.stockQty) : "",
+      criticalStock: p.criticalStock ? String(p.criticalStock) : "",
       labelSize: p.labelSize ?? "",
       labelText: p.labelText ?? "",
       usageGuide: p.usageGuide ?? "",
@@ -318,6 +340,7 @@ export default function Products() {
       packaging: form.packaging || null,
       barcode: form.barcode.trim() || null,
       stockQty: parseInt(form.stockQty, 10) || 0,
+      criticalStock: parseInt(form.criticalStock, 10) || 0,
       labelSize: form.labelSize || null,
       labelText: form.labelText || null,
       usageGuide: form.usageGuide || null,
@@ -363,14 +386,31 @@ export default function Products() {
         </div>
       </div>
 
-      <div className="relative max-w-sm">
-        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Ürün veya türev ara..."
-          className="pl-8"
-        />
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="relative max-w-sm flex-1 min-w-[200px]">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Ürün veya türev ara..."
+            className="pl-8"
+          />
+        </div>
+        <Button
+          type="button"
+          variant={lowStockOnly ? "default" : "outline"}
+          size="sm"
+          onClick={() => setLowStockOnly(v => !v)}
+          className="gap-1.5"
+        >
+          <AlertTriangle className="h-3.5 w-3.5" />
+          Düşük stok
+          {lowStockCount > 0 && (
+            <Badge variant="secondary" className="ml-1 h-5 min-w-5 px-1">
+              {lowStockCount}
+            </Badge>
+          )}
+        </Button>
       </div>
 
       {isLoading && <div className="h-40 rounded-xl bg-muted animate-pulse" />}
@@ -418,9 +458,30 @@ export default function Products() {
                   </div>
                   <p className="text-xs text-muted-foreground">
                     {variants.length} türev · Satış: {formatTL(main.salePrice)} · Stok:{" "}
-                    <span className={main.stockQty <= 0 ? "text-rose-600 font-medium" : main.stockQty < 5 ? "text-amber-600 font-medium" : ""}>
+                    <span
+                      className={
+                        stockLevel(main) === "out"
+                          ? "text-rose-600 font-medium"
+                          : stockLevel(main) === "low"
+                            ? "text-amber-600 font-medium"
+                            : ""
+                      }
+                    >
                       {main.stockQty}
                     </span>
+                    {main.criticalStock > 0 && (
+                      <span className="text-muted-foreground/70"> / eşik {main.criticalStock}</span>
+                    )}
+                    {stockLevel(main) === "low" && (
+                      <Badge variant="outline" className="ml-1.5 border-amber-400 text-amber-600 text-[10px]">
+                        Düşük stok
+                      </Badge>
+                    )}
+                    {stockLevel(main) === "out" && (
+                      <Badge variant="outline" className="ml-1.5 border-rose-400 text-rose-600 text-[10px]">
+                        Stok bitti
+                      </Badge>
+                    )}
                   </p>
                 </div>
                 <div className="flex items-center gap-1">
@@ -636,6 +697,22 @@ export default function Products() {
                   onChange={e => setForm(f => ({ ...f, stockQty: e.target.value }))}
                   placeholder="0"
                 />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Kritik Stok Eşiği</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  value={form.criticalStock}
+                  onChange={e => setForm(f => ({ ...f, criticalStock: e.target.value }))}
+                  placeholder="0 = uyarı yok"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Stok bu adedin altına düşünce "düşük stok" uyarısı verilir.
+                </p>
               </div>
             </div>
 

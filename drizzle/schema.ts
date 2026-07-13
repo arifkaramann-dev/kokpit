@@ -86,6 +86,9 @@ export const products = mysqlTable("products", {
   // Pazaryeri eşleştirmesi için barkod (Trendyol/Hepsiburada bununla eşler).
   barcode: varchar("barcode", { length: 64 }),
   stockQty: int("stockQty").notNull().default(0),
+  // Kritik stok eşiği: stockQty bu değerin altına düşünce "düşük stok" uyarısı.
+  // 0 = eşik tanımlı değil (uyarı yok).
+  criticalStock: int("criticalStock").notNull().default(0),
   labelSize: varchar("labelSize", { length: 64 }),
   labelText: text("labelText"),
   usageGuide: text("usageGuide"),

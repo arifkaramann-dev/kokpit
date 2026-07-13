@@ -43,6 +43,7 @@ const productInput = z.object({
   packaging: z.string().nullable().optional(),
   barcode: z.string().nullable().optional(),
   stockQty: z.number().min(0).optional(),
+  criticalStock: z.number().min(0).optional(),
   labelSize: z.string().nullable().optional(),
   labelText: z.string().nullable().optional(),
   usageGuide: z.string().nullable().optional(),
@@ -884,16 +885,18 @@ Türkçe yaz. Sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, o
 
   dashboard: router({
     summary: protectedProcedure.query(async () => {
-      const [today, statusCounts, critical, upcoming, openTasks, finance, unpaid] = await Promise.all([
-        db.countOrdersToday(),
-        db.orderStatusCounts(),
-        db.listCriticalMaterials(),
-        db.upcomingCampaigns(30),
-        db.listTasks(undefined, "open"),
-        db.financeSummary(),
-        db.listUnpaidOrders(6),
-      ]);
-      return { today, statusCounts, critical, upcoming, openTasks, finance, unpaid };
+      const [today, statusCounts, critical, upcoming, openTasks, finance, unpaid, lowStockProducts] =
+        await Promise.all([
+          db.countOrdersToday(),
+          db.orderStatusCounts(),
+          db.listCriticalMaterials(),
+          db.upcomingCampaigns(30),
+          db.listTasks(undefined, "open"),
+          db.financeSummary(),
+          db.listUnpaidOrders(6),
+          db.listLowStockProducts(),
+        ]);
+      return { today, statusCounts, critical, upcoming, openTasks, finance, unpaid, lowStockProducts };
     }),
   }),
 });

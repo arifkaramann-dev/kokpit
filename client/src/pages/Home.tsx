@@ -177,6 +177,42 @@ export default function Home() {
           )}
         </Card>
 
+        {/* Düşük stoklu ürünler */}
+        <Card className="p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-500" /> Düşük Stoklu Ürünler
+            </h2>
+            <Button variant="ghost" size="sm" onClick={() => setLocation("/urunler")}>
+              Ürünlere Git <ArrowRight className="h-3.5 w-3.5 ml-1" />
+            </Button>
+          </div>
+          {(data?.lowStockProducts ?? []).length === 0 ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">
+              Tüm ürün stokları yeterli. 👍
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {(data?.lowStockProducts ?? []).slice(0, 5).map(p => (
+                <div key={p.id} className="flex items-center gap-2 text-sm">
+                  <span className="flex-1 truncate">{p.name}</span>
+                  {p.series && <Badge variant="secondary">{p.series}</Badge>}
+                  <span
+                    className={`font-medium whitespace-nowrap ${p.stockQty <= 0 ? "text-rose-600" : "text-amber-600"}`}
+                  >
+                    {p.stockQty} adet
+                  </span>
+                </div>
+              ))}
+              {(data?.lowStockProducts ?? []).length > 5 && (
+                <p className="text-xs text-muted-foreground">
+                  +{(data?.lowStockProducts ?? []).length - 5} ürün daha...
+                </p>
+              )}
+            </div>
+          )}
+        </Card>
+
         {/* Bekleyen tahsilatlar */}
         <Card className="p-5 space-y-3">
           <div className="flex items-center justify-between">

@@ -1,0 +1,1 @@
+ALTER TABLE `products` ADD `criticalStock` int DEFAULT 0 NOT NULL;

@@ -185,6 +185,21 @@ export async function listCriticalMaterials() {
     .orderBy(materials.name);
 }
 
+/**
+ * Düşük stoklu ürünler: kritik eşiği tanımlı (criticalStock>0) olup stoğu eşiğe
+ * inmiş VEYA stoğu sıfırlanmış ürünler. Kokpit uyarısı ve sayacı için.
+ */
+export async function listLowStockProducts() {
+  const db = await requireDb();
+  return db
+    .select()
+    .from(products)
+    .where(
+      sql`(${products.criticalStock} > 0 AND ${products.stockQty} <= ${products.criticalStock}) OR ${products.stockQty} <= 0`,
+    )
+    .orderBy(products.stockQty, products.name);
+}
+
 /* ------------------------- Products (Ürünler) ------------------------- */
 
 export async function listProducts() {
