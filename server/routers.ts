@@ -444,7 +444,7 @@ export const appRouter = router({
       }),
     // Pazaryerine gerçek istek atıp ham HTTP sonucunu döner (401 teşhisi için).
     testConnection: protectedProcedure
-      .input(z.object({ key: z.enum(["trendyol", "hepsiburada"]) }))
+      .input(z.object({ key: z.enum(["trendyol", "hepsiburada", "n11", "ciceksepeti"]) }))
       .mutation(({ input }) => testMarketplaceConnection(input.key)),
     create: protectedProcedure.input(orderInput).mutation(async ({ input }) => {
       const { items, ...order } = input;

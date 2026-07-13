@@ -1,6 +1,10 @@
 import { ENV } from "./_core/env";
+import { isCiceksepetiConfigured, syncCiceksepetiOrders, testCiceksepetiConnection } from "./ciceksepeti";
 import { isHepsiburadaConfigured, syncHepsiburadaOrders, testHepsiburadaConnection } from "./hepsiburada";
+import { isN11Configured, syncN11Orders, testN11Connection } from "./n11";
 import { isTrendyolConfigured, syncTrendyolOrders, testTrendyolConnection } from "./trendyol";
+
+export type MarketplaceKey = "trendyol" | "hepsiburada" | "n11" | "ciceksepeti";
 
 /**
  * Pazaryeri entegrasyonlarının ortak yönetimi: durum teşhisi ve toplu çekme.
@@ -10,7 +14,7 @@ import { isTrendyolConfigured, syncTrendyolOrders, testTrendyolConnection } from
  */
 
 export type MarketplaceStatus = {
-  key: "trendyol" | "hepsiburada";
+  key: MarketplaceKey;
   label: string;
   configured: boolean;
   missing: string[];
@@ -38,18 +42,41 @@ export function marketplaceStatus(): MarketplaceStatus[] {
         !ENV.hepsiburadaPassword && "HEPSIBURADA_PASSWORD",
       ].filter((x): x is string => Boolean(x)),
     },
+    {
+      key: "n11",
+      label: "N11",
+      configured: isN11Configured(),
+      missing: [!ENV.n11AppKey && "N11_APP_KEY", !ENV.n11AppSecret && "N11_APP_SECRET"].filter(
+        (x): x is string => Boolean(x),
+      ),
+    },
+    {
+      key: "ciceksepeti",
+      label: "Çiçeksepeti",
+      configured: isCiceksepetiConfigured(),
+      missing: [!ENV.ciceksepetiApiKey && "CICEKSEPETI_API_KEY"].filter((x): x is string => Boolean(x)),
+    },
   ];
 }
 
 /** Bir pazaryerine gerçek istek atıp ham HTTP sonucunu döner (teşhis için). */
 export async function testMarketplaceConnection(
-  key: "trendyol" | "hepsiburada",
+  key: MarketplaceKey,
 ): Promise<{ ok: boolean; status: number; body: string }> {
-  return key === "trendyol" ? testTrendyolConnection() : testHepsiburadaConnection();
+  switch (key) {
+    case "trendyol":
+      return testTrendyolConnection();
+    case "hepsiburada":
+      return testHepsiburadaConnection();
+    case "n11":
+      return testN11Connection();
+    case "ciceksepeti":
+      return testCiceksepetiConnection();
+  }
 }
 
 export type SyncResult = {
-  key: "trendyol" | "hepsiburada";
+  key: MarketplaceKey;
   label: string;
   ok: boolean;
   imported: number;
@@ -76,13 +103,15 @@ async function runSyncAll(): Promise<SyncResult[]> {
   const results: SyncResult[] = [];
 
   const runners: {
-    key: "trendyol" | "hepsiburada";
+    key: MarketplaceKey;
     label: string;
     configured: boolean;
     run: () => Promise<{ imported: number; skipped: number }>;
   }[] = [
     { key: "trendyol", label: "Trendyol", configured: isTrendyolConfigured(), run: () => syncTrendyolOrders() },
     { key: "hepsiburada", label: "Hepsiburada", configured: isHepsiburadaConfigured(), run: () => syncHepsiburadaOrders() },
+    { key: "n11", label: "N11", configured: isN11Configured(), run: () => syncN11Orders() },
+    { key: "ciceksepeti", label: "Çiçeksepeti", configured: isCiceksepetiConfigured(), run: () => syncCiceksepetiOrders() },
   ];
 
   for (const r of runners) {

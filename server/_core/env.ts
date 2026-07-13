@@ -13,6 +13,11 @@ export const ENV = {
   hepsiburadaMerchantId: process.env.HEPSIBURADA_MERCHANT_ID ?? "",
   hepsiburadaUsername: process.env.HEPSIBURADA_USERNAME ?? "",
   hepsiburadaPassword: process.env.HEPSIBURADA_PASSWORD ?? "",
+  // N11 (SOAP/REST). Panelden alınan API anahtarı + gizli anahtar.
+  n11AppKey: process.env.N11_APP_KEY ?? "",
+  n11AppSecret: process.env.N11_APP_SECRET ?? "",
+  // Çiçeksepeti Dükkan API. Panelden alınan tek API anahtarı.
+  ciceksepetiApiKey: process.env.CICEKSEPETI_API_KEY ?? "",
   // Sesli uyandırma (Picovoice Porcupine). AccessKey tarayıcıda kullanılır; repoya girmez.
   // Keyword/Model yolları boşsa hazır İngilizce kelime + gömülü model kullanılır.
   picovoiceAccessKey: process.env.PICOVOICE_ACCESS_KEY ?? "",
