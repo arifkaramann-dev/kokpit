@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
-import { AlertCircle, Building2, CheckCircle2, Store } from "lucide-react";
+import { AlertCircle, Building2, CheckCircle2, Percent, Store } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -79,6 +79,37 @@ export default function Settings() {
                   placeholder={f.placeholder}
                 />
               )}
+            </div>
+          ))}
+        </div>
+        <div className="flex justify-end">
+          <Button onClick={() => save.mutate(form)} disabled={save.isPending}>
+            Kaydet
+          </Button>
+        </div>
+      </Card>
+
+      <Card className="p-5 space-y-4">
+        <h2 className="font-semibold flex items-center gap-2">
+          <Percent className="h-4 w-4 text-primary" /> Pazaryeri Komisyon Oranları
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Her pazaryerinin ortalama komisyon oranını (%) girin. Satış Analizi'ndeki net kâr raporu,
+          bu oranı satış tutarından düşerek pazaryeri bazında net kârı hesaplar.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {(mpStatus ?? []).map(m => (
+            <div key={m.key} className="space-y-1.5">
+              <Label>{m.label} komisyonu (%)</Label>
+              <Input
+                type="number"
+                min="0"
+                max="100"
+                step="0.1"
+                value={form[`commission_${m.key}`] ?? ""}
+                onChange={e => setForm(s => ({ ...s, [`commission_${m.key}`]: e.target.value }))}
+                placeholder="Örn. 15"
+              />
             </div>
           ))}
         </div>

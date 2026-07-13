@@ -1,5 +1,6 @@
 import { Card } from "@/components/ui/card";
 import { formatTL, num } from "@/lib/format";
+import { MARKETPLACE_CHANNELS, marketplaceOrderNet } from "@/lib/marketplace";
 import { trpc } from "@/lib/trpc";
 import { useMemo } from "react";
 import {
@@ -56,10 +57,11 @@ function weekLabel(d: Date) {
 
 export default function Analytics() {
   const { data } = trpc.report.data.useQuery();
+  const { data: settings } = trpc.settings.get.useQuery();
 
   const model = useMemo(() => {
     if (!data) return null;
-    const { orders, orderItems, expenses } = data;
+    const { orders, orderItems, expenses, products, formulas } = data;
     const now = Date.now();
     const day = 86400000;
 
@@ -125,8 +127,69 @@ export default function Analytics() {
       .filter(o => o.paymentStatus !== "paid")
       .reduce((s, o) => s + Math.max(0, num(o.totalAmount) - num(o.paidAmount)), 0);
 
-    return { weeks, revenue30, orders30: recent.length, avgOrder, channels, bestChannel, topProducts, expense30, net30, receivables };
-  }, [data]);
+    // Ürün maliyet haritası (isimden): formül maliyeti + ambalaj + kargo.
+    const costByProductId = new Map<number, number>();
+    for (const f of formulas ?? []) {
+      if (f.productId == null) continue;
+      costByProductId.set(f.productId, (costByProductId.get(f.productId) ?? 0) + num(f.qty) * num(f.unitCost));
+    }
+    const costByName = new Map<string, number>();
+    for (const p of products ?? []) {
+      const material = costByProductId.get(p.id) ?? 0;
+      costByName.set(p.name.trim().toLowerCase(), material + num(p.packagingCost) + num(p.shippingCost));
+    }
+    const itemsByOrder = new Map<number, typeof orderItems>();
+    for (const it of orderItems) {
+      const arr = itemsByOrder.get(it.orderId) ?? [];
+      arr.push(it);
+      itemsByOrder.set(it.orderId, arr);
+    }
+    const commissionRate = (ch: string) => {
+      const v = parseFloat((settings ?? {})[`commission_${ch}`] ?? "");
+      return Number.isFinite(v) ? v : 0;
+    };
+
+    // Pazaryeri bazında net kâr (son 90 gün): brüt − komisyon − tahmini ürün maliyeti.
+    const mpMap = new Map<
+      string,
+      { adet: number; brut: number; komisyon: number; maliyet: number; net: number }
+    >();
+    for (const o of orders) {
+      const ch = (o.channel ?? "").toLowerCase();
+      if (!MARKETPLACE_CHANNELS.includes(ch)) continue;
+      if (now - new Date(o.createdAt).getTime() > 90 * day) continue;
+      const brut = num(o.totalAmount);
+      let cogs = 0;
+      for (const it of itemsByOrder.get(o.id) ?? []) {
+        cogs += (costByName.get(it.productName.trim().toLowerCase()) ?? 0) * num(it.quantity);
+      }
+      const { commission, net } = marketplaceOrderNet(brut, commissionRate(ch), cogs);
+      const cur = mpMap.get(ch) ?? { adet: 0, brut: 0, komisyon: 0, maliyet: 0, net: 0 };
+      cur.adet += 1;
+      cur.brut += brut;
+      cur.komisyon += commission;
+      cur.maliyet += cogs;
+      cur.net += net;
+      mpMap.set(ch, cur);
+    }
+    const marketplaceNet = Array.from(mpMap.entries())
+      .map(([channel, v]) => ({ channel, ...v, marj: v.brut > 0 ? (v.net / v.brut) * 100 : 0 }))
+      .sort((a, b) => b.brut - a.brut);
+
+    return {
+      weeks,
+      revenue30,
+      orders30: recent.length,
+      avgOrder,
+      channels,
+      bestChannel,
+      topProducts,
+      expense30,
+      net30,
+      receivables,
+      marketplaceNet,
+    };
+  }, [data, settings]);
 
   return (
     <div className="viz-root space-y-4">
@@ -285,6 +348,52 @@ export default function Analytics() {
               )}
             </Card>
           </div>
+
+          <Card className="p-5 space-y-3">
+            <div>
+              <h2 className="font-semibold">Pazaryeri Net Kâr — son 90 gün</h2>
+              <p className="text-xs text-muted-foreground">
+                Brüt satıştan komisyon ve tahmini ürün maliyeti düşülerek hesaplanır. Komisyon oranları
+                Ayarlar'dan girilir; ürün maliyeti reçete + ambalaj + kargodan tahmin edilir.
+              </p>
+            </div>
+            {model.marketplaceNet.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-6 text-center">
+                Son 90 günde pazaryeri siparişi yok. Trendyol/Hepsiburada senkronu çalışınca burası dolacak.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-muted-foreground border-b">
+                      <th className="py-2 pr-3">Pazaryeri</th>
+                      <th className="py-2 px-3 text-right">Sipariş</th>
+                      <th className="py-2 px-3 text-right">Brüt Ciro</th>
+                      <th className="py-2 px-3 text-right">Komisyon</th>
+                      <th className="py-2 px-3 text-right">Ürün Maliyeti</th>
+                      <th className="py-2 px-3 text-right">Net Kâr</th>
+                      <th className="py-2 pl-3 text-right">Marj</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {model.marketplaceNet.map(r => (
+                      <tr key={r.channel} className="border-b last:border-0">
+                        <td className="py-2 pr-3 font-medium capitalize">{r.channel}</td>
+                        <td className="py-2 px-3 text-right">{r.adet}</td>
+                        <td className="py-2 px-3 text-right">{formatTL(r.brut)}</td>
+                        <td className="py-2 px-3 text-right text-rose-600">−{formatTL(r.komisyon)}</td>
+                        <td className="py-2 px-3 text-right text-rose-600">−{formatTL(r.maliyet)}</td>
+                        <td className={`py-2 px-3 text-right font-semibold ${r.net >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                          {formatTL(r.net)}
+                        </td>
+                        <td className="py-2 pl-3 text-right">%{Math.round(r.marj)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
         </>
       )}
     </div>
