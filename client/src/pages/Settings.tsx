@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
-import { AlertCircle, Building2, CheckCircle2, Percent, Store } from "lucide-react";
+import { AlertCircle, Building2, CheckCircle2, FileCheck, Percent, Store } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -81,6 +81,71 @@ export default function Settings() {
               )}
             </div>
           ))}
+        </div>
+        <div className="flex justify-end">
+          <Button onClick={() => save.mutate(form)} disabled={save.isPending}>
+            Kaydet
+          </Button>
+        </div>
+      </Card>
+
+      <Card className="p-5 space-y-4">
+        <h2 className="font-semibold flex items-center gap-2">
+          <FileCheck className="h-4 w-4 text-primary" /> e-Fatura / e-Arşiv Entegratörü
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          e-Arşiv/e-Fatura göndermek için GİB onaylı bir entegratörle (İzibiz, Uyumsoft, Foriba) sözleşme
+          ve API bilgisi gerekir. Bilgileri girince siparişlerden "e-Arşiv Gönder" çalışır.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label>Entegratör</Label>
+            <select
+              value={form.einvoice_provider ?? ""}
+              onChange={e => setForm(s => ({ ...s, einvoice_provider: e.target.value }))}
+              className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+            >
+              <option value="">— Seçilmedi —</option>
+              <option value="izibiz">İzibiz</option>
+              <option value="uyumsoft">Uyumsoft</option>
+              <option value="foriba">Foriba</option>
+              <option value="custom">Diğer (REST)</option>
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>API Adresi (Gateway URL)</Label>
+            <Input
+              value={form.einvoice_api_url ?? ""}
+              onChange={e => setForm(s => ({ ...s, einvoice_api_url: e.target.value }))}
+              placeholder="https://.../einvoice"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Kullanıcı Adı</Label>
+            <Input
+              value={form.einvoice_username ?? ""}
+              onChange={e => setForm(s => ({ ...s, einvoice_username: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Şifre / API Anahtarı</Label>
+            <Input
+              type="password"
+              value={form.einvoice_password ?? ""}
+              onChange={e => setForm(s => ({ ...s, einvoice_password: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Ortam</Label>
+            <select
+              value={form.einvoice_test_mode ?? "true"}
+              onChange={e => setForm(s => ({ ...s, einvoice_test_mode: e.target.value }))}
+              className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+            >
+              <option value="true">Test</option>
+              <option value="false">Canlı (Gerçek fatura)</option>
+            </select>
+          </div>
         </div>
         <div className="flex justify-end">
           <Button onClick={() => save.mutate(form)} disabled={save.isPending}>

@@ -21,6 +21,7 @@ import {
   createTrendyolListing,
 } from "./trendyol";
 import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "./marketplace";
+import { buildInvoiceForOrder, getEInvoiceConfig, isEInvoiceConfigured, sendEInvoice } from "./einvoice";
 import { ENV } from "./_core/env";
 
 /* ------------------------- Zod schemas ------------------------- */
@@ -778,6 +779,31 @@ export const appRouter = router({
       .input(z.record(z.string(), z.string()))
       .mutation(({ input }) => db.setSettings(input)),
     nextInvoiceNo: protectedProcedure.mutation(() => db.nextInvoiceNo()),
+  }),
+
+  // e-Fatura / e-Arşiv: entegratör durumu + siparişten e-Arşiv gönderme.
+  einvoice: router({
+    status: protectedProcedure.query(async () => ({
+      configured: await isEInvoiceConfigured(),
+      config: await getEInvoiceConfig().then(c => ({ provider: c.provider, testMode: c.testMode, apiUrl: c.apiUrl })),
+    })),
+    // Faturanın önizleme verisini (KDV dökümlü) üretir — göndermeden kontrol için.
+    preview: protectedProcedure
+      .input(z.object({ orderId: z.number(), invoiceNo: z.string() }))
+      .query(({ input }) => buildInvoiceForOrder(input.orderId, input.invoiceNo)),
+    sendForOrder: protectedProcedure
+      .input(z.object({ orderId: z.number(), invoiceNo: z.string() }))
+      .mutation(async ({ input }) => {
+        try {
+          const inv = await buildInvoiceForOrder(input.orderId, input.invoiceNo);
+          return await sendEInvoice(inv);
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "e-Fatura gönderilemedi",
+          });
+        }
+      }),
   }),
 
   tasks: router({

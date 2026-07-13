@@ -34,7 +34,7 @@ import { trpc } from "@/lib/trpc";
 import { CHANNELS, formatDate, formatTL, ORDER_STATUSES, OrderStatus } from "@/lib/format";
 import { printInvoice } from "@/lib/invoice";
 import { printShippingLabel } from "@/lib/shippingLabel";
-import { AlertCircle, CheckCircle2, FileText, GripVertical, MapPin, MessageCircle, Pencil, Plus, RefreshCw, Search, Settings, Truck, Trash2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, FileCheck, FileText, GripVertical, MapPin, MessageCircle, Pencil, Plus, RefreshCw, Search, Settings, Truck, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
@@ -240,6 +240,24 @@ export default function Orders() {
       );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Fatura oluşturulamadı");
+    }
+  }
+
+  // e-Arşiv / e-Fatura gönder (yapılandırılmış entegratör üzerinden).
+  async function handleEInvoice(order: OrderRow) {
+    try {
+      const status = await utils.client.einvoice.status.query();
+      if (!status.configured) {
+        toast.info("Önce Ayarlar > e-Fatura'dan entegratör bilgilerini girin.");
+        return;
+      }
+      if (!confirm(`${order.customerName} için e-Arşiv faturası gönderilsin mi?`)) return;
+      const seq = await utils.client.settings.nextInvoiceNo.mutate();
+      const invoiceNo = `${new Date().getFullYear()}-${String(seq).padStart(5, "0")}`;
+      const res = await utils.client.einvoice.sendForOrder.mutate({ orderId: order.id, invoiceNo });
+      toast.success(`e-Arşiv gönderildi (${invoiceNo})${res.uuid ? ` · UUID: ${res.uuid}` : ""}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "e-Fatura gönderilemedi");
     }
   }
 
@@ -853,6 +871,7 @@ export default function Orders() {
                 onEdit={openEdit}
                 onDelete={id => deleteOrder.mutate({ id })}
                 onInvoice={handleInvoice}
+                onEInvoice={handleEInvoice}
                 onShippingLabel={handleShippingLabel}
                 onTogglePaid={handleTogglePaid}
               />
@@ -873,6 +892,7 @@ function KanbanColumn({
   onEdit,
   onDelete,
   onInvoice,
+  onEInvoice,
   onShippingLabel,
   onTogglePaid,
 }: {
@@ -881,6 +901,7 @@ function KanbanColumn({
   onEdit: (o: OrderRow) => void;
   onDelete: (id: number) => void;
   onInvoice: (o: OrderRow) => void;
+  onEInvoice: (o: OrderRow) => void;
   onShippingLabel: (o: OrderRow) => void;
   onTogglePaid: (o: OrderRow) => void;
 }) {
@@ -906,7 +927,7 @@ function KanbanColumn({
         </div>
       )}
       {orders.map(order => (
-        <DraggableOrderCard key={order.id} order={order} onEdit={onEdit} onDelete={onDelete} onInvoice={onInvoice} onShippingLabel={onShippingLabel} onTogglePaid={onTogglePaid} />
+        <DraggableOrderCard key={order.id} order={order} onEdit={onEdit} onDelete={onDelete} onInvoice={onInvoice} onEInvoice={onEInvoice} onShippingLabel={onShippingLabel} onTogglePaid={onTogglePaid} />
       ))}
       {orders.length > 0 &&
         (() => {
@@ -931,6 +952,7 @@ function DraggableOrderCard({
   onEdit,
   onDelete,
   onInvoice,
+  onEInvoice,
   onShippingLabel,
   onTogglePaid,
 }: {
@@ -938,6 +960,7 @@ function DraggableOrderCard({
   onEdit: (o: OrderRow) => void;
   onDelete: (id: number) => void;
   onInvoice: (o: OrderRow) => void;
+  onEInvoice: (o: OrderRow) => void;
   onShippingLabel: (o: OrderRow) => void;
   onTogglePaid: (o: OrderRow) => void;
 }) {
@@ -956,6 +979,7 @@ function DraggableOrderCard({
         onEdit={onEdit}
         onDelete={onDelete}
         onInvoice={onInvoice}
+        onEInvoice={onEInvoice}
         onShippingLabel={onShippingLabel}
         onTogglePaid={onTogglePaid}
         dragHandle={{ attributes: attributes as unknown as React.HTMLAttributes<HTMLButtonElement>, listeners }}
@@ -969,6 +993,7 @@ function OrderCard({
   onEdit,
   onDelete,
   onInvoice,
+  onEInvoice,
   onShippingLabel,
   onTogglePaid,
   overlay,
@@ -978,6 +1003,7 @@ function OrderCard({
   onEdit?: (o: OrderRow) => void;
   onDelete?: (id: number) => void;
   onInvoice?: (o: OrderRow) => void;
+  onEInvoice?: (o: OrderRow) => void;
   onShippingLabel?: (o: OrderRow) => void;
   onTogglePaid?: (o: OrderRow) => void;
   overlay?: boolean;
@@ -1061,6 +1087,15 @@ function OrderCard({
               onClick={() => onInvoice?.(order)}
             >
               <FileText className="h-3 w-3" />
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6"
+              title="e-Arşiv / e-Fatura gönder"
+              onClick={() => onEInvoice?.(order)}
+            >
+              <FileCheck className="h-3 w-3" />
             </Button>
             <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => onEdit?.(order)}>
               <Pencil className="h-3 w-3" />

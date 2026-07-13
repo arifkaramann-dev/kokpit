@@ -101,48 +101,37 @@
 Her madde "Bitti sayılır" ölçütüyle tanımlı. Öncelik sırası: önce dış anlaşma
 gerektirmeyen, uygulama içinde bitirilebilen hızlı kazanımlar.
 
-### Öncelik 1 — Uygulama içi, dış servis gerektirmez (hemen yapılabilir)
-- [ ] **P1.1 Ürün kritik stok eşiği + düşük stok filtresi**
-      Neden: Ürünlerin stok uyarısı yok; ne zaman üretim/alım yapılacağı görünmüyor.
-      Kapsam: products tablosuna `criticalStock` alanı; Ürünler sayfasında eşik girişi,
-      "Düşük stok" filtre butonu, kartta eşik-altı kırmızı rozet; Kokpit'te sayaç.
-      Bitti sayılır: eşik girilen bir ürün stoğu eşiğin altına düşünce hem Ürünler'de
-      hem Kokpit'te uyarı görünür; filtre sadece eşik-altı ürünleri listeler.
-- [ ] **P1.2 Sesli/WhatsApp "gider ekle" ve "tahsilat aldım" komutları**
-      Neden: parseVoiceCommand'da sale/stock/task var ama gider ve tahsilat intent'i yok.
-      Kapsam: parseVoiceCommand'a `expense_add` ve `collection_add` intent'leri;
-      assistant.ts'te bu intent'lerin işlenmesi (gider kaydı + kasa hareketi / siparişe tahsilat).
-      Bitti sayılır: "reklama 500 lira harcadım" → gider + kasa çıkışı; "Ahmet 200 lira ödedi"
-      → ilgili müşteri/siparişe tahsilat + kasa girişi; testleri geçer.
-- [ ] **P1.3 Teklif (quote) → siparişe dönüştürme**
-      Neden: Müşteriye önce fiyat teklifi verilip onaylanınca siparişe çevirmek gerekiyor.
-      Kapsam: `quotes` tablosu (müşteri, kalemler, geçerlilik tarihi, durum: taslak/gönderildi/kabul/red);
-      yazdırılabilir teklif; "Siparişe Dönüştür" butonu tek tıkla order oluşturur.
-      Bitti sayılır: teklif oluştur → yazdır → kabul edildi işaretle → sipariş otomatik açılır,
-      kalemler ve tutar kopyalanır.
-- [ ] **P1.4 Pazaryeri komisyon/kesinti bazlı net kâr raporu**
-      Neden: Trendyol/HB satışında komisyon+kargo düşülünce eldeki net belirsiz.
-      Kapsam: pazaryeri bazında komisyon oranı ayarı; sipariş bazında (satış − komisyon −
-      kargo − ürün maliyeti) = net; Analiz'de pazaryeri kırılımlı net kâr tablosu.
-      Bitti sayılır: bir Trendyol siparişinde komisyon düşülmüş net kâr doğru hesaplanır;
-      Analiz'de pazaryeri bazında toplam net kâr görünür.
+### Öncelik 1 — Uygulama içi (TAMAMLANDI ✅ 2026-07)
+- [x] **P1.1 Ürün kritik stok eşiği + düşük stok filtresi**
+      products.criticalStock (migration 0016); Ürünler'de eşik girişi + "Düşük stok"
+      filtre/sayaç + kart rozeti; Kokpit'te "Düşük Stoklu Ürünler" kartı.
+- [x] **P1.2 Sesli/WhatsApp "gider ekle" / "tahsilat aldım" komutları**
+      parseVoiceCommand'a expense_add + collection_add; gider → Giderler + kasa çıkışı,
+      tahsilat → müşterinin en yüksek borçlu siparişine + kasa girişi. (5 test)
+- [x] **P1.3 Teklif (quote) → siparişe dönüştürme**
+      quotes/quoteItems (migration 0017); /teklifler sayfası, yazdırılabilir teklif,
+      durum akışı, tek tıkla siparişe dönüştürme (convertedOrderId).
+- [x] **P1.4 Pazaryeri komisyon bazlı net kâr raporu**
+      Ayarlar'da komisyon oranı; Satış Analizi'nde brüt−komisyon−ürün maliyeti = net
+      tablosu (son 90 gün). (4 test)
 
-### Öncelik 2 — Pazaryeri entegrasyonları (canlıda API anahtarı gerektirir)
-- [ ] **P2.1 N11 entegratörü** — sipariş çekme + stok/fiyat gönderme
-      (mevcut Trendyol/Hepsiburada deseni: server/n11.ts + marketplace.ts'e ekleme).
-      Bitti sayılır: "Bağlantıyı Test Et" 200 döner; siparişler çekilir; stok/fiyat push çalışır.
-- [ ] **P2.2 Çiçeksepeti entegratörü** — sipariş çekme + stok/fiyat gönderme
-      (aynı desen: server/ciceksepeti.ts).
-- [ ] **P2.3 Sıfırdan ürün açma (çoklu pazaryeri)**
-      Kategori/marka/özellik/görsel ile pazaryerinde yeni ilan açma.
-      Bitti sayılır: bir üründen seçilen pazaryerine ilan taslağı gönderilir.
-- [ ] **P2.4 İade yönetimi + müşteri soru-cevap**
-      Pazaryeri iade taleplerini çekip listeleme; müşteri sorularını görüntüleme/yanıtlama.
+### Öncelik 2 — Pazaryeri entegrasyonları (kod TAMAM ✅, canlıda anahtarla doğrulanmalı)
+- [x] **P2.1 N11 entegratörü** — server/n11.ts: sipariş çekme + stok/fiyat + test. (kod)
+- [x] **P2.2 Çiçeksepeti entegratörü** — server/ciceksepeti.ts. (kod, 7 eşleme testi)
+- [x] **P2.3 Sıfırdan ürün açma (Trendyol)** — createTrendyolListing + /pazaryeri "Yeni İlan".
+- [x] **P2.4 İade yönetimi + müşteri soru-cevap** — /pazaryeri sekmeleri; iade listeleme,
+      soru cevaplama (Trendyol claims + qna). (2 test)
+  > CANLI DOĞRULAMA GEREKİR: Bu ortam pazaryerlerine çıkamaz. Render'a N11_APP_KEY/SECRET,
+  > CICEKSEPETI_API_KEY girilip Ayarlar > "Bağlantıyı Test Et" ile doğrulanmalı. Ürün açma ve
+  > iade/soru akışları gerçek API alan adlarıyla ilk canlı denemede teyit edilmeli.
 
-### Öncelik 3 — Dış entegratör anlaşması gerektirir (araştırma + sözleşme)
-- [ ] **P3.1 e-Fatura / e-Arşiv entegrasyonu** (Foriba / İzibiz / Uyumsoft)
-      GİB onaylı bir entegratörle anlaşma + API entegrasyonu gerekir; kod ikinci adım.
-      Bitti sayılır: kesilen fatura entegratör üzerinden e-Arşiv olarak iletilir.
+### Öncelik 3 — e-Fatura (temel TAMAM ✅, entegratör sözleşmesi kullanıcıda)
+- [x] **P3.1 e-Fatura / e-Arşiv temeli** — server/einvoice.ts: entegratörden bağımsız
+      soyutlama, Ayarlar'da entegratör bilgileri, siparişten KDV dökümlü fatura üretip
+      yapılandırılmış gateway'e gönderme, sipariş kartında "e-Arşiv Gönder". (4 KDV testi)
+  > KALAN: Kullanıcının GİB onaylı bir entegratörle (İzibiz/Uyumsoft/Foriba) sözleşmesi +
+  > API adresi/kimlik bilgisi girmesi gerekir. Entegratör seçilince o entegratörün alan
+  > eşlemesi einvoice.ts `buildProviderPayload` içinde netleştirilir.
 
 ### Opsiyonel / talep gelirse
 - [ ] AI görsel üretimi (ürün fotoğrafı arka plan değiştirme)
