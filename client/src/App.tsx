@@ -14,6 +14,7 @@ import Formulas from "@/pages/Formulas";
 import Home from "@/pages/Home";
 import Ledgers from "@/pages/Ledgers";
 import Marketing from "@/pages/Marketing";
+import Marketplace from "@/pages/Marketplace";
 import NotFound from "@/pages/NotFound";
 import Orders from "@/pages/Orders";
 import Production from "@/pages/Production";
@@ -37,6 +38,7 @@ function Router() {
         <Route path={"/"} component={Home} />
         <Route path={"/siparisler"} component={Orders} />
         <Route path={"/teklifler"} component={Quotes} />
+        <Route path={"/pazaryeri"} component={Marketplace} />
         <Route path={"/musteriler"} component={Customers} />
         <Route path={"/giderler"} component={Expenses} />
         <Route path={"/kasa"} component={Accounts} />

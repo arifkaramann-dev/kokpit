@@ -362,3 +362,240 @@ export async function syncTrendyolOrders(daysBack = 14) {
 
   return { imported, skipped, updated };
 }
+
+/* ------------------------- İade & Soru-Cevap ------------------------- */
+
+const trendyolJsonHeaders = () => ({
+  Authorization: `Basic ${Buffer.from(`${ENV.trendyolApiKey}:${ENV.trendyolApiSecret}`).toString("base64")}`,
+  "User-Agent": `${ENV.trendyolSellerId} - SelfIntegration`,
+  "Content-Type": "application/json",
+});
+
+/** Normalize edilmiş iade kaydı (pazaryerinden bağımsız pano için). */
+export type MarketplaceReturn = {
+  id: string;
+  orderNo: string;
+  status: string;
+  reason: string | null;
+  customerName: string | null;
+  items: string;
+  createdAt: number | null;
+};
+
+type TrendyolClaimRaw = {
+  id?: string;
+  claimId?: string;
+  orderNumber?: string;
+  claimDate?: number;
+  customerFirstName?: string;
+  customerLastName?: string;
+  claimItems?: {
+    orderLine?: { productName?: string };
+    claimItemReason?: { name?: string } | string;
+    trendyolClaimItemReason?: { name?: string };
+  }[];
+  status?: string;
+};
+
+type TrendyolClaimsResponse = { content?: TrendyolClaimRaw[]; totalPages?: number };
+
+/** Bir Trendyol iade (claim) kaydını normalize eder. */
+export function mapTrendyolClaim(raw: TrendyolClaimRaw): MarketplaceReturn {
+  const items = raw.claimItems ?? [];
+  const first = items[0];
+  const reasonObj = first?.claimItemReason ?? first?.trendyolClaimItemReason;
+  const reason = typeof reasonObj === "string" ? reasonObj : (reasonObj?.name ?? null);
+  return {
+    id: String(raw.id ?? raw.claimId ?? ""),
+    orderNo: raw.orderNumber ? `TY-${raw.orderNumber}` : "-",
+    status: raw.status ?? "Created",
+    reason,
+    customerName: [raw.customerFirstName, raw.customerLastName].filter(Boolean).join(" ").trim() || null,
+    items: items.map(i => i.orderLine?.productName ?? "Ürün").join(", "),
+    createdAt: raw.claimDate ?? null,
+  };
+}
+
+/** Trendyol iade taleplerini çeker (son 30 gün). */
+export async function fetchTrendyolClaims(): Promise<MarketplaceReturn[]> {
+  if (!isTrendyolConfigured()) {
+    throw new Error("Trendyol entegrasyonu yapılandırılmamış (Satıcı ID, API Key, API Secret gerekli).");
+  }
+  const url = new URL(`${TRENDYOL_API_BASE}/integration/order/sellers/${ENV.trendyolSellerId}/claims`);
+  url.searchParams.set("size", "50");
+  const res = await fetch(url, { headers: trendyolJsonHeaders() });
+  if (res.status === 401 || res.status === 403) {
+    throw new Error("Trendyol API bilgileri reddedildi (yetki hatası).");
+  }
+  if (!res.ok) {
+    const body = (await res.text()).slice(0, 200);
+    throw new Error(`Trendyol iade çekme başarısız (${res.status}): ${body}`);
+  }
+  const data = (await res.json()) as TrendyolClaimsResponse;
+  return (data.content ?? []).map(mapTrendyolClaim);
+}
+
+/** Normalize edilmiş müşteri sorusu. */
+export type MarketplaceQuestion = {
+  id: string;
+  text: string;
+  productName: string | null;
+  customerName: string | null;
+  status: string;
+  answered: boolean;
+  createdAt: number | null;
+};
+
+type TrendyolQuestionRaw = {
+  id?: number | string;
+  text?: string;
+  status?: string;
+  answeredDateMessage?: string;
+  creationDate?: number;
+  userName?: string;
+  customerName?: string;
+  productName?: string;
+  answer?: { text?: string } | null;
+};
+
+type TrendyolQuestionsResponse = { content?: TrendyolQuestionRaw[]; totalPages?: number };
+
+/** Bir Trendyol müşteri sorusunu normalize eder. */
+export function mapTrendyolQuestion(raw: TrendyolQuestionRaw): MarketplaceQuestion {
+  return {
+    id: String(raw.id ?? ""),
+    text: raw.text ?? "",
+    productName: raw.productName ?? null,
+    customerName: raw.userName ?? raw.customerName ?? null,
+    status: raw.status ?? "WAITING_FOR_ANSWER",
+    answered: Boolean(raw.answer?.text) || raw.status === "ANSWERED",
+    createdAt: raw.creationDate ?? null,
+  };
+}
+
+/** Trendyol'daki cevap bekleyen müşteri sorularını çeker. */
+export async function fetchTrendyolQuestions(): Promise<MarketplaceQuestion[]> {
+  if (!isTrendyolConfigured()) {
+    throw new Error("Trendyol entegrasyonu yapılandırılmamış (Satıcı ID, API Key, API Secret gerekli).");
+  }
+  const url = new URL(`${TRENDYOL_API_BASE}/integration/qna/sellers/${ENV.trendyolSellerId}/questions/filter`);
+  url.searchParams.set("size", "50");
+  const res = await fetch(url, { headers: trendyolJsonHeaders() });
+  if (res.status === 401 || res.status === 403) {
+    throw new Error("Trendyol API bilgileri reddedildi (yetki hatası).");
+  }
+  if (!res.ok) {
+    const body = (await res.text()).slice(0, 200);
+    throw new Error(`Trendyol soru çekme başarısız (${res.status}): ${body}`);
+  }
+  const data = (await res.json()) as TrendyolQuestionsResponse;
+  return (data.content ?? []).map(mapTrendyolQuestion);
+}
+
+/** Bir müşteri sorusuna Trendyol üzerinden cevap gönderir. */
+export async function answerTrendyolQuestion(questionId: string, text: string) {
+  if (!isTrendyolConfigured()) {
+    throw new Error("Trendyol entegrasyonu yapılandırılmamış.");
+  }
+  if (!text.trim()) throw new Error("Cevap metni boş olamaz.");
+  const url = `${TRENDYOL_API_BASE}/integration/qna/sellers/${ENV.trendyolSellerId}/questions/${encodeURIComponent(questionId)}/answers`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: trendyolJsonHeaders(),
+    body: JSON.stringify({ text: text.trim() }),
+  });
+  if (res.status === 401 || res.status === 403) {
+    throw new Error("Trendyol API bilgileri reddedildi (yetki hatası).");
+  }
+  if (!res.ok) {
+    const body = (await res.text()).slice(0, 300);
+    throw new Error(`Cevap gönderilemedi (${res.status}): ${body}`);
+  }
+  return { ok: true };
+}
+
+/* ------------------------- Sıfırdan Ürün/İlan Açma ------------------------- */
+
+export type TrendyolCategory = { id: number; name: string; parentId?: number | null };
+export type TrendyolBrand = { id: number; name: string };
+
+/** Trendyol kategori ağacını (düz liste) çeker — ilan açma sihirbazı için. */
+export async function fetchTrendyolCategories(): Promise<TrendyolCategory[]> {
+  if (!isTrendyolConfigured()) throw new Error("Trendyol entegrasyonu yapılandırılmamış.");
+  const res = await fetch(`${TRENDYOL_API_BASE}/integration/product/product-categories`, {
+    headers: trendyolJsonHeaders(),
+  });
+  if (!res.ok) throw new Error(`Kategori çekme başarısız (${res.status})`);
+  const data = (await res.json()) as { categories?: TrendyolCategory[] };
+  const flat: TrendyolCategory[] = [];
+  const walk = (nodes: (TrendyolCategory & { subCategories?: TrendyolCategory[] })[]) => {
+    for (const n of nodes) {
+      flat.push({ id: n.id, name: n.name, parentId: n.parentId ?? null });
+      const subs = (n as { subCategories?: TrendyolCategory[] }).subCategories;
+      if (subs?.length) walk(subs as never);
+    }
+  };
+  walk((data.categories ?? []) as never);
+  return flat;
+}
+
+export type CreateListingInput = {
+  barcode: string;
+  title: string;
+  productMainId: string;
+  brandId: number;
+  categoryId: number;
+  quantity: number;
+  listPrice: number;
+  salePrice: number;
+  description: string;
+  images: string[];
+  vatRate: number;
+  attributes: { attributeId: number; attributeValueId?: number; customAttributeValue?: string }[];
+};
+
+/**
+ * Trendyol'da sıfırdan ürün/ilan açar (create products v2).
+ * Kategori, marka ve zorunlu özellikler önceden seçilmiş olmalıdır.
+ * Belgeler: developers.trendyol.com → Product Integration → Create Products.
+ *
+ * NOT: Zorunlu kategori özellikleri (attributes) pazaryerine göre değişir ve
+ * canlıda kategori-özellik servisinden alınır; bu ortam Trendyol'a çıkamadığı
+ * için akış canlıda doğrulanmalıdır.
+ */
+export async function createTrendyolListing(input: CreateListingInput) {
+  if (!isTrendyolConfigured()) throw new Error("Trendyol entegrasyonu yapılandırılmamış.");
+  const url = `${TRENDYOL_API_BASE}/integration/product/sellers/${ENV.trendyolSellerId}/products`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: trendyolJsonHeaders(),
+    body: JSON.stringify({
+      items: [
+        {
+          barcode: input.barcode,
+          title: input.title,
+          productMainId: input.productMainId,
+          brandId: input.brandId,
+          categoryId: input.categoryId,
+          quantity: input.quantity,
+          stockCode: input.barcode,
+          dimensionalWeight: 1,
+          description: input.description,
+          currencyType: "TRY",
+          listPrice: input.listPrice,
+          salePrice: input.salePrice,
+          vatRate: input.vatRate,
+          images: input.images.map(url => ({ url })),
+          attributes: input.attributes,
+        },
+      ],
+    }),
+  });
+  if (res.status === 401 || res.status === 403) throw new Error("Trendyol API bilgileri reddedildi (yetki hatası).");
+  if (!res.ok) {
+    const body = (await res.text()).slice(0, 400);
+    throw new Error(`İlan açma başarısız (${res.status}): ${body}`);
+  }
+  const data = (await res.json()) as { batchRequestId?: string };
+  return { batchRequestId: data.batchRequestId ?? null };
+}

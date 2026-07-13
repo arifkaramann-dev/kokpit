@@ -10,7 +10,16 @@ import { itemsTotal, summarizeItems, toItemRows } from "./orderUtils";
 import { extractInvoice } from "./_core/claude";
 import { executeAssistantCommand, generateOrderNo, generateQuoteNo } from "./assistant";
 import { buildSaleTitle, deriveCombos, parseSetCount } from "./productUtils";
-import { syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf } from "./trendyol";
+import {
+  syncTrendyolOrders,
+  pushTrendyolStockPrice,
+  getTrendyolCommonLabelPdf,
+  fetchTrendyolClaims,
+  fetchTrendyolQuestions,
+  answerTrendyolQuestion,
+  fetchTrendyolCategories,
+  createTrendyolListing,
+} from "./trendyol";
 import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "./marketplace";
 import { ENV } from "./_core/env";
 
@@ -559,6 +568,87 @@ export const appRouter = router({
       await db.updateQuote(input.id, { status: "converted", convertedOrderId: Number(orderId) });
       return { orderId: Number(orderId) };
     }),
+  }),
+
+  // Pazaryeri iade & müşteri soru-cevap yönetimi + sıfırdan ilan açma (Trendyol).
+  marketplace: router({
+    returns: protectedProcedure.query(async () => {
+      try {
+        return await fetchTrendyolClaims();
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: error instanceof Error ? error.message : "İadeler çekilemedi",
+        });
+      }
+    }),
+    questions: protectedProcedure.query(async () => {
+      try {
+        return await fetchTrendyolQuestions();
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: error instanceof Error ? error.message : "Sorular çekilemedi",
+        });
+      }
+    }),
+    answerQuestion: protectedProcedure
+      .input(z.object({ questionId: z.string(), text: z.string().min(1) }))
+      .mutation(async ({ input }) => {
+        try {
+          return await answerTrendyolQuestion(input.questionId, input.text);
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Cevap gönderilemedi",
+          });
+        }
+      }),
+    categories: protectedProcedure.query(async () => {
+      try {
+        return await fetchTrendyolCategories();
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: error instanceof Error ? error.message : "Kategoriler çekilemedi",
+        });
+      }
+    }),
+    createListing: protectedProcedure
+      .input(
+        z.object({
+          barcode: z.string().min(1),
+          title: z.string().min(1),
+          productMainId: z.string().min(1),
+          brandId: z.number(),
+          categoryId: z.number(),
+          quantity: z.number().min(0),
+          listPrice: z.number().min(0),
+          salePrice: z.number().min(0),
+          description: z.string().default(""),
+          images: z.array(z.string()).default([]),
+          vatRate: z.number().min(0).max(100).default(20),
+          attributes: z
+            .array(
+              z.object({
+                attributeId: z.number(),
+                attributeValueId: z.number().optional(),
+                customAttributeValue: z.string().optional(),
+              }),
+            )
+            .default([]),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        try {
+          return await createTrendyolListing(input);
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "İlan açılamadı",
+          });
+        }
+      }),
   }),
 
   dev: router({

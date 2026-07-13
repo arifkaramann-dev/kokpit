@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { extractZpl, mapPackageToOrder, type TrendyolPackage } from "./trendyol";
+import {
+  extractZpl,
+  mapPackageToOrder,
+  mapTrendyolClaim,
+  mapTrendyolQuestion,
+  type TrendyolPackage,
+} from "./trendyol";
 
 function samplePackage(overrides: Partial<TrendyolPackage> = {}): TrendyolPackage {
   return {
@@ -93,5 +99,45 @@ describe("extractZpl", () => {
     expect(extractZpl("   ")).toBeNull();
     expect(extractZpl("{}")).toBeNull();
     expect(extractZpl('{"zpl":""}')).toBeNull();
+  });
+});
+
+describe("mapTrendyolClaim — iade normalizasyonu", () => {
+  it("iade kaydını normalize eder (sebep + ürün + müşteri)", () => {
+    const r = mapTrendyolClaim({
+      id: "claim-1",
+      orderNumber: "80249163",
+      status: "Created",
+      customerFirstName: "Ayşe",
+      customerLastName: "Yılmaz",
+      claimItems: [
+        { orderLine: { productName: "Kırmızı Metalik 1L" }, claimItemReason: { name: "Beklentiyi karşılamadı" } },
+      ],
+    });
+    expect(r.id).toBe("claim-1");
+    expect(r.orderNo).toBe("TY-80249163");
+    expect(r.customerName).toBe("Ayşe Yılmaz");
+    expect(r.reason).toBe("Beklentiyi karşılamadı");
+    expect(r.items).toBe("Kırmızı Metalik 1L");
+  });
+});
+
+describe("mapTrendyolQuestion — soru normalizasyonu", () => {
+  it("cevaplanmış soruyu answered=true işaretler", () => {
+    const q = mapTrendyolQuestion({
+      id: 55,
+      text: "Kaç günde kargolanır?",
+      status: "ANSWERED",
+      answer: { text: "1 iş günü" },
+      userName: "Mehmet",
+    });
+    expect(q.id).toBe("55");
+    expect(q.answered).toBe(true);
+    expect(q.customerName).toBe("Mehmet");
+  });
+
+  it("cevap bekleyen soruyu answered=false işaretler", () => {
+    const q = mapTrendyolQuestion({ id: 56, text: "Stok var mı?", status: "WAITING_FOR_ANSWER" });
+    expect(q.answered).toBe(false);
   });
 });
