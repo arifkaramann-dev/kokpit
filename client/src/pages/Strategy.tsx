@@ -22,6 +22,7 @@ import { useLocation } from "wouter";
 const TABS = [
   { key: "tamamlama", label: "Ürün Tamamlama" },
   { key: "rapor", label: "Durum Raporu" },
+  { key: "kdv", label: "KDV Raporu" },
   { key: "strateji", label: "Strateji Rehberi" },
 ] as const;
 
@@ -32,6 +33,7 @@ const num = (v: string | number | null | undefined) => {
 
 export default function Strategy() {
   const { data, isLoading } = trpc.report.data.useQuery();
+  const { data: vat } = trpc.report.vat.useQuery();
   const [tab, setTab] = useState<(typeof TABS)[number]["key"]>("tamamlama");
   const [, setLocation] = useLocation();
 
@@ -392,6 +394,36 @@ export default function Strategy() {
               )}
             </Card>
           </div>
+        </div>
+      )}
+
+      {/* ------- KDV Raporu ------- */}
+      {tab === "kdv" && (
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Satış KDV'si (siparişler, KDV dahil kabul) − Alış KDV'si (alış faturaları) = Ödenecek KDV.
+            KDV oranı Ayarlar'dan alınır (varsayılan %{vat?.rate ?? 20}). Bu resmi beyanname değildir, bilgi amaçlıdır.
+          </p>
+          {(["month", "year"] as const).map(period => {
+            const d = vat?.[period];
+            return (
+              <Card key={period} className="p-5 space-y-3">
+                <h2 className="font-semibold">{period === "month" ? "Bu Ay" : "Bu Yıl"}</h2>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  <Stat label="Satış (KDV dahil)" value={formatTL(d?.salesGross ?? 0)} />
+                  <Stat label="Hesaplanan KDV" value={formatTL(d?.salesVat ?? 0)} tone="text-emerald-600" />
+                  <Stat label="Alış (KDV dahil)" value={formatTL(d?.buyGross ?? 0)} />
+                  <Stat label="İndirilecek KDV" value={formatTL(d?.buyVat ?? 0)} tone="text-amber-600" />
+                </div>
+                <div className="flex items-center justify-between border-t pt-3">
+                  <span className="font-medium">Ödenecek KDV</span>
+                  <span className={`text-lg font-bold ${(d?.payable ?? 0) > 0 ? "text-rose-600" : "text-emerald-600"}`}>
+                    {formatTL(d?.payable ?? 0)}
+                  </span>
+                </div>
+              </Card>
+            );
+          })}
         </div>
       )}
 

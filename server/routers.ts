@@ -690,6 +690,7 @@ export const appRouter = router({
 
   report: router({
     data: protectedProcedure.query(() => db.reportData()),
+    vat: protectedProcedure.query(() => db.vatReport()),
   }),
 
   customers: router({
@@ -701,6 +702,8 @@ export const appRouter = router({
     delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteCustomer(input.id)),
     // Müşteri cari ekstresi: siparişler (borç) + tahsilatlar (alacak) + bakiye.
     ledger: protectedProcedure.input(z.object({ name: z.string() })).query(({ input }) => db.customerLedger(input.name)),
+    // Tüm müşterilerin cari bakiyesi (küçük harf ada göre).
+    balances: protectedProcedure.query(() => db.customerBalances()),
   }),
 
   // Kasa & Banka hesapları (ön muhasebe).
@@ -713,6 +716,12 @@ export const appRouter = router({
       .input(z.object({ id: z.number(), data: accountInput.partial() }))
       .mutation(({ input }) => db.updateAccount(input.id, toDecimalFields(input.data, ["openingBalance"]) as never)),
     delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteAccount(input.id)),
+    transfer: protectedProcedure
+      .input(z.object({ fromId: z.number(), toId: z.number(), amount: z.number().positive(), note: z.string().nullable().optional() }))
+      .mutation(({ input }) => {
+        if (input.fromId === input.toId) throw new TRPCError({ code: "BAD_REQUEST", message: "Aynı hesaba transfer olmaz." });
+        return db.transferBetweenAccounts(input.fromId, input.toId, input.amount, input.note ?? null);
+      }),
   }),
 
   // Para/cari hareketleri: tahsilat, ödeme, gelir, gider, transfer.

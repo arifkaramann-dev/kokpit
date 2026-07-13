@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/select";
 import { formatDate, formatTL } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
-import { ArrowDownLeft, ArrowUpRight, Banknote, Landmark, Plus, Trash2, Wallet } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, ArrowLeftRight, Banknote, Landmark, Plus, Trash2, Wallet } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -53,6 +53,8 @@ export default function Accounts() {
 
   const [accDialog, setAccDialog] = useState(false);
   const [accForm, setAccForm] = useState({ name: "", kind: "kasa" as "kasa" | "banka", openingBalance: "", note: "" });
+  const [transferDialog, setTransferDialog] = useState(false);
+  const [transfer, setTransfer] = useState({ fromId: "", toId: "", amount: "" });
   const [txn, setTxn] = useState({
     type: "tahsilat",
     amount: "",
@@ -100,6 +102,17 @@ export default function Accounts() {
     },
     onError: e => toast.error(e.message),
   });
+  const doTransfer = trpc.accounts.transfer.useMutation({
+    onSuccess: () => {
+      utils.transactions.invalidate();
+      utils.accounts.invalidate();
+      utils.dashboard.summary.invalidate();
+      toast.success("Transfer yapıldı");
+      setTransferDialog(false);
+      setTransfer({ fromId: "", toId: "", amount: "" });
+    },
+    onError: e => toast.error(e.message),
+  });
 
   const accountRows = (accounts as AccountRow[]) ?? [];
   const txnRows = (txns as TxnRow[]) ?? [];
@@ -130,13 +143,20 @@ export default function Accounts() {
             Nakit ve banka hesapları, tahsilat/ödeme hareketleri ve güncel bakiyeler.
           </p>
         </div>
-        <Card className="px-4 py-2 flex items-center gap-2">
-          <Wallet className="h-5 w-5 text-emerald-600" />
-          <div>
-            <p className="text-[11px] text-muted-foreground leading-none">Toplam bakiye</p>
-            <p className="text-lg font-bold leading-tight">{formatTL(totalCash)}</p>
-          </div>
-        </Card>
+        <div className="flex items-center gap-2">
+          {accountRows.length >= 2 && (
+            <Button variant="outline" onClick={() => setTransferDialog(true)}>
+              <ArrowLeftRight className="h-4 w-4 mr-1" /> Transfer
+            </Button>
+          )}
+          <Card className="px-4 py-2 flex items-center gap-2">
+            <Wallet className="h-5 w-5 text-emerald-600" />
+            <div>
+              <p className="text-[11px] text-muted-foreground leading-none">Toplam bakiye</p>
+              <p className="text-lg font-bold leading-tight">{formatTL(totalCash)}</p>
+            </div>
+          </Card>
+        </div>
       </div>
 
       {/* Hesap kartları */}
@@ -269,6 +289,66 @@ export default function Accounts() {
           })}
         </Card>
       )}
+
+      <Dialog open={transferDialog} onOpenChange={setTransferDialog}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Hesaplar Arası Transfer</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>Kaynak hesap</Label>
+              <Select value={transfer.fromId} onValueChange={v => setTransfer(t => ({ ...t, fromId: v }))}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Seç" />
+                </SelectTrigger>
+                <SelectContent>
+                  {accountRows.map(a => (
+                    <SelectItem key={a.id} value={String(a.id)}>
+                      {a.name} ({formatTL(a.balance)})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Hedef hesap</Label>
+              <Select value={transfer.toId} onValueChange={v => setTransfer(t => ({ ...t, toId: v }))}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Seç" />
+                </SelectTrigger>
+                <SelectContent>
+                  {accountRows.map(a => (
+                    <SelectItem key={a.id} value={String(a.id)}>
+                      {a.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Tutar (₺)</Label>
+              <Input type="number" value={transfer.amount} onChange={e => setTransfer(t => ({ ...t, amount: e.target.value }))} placeholder="0" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTransferDialog(false)}>
+              İptal
+            </Button>
+            <Button
+              onClick={() => {
+                const amount = parseFloat(transfer.amount);
+                if (!transfer.fromId || !transfer.toId) return toast.error("Kaynak ve hedef hesap seçin");
+                if (!amount || amount <= 0) return toast.error("Geçerli tutar girin");
+                doTransfer.mutate({ fromId: Number(transfer.fromId), toId: Number(transfer.toId), amount });
+              }}
+              disabled={doTransfer.isPending}
+            >
+              Transfer Et
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={accDialog} onOpenChange={setAccDialog}>
         <DialogContent className="sm:max-w-sm">
