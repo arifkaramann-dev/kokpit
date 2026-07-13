@@ -28,7 +28,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { formatQty, formatTL, MATERIAL_CATEGORIES, num, UNITS } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
-import { AlertTriangle, ArrowDownToLine, ArrowUpFromLine, Pencil, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowDownToLine, ArrowUpFromLine, CalendarClock, ListPlus, Pencil, Plus, ShoppingCart, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -113,6 +113,21 @@ export default function Stock() {
     onError: e => toast.error(e.message),
   });
 
+  const { data: forecast } = trpc.report.stockForecast.useQuery();
+  const addTask = trpc.tasks.create.useMutation({
+    onSuccess: () => {
+      utils.tasks.invalidate();
+      utils.dashboard.summary.invalidate();
+      toast.success("Eksik listesine eklendi");
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  function addToShoppingList(name: string, qty: number, unit: string) {
+    const amount = qty > 0 ? `${formatQty(qty)} ${unit} ` : "";
+    addTask.mutate({ kind: "eksik", title: `${name}: ${amount}al`, note: "Stok tahmininden otomatik" });
+  }
+
   const filtered = useMemo(() => {
     const list = (materials as MaterialRow[]) ?? [];
     if (filter === "all") return list;
@@ -189,6 +204,66 @@ export default function Stock() {
           <Button size="sm" variant="outline" className="ml-auto" onClick={() => setFilter("critical")}>
             Göster
           </Button>
+        </Card>
+      )}
+
+      {forecast && forecast.toOrder.length > 0 && (
+        <Card className="p-5 space-y-3">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <h2 className="font-semibold flex items-center gap-2">
+              <ShoppingCart className="h-4 w-4 text-primary" /> Sipariş Önerileri
+              <span className="text-xs font-normal text-muted-foreground">
+                — son 90 günün tüketim hızına göre
+              </span>
+            </h2>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">
+                {forecast.counts.out > 0 && <span className="text-rose-600 font-medium">{forecast.counts.out} tükendi</span>}
+                {forecast.counts.out > 0 && (forecast.counts.critical > 0 || forecast.counts.low > 0) && " · "}
+                {forecast.counts.critical > 0 && <span className="text-rose-600 font-medium">{forecast.counts.critical} kritik</span>}
+                {forecast.counts.critical > 0 && forecast.counts.low > 0 && " · "}
+                {forecast.counts.low > 0 && <span className="text-amber-600 font-medium">{forecast.counts.low} azalıyor</span>}
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={addTask.isPending}
+                onClick={() => forecast.toOrder.forEach(r => addToShoppingList(r.name, r.suggestedOrder, r.unit))}
+              >
+                <ListPlus className="h-3.5 w-3.5 mr-1" /> Tümünü Eksik Listesine Ekle
+              </Button>
+            </div>
+          </div>
+          <div className="divide-y">
+            {forecast.toOrder.slice(0, 12).map(r => {
+              const meta = statusMeta(r.status);
+              return (
+                <div key={r.id} className="flex items-center gap-3 py-2 text-sm">
+                  <Badge variant="outline" className={meta.className}>{meta.label}</Badge>
+                  <span className="flex-1 truncate font-medium" title={r.name}>{r.name}</span>
+                  <span className="text-xs text-muted-foreground whitespace-nowrap flex items-center gap-1">
+                    <CalendarClock className="h-3 w-3" />
+                    {r.daysOfCover === null ? "tüketim yok" : `${Math.round(r.daysOfCover)} gün yeter`}
+                  </span>
+                  <span className="text-xs text-muted-foreground whitespace-nowrap w-28 text-right">
+                    stok {formatQty(r.stock)} {r.unit}
+                  </span>
+                  <span className="font-semibold whitespace-nowrap w-28 text-right">
+                    {r.suggestedOrder > 0 ? `${formatQty(r.suggestedOrder)} ${r.unit} al` : "—"}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7"
+                    disabled={addTask.isPending}
+                    onClick={() => addToShoppingList(r.name, r.suggestedOrder, r.unit)}
+                  >
+                    <ListPlus className="h-3.5 w-3.5 mr-1" /> Ekle
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
         </Card>
       )}
 
@@ -468,4 +543,17 @@ export default function Stock() {
       </Dialog>
     </div>
   );
+}
+
+function statusMeta(status: "out" | "critical" | "low" | "ok") {
+  switch (status) {
+    case "out":
+      return { label: "Tükendi", className: "text-rose-700 border-rose-300 bg-rose-50 dark:bg-rose-950/40 dark:border-rose-800 dark:text-rose-300" };
+    case "critical":
+      return { label: "Kritik", className: "text-rose-600 border-rose-200 bg-rose-50/60 dark:bg-rose-950/30 dark:border-rose-900 dark:text-rose-300" };
+    case "low":
+      return { label: "Azalıyor", className: "text-amber-700 border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-300" };
+    default:
+      return { label: "Yeterli", className: "text-emerald-700 border-emerald-200" };
+  }
 }

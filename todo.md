@@ -126,7 +126,16 @@ Pazaryeri (Qukasoft):
 - [x] `replaceOrderItems`: sil + ekle atomik (sipariş kalemsiz kalmaz)
 - [x] Üretim planı saf fonksiyona ayrıldı: `planProduction` (productUtils) + `server/production.test.ts` (5 test)
 
+## Modül 16: Dinamik stok & tahminleyici satın alma (eklendi)
+- [x] Stok hareketlerinden (çıkış=tüketim) günlük tüketim hızı + gün-kapağı hesabı
+- [x] Durum: tükendi / kritik (tedarik süresi altı) / azalıyor / yeterli; tüketim yoksa sabit eşiğe düşer
+- [x] Hedef günü karşılayacak önerilen sipariş miktarı
+- [x] Stok ekranında "Sipariş Önerileri" kartı + tek tık "Eksik Listesine Ekle" (+ tümünü ekle)
+- [x] Asistan/WhatsApp: "hangi hammadde bitiyor, ne almalıyım?" (snapshot'a eklendi)
+- [x] `report.stockForecast` endpoint + `stockForecast` saf motoru + 5 birim test
+
 ## Sonraki Oturuma Ertelenenler (opsiyonel geliştirmeler)
+- e-Fatura/e-Arşiv: **Bizimhesap** entegrasyonu (API anahtarı gerektirir, canlıda test edilir)
 - AI görsel üretimi modülü (ürün fotoğrafı arka plan değiştirme) — kullanıcı talebiyle eklenecek
 - Asistanla sesli "gider ekle" / "tahsilat aldım" komutu (parseVoiceCommand intent)
 - Ürünlerde kritik stok eşiği alanı + düşük stok filtresi

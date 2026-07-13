@@ -357,3 +357,145 @@ export function customerInsights(
     activeCustomers: all.length - sleeping.length,
   };
 }
+
+/* ------------------------- Dinamik stok / satın alma tahmini ------------------------- */
+
+export type MaterialLite = {
+  id: number;
+  name: string;
+  unit: string;
+  category?: string | null;
+  stockQty: string | number;
+  criticalQty: string | number;
+};
+
+export type StockMovementLite = {
+  materialId: number;
+  type: "in" | "out";
+  qty: string | number;
+  createdAt: string | number | Date;
+};
+
+export type StockStatus = "out" | "critical" | "low" | "ok";
+
+export type StockForecastRow = {
+  id: number;
+  name: string;
+  unit: string;
+  category: string | null;
+  stock: number;
+  criticalQty: number;
+  /** Pencere içindeki günlük ortalama tüketim (birim/gün). */
+  dailyUsage: number;
+  /** Mevcut stok kaç gün yeter; tüketim yoksa null (süresiz). */
+  daysOfCover: number | null;
+  status: StockStatus;
+  /** Hedef gün sayısını karşılamak için önerilen sipariş miktarı (birim). */
+  suggestedOrder: number;
+};
+
+export type StockForecast = {
+  rows: StockForecastRow[];
+  counts: { out: number; critical: number; low: number };
+  /** Sipariş önerilecek (out/critical/low) satırlar, aciliyet sırasıyla. */
+  toOrder: StockForecastRow[];
+};
+
+export type StockForecastOptions = {
+  now?: number;
+  /** Tüketim hızının hesaplanacağı geçmiş pencere (gün). Varsayılan 90. */
+  windowDays?: number;
+  /** Tedarik süresi (gün): stok bu süreden az yeterse "kritik". Varsayılan 14. */
+  leadDays?: number;
+  /** Sipariş önerisinin karşılamayı hedeflediği gün sayısı. Varsayılan 30. */
+  targetDays?: number;
+};
+
+const STATUS_RANK: Record<StockStatus, number> = { out: 0, critical: 1, low: 2, ok: 3 };
+
+/**
+ * Her hammadde için stok hareketlerinden (çıkışlar = tüketim) günlük tüketim
+ * hızını çıkarır; mevcut stoğun kaç gün yeteceğini, aciliyet durumunu ve
+ * hedef günü karşılayacak önerilen sipariş miktarını hesaplar. Tüketim geçmişi
+ * yoksa kullanıcının girdiği sabit kritik eşiğe (criticalQty) düşer.
+ * Saf fonksiyon — DB'ye/React'e bağlı değil, birim test edilir.
+ */
+export function stockForecast(
+  materials: MaterialLite[],
+  movements: StockMovementLite[],
+  options: StockForecastOptions = {},
+): StockForecast {
+  const now = options.now ?? Date.now();
+  const windowDays = options.windowDays ?? 90;
+  const leadDays = options.leadDays ?? 14;
+  const targetDays = options.targetDays ?? 30;
+  const cutoff = now - windowDays * DAY_MS;
+
+  // Pencere içindeki çıkış (tüketim) miktarını hammadde başına topla.
+  const usageById = new Map<number, number>();
+  for (const m of movements) {
+    if (m.type !== "out") continue;
+    if (new Date(m.createdAt).getTime() < cutoff) continue;
+    usageById.set(m.materialId, (usageById.get(m.materialId) ?? 0) + num(m.qty));
+  }
+
+  const rows: StockForecastRow[] = materials.map(mat => {
+    const stock = num(mat.stockQty);
+    const criticalQty = num(mat.criticalQty);
+    const dailyUsage = (usageById.get(mat.id) ?? 0) / windowDays;
+    const daysOfCover = dailyUsage > 0 ? stock / dailyUsage : null;
+
+    let status: StockStatus;
+    let suggestedOrder = 0;
+    if (stock <= 0) {
+      status = "out";
+    } else if (dailyUsage > 0) {
+      if (daysOfCover! <= leadDays) status = "critical";
+      else if (daysOfCover! <= leadDays * 2) status = "low";
+      else status = "ok";
+    } else {
+      // Tüketim geçmişi yok → sabit eşiğe düş.
+      status = criticalQty > 0 && stock <= criticalQty ? "low" : "ok";
+    }
+
+    if (dailyUsage > 0 && status !== "ok") {
+      suggestedOrder = Math.max(0, Math.ceil(dailyUsage * targetDays - stock));
+    } else if (dailyUsage === 0 && status !== "ok") {
+      suggestedOrder = Math.max(0, Math.ceil(criticalQty * 2 - stock));
+    } else if (status === "out") {
+      suggestedOrder = Math.max(suggestedOrder, Math.ceil(criticalQty) || 1);
+    }
+
+    return {
+      id: mat.id,
+      name: mat.name,
+      unit: mat.unit,
+      category: mat.category ?? null,
+      stock,
+      criticalQty,
+      dailyUsage,
+      daysOfCover,
+      status,
+      suggestedOrder,
+    };
+  });
+
+  const rank = (r: StockForecastRow) => STATUS_RANK[r.status];
+  rows.sort((a, b) => {
+    if (rank(a) !== rank(b)) return rank(a) - rank(b);
+    const da = a.daysOfCover ?? Number.POSITIVE_INFINITY;
+    const db = b.daysOfCover ?? Number.POSITIVE_INFINITY;
+    return da - db;
+  });
+
+  const toOrder = rows.filter(r => r.status !== "ok");
+  return {
+    rows,
+    toOrder,
+    counts: {
+      out: rows.filter(r => r.status === "out").length,
+      critical: rows.filter(r => r.status === "critical").length,
+      low: rows.filter(r => r.status === "low").length,
+    },
+  };
+}

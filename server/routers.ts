@@ -13,7 +13,7 @@ import { buildSaleTitle, deriveCombos, parseSetCount, planProduction } from "./p
 import { syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf } from "./trendyol";
 import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "./marketplace";
 import { ENV } from "./_core/env";
-import { customerInsights, productProfitability } from "@shared/analytics";
+import { customerInsights, productProfitability, stockForecast } from "@shared/analytics";
 
 /* ------------------------- Zod schemas ------------------------- */
 
@@ -683,6 +683,14 @@ export const appRouter = router({
     data: protectedProcedure.query(() => db.reportData()),
     vat: protectedProcedure.query(() => db.vatReport()),
     cashflow: protectedProcedure.query(() => db.cashflowReport()),
+    // Dinamik stok tahmini: tüketim hızından gün-kapağı + sipariş önerisi.
+    stockForecast: protectedProcedure.query(async () => {
+      const [materials, movements] = await Promise.all([
+        db.listMaterials(),
+        db.listStockMovementsSince(90),
+      ]);
+      return stockForecast(materials, movements);
+    }),
   }),
 
   customers: router({

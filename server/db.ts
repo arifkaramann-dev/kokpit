@@ -201,6 +201,21 @@ export async function listStockMovements(materialId: number) {
     .limit(50);
 }
 
+/** Son `days` gündeki tüm stok hareketleri (tüketim hızı tahmini için). */
+export async function listStockMovementsSince(days: number) {
+  const db = await requireDb();
+  const since = new Date(Date.now() - days * 86400000);
+  return db
+    .select({
+      materialId: stockMovements.materialId,
+      type: stockMovements.type,
+      qty: stockMovements.qty,
+      createdAt: stockMovements.createdAt,
+    })
+    .from(stockMovements)
+    .where(gte(stockMovements.createdAt, since));
+}
+
 export async function listCriticalMaterials() {
   const db = await requireDb();
   return db

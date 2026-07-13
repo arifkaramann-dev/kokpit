@@ -1,7 +1,7 @@
 import { answerBusinessQuestion, parseVoiceCommand } from "./_core/claude";
 import * as db from "./db";
 import { itemsTotal, summarizeItems, toItemRows } from "./orderUtils";
-import { customerInsights, productProfitability } from "@shared/analytics";
+import { customerInsights, productProfitability, stockForecast } from "@shared/analytics";
 
 /**
  * Sesli komut / WhatsApp asistanının ortak beyni: serbest Türkçe metni
@@ -56,7 +56,7 @@ const HELP_TEXT = [
 
 /** Soru-cevap için işletmenin güncel verilerinden kompakt Türkçe özet üretir. */
 export async function buildBusinessSnapshot(): Promise<string> {
-  const [statusCounts, today, critical, materials, products, orders, openTasks, finance, expenses, orderItems, formulas] = await Promise.all([
+  const [statusCounts, today, critical, materials, products, orders, openTasks, finance, expenses, orderItems, formulas, movements] = await Promise.all([
     db.orderStatusCounts(),
     db.countOrdersToday(),
     db.listCriticalMaterials(),
@@ -68,6 +68,7 @@ export async function buildBusinessSnapshot(): Promise<string> {
     db.listExpenses(50),
     db.listAllOrderItems(),
     db.formulaCostRows(),
+    db.listStockMovementsSince(90),
   ]);
   const since30 = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const last30 = orders.filter(o => new Date(o.createdAt as unknown as string).getTime() >= since30);
@@ -105,6 +106,19 @@ export async function buildBusinessSnapshot(): Promise<string> {
     ? profit.lowMargin.slice(0, 5).map(r => `${r.name} (kâr ${Math.round(r.profit ?? 0)} TL, marj %${Math.round(r.margin ?? 0)})`).join("; ")
     : "yok";
 
+  // Dinamik stok tahmini: tüketim hızından bitmeye yakın hammaddeler + öneri.
+  const forecast = stockForecast(materials, movements);
+  const reorderLine = forecast.toOrder.length
+    ? forecast.toOrder
+        .slice(0, 10)
+        .map(r => {
+          const cover = r.daysOfCover === null ? "tüketim yok" : `~${Math.round(r.daysOfCover)} gün`;
+          const buy = r.suggestedOrder > 0 ? `, öneri ${r.suggestedOrder} ${r.unit} al` : "";
+          return `${r.name} (${cover}, stok ${r.stock} ${r.unit}${buy})`;
+        })
+        .join("; ")
+    : "acil sipariş gereken hammadde yok";
+
   // Uykuda müşteriler (60+ gündür sipariş vermeyen), değerine göre.
   const insights = customerInsights(orders, { sleepingDays: 60 });
   const sleepingLine = insights.sleeping.length
@@ -128,6 +142,7 @@ export async function buildBusinessSnapshot(): Promise<string> {
       .join("; ") || "yok"}`,
     `Hammadde sayısı: ${materials.length}`,
     `Kritik stok altındaki hammaddeler: ${critical.map(m => `${m.name} (${m.stockQty} ${m.unit})`).join(", ") || "yok"}`,
+    `Stok tahmini / satın alma önerisi (tüketim hızına göre): ${reorderLine}`,
     `Stok listesi (ad | miktar | birim maliyet): ${materials
       .slice(0, 40)
       .map(m => `${m.name} | ${m.stockQty} ${m.unit} | ${m.unitCost} TL`)
