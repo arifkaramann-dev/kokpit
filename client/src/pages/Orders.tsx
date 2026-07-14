@@ -1,17 +1,5 @@
-import {
-  DndContext,
-  DragEndEvent,
-  DragOverlay,
-  DragStartEvent,
-  PointerSensor,
-  useDraggable,
-  useDroppable,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -20,6 +8,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -34,7 +29,27 @@ import { trpc } from "@/lib/trpc";
 import { CHANNELS, formatDate, formatTL, ORDER_STATUSES, OrderStatus } from "@/lib/format";
 import { printInvoice } from "@/lib/invoice";
 import { printShippingLabel } from "@/lib/shippingLabel";
-import { AlertCircle, CheckCircle2, FileText, GripVertical, MapPin, MessageCircle, Pencil, Plus, RefreshCw, Search, Settings, Truck, Trash2 } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowLeft,
+  ArrowRight,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  ClipboardList,
+  FileText,
+  MapPin,
+  MessageCircle,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  Settings,
+  Truck,
+  Trash2,
+  Zap,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
@@ -59,6 +74,22 @@ type OrderRow = {
 };
 
 type ItemRow = { productName: string; quantity: string; unitPrice: string };
+
+/** Pazaryeri kanalları: durumları senkronla otomatik yönetilir, elle taşınmaz. */
+const MARKETPLACE_CHANNELS = new Set(["trendyol", "hepsiburada", "pazaryeri"]);
+function isAutoOrder(o: OrderRow): boolean {
+  return MARKETPLACE_CHANNELS.has((o.channel ?? "").toLocaleLowerCase("tr-TR"));
+}
+
+function num(v: string): number {
+  return parseFloat(v) || 0;
+}
+
+function waLink(order: OrderRow): string {
+  return `https://wa.me/${(order.customerPhone ?? "").replace(/\D/g, "")}?text=${encodeURIComponent(
+    `Merhaba ${order.customerName}, ${order.orderNo} numaralı siparişiniz hakkında bilgi vermek istedik.`,
+  )}`;
+}
 
 /** Base64 PDF'i tarayıcıda blob olarak açar ve yazdırma penceresini tetikler. */
 function openPdfBase64(base64: string, filename: string) {
@@ -111,7 +142,6 @@ export default function Orders() {
   const { data: products } = trpc.products.list.useQuery();
   const { data: customersList } = trpc.customers.list.useQuery();
   const { data: mpStatus } = trpc.orders.marketplaceStatus.useQuery();
-  const [activeOrder, setActiveOrder] = useState<OrderRow | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editOrder, setEditOrder] = useState<OrderRow | null>(null);
   const [form, setForm] = useState(emptyForm);
@@ -119,9 +149,18 @@ export default function Orders() {
   const [search, setSearch] = useState("");
   const [payFilter, setPayFilter] = useState<"all" | "unpaid" | "paid">("all");
   const [channelFilter, setChannelFilter] = useState<string>("all");
+  // Tamamlanan siparişler varsayılan olarak katlı — güncel iş üstte kalsın.
+  const [collapsed, setCollapsed] = useState<Set<OrderStatus>>(new Set<OrderStatus>(["done"]));
   const autoSynced = useRef(false);
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  function toggleSection(status: OrderStatus) {
+    setCollapsed(prev => {
+      const next = new Set(prev);
+      if (next.has(status)) next.delete(status);
+      else next.add(status);
+      return next;
+    });
+  }
 
   const setStatus = trpc.orders.setStatus.useMutation({
     onMutate: async input => {
@@ -162,17 +201,21 @@ export default function Orders() {
   });
 
   // Sayfa açılınca ve açık kaldıkça 10 dk'da bir tüm pazaryerlerini sessizce çek.
+  // Yeni sipariş gelir + mevcutların durumu (kargolandı/teslim) otomatik güncellenir.
   useEffect(() => {
     const quietSync = () => {
       utils.client.orders.syncAll
         .mutate()
         .then(results => {
-          const total = results.reduce((s, r) => s + r.imported, 0);
-          if (total > 0) {
+          const imported = results.reduce((s, r) => s + r.imported, 0);
+          const updated = results.reduce((s, r) => s + (r.updated ?? 0), 0);
+          if (imported + updated > 0) {
             utils.orders.list.invalidate();
             utils.dashboard.summary.invalidate();
-            const parts = results.filter(r => r.imported > 0).map(r => `${r.label}: ${r.imported}`);
-            toast.success(`Yeni sipariş: ${parts.join(", ")}`);
+            const parts: string[] = [];
+            if (imported > 0) parts.push(`${imported} yeni sipariş`);
+            if (updated > 0) parts.push(`${updated} durum güncellendi`);
+            toast.success(`Pazaryeri: ${parts.join(", ")}`);
           }
         })
         .catch(() => {
@@ -192,6 +235,7 @@ export default function Orders() {
       utils.orders.list.invalidate();
       utils.dashboard.summary.invalidate();
       const imported = results.reduce((s, r) => s + r.imported, 0);
+      const updated = results.reduce((s, r) => s + (r.updated ?? 0), 0);
       const errors = results.filter(r => r.error);
       const configured = results.filter(r => r.skippedReason !== "not_configured");
       if (configured.length === 0) {
@@ -203,9 +247,14 @@ export default function Orders() {
       }
       const okParts = configured
         .filter(r => !r.error)
-        .map(r => `${r.label}: ${r.imported > 0 ? `${r.imported} yeni` : "yeni yok"}`);
+        .map(r => {
+          const bits: string[] = [];
+          if (r.imported > 0) bits.push(`${r.imported} yeni`);
+          if ((r.updated ?? 0) > 0) bits.push(`${r.updated} güncel`);
+          return `${r.label}: ${bits.length > 0 ? bits.join(" + ") : "değişiklik yok"}`;
+        });
       if (okParts.length > 0) {
-        toast.success(imported > 0 ? `Çekildi — ${okParts.join(", ")}` : okParts.join(", "));
+        toast.success(imported + updated > 0 ? `Senkron — ${okParts.join(", ")}` : okParts.join(", "));
       }
     },
     onError: e => toast.error(e.message),
@@ -266,6 +315,18 @@ export default function Orders() {
     );
   }
 
+  // Elden/manuel siparişte kargo etiketi basıldıysa akışı otomatik ilerlet:
+  // etiket basmak "kargoya hazır" demektir. Pazaryeri siparişleri hariç (onları senkron yönetir).
+  function maybeAdvanceOnLabel(order: OrderRow) {
+    if (isAutoOrder(order)) return;
+    const idx = ORDER_STATUSES.findIndex(s => s.value === order.status);
+    const readyIdx = ORDER_STATUSES.findIndex(s => s.value === "ready");
+    if (idx >= 0 && idx < readyIdx) {
+      setStatus.mutate({ id: order.id, status: "ready" });
+      toast.success("Sipariş “Kargoya Hazır”a taşındı");
+    }
+  }
+
   // Kargo etiketi: Trendyol siparişinde takip no varsa resmi etiketi (PDF) çeker;
   // yoksa/başarısızsa kendi barkodlu etiketimizi yazdırır.
   async function handleShippingLabel(order: OrderRow) {
@@ -286,6 +347,7 @@ export default function Orders() {
     }
     try {
       await printOwnLabel(order);
+      maybeAdvanceOnLabel(order);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Kargo etiketi oluşturulamadı");
     }
@@ -328,23 +390,12 @@ export default function Orders() {
     });
   }
 
-  function handleDragStart(event: DragStartEvent) {
-    const order = orders?.find(o => o.id === event.active.id);
-    if (order) setActiveOrder(order as OrderRow);
-    document.body.classList.add("dragging-active");
-  }
-
-  function handleDragEnd(event: DragEndEvent) {
-    document.body.classList.remove("dragging-active");
-    setActiveOrder(null);
-    const { active, over } = event;
-    if (!over) return;
-    const orderId = Number(active.id);
-    const newStatus = String(over.id) as OrderStatus;
-    const order = orders?.find(o => o.id === orderId);
-    if (order && order.status !== newStatus) {
-      setStatus.mutate({ id: orderId, status: newStatus });
-    }
+  // Elden/manuel siparişi bir aşama ileri/geri taşı (dir: +1 ileri, -1 geri).
+  function handleAdvance(order: OrderRow, dir: 1 | -1) {
+    const idx = ORDER_STATUSES.findIndex(s => s.value === order.status);
+    const target = ORDER_STATUSES[idx + dir];
+    if (!target) return;
+    setStatus.mutate({ id: order.id, status: target.value });
   }
 
   function openCreate() {
@@ -471,9 +522,9 @@ export default function Orders() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Sipariş Panosu</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Siparişler</h1>
           <p className="text-sm text-muted-foreground">
-            Siparişleri sürükleyip bırakarak aşamalar arasında taşıyın.
+            Pazaryeri siparişleri durumunu kendi akıtır; elden siparişleri tek dokunuşla ilerletin.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -837,102 +888,97 @@ export default function Orders() {
       )}
 
       {isLoading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="space-y-3">
           {ORDER_STATUSES.map(s => (
-            <div key={s.value} className="h-64 rounded-xl bg-muted animate-pulse" />
+            <div key={s.value} className="h-24 rounded-xl bg-muted animate-pulse" />
           ))}
         </div>
-      ) : (
-        <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-            {ORDER_STATUSES.map(status => (
-              <KanbanColumn
-                key={status.value}
-                status={status}
-                orders={filteredOrders.filter(o => o.status === status.value)}
-                onEdit={openEdit}
-                onDelete={id => deleteOrder.mutate({ id })}
-                onInvoice={handleInvoice}
-                onShippingLabel={handleShippingLabel}
-                onTogglePaid={handleTogglePaid}
-              />
-            ))}
+      ) : allOrders.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed py-16 text-center">
+          <ClipboardList className="h-10 w-10 text-muted-foreground/40" />
+          <p className="text-sm text-muted-foreground">
+            Henüz sipariş yok. Pazaryerlerinden çekin ya da elle ekleyin.
+          </p>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => syncAll.mutate()} disabled={syncAll.isPending}>
+              <RefreshCw className={`h-4 w-4 mr-1 ${syncAll.isPending ? "animate-spin" : ""}`} />
+              Pazaryerlerinden Çek
+            </Button>
+            <Button onClick={openCreate}>
+              <Plus className="h-4 w-4 mr-1" /> Yeni Sipariş
+            </Button>
           </div>
-          <DragOverlay>
-            {activeOrder ? <OrderCard order={activeOrder} overlay /> : null}
-          </DragOverlay>
-        </DndContext>
-      )}
-    </div>
-  );
-}
-
-function KanbanColumn({
-  status,
-  orders,
-  onEdit,
-  onDelete,
-  onInvoice,
-  onShippingLabel,
-  onTogglePaid,
-}: {
-  status: (typeof ORDER_STATUSES)[number];
-  orders: OrderRow[];
-  onEdit: (o: OrderRow) => void;
-  onDelete: (id: number) => void;
-  onInvoice: (o: OrderRow) => void;
-  onShippingLabel: (o: OrderRow) => void;
-  onTogglePaid: (o: OrderRow) => void;
-}) {
-  const { setNodeRef, isOver } = useDroppable({ id: status.value });
-
-  return (
-    <div
-      ref={setNodeRef}
-      className={`rounded-xl border bg-card p-3 flex flex-col gap-2 min-h-[300px] transition-colors ${
-        isOver ? "ring-2 ring-primary/60 bg-accent/40" : ""
-      }`}
-    >
-      <div className="flex items-center gap-2 pb-1">
-        <span className={`h-2.5 w-2.5 rounded-full ${status.color}`} />
-        <span className="font-semibold text-sm">{status.label}</span>
-        <Badge variant="secondary" className="ml-auto">
-          {orders.length}
-        </Badge>
-      </div>
-      {orders.length === 0 && (
-        <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground border border-dashed rounded-lg py-8">
-          Sipariş yok
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {ORDER_STATUSES.map(status => {
+            const list = filteredOrders.filter(o => o.status === status.value);
+            if (filterActive && list.length === 0) return null;
+            const isCollapsed = collapsed.has(status.value);
+            const total = list.reduce((s, o) => s + num(o.totalAmount), 0);
+            const due = list
+              .filter(o => o.paymentStatus !== "paid")
+              .reduce((s, o) => s + Math.max(0, num(o.totalAmount) - num(o.paidAmount)), 0);
+            return (
+              <div key={status.value} className="rounded-xl border bg-card overflow-hidden">
+                <button
+                  onClick={() => toggleSection(status.value)}
+                  className="flex w-full items-center gap-2 px-3 py-2.5 hover:bg-accent/40 transition-colors"
+                >
+                  {isCollapsed ? (
+                    <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                  )}
+                  <span className={`h-2.5 w-2.5 rounded-full ${status.color} shrink-0`} />
+                  <span className="font-semibold text-sm">{status.label}</span>
+                  <Badge variant="secondary">{list.length}</Badge>
+                  <span className="ml-auto text-xs text-muted-foreground whitespace-nowrap">
+                    {formatTL(total)}
+                    {due > 0 && (
+                      <span className="text-destructive font-medium ml-2">{formatTL(due)} bekliyor</span>
+                    )}
+                  </span>
+                </button>
+                {!isCollapsed && (
+                  <div className="divide-y border-t">
+                    {list.length === 0 ? (
+                      <div className="py-8 text-center text-xs text-muted-foreground">
+                        Bu aşamada sipariş yok
+                      </div>
+                    ) : (
+                      list.map(order => (
+                        <OrderRowItem
+                          key={order.id}
+                          order={order}
+                          onEdit={openEdit}
+                          onDelete={id => deleteOrder.mutate({ id })}
+                          onInvoice={handleInvoice}
+                          onShippingLabel={handleShippingLabel}
+                          onTogglePaid={handleTogglePaid}
+                          onAdvance={handleAdvance}
+                        />
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
-      {orders.map(order => (
-        <DraggableOrderCard key={order.id} order={order} onEdit={onEdit} onDelete={onDelete} onInvoice={onInvoice} onShippingLabel={onShippingLabel} onTogglePaid={onTogglePaid} />
-      ))}
-      {orders.length > 0 &&
-        (() => {
-          const num = (v: string) => parseFloat(v) || 0;
-          const total = orders.reduce((s, o) => s + num(o.totalAmount), 0);
-          const due = orders
-            .filter(o => o.paymentStatus !== "paid")
-            .reduce((s, o) => s + Math.max(0, num(o.totalAmount) - num(o.paidAmount)), 0);
-          return (
-            <div className="mt-auto border-t pt-2 text-[11px] text-muted-foreground flex items-center justify-between">
-              <span>Toplam {formatTL(total)}</span>
-              {due > 0 && <span className="text-destructive font-medium">{formatTL(due)} bekliyor</span>}
-            </div>
-          );
-        })()}
     </div>
   );
 }
 
-function DraggableOrderCard({
+function OrderRowItem({
   order,
   onEdit,
   onDelete,
   onInvoice,
   onShippingLabel,
   onTogglePaid,
+  onAdvance,
 }: {
   order: OrderRow;
   onEdit: (o: OrderRow) => void;
@@ -940,144 +986,103 @@ function DraggableOrderCard({
   onInvoice: (o: OrderRow) => void;
   onShippingLabel: (o: OrderRow) => void;
   onTogglePaid: (o: OrderRow) => void;
-}) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: order.id });
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={{
-        transform: transform ? `translate(${transform.x}px, ${transform.y}px)` : undefined,
-        opacity: isDragging ? 0.4 : 1,
-      }}
-    >
-      <OrderCard
-        order={order}
-        onEdit={onEdit}
-        onDelete={onDelete}
-        onInvoice={onInvoice}
-        onShippingLabel={onShippingLabel}
-        onTogglePaid={onTogglePaid}
-        dragHandle={{ attributes: attributes as unknown as React.HTMLAttributes<HTMLButtonElement>, listeners }}
-      />
-    </div>
-  );
-}
-
-function OrderCard({
-  order,
-  onEdit,
-  onDelete,
-  onInvoice,
-  onShippingLabel,
-  onTogglePaid,
-  overlay,
-  dragHandle,
-}: {
-  order: OrderRow;
-  onEdit?: (o: OrderRow) => void;
-  onDelete?: (id: number) => void;
-  onInvoice?: (o: OrderRow) => void;
-  onShippingLabel?: (o: OrderRow) => void;
-  onTogglePaid?: (o: OrderRow) => void;
-  overlay?: boolean;
-  dragHandle?: { attributes: React.HTMLAttributes<HTMLButtonElement>; listeners: Record<string, unknown> | undefined };
+  onAdvance: (o: OrderRow, dir: 1 | -1) => void;
 }) {
   const paid = order.paymentStatus === "paid";
+  const auto = isAutoOrder(order);
+  const idx = ORDER_STATUSES.findIndex(s => s.value === order.status);
+  const next = ORDER_STATUSES[idx + 1];
+  const prev = ORDER_STATUSES[idx - 1];
+
   return (
-    <Card className={`p-3 space-y-1.5 ${overlay ? "shadow-xl rotate-2" : "shadow-sm"}`}>
-      <div className="flex items-start gap-1.5">
-        <button
-          className="mt-0.5 text-muted-foreground/60 hover:text-foreground cursor-grab active:cursor-grabbing touch-none"
-          {...(dragHandle?.attributes ?? {})}
-          {...(dragHandle?.listeners ?? {})}
-          aria-label="Taşı"
-        >
-          <GripVertical className="h-4 w-4" />
-        </button>
-        <div className="flex-1 min-w-0">
-          <p className="font-medium text-sm truncate flex items-center gap-1">
-            {order.customerName}
-            {order.customerAddress && <MapPin className="h-3 w-3 text-muted-foreground shrink-0" />}
-          </p>
-          <p className="text-[11px] text-muted-foreground">{order.orderNo}</p>
+    <div className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center">
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-medium text-sm truncate">{order.customerName}</span>
+          {order.customerAddress && <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
+          <button
+            onClick={() => onTogglePaid(order)}
+            title={paid ? "Ödendi (bekliyor yap)" : "Ödendi olarak işaretle"}
+            className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors ${
+              paid
+                ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                : order.paymentStatus === "partial"
+                  ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                  : "bg-destructive/10 text-destructive hover:bg-destructive/20"
+            }`}
+          >
+            {paid ? "Ödendi" : order.paymentStatus === "partial" ? "Kısmi" : "Bekliyor"}
+          </button>
         </div>
-        <span className="font-semibold text-sm whitespace-nowrap">{formatTL(order.totalAmount)}</span>
-      </div>
-      {order.itemsSummary && (
-        <p className="text-xs text-muted-foreground line-clamp-2 pl-5">{order.itemsSummary}</p>
-      )}
-      <div className="flex items-center justify-between pl-5">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mt-0.5">
+          <span>{order.orderNo}</span>
           <Badge variant="outline" className="text-[10px] px-1.5 py-0">
             {order.channel}
           </Badge>
-          {!overlay && (
-            <button
-              onClick={() => onTogglePaid?.(order)}
-              title={paid ? "Ödendi (bekliyor yap)" : "Ödendi olarak işaretle"}
-              className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0 text-[10px] font-medium transition-colors ${
-                paid
-                  ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-                  : order.paymentStatus === "partial"
-                    ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
-                    : "bg-destructive/10 text-destructive hover:bg-destructive/20"
-              }`}
-            >
-              {paid ? "Ödendi" : order.paymentStatus === "partial" ? "Kısmi" : "Bekliyor"}
-            </button>
-          )}
-          <span className="text-[10px] text-muted-foreground">{formatDate(order.createdAt)}</span>
+          <span>{formatDate(order.createdAt)}</span>
         </div>
-        {!overlay && (
-          <div className="flex gap-0.5">
-            {order.customerPhone && (
-              <a
-                href={`https://wa.me/${order.customerPhone.replace(/\D/g, "")}?text=${encodeURIComponent(
-                  `Merhaba ${order.customerName}, ${order.orderNo} numaralı siparişiniz hakkında bilgi vermek istedik.`,
-                )}`}
-                target="_blank"
-                rel="noreferrer"
-                title="Müşteriye WhatsApp'tan yaz"
-                className="inline-flex h-6 w-6 items-center justify-center rounded-md text-emerald-600 hover:bg-accent"
-              >
-                <MessageCircle className="h-3 w-3" />
-              </a>
-            )}
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-6 w-6"
-              title="Kargo etiketi / barkod yazdır"
-              onClick={() => onShippingLabel?.(order)}
-            >
-              <Truck className="h-3 w-3" />
-            </Button>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-6 w-6"
-              title="Fatura kes / yazdır"
-              onClick={() => onInvoice?.(order)}
-            >
-              <FileText className="h-3 w-3" />
-            </Button>
-            <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => onEdit?.(order)}>
-              <Pencil className="h-3 w-3" />
-            </Button>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-6 w-6 text-destructive hover:text-destructive"
-              onClick={() => {
-                if (confirm("Bu siparişi silmek istediğinize emin misiniz?")) onDelete?.(order.id);
-              }}
-            >
-              <Trash2 className="h-3 w-3" />
-            </Button>
-          </div>
+        {order.itemsSummary && (
+          <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">{order.itemsSummary}</p>
         )}
       </div>
-    </Card>
+
+      <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+        <span className="font-semibold text-sm whitespace-nowrap">{formatTL(order.totalAmount)}</span>
+
+        {order.status !== "done" &&
+          (auto ? (
+            <span
+              className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1.5 text-[11px] text-muted-foreground"
+              title="Pazaryeri siparişi — durumu her senkronda otomatik güncellenir"
+            >
+              <Zap className="h-3.5 w-3.5" /> Otomatik
+            </span>
+          ) : next ? (
+            <Button size="sm" className="h-9" onClick={() => onAdvance(order, 1)}>
+              {next.label} <ArrowRight className="h-3.5 w-3.5 ml-1" />
+            </Button>
+          ) : null)}
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="icon" variant="ghost" className="h-9 w-9" aria-label="İşlemler">
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            {order.customerPhone && (
+              <DropdownMenuItem asChild>
+                <a href={waLink(order)} target="_blank" rel="noreferrer">
+                  <MessageCircle className="mr-2 h-4 w-4 text-emerald-600" /> WhatsApp'tan yaz
+                </a>
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onClick={() => onShippingLabel(order)}>
+              <Truck className="mr-2 h-4 w-4" /> Kargo etiketi
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onInvoice(order)}>
+              <FileText className="mr-2 h-4 w-4" /> Fatura kes
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onEdit(order)}>
+              <Pencil className="mr-2 h-4 w-4" /> Düzenle
+            </DropdownMenuItem>
+            {!auto && prev && (
+              <DropdownMenuItem onClick={() => onAdvance(order, -1)}>
+                <ArrowLeft className="mr-2 h-4 w-4" /> Geri: {prev.label}
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onClick={() => {
+                if (confirm("Bu siparişi silmek istediğinize emin misiniz?")) onDelete(order.id);
+              }}
+            >
+              <Trash2 className="mr-2 h-4 w-4" /> Sil
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </div>
   );
 }

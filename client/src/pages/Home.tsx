@@ -75,7 +75,7 @@ export default function Home() {
       </div>
 
       {/* Finans özeti */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <button className="text-left" onClick={() => setLocation("/siparisler")}>
           <StatCard
             icon={<Wallet className="h-5 w-5" />}
@@ -271,16 +271,16 @@ export default function Home() {
 
         {/* Hızlı erişim */}
         <Card className="p-5 space-y-3">
-          <h2 className="font-semibold">Hızlı İşlemler</h2>
+          <h2 className="font-semibold">Hızlı Erişim</h2>
           <div className="grid grid-cols-2 gap-2">
             <QuickAction
               icon={<ClipboardList className="h-4 w-4" />}
-              label="Yeni Sipariş"
+              label="Siparişler"
               onClick={() => setLocation("/siparisler")}
             />
             <QuickAction
               icon={<Package className="h-4 w-4" />}
-              label="Ürün Ekle"
+              label="Ürünler"
               onClick={() => setLocation("/urunler")}
             />
             <QuickAction
@@ -290,17 +290,17 @@ export default function Home() {
             />
             <QuickAction
               icon={<Receipt className="h-4 w-4" />}
-              label="Gider Ekle"
+              label="Giderler"
               onClick={() => setLocation("/giderler")}
             />
             <QuickAction
               icon={<Sparkles className="h-4 w-4" />}
-              label="AI Metin Üret"
+              label="AI Pazarlama"
               onClick={() => setLocation("/pazarlama")}
             />
             <QuickAction
               icon={<TrendingUp className="h-4 w-4" />}
-              label="Kar Hesapla"
+              label="Maliyet & Kâr"
               onClick={() => setLocation("/maliyet")}
             />
           </div>

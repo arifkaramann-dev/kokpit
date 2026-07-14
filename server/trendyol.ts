@@ -330,18 +330,19 @@ export async function syncTrendyolOrders(daysBack = 14) {
 
       const existing = await db.getOrderByOrderNo(mapped.orderNo);
       if (existing) {
-        // Sipariş zaten var; ama kargoya verilmişse takip no/kargo bilgisi sonradan
-        // dolar. Eksik/değişmişse güncelle ki resmi etiket çekilebilsin.
-        const changed =
-          (mapped.cargoTrackingNumber && mapped.cargoTrackingNumber !== existing.cargoTrackingNumber) ||
-          (mapped.cargoProviderName && mapped.cargoProviderName !== existing.cargoProviderName) ||
-          (mapped.cargoTrackingLink && mapped.cargoTrackingLink !== existing.cargoTrackingLink);
-        if (changed) {
-          await db.updateOrder(existing.id, {
-            cargoTrackingNumber: mapped.cargoTrackingNumber,
-            cargoProviderName: mapped.cargoProviderName,
-            cargoTrackingLink: mapped.cargoTrackingLink,
-          });
+        // Sipariş zaten var; ama Trendyol siparişi kaynağın kendisidir: durumu
+        // (Shipped→Hazır, Delivered→Tamamlandı) ve kargoya verilince dolan takip
+        // no/kargo bilgisi burada otomatik akıtılır. Kullanıcı elle taşımaz.
+        const patch: Record<string, unknown> = {};
+        if (mapped.status !== existing.status) patch.status = mapped.status;
+        if (mapped.cargoTrackingNumber && mapped.cargoTrackingNumber !== existing.cargoTrackingNumber)
+          patch.cargoTrackingNumber = mapped.cargoTrackingNumber;
+        if (mapped.cargoProviderName && mapped.cargoProviderName !== existing.cargoProviderName)
+          patch.cargoProviderName = mapped.cargoProviderName;
+        if (mapped.cargoTrackingLink && mapped.cargoTrackingLink !== existing.cargoTrackingLink)
+          patch.cargoTrackingLink = mapped.cargoTrackingLink;
+        if (Object.keys(patch).length > 0) {
+          await db.updateOrder(existing.id, patch as never);
           updated++;
         } else {
           skipped++;

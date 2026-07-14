@@ -20,6 +20,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/useMobile";
+import { useTheme } from "@/contexts/ThemeContext";
 import VoiceButton from "@/components/VoiceButton";
 import CommandPalette from "@/components/CommandPalette";
 import {
@@ -36,6 +37,7 @@ import {
   LayoutDashboard,
   LibraryBig,
   LogOut,
+  Moon,
   Package,
   PanelLeft,
   ReceiptText,
@@ -44,6 +46,7 @@ import {
   Search,
   Settings2,
   Sparkles,
+  Sun,
   Target,
   TrendingDown,
   Truck,
@@ -134,6 +137,7 @@ function DashboardLayoutContent({
   setSidebarWidth,
 }: DashboardLayoutContentProps) {
   const { user, logout } = useAuth();
+  const { theme, toggleTheme, switchable } = useTheme();
   const [location, setLocation] = useLocation();
   const { state, toggleSidebar } = useSidebar();
   const isCollapsed = state === "collapsed";
@@ -260,6 +264,16 @@ function DashboardLayoutContent({
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
+                {switchable && (
+                  <DropdownMenuItem onClick={() => toggleTheme?.()} className="cursor-pointer">
+                    {theme === "dark" ? (
+                      <Sun className="mr-2 h-4 w-4" />
+                    ) : (
+                      <Moon className="mr-2 h-4 w-4" />
+                    )}
+                    <span>{theme === "dark" ? "Açık tema" : "Koyu tema"}</span>
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem
                   onClick={logout}
                   className="cursor-pointer text-destructive focus:text-destructive"
@@ -297,7 +311,8 @@ function DashboardLayoutContent({
           </div>
         )}
         <main className="flex-1 p-4">{children}</main>
-        <VoiceButton />
+        {/* Asistan sayfasının kendi mikrofonu var; sabit buton orada gizlenir. */}
+        {location !== "/asistan" && <VoiceButton />}
         <CommandPalette />
       </SidebarInset>
     </>

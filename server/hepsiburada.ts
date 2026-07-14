@@ -190,6 +190,7 @@ export async function syncHepsiburadaOrders() {
   }
 
   let imported = 0;
+  let updated = 0;
   let skipped = 0;
   // Aynı sipariş sayfalar arasında tekrar gelebilir; tek çekimde bir kez ekle.
   const seen = new Set<string>();
@@ -211,7 +212,14 @@ export async function syncHepsiburadaOrders() {
 
       const existing = await db.getOrderByOrderNo(mapped.orderNo);
       if (existing) {
-        skipped++;
+        // Hepsiburada siparişin kaynağıdır: durum (Shipped→Hazır, Delivered→
+        // Tamamlandı) senkronda otomatik akıtılır; kullanıcı elle taşımaz.
+        if (mapped.status !== existing.status) {
+          await db.updateOrder(existing.id, { status: mapped.status } as never);
+          updated++;
+        } else {
+          skipped++;
+        }
         continue;
       }
 
@@ -226,5 +234,5 @@ export async function syncHepsiburadaOrders() {
     if (page >= (data.totalPages ?? 1) - 1) break;
   }
 
-  return { imported, skipped };
+  return { imported, updated, skipped };
 }
