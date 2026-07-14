@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { formatTL } from "@/lib/format";
+import { useConfirm } from "@/components/ConfirmDialog";
 import { trpc } from "@/lib/trpc";
 import { Beaker, ChevronDown, ChevronRight, Download, Layers, Package, Pencil, Percent, Plus, Printer, Search, Store, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -75,6 +76,7 @@ const emptyForm = {
 
 export default function Products() {
   const utils = trpc.useUtils();
+  const confirm = useConfirm();
   const { data: products, isLoading } = trpc.products.list.useQuery();
   const [, setLocation] = useLocation();
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -463,8 +465,15 @@ export default function Products() {
                     size="icon"
                     variant="ghost"
                     className="h-8 w-8 text-destructive"
-                    onClick={() => {
-                      if (confirm(`"${main.name}" ve tüm türevleri silinsin mi?`))
+                    onClick={async () => {
+                      if (
+                        await confirm({
+                          title: "Ürünü sil",
+                          description: `"${main.name}" ve tüm türevleri silinsin mi?`,
+                          confirmText: "Sil",
+                          destructive: true,
+                        })
+                      )
                         deleteProduct.mutate({ id: main.id });
                     }}
                   >
@@ -532,8 +541,16 @@ export default function Products() {
                           size="icon"
                           variant="ghost"
                           className="h-7 w-7 text-destructive"
-                          onClick={() => {
-                            if (confirm(`"${v.name}" türevi silinsin mi?`)) deleteProduct.mutate({ id: v.id });
+                          onClick={async () => {
+                            if (
+                              await confirm({
+                                title: "Türevi sil",
+                                description: `"${v.name}" türevi silinsin mi?`,
+                                confirmText: "Sil",
+                                destructive: true,
+                              })
+                            )
+                              deleteProduct.mutate({ id: v.id });
                           }}
                         >
                           <Trash2 className="h-3.5 w-3.5" />

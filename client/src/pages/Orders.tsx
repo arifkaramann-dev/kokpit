@@ -1,3 +1,4 @@
+import { useConfirm } from "@/components/ConfirmDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -988,6 +989,7 @@ function OrderRowItem({
   onTogglePaid: (o: OrderRow) => void;
   onAdvance: (o: OrderRow, dir: 1 | -1) => void;
 }) {
+  const confirm = useConfirm();
   const paid = order.paymentStatus === "paid";
   const auto = isAutoOrder(order);
   const idx = ORDER_STATUSES.findIndex(s => s.value === order.status);
@@ -1074,8 +1076,16 @@ function OrderRowItem({
             <DropdownMenuSeparator />
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
-              onClick={() => {
-                if (confirm("Bu siparişi silmek istediğinize emin misiniz?")) onDelete(order.id);
+              onSelect={async () => {
+                if (
+                  await confirm({
+                    title: "Siparişi sil",
+                    description: `${order.orderNo} — ${order.customerName} siparişi silinsin mi? Bu işlem geri alınamaz.`,
+                    confirmText: "Sil",
+                    destructive: true,
+                  })
+                )
+                  onDelete(order.id);
               }}
             >
               <Trash2 className="mr-2 h-4 w-4" /> Sil

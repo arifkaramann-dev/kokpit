@@ -10,6 +10,8 @@ import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
+  SidebarGroup,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
@@ -58,31 +60,59 @@ import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import LoginForm from "./LoginForm";
 
-const menuItems = [
-  { icon: LayoutDashboard, label: "Kokpit", path: "/" },
-  { icon: Bot, label: "Asistan", path: "/asistan" },
-  { icon: ClipboardList, label: "Sipariş Panosu", path: "/siparisler" },
-  { icon: Contact, label: "Müşteriler", path: "/musteriler" },
-  { icon: ListChecks, label: "Görevler & Eksikler", path: "/gorevler" },
-  { icon: Warehouse, label: "Stok & Hammadde", path: "/stok" },
-  { icon: ReceiptText, label: "Fatura Girişi", path: "/faturalar" },
-  { icon: TrendingDown, label: "Giderler", path: "/giderler" },
-  { icon: Wallet, label: "Kasa & Banka", path: "/kasa" },
-  { icon: Scale, label: "Cari Hesaplar", path: "/cari" },
-  { icon: ScrollText, label: "Çek & Senet", path: "/cek-senet" },
-  { icon: Package, label: "Ürünler & Türevler", path: "/urunler" },
-  { icon: FlaskConical, label: "Ürün Geliştirme", path: "/gelistirme" },
-  { icon: Beaker, label: "Formül Defteri", path: "/formuller" },
-  { icon: Factory, label: "Üretim", path: "/uretim" },
-  { icon: Calculator, label: "Maliyet & Kar", path: "/maliyet" },
-  { icon: BarChart3, label: "Satış Analizi", path: "/analiz" },
-  { icon: Sparkles, label: "AI Pazarlama", path: "/pazarlama" },
-  { icon: CalendarDays, label: "Kampanya Takvimi", path: "/kampanyalar" },
-  { icon: Truck, label: "Tedarikçiler", path: "/tedarikciler" },
-  { icon: Target, label: "Strateji & Rapor", path: "/strateji" },
-  { icon: LibraryBig, label: "Şablonlar", path: "/sablonlar" },
-  { icon: Settings2, label: "Ayarlar", path: "/ayarlar" },
+const menuGroups = [
+  {
+    label: "Genel",
+    items: [
+      { icon: LayoutDashboard, label: "Kokpit", path: "/" },
+      { icon: Bot, label: "Asistan", path: "/asistan" },
+    ],
+  },
+  {
+    label: "Satış & Müşteri",
+    items: [
+      { icon: ClipboardList, label: "Sipariş Panosu", path: "/siparisler" },
+      { icon: Contact, label: "Müşteriler", path: "/musteriler" },
+      { icon: ListChecks, label: "Görevler & Eksikler", path: "/gorevler" },
+      { icon: CalendarDays, label: "Kampanya Takvimi", path: "/kampanyalar" },
+      { icon: Sparkles, label: "AI Pazarlama", path: "/pazarlama" },
+      { icon: LibraryBig, label: "Şablonlar", path: "/sablonlar" },
+    ],
+  },
+  {
+    label: "Finans",
+    items: [
+      { icon: ReceiptText, label: "Fatura Girişi", path: "/faturalar" },
+      { icon: TrendingDown, label: "Giderler", path: "/giderler" },
+      { icon: Wallet, label: "Kasa & Banka", path: "/kasa" },
+      { icon: Scale, label: "Cari Hesaplar", path: "/cari" },
+      { icon: ScrollText, label: "Çek & Senet", path: "/cek-senet" },
+    ],
+  },
+  {
+    label: "Ürün & Üretim",
+    items: [
+      { icon: Package, label: "Ürünler & Türevler", path: "/urunler" },
+      { icon: FlaskConical, label: "Ürün Geliştirme", path: "/gelistirme" },
+      { icon: Beaker, label: "Formül Defteri", path: "/formuller" },
+      { icon: Factory, label: "Üretim", path: "/uretim" },
+      { icon: Warehouse, label: "Stok & Hammadde", path: "/stok" },
+      { icon: Calculator, label: "Maliyet & Kar", path: "/maliyet" },
+      { icon: Truck, label: "Tedarikçiler", path: "/tedarikciler" },
+    ],
+  },
+  {
+    label: "Analiz & Ayarlar",
+    items: [
+      { icon: BarChart3, label: "Satış Analizi", path: "/analiz" },
+      { icon: Target, label: "Strateji & Rapor", path: "/strateji" },
+      { icon: Settings2, label: "Ayarlar", path: "/ayarlar" },
+    ],
+  },
 ];
+
+// Aktif başlık aramaları ve rota eşleşmesi için düz liste.
+const menuItems = menuGroups.flatMap(g => g.items);
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
 const DEFAULT_WIDTH = 280;
@@ -222,26 +252,31 @@ function DashboardLayoutContent({
                 </button>
               </div>
             )}
-            <SidebarMenu className="px-2 py-1">
-              {menuItems.map(item => {
-                const isActive = location === item.path;
-                return (
-                  <SidebarMenuItem key={item.path}>
-                    <SidebarMenuButton
-                      isActive={isActive}
-                      onClick={() => setLocation(item.path)}
-                      tooltip={item.label}
-                      className={`h-10 transition-all font-normal`}
-                    >
-                      <item.icon
-                        className={`h-4 w-4 ${isActive ? "text-primary" : ""}`}
-                      />
-                      <span>{item.label}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
+            {menuGroups.map(group => (
+              <SidebarGroup key={group.label} className="px-2 py-0.5">
+                <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+                <SidebarMenu>
+                  {group.items.map(item => {
+                    const isActive = location === item.path;
+                    return (
+                      <SidebarMenuItem key={item.path}>
+                        <SidebarMenuButton
+                          isActive={isActive}
+                          onClick={() => setLocation(item.path)}
+                          tooltip={item.label}
+                          className={`h-10 transition-all font-normal`}
+                        >
+                          <item.icon
+                            className={`h-4 w-4 ${isActive ? "text-primary" : ""}`}
+                          />
+                          <span>{item.label}</span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    );
+                  })}
+                </SidebarMenu>
+              </SidebarGroup>
+            ))}
           </SidebarContent>
 
           <SidebarFooter className="p-3">

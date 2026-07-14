@@ -1,3 +1,4 @@
+import { ConfirmProvider } from "@/components/ConfirmDialog";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -68,8 +69,10 @@ function App() {
     <ErrorBoundary>
       <ThemeProvider defaultTheme="light" switchable>
         <TooltipProvider>
-          <Toaster />
-          <Router />
+          <ConfirmProvider>
+            <Toaster />
+            <Router />
+          </ConfirmProvider>
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>

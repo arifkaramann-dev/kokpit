@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/select";
 import { formatDate, formatTL } from "@/lib/format";
 import { printReceipt } from "@/lib/receipt";
+import { useConfirm } from "@/components/ConfirmDialog";
 import { trpc } from "@/lib/trpc";
 import { ArrowDownLeft, ArrowUpRight, ArrowLeftRight, Banknote, Landmark, Plus, Printer, Trash2, Wallet } from "lucide-react";
 import { useState } from "react";
@@ -48,6 +49,7 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
 
 export default function Accounts() {
   const utils = trpc.useUtils();
+  const confirm = useConfirm();
   const { data: accounts } = trpc.accounts.list.useQuery();
   const { data: txns } = trpc.transactions.list.useQuery({});
   const { data: customers } = trpc.customers.list.useQuery();
@@ -193,8 +195,15 @@ export default function Accounts() {
                 size="icon"
                 variant="ghost"
                 className="h-6 w-6 text-destructive"
-                onClick={() => {
-                  if (confirm(`"${a.name}" hesabı silinsin mi? Hareketler kalır (hesaptan çözülür).`))
+                onClick={async () => {
+                  if (
+                    await confirm({
+                      title: "Hesabı sil",
+                      description: `"${a.name}" hesabı silinsin mi? Hareketler kalır (hesaptan çözülür).`,
+                      confirmText: "Sil",
+                      destructive: true,
+                    })
+                  )
                     deleteAccount.mutate({ id: a.id });
                 }}
               >

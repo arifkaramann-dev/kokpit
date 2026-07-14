@@ -26,6 +26,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatQty, formatTL, num } from "@/lib/format";
+import { useConfirm } from "@/components/ConfirmDialog";
 import { trpc } from "@/lib/trpc";
 import { Beaker, Pencil, Plus, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -36,6 +37,7 @@ import type { ProductRow } from "./Products";
 export default function Formulas() {
   const search = useSearch();
   const utils = trpc.useUtils();
+  const confirm = useConfirm();
   const { data: products } = trpc.products.list.useQuery();
   const { data: materials } = trpc.materials.list.useQuery();
 
@@ -276,8 +278,16 @@ export default function Formulas() {
                           size="icon"
                           variant="ghost"
                           className="h-7 w-7 text-destructive"
-                          onClick={() => {
-                            if (confirm("Bu formül kalemi silinsin mi?")) deleteItem.mutate({ id: item.id });
+                          onClick={async () => {
+                            if (
+                              await confirm({
+                                title: "Formül kalemini sil",
+                                description: "Bu formül kalemi silinsin mi?",
+                                confirmText: "Sil",
+                                destructive: true,
+                              })
+                            )
+                              deleteItem.mutate({ id: item.id });
                           }}
                         >
                           <Trash2 className="h-3.5 w-3.5" />

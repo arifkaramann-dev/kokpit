@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatTL } from "@/lib/format";
+import { useConfirm } from "@/components/ConfirmDialog";
 import { trpc } from "@/lib/trpc";
 import { Contact, Mail, MapPin, MessageCircle, Pencil, Phone, Plus, Search, ShoppingBag, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -30,6 +31,7 @@ const emptyForm = { name: "", phone: "", email: "", address: "", city: "", notes
 
 export default function Customers() {
   const utils = trpc.useUtils();
+  const confirm = useConfirm();
   const { data: customers, isLoading } = trpc.customers.list.useQuery();
   const { data: orders } = trpc.orders.list.useQuery();
   const { data: balances } = trpc.customers.balances.useQuery();
@@ -202,8 +204,16 @@ export default function Customers() {
                   size="icon"
                   variant="ghost"
                   className="h-7 w-7 text-destructive"
-                  onClick={() => {
-                    if (confirm(`"${c.name}" silinsin mi?`)) deleteCustomer.mutate({ id: c.id });
+                  onClick={async () => {
+                    if (
+                      await confirm({
+                        title: "Müşteriyi sil",
+                        description: `"${c.name}" silinsin mi?`,
+                        confirmText: "Sil",
+                        destructive: true,
+                      })
+                    )
+                      deleteCustomer.mutate({ id: c.id });
                   }}
                 >
                   <Trash2 className="h-3.5 w-3.5" />

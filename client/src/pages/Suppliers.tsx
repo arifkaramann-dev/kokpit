@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatTL } from "@/lib/format";
+import { useConfirm } from "@/components/ConfirmDialog";
 import { trpc } from "@/lib/trpc";
 import { Mail, Pencil, Phone, Plus, Trash2, Truck, Wallet } from "lucide-react";
 import { useState } from "react";
@@ -39,6 +40,7 @@ const emptyForm = {
 
 export default function Suppliers() {
   const utils = trpc.useUtils();
+  const confirm = useConfirm();
   const { data: suppliers, isLoading } = trpc.suppliers.list.useQuery();
   const { data: balances } = trpc.suppliers.balances.useQuery();
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -173,8 +175,16 @@ export default function Suppliers() {
                   size="icon"
                   variant="ghost"
                   className="h-7 w-7 text-destructive"
-                  onClick={() => {
-                    if (confirm(`"${s.name}" silinsin mi?`)) deleteSupplier.mutate({ id: s.id });
+                  onClick={async () => {
+                    if (
+                      await confirm({
+                        title: "Tedarikçiyi sil",
+                        description: `"${s.name}" silinsin mi?`,
+                        confirmText: "Sil",
+                        destructive: true,
+                      })
+                    )
+                      deleteSupplier.mutate({ id: s.id });
                   }}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
