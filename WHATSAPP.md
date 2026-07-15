@@ -46,6 +46,7 @@ Render panelinde **artofcolour-kokpit → Environment**:
 | `WHATSAPP_ACCESS_TOKEN` | 2. adımdaki kalıcı token |
 | `WHATSAPP_PHONE_NUMBER_ID` | API Setup sayfasındaki **Phone number ID** |
 | `WHATSAPP_ALLOWED_NUMBERS` | Kendi numaran, örn. `905551112233` (birden fazlaysa virgülle) |
+| `WHATSAPP_APP_SECRET` | Meta panelinde **Settings → Basic → App Secret** (Show'a bas, kopyala) — webhook imza doğrulaması için, **önerilir** |
 | `ANTHROPIC_API_KEY` | (zaten girdiysen atla) — asistanın beyni bu |
 
 Kaydet, servis yeniden başlasın.
@@ -66,6 +67,10 @@ Cevap birkaç saniyede gelir. ✅
 ## Güvenlik
 - Sadece `WHATSAPP_ALLOWED_NUMBERS` içindeki numaralara cevap verilir;
   liste boşsa asistan kimseye cevap vermez.
+- `WHATSAPP_APP_SECRET` tanımlıysa her gelen webhook'un Meta imzası
+  (`X-Hub-Signature-256`, HMAC-SHA256) doğrulanır; imzasız/sahte istekler
+  401 ile reddedilir. Tanımsızsa doğrulama kapalıdır ve açılışta log'a
+  uyarı yazılır — canlıda mutlaka tanımla.
 - Token'ları kimseyle paylaşma; sızarsa Meta panelinden yenile.
 
 ## Sorun giderme

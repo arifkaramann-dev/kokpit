@@ -117,9 +117,10 @@ Pazaryeri (Qukasoft):
 - [ ] Sıfırdan ürün açma (kategori/marka/özellik/görsel) — çoklu pazaryeri
 
 ## Açık işler — 15.07.2026 takım denetimi (öncelik sırasıyla)
-1. [ ] GÜVENLİK: WhatsApp POST webhook'una X-Hub-Signature-256 (HMAC, app secret) imza
-       doğrulaması — imza kontrolü yok, sahte POST asistanı tetikleyebilir (whatsapp.ts;
-       verify_token ve idempotens mevcut). Düşük efor, yüksek öncelik.
+1. [x] GÜVENLİK: WhatsApp POST webhook'una X-Hub-Signature-256 (HMAC, timingSafeEqual)
+       imza doğrulaması eklendi — `WHATSAPP_APP_SECRET` tanımlıysa sahte istek 401 alır,
+       tanımsızsa eski davranış + açılış uyarısı. 6 birim testi. **Render'a
+       `WHATSAPP_APP_SECRET` girilmeli** (Meta → Settings → Basic → App Secret).
 2. [ ] Asistan yazma intent'leri: "gider ekle" / "tahsilat aldım" (claude.ts intent
        enum + assistant.ts handler; snapshot/kasa altyapısı hazır, sadece okuma var)
 3. [ ] Hepsiburada stok/fiyat gönderme + HEPSIBURADA_SERVICE_KEY env desteği

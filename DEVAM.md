@@ -83,9 +83,10 @@ Sağlık: `pnpm check` 0 hata, 38/38 test geçiyor, kod içi TODO/FIXME borcu yo
    kurulum SESLI.md).
 
 **Geliştirme sırası (takım denetiminin bulguları):**
-5. **GÜVENLİK — WhatsApp webhook imzası:** POST webhook'ta `X-Hub-Signature-256` HMAC
-   doğrulaması yok (verify_token + idempotens var); sahte POST asistanı tetikleyebilir.
-   Düşük efor, öncelikli.
+5. **GÜVENLİK — WhatsApp webhook imzası ✔ yapıldı:** `X-Hub-Signature-256` HMAC
+   doğrulaması eklendi (`verifyWebhookSignature`, timingSafeEqual, ham gövde üzerinden).
+   `WHATSAPP_APP_SECRET` tanımlıysa sahte istek 401; tanımsızsa eski davranış + açılışta
+   uyarı. **Render'a `WHATSAPP_APP_SECRET` girilmeli** (Meta → Settings → Basic).
 6. **Asistan yazma intent'leri:** "gider ekle"/"tahsilat aldım" intent enum'unda yok —
    sadece soru-cevap var; altyapı (kasa/gider API'leri) hazır.
 7. **Hepsiburada stok/fiyat gönderme** + "Servis Anahtarı" desteği kodda hiç yok.
