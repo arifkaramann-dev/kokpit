@@ -116,13 +116,38 @@ Pazaryeri (Qukasoft):
 - [ ] İade yönetimi (Returned/Cancelled siparişler şu an sessizce atlanıyor) + müşteri soru-cevap yönetimi
 - [ ] Sıfırdan ürün açma (kategori/marka/özellik/görsel) — çoklu pazaryeri
 
+## YENİ ÖNCELİK — Fiyatlandırma & kâr hızlandırma paketi (15.07.2026, patron kararı)
+Asistan yazma komutları (aşağıda 2. madde) ertelendi; önce işleyişi hızlandıran
+fiyat/kâr araçları gelecek. Araştırma bulguları: tekil hesaplayıcı var (Costs.tsx,
+tek ürün seç → kaydet), toplu güncelleme sadece yüzde zam/indirim (bulkUpdatePrices),
+Excel/CSV İÇE aktarım yok (sadece dışa aktarım var), Trendyol fiyat push var,
+Hepsiburada push yok, web sitesi (Qukasoft) entegrasyonu yok.
+
+- [ ] F1. **Fiyat & Kâr tablosu:** tüm ürünler tek tabloda — formülden hammadde
+      maliyeti + ambalaj + kargo = toplam maliyet, mevcut fiyat, komisyon/KDV
+      varsayımıyla net kâr ve marj %; sıralama/filtre (zararına satılanlar üste),
+      satırda fiyat düzenleme. Server'da tek sorguda toplu maliyet endpoint'i.
+- [ ] F2. **Formülle toplu fiyatlama:** hedef marj % / çarpan / sabit tutar gir →
+      önerilen fiyatlar + psikolojik yuvarlama (örn. ,90'a); önizleme (eski→yeni
+      diff) → onayla → toplu uygula (bulkPrice genişletilir: percent'e ek modlar).
+- [ ] F3. **Excel/CSV ile fiyat güncelleme:** mevcut katalog dışa aktarımının
+      simetriği — barkod/ID + yeni fiyat sütunlu dosya yükle → eşleşme + diff
+      önizlemesi → onayla → uygula (hatalı satırlar raporlanır).
+- [ ] F4. **Değişen fiyatı kanallara yansıtma:** güncelleme sonrası tek tıkla
+      Trendyol'a push (mevcut pushTrendyolStockPrice); Hepsiburada stok/fiyat
+      push eklenmeli (eski 3. madde buraya bağlanır). Web sitesi: Qukasoft'un
+      API'si/toplu içe aktarımı araştırılacak; yoksa F3 formatında CSV üret.
+- [ ] F5. **Pazaryeri komisyon profilleri:** kanal başına komisyon/kesinti
+      varsayılanları kaydedilir; F1 tablosu ve toplu net kâr raporu (eski 6.
+      madde) bunları kullanır.
+
 ## Açık işler — 15.07.2026 takım denetimi (öncelik sırasıyla)
 1. [x] GÜVENLİK: WhatsApp POST webhook'una X-Hub-Signature-256 (HMAC, timingSafeEqual)
        imza doğrulaması eklendi — `WHATSAPP_APP_SECRET` tanımlıysa sahte istek 401 alır,
        tanımsızsa eski davranış + açılış uyarısı. 6 birim testi. **Render'a
        `WHATSAPP_APP_SECRET` girilmeli** (Meta → Settings → Basic → App Secret).
-2. [ ] Asistan yazma intent'leri: "gider ekle" / "tahsilat aldım" (claude.ts intent
-       enum + assistant.ts handler; snapshot/kasa altyapısı hazır, sadece okuma var)
+2. [ ] (ERTELENDİ — önce fiyatlandırma paketi) Asistan yazma intent'leri: "gider ekle" /
+       "tahsilat aldım" (claude.ts intent enum + assistant.ts handler; altyapı hazır)
 3. [ ] Hepsiburada stok/fiyat gönderme + HEPSIBURADA_SERVICE_KEY env desteği
 4. [ ] Finans birim testleri: vatReport, customer/supplierBalances, tahsilat→sipariş
        ödeme senkronu, kasa bakiyesi, senkron tek-uçuş kilidi (38/38 test geçiyor ama
