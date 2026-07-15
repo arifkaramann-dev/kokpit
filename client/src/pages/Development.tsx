@@ -20,6 +20,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import TemplatePicker from "@/components/TemplatePicker";
 import { formatTL } from "@/lib/format";
+import { useConfirm } from "@/components/ConfirmDialog";
 import { trpc } from "@/lib/trpc";
 import {
   ArrowLeft,
@@ -27,11 +28,24 @@ import {
   Check,
   CheckCircle2,
   FlaskConical,
+  GripVertical,
+  LayoutGrid,
+  List,
   Package,
   Plus,
   Star,
   Trash2,
 } from "lucide-react";
+import {
+  DndContext,
+  DragEndEvent,
+  DragOverlay,
+  PointerSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
@@ -66,10 +80,18 @@ export default function Development() {
 
 function ProjectList({ onOpen }: { onOpen: (id: number) => void }) {
   const utils = trpc.useUtils();
+  const confirm = useConfirm();
   const { data: projects, isLoading } = trpc.dev.list.useQuery();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [name, setName] = useState("");
   const [targetUse, setTargetUse] = useState("");
+  // Liste (kart ızgarası) veya Pano (adım adım kanban) görünümü; tercih saklanır.
+  const [view, setView] = useState<"list" | "board">(
+    () => (localStorage.getItem("dev-view") as "list" | "board") || "list",
+  );
+  useEffect(() => {
+    localStorage.setItem("dev-view", view);
+  }, [view]);
 
   const createProject = trpc.dev.create.useMutation({
     onSuccess: () => {
@@ -90,6 +112,23 @@ function ProjectList({ onOpen }: { onOpen: (id: number) => void }) {
     onError: e => toast.error(e.message),
   });
 
+  // Panoda kart sürüklenince projenin geliştirme adımını günceller (optimistic).
+  const setStep = trpc.dev.update.useMutation({
+    onMutate: async ({ id, data }) => {
+      await utils.dev.list.cancel();
+      const prev = utils.dev.list.getData();
+      utils.dev.list.setData(undefined, old =>
+        old?.map(p => (p.id === id ? { ...p, currentStep: data.currentStep ?? p.currentStep } : p)),
+      );
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) utils.dev.list.setData(undefined, ctx.prev);
+      toast.error("Adım güncellenemedi");
+    },
+    onSettled: () => utils.dev.list.invalidate(),
+  });
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -99,9 +138,31 @@ function ProjectList({ onOpen }: { onOpen: (id: number) => void }) {
             Fikirden bitmiş ürüne 5 adım: tanım → reçete → test → fiyat → ürünleştir.
           </p>
         </div>
-        <Button onClick={() => setDialogOpen(true)}>
-          <Plus className="h-4 w-4 mr-1" /> Yeni Proje
-        </Button>
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-lg border p-0.5">
+            <button
+              onClick={() => setView("list")}
+              className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                view === "list" ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground"
+              }`}
+              title="Liste görünümü"
+            >
+              <List className="h-3.5 w-3.5" /> Liste
+            </button>
+            <button
+              onClick={() => setView("board")}
+              className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                view === "board" ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:text-foreground"
+              }`}
+              title="Pano (adım adım) görünümü"
+            >
+              <LayoutGrid className="h-3.5 w-3.5" /> Pano
+            </button>
+          </div>
+          <Button onClick={() => setDialogOpen(true)}>
+            <Plus className="h-4 w-4 mr-1" /> Yeni Proje
+          </Button>
+        </div>
       </div>
 
       {isLoading ? (
@@ -114,6 +175,12 @@ function ProjectList({ onOpen }: { onOpen: (id: number) => void }) {
             "Yeni Proje" ile başlayın — sistem sizi adım adım yönlendirir.
           </p>
         </Card>
+      ) : view === "board" ? (
+        <DevBoard
+          projects={projects ?? []}
+          onOpen={onOpen}
+          onStepChange={(id, step) => setStep.mutate({ id, data: { currentStep: step } })}
+        />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {(projects ?? []).map(p => (
@@ -152,10 +219,16 @@ function ProjectList({ onOpen }: { onOpen: (id: number) => void }) {
                   variant="ghost"
                   size="icon"
                   className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                  onClick={() => {
-                    if (confirm(`"${p.name}" projesi ve tüm denemeleri silinsin mi?`)) {
+                  onClick={async () => {
+                    if (
+                      await confirm({
+                        title: "Projeyi sil",
+                        description: `"${p.name}" projesi ve tüm denemeleri silinsin mi?`,
+                        confirmText: "Sil",
+                        destructive: true,
+                      })
+                    )
                       deleteProject.mutate({ id: p.id });
-                    }
                   }}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -769,5 +842,185 @@ function SummaryRow({ ok, label }: { ok: boolean; label: string }) {
       <Check className={`h-4 w-4 ${ok ? "text-emerald-500" : "text-muted-foreground/40"}`} />
       <span className={ok ? "" : "text-muted-foreground"}>{label}</span>
     </div>
+  );
+}
+
+/* ------------------------- Geliştirme panosu (kanban) ------------------------- */
+
+type DevBoardProject = {
+  id: number;
+  name: string;
+  targetUse: string | null;
+  status: "active" | "done" | "archived";
+  currentStep: number;
+};
+
+/**
+ * Aktif geliştirme projelerini 5 adıma göre kanban sütunlarında gösterir.
+ * Kartı bir adıma sürükleyince projenin currentStep'i güncellenir. Ürünleşen
+ * (done) projeler panoda gösterilmez; liste görünümünde görünür.
+ */
+function DevBoard({
+  projects,
+  onOpen,
+  onStepChange,
+}: {
+  projects: DevBoardProject[];
+  onOpen: (id: number) => void;
+  onStepChange: (id: number, step: number) => void;
+}) {
+  const active = projects.filter(p => p.status !== "done" && p.status !== "archived");
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const [dragId, setDragId] = useState<number | null>(null);
+  const dragged = active.find(p => p.id === dragId) ?? null;
+
+  function handleEnd(e: DragEndEvent) {
+    setDragId(null);
+    const { active: a, over } = e;
+    if (!over) return;
+    const id = Number(a.id);
+    const step = Number(over.id);
+    const proj = active.find(p => p.id === id);
+    if (proj && proj.currentStep !== step) onStepChange(id, step);
+  }
+
+  return (
+    <div className="space-y-2">
+      <DndContext
+        sensors={sensors}
+        onDragStart={e => setDragId(Number(e.active.id))}
+        onDragEnd={handleEnd}
+      >
+        <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-5 gap-3">
+          {STEPS.map(step => (
+            <DevStepColumn
+              key={step.n}
+              step={step}
+              projects={active.filter(p => p.currentStep === step.n)}
+              onOpen={onOpen}
+            />
+          ))}
+        </div>
+        <DragOverlay>
+          {dragged ? <DevBoardCard project={dragged} onOpen={onOpen} overlay /> : null}
+        </DragOverlay>
+      </DndContext>
+      {projects.some(p => p.status === "done") && (
+        <p className="text-xs text-muted-foreground">
+          Ürünleşen projeler panoda gösterilmez — liste görünümünde görüntüleyin.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function DevStepColumn({
+  step,
+  projects,
+  onOpen,
+}: {
+  step: (typeof STEPS)[number];
+  projects: DevBoardProject[];
+  onOpen: (id: number) => void;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: String(step.n) });
+  return (
+    <div
+      ref={setNodeRef}
+      className={`rounded-xl border bg-card p-2.5 flex flex-col gap-2 min-h-[160px] transition-colors ${
+        isOver ? "ring-2 ring-primary/60 bg-accent/40" : ""
+      }`}
+    >
+      <div className="flex items-center gap-1.5 px-0.5">
+        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
+          {step.n}
+        </span>
+        <span className="text-xs font-semibold">{step.label}</span>
+        <Badge variant="secondary" className="ml-auto">
+          {projects.length}
+        </Badge>
+      </div>
+      {projects.length === 0 ? (
+        <div className="flex-1 flex items-center justify-center text-[11px] text-muted-foreground border border-dashed rounded-lg py-6">
+          —
+        </div>
+      ) : (
+        projects.map(p => <DraggableDevCard key={p.id} project={p} onOpen={onOpen} />)
+      )}
+    </div>
+  );
+}
+
+function DraggableDevCard({
+  project,
+  onOpen,
+}: {
+  project: DevBoardProject;
+  onOpen: (id: number) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: project.id });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: transform ? `translate(${transform.x}px, ${transform.y}px)` : undefined,
+        opacity: isDragging ? 0.4 : 1,
+      }}
+    >
+      <DevBoardCard
+        project={project}
+        onOpen={onOpen}
+        dragHandle={{
+          attributes: attributes as unknown as React.HTMLAttributes<HTMLButtonElement>,
+          listeners,
+        }}
+      />
+    </div>
+  );
+}
+
+function DevBoardCard({
+  project,
+  onOpen,
+  overlay,
+  dragHandle,
+}: {
+  project: DevBoardProject;
+  onOpen: (id: number) => void;
+  overlay?: boolean;
+  dragHandle?: {
+    attributes: React.HTMLAttributes<HTMLButtonElement>;
+    listeners: Record<string, unknown> | undefined;
+  };
+}) {
+  return (
+    <Card className={`p-2.5 space-y-1.5 ${overlay ? "shadow-xl rotate-2" : "shadow-sm"}`}>
+      <div className="flex items-start gap-1.5">
+        <button
+          className="mt-0.5 text-muted-foreground/60 hover:text-foreground cursor-grab active:cursor-grabbing touch-none"
+          {...(dragHandle?.attributes ?? {})}
+          {...(dragHandle?.listeners ?? {})}
+          aria-label="Taşı"
+        >
+          <GripVertical className="h-4 w-4" />
+        </button>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium truncate">{project.name}</p>
+          {project.targetUse && (
+            <p className="text-[11px] text-muted-foreground truncate">{project.targetUse}</p>
+          )}
+        </div>
+      </div>
+      {!overlay && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 w-full text-xs"
+          onClick={() => onOpen(project.id)}
+        >
+          Aç <ArrowRight className="h-3 w-3 ml-1" />
+        </Button>
+      )}
+    </Card>
   );
 }

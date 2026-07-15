@@ -20,6 +20,7 @@ type HbLineRaw = {
   productName?: string;
   name?: string;
   sku?: string;
+  merchantSku?: string;
   quantity?: number;
   price?: { amount?: number } | number;
   totalPrice?: { amount?: number } | number;
@@ -102,6 +103,8 @@ export function mapHbOrder(raw: HbOrderRaw): MappedOrder | null {
       productName: l.productName ?? l.name ?? l.sku ?? "Ürün",
       quantity: qty,
       unitPrice: unit,
+      // HB'de merchantSku = barkod varsayımı (stok/fiyat push ile tutarlı).
+      barcode: l.merchantSku ?? l.sku ?? null,
     };
   });
 
@@ -181,6 +184,72 @@ export async function testHepsiburadaConnection(): Promise<{ ok: boolean; status
   }
 }
 
+/* ------------------------- Stok & fiyat gönderme (Listing API) ------------------------- */
+
+const HB_LISTING_API_BASE =
+  process.env.HEPSIBURADA_LISTING_API_BASE_URL ?? "https://listing-external.hepsiburada.com";
+
+export type HbStockPriceItem = {
+  /** Satıcı SKU'su — bizde ürün barkodu bu alana yazılır (listelemedeki merchantSku ile aynı olmalı). */
+  merchantSku: string;
+  price: number;
+  availableStock: number;
+};
+
+function hbListingAuth(): string {
+  // Listing API'si "Servis Anahtarı" ile çalışır; tanımlı değilse OMS şifresi denenir.
+  const secret = ENV.hepsiburadaServiceKey || ENV.hepsiburadaPassword;
+  return Buffer.from(`${ENV.hepsiburadaUsername}:${secret}`).toString("base64");
+}
+
+async function hbListingPost(path: string, payload: unknown): Promise<string | null> {
+  const res = await fetch(`${HB_LISTING_API_BASE}${path}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${hbListingAuth()}`,
+      "User-Agent": ENV.hepsiburadaMerchantId,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (res.status === 401 || res.status === 403) {
+    throw new Error(
+      "Hepsiburada Listing API yetki hatası: HEPSIBURADA_SERVICE_KEY (Servis Anahtarı) Render'a girilmeli — panelden 'API Entegrasyon İşlemleri' altında üretilir."
+    );
+  }
+  if (!res.ok) {
+    const body = (await res.text()).slice(0, 300);
+    throw new Error(`Hepsiburada gönderimi başarısız (${res.status}): ${body}`);
+  }
+  const data = (await res.json().catch(() => ({}))) as { id?: string; trackingId?: string };
+  return data.id ?? data.trackingId ?? null;
+}
+
+/**
+ * Hepsiburada'ya stok ve fiyat gönderir (mevcut listelemeleri günceller).
+ * Listing API'sinde fiyat ve stok ayrı uçlardır; ikisi de tek çağrıda gönderilir.
+ * Belgeler: developers.hepsiburada.com → Listing → price-uploads / stock-uploads.
+ */
+export async function pushHepsiburadaStockPrice(items: HbStockPriceItem[]) {
+  if (!isHepsiburadaConfigured()) {
+    throw new Error(
+      "Hepsiburada entegrasyonu yapılandırılmamış (Merchant ID, kullanıcı adı ve Servis Anahtarı/şifre gerekli)."
+    );
+  }
+  if (items.length === 0) throw new Error("Gönderilecek ürün yok (barkodlu ürün gerekli).");
+
+  const priceUploadId = await hbListingPost(
+    `/listings/merchantid/${ENV.hepsiburadaMerchantId}/price-uploads`,
+    items.map(i => ({ merchantSku: i.merchantSku, price: i.price })),
+  );
+  const stockUploadId = await hbListingPost(
+    `/listings/merchantid/${ENV.hepsiburadaMerchantId}/stock-uploads`,
+    items.map(i => ({ merchantSku: i.merchantSku, availableStock: i.availableStock })),
+  );
+  return { priceUploadId, stockUploadId, sent: items.length };
+}
+
 /** Hepsiburada siparişlerini çekip yeni olanları panoya ekler. */
 export async function syncHepsiburadaOrders() {
   if (!isHepsiburadaConfigured()) {
@@ -190,6 +259,7 @@ export async function syncHepsiburadaOrders() {
   }
 
   let imported = 0;
+  let updated = 0;
   let skipped = 0;
   // Aynı sipariş sayfalar arasında tekrar gelebilir; tek çekimde bir kez ekle.
   const seen = new Set<string>();
@@ -201,7 +271,22 @@ export async function syncHepsiburadaOrders() {
 
     for (const raw of orders) {
       const mapped = mapHbOrder(raw);
-      if (!mapped) continue;
+      if (!mapped) {
+        // İptal/iade: içe alınmış sipariş varsa iptal et (stok iadesi otomatik).
+        const rawNo = raw.orderNumber ?? raw.orderId ?? raw.id;
+        if (rawNo) {
+          const cancelledNo = `HB-${rawNo}`;
+          if (!seen.has(cancelledNo)) {
+            seen.add(cancelledNo);
+            const existing = await db.getOrderByOrderNo(cancelledNo);
+            if (existing && existing.status !== "cancelled") {
+              await db.updateOrder(existing.id, { status: "cancelled" });
+              updated++;
+            }
+          }
+        }
+        continue;
+      }
 
       if (seen.has(mapped.orderNo)) {
         skipped++;
@@ -211,7 +296,14 @@ export async function syncHepsiburadaOrders() {
 
       const existing = await db.getOrderByOrderNo(mapped.orderNo);
       if (existing) {
-        skipped++;
+        // Hepsiburada siparişin kaynağıdır: durum (Shipped→Hazır, Delivered→
+        // Tamamlandı) senkronda otomatik akıtılır; kullanıcı elle taşımaz.
+        if (mapped.status !== existing.status) {
+          await db.updateOrder(existing.id, { status: mapped.status } as never);
+          updated++;
+        } else {
+          skipped++;
+        }
         continue;
       }
 
@@ -226,5 +318,5 @@ export async function syncHepsiburadaOrders() {
     if (page >= (data.totalPages ?? 1) - 1) break;
   }
 
-  return { imported, skipped };
+  return { imported, updated, skipped };
 }

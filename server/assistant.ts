@@ -1,6 +1,6 @@
 import { answerBusinessQuestion, parseVoiceCommand } from "./_core/claude";
 import * as db from "./db";
-import { itemsTotal, summarizeItems, toItemRows } from "./orderUtils";
+import { findOpenOrderForCollection, itemsTotal, summarizeItems, toItemRows } from "./orderUtils";
 
 /**
  * Sesli komut / WhatsApp asistanının ortak beyni: serbest Türkçe metni
@@ -25,6 +25,7 @@ const STATUS_LABELS: Record<string, string> = {
   production: "Üretimde",
   ready: "Kargoya Hazır",
   done: "Tamamlandı",
+  cancelled: "İptal/İade",
 };
 
 const HELP_TEXT = [
@@ -39,6 +40,10 @@ const HELP_TEXT = [
   '• "10 kg beyaz pigment geldi, stok girişi"',
   '• "2 litre tiner kullandım, stoktan düş"',
   "",
+  "💸 *Gider & Tahsilat*",
+  '• "Gider ekle: kargoya 250 lira" · "Kira ödedim, 5000 TL"',
+  '• "Ahmet 500 lira ödedi" / "Ayşe\'den tahsilat aldım, 300"',
+  "",
   "📝 *Eksikler & Görevler*",
   '• "Eksik listesine ekle: etiket, 400 ml kutu"',
   '• "Bugün neler alınacaktı?" · "Etiket aldım"',
@@ -46,6 +51,8 @@ const HELP_TEXT = [
   "",
   "📊 *Soru-Cevap*",
   '• "Bugün kaç sipariş var? Ciro ne kadar?"',
+  '• "Ne kadar tahsilat bekliyor? Kim borçlu?"',
+  '• "Bu ay ne kadar kâr ettim?" · "Bu ayki giderler ne?"',
   '• "Stok durumu nasıl?" · "Projeler ne durumda?"',
   "",
   '🗒️ "Not al: ..." ile hızlı not bırakabilirsin.',
@@ -53,7 +60,7 @@ const HELP_TEXT = [
 
 /** Soru-cevap için işletmenin güncel verilerinden kompakt Türkçe özet üretir. */
 export async function buildBusinessSnapshot(): Promise<string> {
-  const [statusCounts, today, critical, materials, products, orders, openTasks] = await Promise.all([
+  const [statusCounts, today, critical, materials, products, orders, openTasks, finance, expenses] = await Promise.all([
     db.orderStatusCounts(),
     db.countOrdersToday(),
     db.listCriticalMaterials(),
@@ -61,10 +68,28 @@ export async function buildBusinessSnapshot(): Promise<string> {
     db.listProducts(),
     db.listOrders(),
     db.listTasks(undefined, "open"),
+    db.financeSummary(),
+    db.listExpenses(50),
   ]);
   const since30 = Date.now() - 30 * 24 * 60 * 60 * 1000;
-  const last30 = orders.filter(o => new Date(o.createdAt as unknown as string).getTime() >= since30);
+  const active = orders.filter(o => o.status !== "cancelled"); // iptal/iade ciro-alacak dışı
+  const last30 = active.filter(o => new Date(o.createdAt as unknown as string).getTime() >= since30);
   const revenue30 = last30.reduce((s, o) => s + (parseFloat(String(o.totalAmount)) || 0), 0);
+
+  // Alacaklar (ödenmemiş siparişler) — "kim borçlu / ne kadar tahsilat" için.
+  const num = (v: unknown) => parseFloat(String(v ?? 0)) || 0;
+  const debtors = active
+    .filter(o => o.paymentStatus !== "paid")
+    .map(o => ({ name: o.customerName, due: Math.max(0, num(o.totalAmount) - num(o.paidAmount)), orderNo: o.orderNo }))
+    .filter(d => d.due > 0)
+    .sort((a, b) => b.due - a.due);
+  // Bu ayki giderleri kategoriye göre topla.
+  const startMonth = new Date();
+  startMonth.setDate(1);
+  startMonth.setHours(0, 0, 0, 0);
+  const monthExpenses = expenses.filter(e => new Date(e.expenseDate as never).getTime() >= startMonth.getTime());
+  const byCategory = new Map<string, number>();
+  for (const e of monthExpenses) byCategory.set(e.category, (byCategory.get(e.category) ?? 0) + num(e.amount));
   const recent = orders.slice(0, 15).map(o => {
     const date = o.createdAt instanceof Date ? o.createdAt.toISOString().slice(0, 10) : String(o.createdAt).slice(0, 10);
     return `- ${date} ${o.orderNo} | ${o.customerName} | ${o.channel} | ${o.status} | ${o.totalAmount} TL | ${o.itemsSummary ?? ""}`;
@@ -73,6 +98,11 @@ export async function buildBusinessSnapshot(): Promise<string> {
     `Bugünkü sipariş: ${today?.count ?? 0} adet, ${today?.total ?? 0} TL`,
     `Sipariş durumları: ${statusCounts.map(s => `${s.status}: ${s.count}`).join(", ") || "yok"}`,
     `Son 30 gün ciro: ${revenue30.toFixed(2)} TL (${last30.length} sipariş)`,
+    `Bu ay: ciro ${finance.monthRevenue.toFixed(2)} TL, gider ${finance.monthExpense.toFixed(2)} TL, net kâr ${finance.monthNet.toFixed(2)} TL`,
+    `Toplam tahsil edilecek (alacak): ${finance.receivables.toFixed(2)} TL`,
+    `Kasa/banka toplam bakiye: ${finance.cashTotal.toFixed(2)} TL`,
+    `Borçlu müşteriler (ad | kalan): ${debtors.slice(0, 15).map(d => `${d.name} | ${d.due.toFixed(2)} TL`).join("; ") || "yok"}`,
+    `Bu ay giderler (kategori | tutar): ${Array.from(byCategory.entries()).map(([k, v]) => `${k} | ${v.toFixed(2)} TL`).join("; ") || "yok"}`,
     `Ürünler (ad | satış fiyatı): ${products
       .slice(0, 40)
       .map(p => `${p.name} | ${p.salePrice} TL`)
@@ -238,6 +268,63 @@ export async function executeAssistantCommand(transcript: string): Promise<{ mes
     return {
       message: `${target.orderNo} (${target.customerName}) → ${STATUS_LABELS[cmd.orderStatus]} olarak güncellendi ✅`,
     };
+  }
+
+  if (cmd.intent === "expense_add") {
+    const amount = cmd.amount ?? 0;
+    if (amount <= 0) {
+      throw new Error('Gider tutarını anlayamadım, tutarla birlikte söyler misin? (örn. "kargoya 250 lira gider ekle")');
+    }
+    const category = cmd.expenseCategory ?? "diğer";
+    await db.createExpense({
+      category,
+      description: (cmd.noteText ?? transcript).slice(0, 255),
+      amount: String(amount),
+    } as never);
+    return { message: `Gider eklendi: ${category} — ${amount.toFixed(2)} TL ✅ (Giderler sayfasında)` };
+  }
+
+  if (cmd.intent === "collection_add") {
+    const amount = cmd.amount ?? 0;
+    if (amount <= 0) {
+      throw new Error('Tahsilat tutarını anlayamadım, tutarla birlikte söyler misin? (örn. "Ahmet 500 lira ödedi")');
+    }
+    if (!cmd.customerName?.trim()) {
+      throw new Error("Kimden tahsilat aldığını anlayamadım, müşteri adını da söyler misin?");
+    }
+    const [customersList, orders, accountList] = await Promise.all([
+      db.listCustomers(),
+      db.listOrders(),
+      db.listAccounts(),
+    ]);
+    // Cari ekstre ada göre bağlandığı için kayıtlı adı esas al.
+    const needle = cmd.customerName.trim().toLowerCase();
+    const canonical =
+      customersList.find(c => c.name.trim().toLowerCase() === needle)?.name ??
+      customersList.find(c => c.name.toLowerCase().includes(needle))?.name ??
+      orders.find(o => o.customerName.toLowerCase().includes(needle))?.customerName ??
+      cmd.customerName.trim();
+    const target = findOpenOrderForCollection(orders, canonical, cmd.orderRef);
+    const account = accountList.find(a => a.kind === "kasa") ?? accountList[0];
+    await db.createTransaction({
+      accountId: account?.id ?? null,
+      direction: "in",
+      category: "tahsilat",
+      amount: String(amount),
+      customerName: canonical,
+      orderId: target?.id ?? null,
+      orderNo: target?.orderNo ?? null,
+      description: "Asistan tahsilatı",
+      note: cmd.noteText,
+    } as never);
+    const num = (v: unknown) => parseFloat(String(v ?? 0)) || 0;
+    let message = `Tahsilat kaydedildi: ${canonical} — ${amount.toFixed(2)} TL ✅`;
+    if (target) {
+      const remaining = Math.max(0, num(target.totalAmount) - num(target.paidAmount) - amount);
+      message += `\n${target.orderNo} siparişine işlendi${remaining > 0.001 ? `, kalan ${remaining.toFixed(2)} TL` : ", sipariş tamamen ödendi 🎉"}`;
+    }
+    if (account) message += `\nHesap: ${account.name}`;
+    return { message };
   }
 
   if (cmd.intent === "help") {

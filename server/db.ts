@@ -1,23 +1,36 @@
-import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lte, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
+  accounts,
   campaigns,
+  cheques,
+  customers,
   devProjects,
   devTrialItems,
   devTrials,
+  expenses,
   formulaItems,
+  transactions,
+  InsertAccount,
+  InsertCheque,
+  InsertCustomer,
   InsertDevProject,
+  InsertExpense,
   InsertMaterial,
+  InsertTransaction,
   InsertOrder,
   InsertOrderItem,
   InsertProduct,
   InsertUser,
   marketingTexts,
   materials,
+  notifications,
   orderItems,
   orders,
   products,
   productImages,
+  productMovements,
+  productionRuns,
   purchaseItems,
   purchases,
   settings,
@@ -27,6 +40,7 @@ import {
   suppliers,
   users,
 } from "../drizzle/schema";
+import { resolveProductIdForItem } from "./orderUtils";
 import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -257,25 +271,557 @@ export async function listOrders() {
 
 export async function createOrder(data: InsertOrder) {
   const db = await requireDb();
+  // Cari bağ: müşteri adı CRM'de kayıtlıysa ID ile bağla (isim değişse de ekstre kopmaz).
+  if (data.customerId == null && data.customerName) {
+    data = { ...data, customerId: await resolveCustomerIdByName(data.customerName) };
+  }
   const [result] = await db.insert(orders).values(data);
   return result.insertId;
 }
 
 export async function updateOrder(id: number, data: Partial<InsertOrder>) {
   const db = await requireDb();
+  // Müşteri adı değiştirildiyse cari bağı da yeni ada göre tazele.
+  if (data.customerName !== undefined && data.customerId === undefined) {
+    data = { ...data, customerId: await resolveCustomerIdByName(data.customerName) };
+  }
+  // İptal geçişleri mamul stoğu yönetir: iptale girişte kalemler iade edilir,
+  // iptalden çıkışta yeniden düşülür. (Tüm durum değişimleri bu fonksiyondan
+  // geçer: pano, asistan, pazaryeri senkronu.)
+  if (data.status !== undefined) {
+    const old = await getOrder(id);
+    if (old && old.status !== data.status) {
+      const items = await db
+        .select({ productId: orderItems.productId, quantity: orderItems.quantity })
+        .from(orderItems)
+        .where(eq(orderItems.orderId, id));
+      if (old.status !== "cancelled" && data.status === "cancelled") {
+        await applyItemsStock(items, "in", `İptal/iade: ${old.orderNo}`, id);
+      } else if (old.status === "cancelled" && data.status !== "cancelled") {
+        await applyItemsStock(items, "out", `İptal geri alındı: ${old.orderNo}`, id);
+      }
+    }
+  }
   await db.update(orders).set(data).where(eq(orders.id, id));
 }
 
 export async function deleteOrder(id: number) {
   const db = await requireDb();
+  // Silinen siparişin ürün bağlı kalemleri stoğa iade edilir (iptal değilse —
+  // iptalde iade zaten yapılmıştır).
+  const order = await getOrder(id);
+  if (order && order.status !== "cancelled") {
+    const items = await db
+      .select({ productId: orderItems.productId, quantity: orderItems.quantity })
+      .from(orderItems)
+      .where(eq(orderItems.orderId, id));
+    await applyItemsStock(items, "in", `Sipariş silindi: ${order.orderNo}`, id);
+  }
   await db.delete(orderItems).where(eq(orderItems.orderId, id));
   await db.delete(orders).where(eq(orders.id, id));
+}
+
+export async function getOrder(id: number) {
+  const db = await requireDb();
+  const result = await db.select().from(orders).where(eq(orders.id, id)).limit(1);
+  return result[0];
 }
 
 export async function getOrderByOrderNo(orderNo: string) {
   const db = await requireDb();
   const result = await db.select().from(orders).where(eq(orders.orderNo, orderNo)).limit(1);
   return result[0];
+}
+
+/** Siparişin ödeme durumu/tutarı/yöntemini günceller. */
+export async function setOrderPayment(
+  id: number,
+  data: { paymentStatus: "unpaid" | "partial" | "paid"; paidAmount: string; paymentMethod: string | null },
+) {
+  const db = await requireDb();
+  await db.update(orders).set(data).where(eq(orders.id, id));
+}
+
+/* ------------------------- Müşteriler (CRM) ------------------------- */
+
+export async function listCustomers() {
+  const db = await requireDb();
+  return db.select().from(customers).orderBy(customers.name);
+}
+
+/**
+ * Cari ID çözümleme (V2 göçü): isimden müşteri/tedarikçi ID'si bulur.
+ * Türkçe küçük harf + trim ile eşleşir; birden fazla aynı isim varsa en
+ * eski kayıt (en küçük id) esas alınır. Bulunamazsa null — kayıt isimle
+ * yaşamaya devam eder (pazaryeri müşterisi gibi CRM dışı adlar için normal).
+ */
+const trKey = (n: string) => n.trim().toLocaleLowerCase("tr-TR");
+
+export async function resolveCustomerIdByName(name: string | null | undefined): Promise<number | null> {
+  if (!name?.trim()) return null;
+  const db = await requireDb();
+  const rows = await db.select({ id: customers.id, name: customers.name }).from(customers);
+  const needle = trKey(name);
+  const hits = rows.filter(c => trKey(c.name) === needle).sort((a, b) => a.id - b.id);
+  return hits[0]?.id ?? null;
+}
+
+export async function resolveSupplierIdByName(name: string | null | undefined): Promise<number | null> {
+  if (!name?.trim()) return null;
+  const db = await requireDb();
+  const rows = await db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers);
+  const needle = trKey(name);
+  const hits = rows.filter(s => trKey(s.name) === needle).sort((a, b) => a.id - b.id);
+  return hits[0]?.id ?? null;
+}
+
+export async function createCustomer(data: InsertCustomer) {
+  const db = await requireDb();
+  const [res] = await db.insert(customers).values(data);
+  return Number(res.insertId);
+}
+
+export async function updateCustomer(id: number, data: Partial<InsertCustomer>) {
+  const db = await requireDb();
+  await db.update(customers).set(data).where(eq(customers.id, id));
+}
+
+export async function deleteCustomer(id: number) {
+  const db = await requireDb();
+  await db.delete(customers).where(eq(customers.id, id));
+}
+
+/* ------------------------- Giderler ------------------------- */
+
+export async function listExpenses(limit = 200) {
+  const db = await requireDb();
+  return db.select().from(expenses).orderBy(desc(expenses.expenseDate)).limit(limit);
+}
+
+export async function createExpense(data: InsertExpense) {
+  const db = await requireDb();
+  const [res] = await db.insert(expenses).values(data);
+  return Number(res.insertId);
+}
+
+export async function updateExpense(id: number, data: Partial<InsertExpense>) {
+  const db = await requireDb();
+  await db.update(expenses).set(data).where(eq(expenses.id, id));
+}
+
+export async function deleteExpense(id: number) {
+  const db = await requireDb();
+  await db.delete(expenses).where(eq(expenses.id, id));
+}
+
+/* ------------------------- Kasa & Banka + Cari (ön muhasebe) ------------------------- */
+
+const toNum = (v: string | null | undefined) => parseFloat(v ?? "0") || 0;
+
+/** Hesapları, güncel bakiyeleriyle (açılış + gelen − giden) birlikte döner. */
+export async function listAccounts() {
+  const db = await requireDb();
+  const [accs, txns] = await Promise.all([
+    db.select().from(accounts).orderBy(accounts.name),
+    db.select({ accountId: transactions.accountId, direction: transactions.direction, amount: transactions.amount }).from(transactions),
+  ]);
+  return accs.map(a => {
+    let bal = toNum(a.openingBalance);
+    for (const t of txns) {
+      if (t.accountId !== a.id) continue;
+      bal += t.direction === "in" ? toNum(t.amount) : -toNum(t.amount);
+    }
+    return { ...a, balance: bal };
+  });
+}
+
+export async function createAccount(data: InsertAccount) {
+  const db = await requireDb();
+  const [res] = await db.insert(accounts).values(data);
+  return Number(res.insertId);
+}
+
+export async function updateAccount(id: number, data: Partial<InsertAccount>) {
+  const db = await requireDb();
+  await db.update(accounts).set(data).where(eq(accounts.id, id));
+}
+
+export async function deleteAccount(id: number) {
+  const db = await requireDb();
+  await db.update(transactions).set({ accountId: null }).where(eq(transactions.accountId, id));
+  await db.delete(accounts).where(eq(accounts.id, id));
+}
+
+/** Para/cari hareketlerini (en yeni önce) döner; müşteri/hesaba göre süzülebilir. */
+export async function listTransactions(filter?: { customerName?: string; accountId?: number; limit?: number }) {
+  const db = await requireDb();
+  const conds = [];
+  if (filter?.customerName) {
+    // ID-öncelikli süzme: kayıtlı müşteriyse ID'yle bağlı tüm hareketler gelir.
+    const customerId = await resolveCustomerIdByName(filter.customerName);
+    conds.push(
+      customerId != null
+        ? or(eq(transactions.customerId, customerId), and(isNull(transactions.customerId), eq(transactions.customerName, filter.customerName)))!
+        : eq(transactions.customerName, filter.customerName),
+    );
+  }
+  if (filter?.accountId) conds.push(eq(transactions.accountId, filter.accountId));
+  const q = db.select().from(transactions);
+  const rows = conds.length ? await q.where(and(...conds)) : await q;
+  return rows.sort((a, b) => new Date(b.txnDate).getTime() - new Date(a.txnDate).getTime()).slice(0, filter?.limit ?? 300);
+}
+
+/**
+ * Hareket ekler. Tahsilat/ödeme bir siparişe bağlıysa (orderId) o siparişin
+ * ödenen tutarı ve ödeme durumu otomatik güncellenir (mevcut model korunur).
+ */
+export async function createTransaction(data: InsertTransaction) {
+  const db = await requireDb();
+  // Cari bağ: isim varsa ID'ye çevirip birlikte sakla (isim görüntü/yedek kalır).
+  if (data.customerId == null && data.customerName) {
+    data = { ...data, customerId: await resolveCustomerIdByName(data.customerName) };
+  }
+  if (data.supplierId == null && data.supplierName) {
+    data = { ...data, supplierId: await resolveSupplierIdByName(data.supplierName) };
+  }
+  const [res] = await db.insert(transactions).values(data);
+  if (data.orderId && data.category === "tahsilat" && data.direction === "in") {
+    const [ord] = await db.select().from(orders).where(eq(orders.id, data.orderId)).limit(1);
+    if (ord) {
+      const collected = (await db.select({ amount: transactions.amount, direction: transactions.direction, category: transactions.category })
+        .from(transactions)
+        .where(eq(transactions.orderId, data.orderId)))
+        .filter(t => t.category === "tahsilat")
+        .reduce((s, t) => s + (t.direction === "in" ? toNum(t.amount) : -toNum(t.amount)), 0);
+      const total = toNum(ord.totalAmount);
+      const status = collected <= 0 ? "unpaid" : collected + 0.001 >= total ? "paid" : "partial";
+      await db.update(orders).set({ paidAmount: String(Math.max(0, collected)), paymentStatus: status }).where(eq(orders.id, data.orderId));
+    }
+  }
+  return Number(res.insertId);
+}
+
+export async function deleteTransaction(id: number) {
+  const db = await requireDb();
+  await db.delete(transactions).where(eq(transactions.id, id));
+}
+
+/** İki hesap arasında transfer: kaynaktan çıkış + hedefe giriş (iki hareket). */
+export async function transferBetweenAccounts(fromId: number, toId: number, amount: number, note: string | null) {
+  const db = await requireDb();
+  const [from] = await db.select().from(accounts).where(eq(accounts.id, fromId)).limit(1);
+  const [to] = await db.select().from(accounts).where(eq(accounts.id, toId)).limit(1);
+  const now = new Date();
+  await db.insert(transactions).values({
+    txnDate: now, accountId: fromId, direction: "out", amount: String(amount), category: "transfer",
+    description: `Transfer → ${to?.name ?? ""}`, note,
+  } as never);
+  await db.insert(transactions).values({
+    txnDate: now, accountId: toId, direction: "in", amount: String(amount), category: "transfer",
+    description: `Transfer ← ${from?.name ?? ""}`, note,
+  } as never);
+}
+
+/**
+ * Tüm müşterilerin cari bakiyesi (küçük harf ada göre): sipariş toplamı (borç)
+ * − tahsilat (alacak). Pozitif = müşteri bize borçlu.
+ */
+export async function customerBalances(): Promise<Record<string, number>> {
+  const db = await requireDb();
+  const [ords, txns, custs] = await Promise.all([
+    db.select({ name: orders.customerName, customerId: orders.customerId, total: orders.totalAmount, status: orders.status }).from(orders),
+    db.select({ name: transactions.customerName, customerId: transactions.customerId, direction: transactions.direction, amount: transactions.amount, category: transactions.category }).from(transactions),
+    db.select({ id: customers.id, name: customers.name }).from(customers),
+  ]);
+  const key = (n: string) => n.trim().toLocaleLowerCase("tr-TR");
+  // ID'li kayıtlar müşterinin GÜNCEL adı altında toplanır (ad değişse de cari bölünmez);
+  // ID'siz (CRM dışı) kayıtlar kayıtlı isimle yaşar.
+  const nameById = new Map(custs.map(c => [c.id, c.name]));
+  const canonical = (customerId: number | null, name: string | null) =>
+    (customerId != null ? nameById.get(customerId) : undefined) ?? name ?? "";
+  const out: Record<string, number> = {};
+  for (const o of ords) {
+    if (o.status === "cancelled") continue; // iptal/iade borç doğurmaz
+    const k = key(canonical(o.customerId, o.name));
+    if (k) out[k] = (out[k] ?? 0) + toNum(o.total);
+  }
+  for (const t of txns) {
+    if (t.category !== "tahsilat") continue;
+    const k = key(canonical(t.customerId, t.name));
+    if (!k) continue;
+    out[k] = (out[k] ?? 0) - (t.direction === "in" ? toNum(t.amount) : -toNum(t.amount));
+  }
+  return out;
+}
+
+/**
+ * Bir müşterinin cari ekstresi: siparişleri (borç) + tahsilatları (alacak/ödeme)
+ * tarih sırasıyla, yürüyen bakiyeyle. Bakiye > 0 → müşteri bize borçlu.
+ */
+export async function customerLedger(name: string) {
+  const db = await requireDb();
+  // ID-öncelikli eşleşme: müşteri kayıtlıysa ID ile bağlı TÜM hareketler gelir
+  // (geçmişte farklı yazılmış adlar dahil); ID'siz eski kayıtlar isimle yakalanır.
+  const customerId = await resolveCustomerIdByName(name);
+  const orderCond = customerId != null
+    ? or(eq(orders.customerId, customerId), and(isNull(orders.customerId), eq(orders.customerName, name)))
+    : eq(orders.customerName, name);
+  const txnCond = customerId != null
+    ? or(eq(transactions.customerId, customerId), and(isNull(transactions.customerId), eq(transactions.customerName, name)))
+    : eq(transactions.customerName, name);
+  const [ords, txns] = await Promise.all([
+    db.select().from(orders).where(orderCond),
+    db.select().from(transactions).where(txnCond),
+  ]);
+  type Entry = { date: Date; label: string; debit: number; credit: number; ref: string };
+  const entries: Entry[] = [];
+  for (const o of ords) {
+    if (o.status === "cancelled") continue; // iptal/iade cari ekstreye girmez
+    entries.push({ date: new Date(o.createdAt), label: "Sipariş", debit: toNum(o.totalAmount), credit: 0, ref: o.orderNo });
+  }
+  for (const t of txns) {
+    const isIn = t.direction === "in";
+    entries.push({
+      date: new Date(t.txnDate),
+      label: t.category === "tahsilat" ? "Tahsilat" : t.description || t.category,
+      debit: isIn ? 0 : toNum(t.amount),
+      credit: isIn ? toNum(t.amount) : 0,
+      ref: t.orderNo ?? "",
+    });
+  }
+  entries.sort((a, b) => a.date.getTime() - b.date.getTime());
+  let running = 0;
+  const rows = entries.map(e => {
+    running += e.debit - e.credit;
+    return { ...e, balance: running };
+  });
+  return { rows, balance: running };
+}
+
+/**
+ * KDV raporu: satış KDV'si (siparişler, KDV dahil kabul) − alış KDV'si
+ * (alış faturaları) = ödenecek KDV. Bu ay ve bu yıl için ayrı hesaplar.
+ */
+export async function vatReport() {
+  const db = await requireDb();
+  const [vatRow, ords, purs] = await Promise.all([
+    db.select().from(settings).where(eq(settings.key, "vatRate")).limit(1),
+    db.select({ total: orders.totalAmount, date: orders.createdAt, status: orders.status }).from(orders),
+    db.select({ total: purchases.totalAmount, date: purchases.invoiceDate, created: purchases.createdAt }).from(purchases),
+  ]);
+  const rate = parseFloat(vatRow[0]?.value ?? "") || 20;
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  const yearStart = new Date(now.getFullYear(), 0, 1).getTime();
+  const vatOf = (gross: number) => gross - gross / (1 + rate / 100);
+
+  const calc = (since: number) => {
+    let salesGross = 0;
+    for (const o of ords) {
+      if (o.status === "cancelled") continue; // iptal/iade KDV matrahına girmez
+      if (new Date(o.date).getTime() >= since) salesGross += toNum(o.total);
+    }
+    let buyGross = 0;
+    for (const p of purs) {
+      const t = new Date((p.date ?? p.created) as never).getTime();
+      if (t >= since) buyGross += toNum(p.total);
+    }
+    const salesVat = vatOf(salesGross);
+    const buyVat = vatOf(buyGross);
+    return { salesGross, salesVat, buyGross, buyVat, payable: salesVat - buyVat };
+  };
+
+  return { rate, month: calc(monthStart), year: calc(yearStart) };
+}
+
+/**
+ * Tedarikçi cari bakiyeleri (küçük harf ada göre): alış faturaları (borç)
+ * − tedarikçiye ödemeler. Pozitif = biz tedarikçiye borçluyuz.
+ */
+export async function supplierBalances(): Promise<Record<string, number>> {
+  const db = await requireDb();
+  const [purs, txns, sups] = await Promise.all([
+    db.select({ name: purchases.supplierName, supplierId: purchases.supplierId, total: purchases.totalAmount }).from(purchases),
+    db.select({ name: transactions.supplierName, supplierId: transactions.supplierId, direction: transactions.direction, amount: transactions.amount }).from(transactions),
+    db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers),
+  ]);
+  const key = (n: string) => n.trim().toLocaleLowerCase("tr-TR");
+  const nameById = new Map(sups.map(s => [s.id, s.name]));
+  const canonical = (supplierId: number | null, name: string | null) =>
+    (supplierId != null ? nameById.get(supplierId) : undefined) ?? name ?? "";
+  const out: Record<string, number> = {};
+  for (const p of purs) {
+    const k = key(canonical(p.supplierId, p.name));
+    if (k) out[k] = (out[k] ?? 0) + toNum(p.total);
+  }
+  for (const t of txns) {
+    const k = key(canonical(t.supplierId, t.name));
+    if (!k) continue;
+    // Tedarikçiye ödeme (out) borcumuzu azaltır.
+    out[k] = (out[k] ?? 0) - (t.direction === "out" ? toNum(t.amount) : -toNum(t.amount));
+  }
+  return out;
+}
+
+/** Tedarikçi cari ekstresi: alış faturaları (borç) + ödemeler (alacak) + bakiye. */
+export async function supplierLedger(name: string) {
+  const db = await requireDb();
+  const supplierId = await resolveSupplierIdByName(name);
+  const purCond = supplierId != null
+    ? or(eq(purchases.supplierId, supplierId), and(isNull(purchases.supplierId), eq(purchases.supplierName, name)))
+    : eq(purchases.supplierName, name);
+  const txnCond = supplierId != null
+    ? or(eq(transactions.supplierId, supplierId), and(isNull(transactions.supplierId), eq(transactions.supplierName, name)))
+    : eq(transactions.supplierName, name);
+  const [purs, txns] = await Promise.all([
+    db.select().from(purchases).where(purCond),
+    db.select().from(transactions).where(txnCond),
+  ]);
+  type Entry = { date: Date; label: string; debit: number; credit: number; ref: string };
+  const entries: Entry[] = [];
+  for (const p of purs) {
+    entries.push({ date: new Date((p.invoiceDate ?? p.createdAt) as never), label: "Alış Faturası", debit: toNum(p.totalAmount), credit: 0, ref: p.invoiceNo ?? "" });
+  }
+  for (const t of txns) {
+    const isOut = t.direction === "out";
+    entries.push({ date: new Date(t.txnDate), label: isOut ? "Ödeme" : t.description || t.category, debit: 0, credit: isOut ? toNum(t.amount) : -toNum(t.amount), ref: "" });
+  }
+  entries.sort((a, b) => a.date.getTime() - b.date.getTime());
+  let running = 0;
+  const rows = entries.map(e => {
+    running += e.debit - e.credit;
+    return { ...e, balance: running };
+  });
+  return { rows, balance: running };
+}
+
+/**
+ * Nakit akışı raporu: kasa/banka hareketlerinden girişler/çıkışlar/net,
+ * bu ay ve bu yıl için, ayrıca bu ayın kategori kırılımı.
+ */
+export async function cashflowReport() {
+  const db = await requireDb();
+  const rows = await db
+    .select({ date: transactions.txnDate, direction: transactions.direction, amount: transactions.amount, category: transactions.category })
+    .from(transactions);
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  const yearStart = new Date(now.getFullYear(), 0, 1).getTime();
+
+  const sum = (since: number) => {
+    let inflow = 0;
+    let outflow = 0;
+    for (const r of rows) {
+      if (new Date(r.date).getTime() < since) continue;
+      if (r.direction === "in") inflow += toNum(r.amount);
+      else outflow += toNum(r.amount);
+    }
+    return { inflow, outflow, net: inflow - outflow };
+  };
+
+  // Bu ay kategori kırılımı (transfer hariç, iç hareket olduğundan).
+  const catMap = new Map<string, { in: number; out: number }>();
+  for (const r of rows) {
+    if (new Date(r.date).getTime() < monthStart || r.category === "transfer") continue;
+    const cur = catMap.get(r.category) ?? { in: 0, out: 0 };
+    if (r.direction === "in") cur.in += toNum(r.amount);
+    else cur.out += toNum(r.amount);
+    catMap.set(r.category, cur);
+  }
+  const categories = Array.from(catMap.entries())
+    .map(([category, v]) => ({ category, ...v }))
+    .sort((a, b) => b.in + b.out - (a.in + a.out));
+
+  return { month: sum(monthStart), year: sum(yearStart), categories };
+}
+
+/* ------------------------- Çek & Senet ------------------------- */
+
+export async function listCheques() {
+  const db = await requireDb();
+  return db.select().from(cheques).orderBy(cheques.dueDate);
+}
+
+export async function createCheque(data: InsertCheque) {
+  const db = await requireDb();
+  const [res] = await db.insert(cheques).values(data);
+  return Number(res.insertId);
+}
+
+export async function updateCheque(id: number, data: Partial<InsertCheque>) {
+  const db = await requireDb();
+  await db.update(cheques).set(data).where(eq(cheques.id, id));
+}
+
+export async function deleteCheque(id: number) {
+  const db = await requireDb();
+  await db.delete(cheques).where(eq(cheques.id, id));
+}
+
+/** Ödenmemiş/kısmi ödenmiş siparişleri kalan borca göre döner (tahsilat takibi). */
+export async function listUnpaidOrders(limit = 8) {
+  const db = await requireDb();
+  const rows = await db
+    .select({
+      id: orders.id,
+      orderNo: orders.orderNo,
+      customerName: orders.customerName,
+      totalAmount: orders.totalAmount,
+      paidAmount: orders.paidAmount,
+      paymentStatus: orders.paymentStatus,
+      createdAt: orders.createdAt,
+    })
+    .from(orders)
+    .where(sql`${orders.paymentStatus} <> 'paid' AND ${orders.status} <> 'cancelled'`);
+  const num = (v: string | null) => parseFloat(v ?? "0") || 0;
+  return rows
+    .map(o => ({ ...o, due: Math.max(0, num(o.totalAmount) - num(o.paidAmount)) }))
+    .filter(o => o.due > 0)
+    .sort((a, b) => b.due - a.due)
+    .slice(0, limit);
+}
+
+/**
+ * Kokpit için finans özeti: tahsil edilecek (alacak) toplamı ve bu ayın
+ * cirosu/gideri/net kârı. Gider = giderler + alış faturaları (hammadde).
+ */
+export async function financeSummary() {
+  const db = await requireDb();
+  const start = new Date();
+  start.setDate(1);
+  start.setHours(0, 0, 0, 0);
+  const num = (v: string | null | undefined) => parseFloat(v ?? "0") || 0;
+
+  const [orderRows, expenseRows, purchaseRows] = await Promise.all([
+    db
+      .select({ total: orders.totalAmount, paid: orders.paidAmount, status: orders.paymentStatus, orderStatus: orders.status, createdAt: orders.createdAt })
+      .from(orders),
+    db.select({ amount: expenses.amount, date: expenses.expenseDate }).from(expenses),
+    db.select({ amount: purchases.totalAmount, date: purchases.createdAt }).from(purchases),
+  ]);
+
+  let receivables = 0;
+  let monthRevenue = 0;
+  for (const o of orderRows) {
+    if (o.orderStatus === "cancelled") continue; // iptal/iade ciroya ve alacağa girmez
+    if (o.status !== "paid") receivables += Math.max(0, num(o.total) - num(o.paid));
+    if (o.createdAt && o.createdAt >= start) monthRevenue += num(o.total);
+  }
+  let monthExpense = 0;
+  for (const e of expenseRows) if (e.date && e.date >= start) monthExpense += num(e.amount);
+  for (const p of purchaseRows) if (p.date && p.date >= start) monthExpense += num(p.amount);
+
+  // Kasa/banka toplam bakiyesi (açılış + gelen − giden).
+  const accs = await listAccounts();
+  const cashTotal = accs.reduce((s, a) => s + a.balance, 0);
+
+  return {
+    receivables,
+    monthRevenue,
+    monthExpense,
+    monthNet: monthRevenue - monthExpense,
+    cashTotal,
+  };
 }
 
 /**
@@ -306,15 +852,112 @@ export async function listOrderItems(orderId: number) {
   return db.select().from(orderItems).where(eq(orderItems.orderId, orderId)).orderBy(orderItems.id);
 }
 
-/** Siparişin kalemlerini komple değiştirir (sil + yeniden ekle). */
+/* --------------- Mamul stok hareketleri (Faz 0.2) --------------- */
+
+/**
+ * Mamul stok hareketi kaydeder ve products.stockQty'yi günceller.
+ * stockQty tam sayı olduğundan ondalıklı satış miktarı yuvarlanır (hareket
+ * kaydı gerçek miktarı taşır). Eksi bakiye serbesttir: "üretilecek" sinyali.
+ */
+export async function recordProductMovement(
+  productId: number,
+  type: "in" | "out",
+  qty: number,
+  note?: string | null,
+  orderId?: number | null,
+) {
+  if (!(qty > 0)) return;
+  const db = await requireDb();
+  await db.insert(productMovements).values({
+    productId,
+    type,
+    qty: String(qty),
+    note: note ?? null,
+    orderId: orderId ?? null,
+  });
+  const delta = Math.round(qty);
+  if (delta !== 0) {
+    await db
+      .update(products)
+      .set({ stockQty: sql`${products.stockQty} ${type === "in" ? sql`+` : sql`-`} ${delta}` })
+      .where(eq(products.id, productId));
+  }
+}
+
+/** Kalem listesindeki ürün bağlı satırlar için stok iadesi/düşümü uygular. */
+async function applyItemsStock(
+  items: { productId?: number | null; quantity?: unknown }[],
+  type: "in" | "out",
+  note: string,
+  orderId: number,
+) {
+  for (const item of items) {
+    if (item.productId == null) continue;
+    const qty = toNum(String(item.quantity));
+    if (qty > 0) await recordProductMovement(item.productId, type, qty, note, orderId);
+  }
+}
+
+/** Üretim emri kaydı + mamul stok girişi (hammadde düşümü çağıran tarafta). */
+export async function recordProductionRun(productId: number, qty: number, note?: string | null) {
+  const db = await requireDb();
+  await db.insert(productionRuns).values({ productId, qty, note: note ?? null });
+  await recordProductMovement(productId, "in", qty, "Üretim girişi");
+}
+
+export async function listProductionRuns(limit = 50) {
+  const db = await requireDb();
+  const rows = await db
+    .select({
+      id: productionRuns.id,
+      productId: productionRuns.productId,
+      qty: productionRuns.qty,
+      note: productionRuns.note,
+      createdAt: productionRuns.createdAt,
+      productName: products.name,
+    })
+    .from(productionRuns)
+    .leftJoin(products, eq(productionRuns.productId, products.id))
+    .orderBy(desc(productionRuns.id))
+    .limit(limit);
+  return rows;
+}
+
+/**
+ * Siparişin kalemlerini komple değiştirir (sil + yeniden ekle).
+ * Her kalem katalogla eşleştirilir (barkod → ad); eşleşen kaleme productId
+ * yazılır. Mamul stok da burada yürür: eski kalemler iade edilir, yeni
+ * kalemler düşülür (sipariş iptal durumundaysa stok işlemi yapılmaz —
+ * iptalde stok zaten iade edilmiştir).
+ */
 export async function replaceOrderItems(
   orderId: number,
-  items: Omit<InsertOrderItem, "orderId">[]
+  items: (Omit<InsertOrderItem, "orderId"> & { barcode?: string | null })[]
 ) {
   const db = await requireDb();
+  const order = await getOrder(orderId);
+  const stockActive = order != null && order.status !== "cancelled";
+  const oldItems = await db
+    .select({ productId: orderItems.productId, quantity: orderItems.quantity })
+    .from(orderItems)
+    .where(eq(orderItems.orderId, orderId));
+  if (stockActive && oldItems.length > 0) {
+    await applyItemsStock(oldItems, "in", "Kalem güncelleme iadesi", orderId);
+  }
   await db.delete(orderItems).where(eq(orderItems.orderId, orderId));
   if (items.length > 0) {
-    await db.insert(orderItems).values(items.map(item => ({ ...item, orderId })));
+    const refs = await db
+      .select({ id: products.id, name: products.name, barcode: products.barcode })
+      .from(products);
+    const rows = items.map(({ barcode, ...item }) => ({
+      ...item,
+      productId: item.productId ?? resolveProductIdForItem({ productName: item.productName, barcode }, refs),
+      orderId,
+    }));
+    await db.insert(orderItems).values(rows);
+    if (stockActive) {
+      await applyItemsStock(rows, "out", `Satış: ${order?.orderNo ?? orderId}`, orderId);
+    }
   }
 }
 
@@ -325,7 +968,7 @@ export async function countOrdersToday() {
   const rows = await db
     .select({ count: sql<number>`COUNT(*)`, total: sql<string>`COALESCE(SUM(${orders.totalAmount}), 0)` })
     .from(orders)
-    .where(gte(orders.createdAt, start));
+    .where(and(gte(orders.createdAt, start), sql`${orders.status} <> 'cancelled'`));
   return rows[0];
 }
 
@@ -554,7 +1197,7 @@ export async function getChosenDevTrialItems(projectId: number) {
 /** Rapor sayfasının tek seferde ihtiyaç duyduğu tüm veri kümeleri. */
 export async function reportData() {
   const db = await requireDb();
-  const [allProducts, formulaRows, textRows, allOrders, allOrderItems, allMaterials, allCampaigns, imageRows] =
+  const [allProducts, formulaRows, textRows, allOrders, allOrderItems, allMaterials, allCampaigns, imageRows, expenseRows] =
     await Promise.all([
       db.select().from(products),
       db
@@ -572,16 +1215,19 @@ export async function reportData() {
       db.select().from(campaigns),
       // Görsel verisinin kendisi ağır (base64); tamamlama kontrolü için kimlikler yeter.
       db.select({ productId: productImages.productId, kind: productImages.kind }).from(productImages),
+      db.select().from(expenses),
     ]);
   return {
     products: allProducts,
     formulas: formulaRows,
     marketingTexts: textRows,
-    orders: allOrders,
+    // İptal/iade siparişler analiz/ciro grafiklerine girmez.
+    orders: allOrders.filter(o => o.status !== "cancelled"),
     orderItems: allOrderItems,
     materials: allMaterials,
     campaigns: allCampaigns,
     productImages: imageRows,
+    expenses: expenseRows,
   };
 }
 
@@ -605,6 +1251,8 @@ export async function createPurchase(
   const total = items.reduce((s, i) => s + i.qty * i.unitCost, 0);
   const [res] = await db.insert(purchases).values({
     supplierName: header.supplierName,
+    // Cari bağ: tedarikçi kayıtlıysa ID ile bağla (ekstre ada değil ID'ye dayanır).
+    supplierId: await resolveSupplierIdByName(header.supplierName),
     invoiceNo: header.invoiceNo,
     invoiceDate: header.invoiceDate,
     note: header.note,
@@ -772,6 +1420,36 @@ export async function deleteTask(id: number) {
 /* ------------------------- Toplu Fiyat Güncelleme ------------------------- */
 
 /** Tüm ürünlerin (ya da bir serinin) satış fiyatını yüzdeyle günceller. */
+/**
+ * Tüm ürünlerin formülden gelen hammadde maliyetini TEK sorguda hesaplar
+ * (Fiyat & Kâr tablosu ürün başına ayrı sorgu atmasın diye).
+ */
+export async function listProductMaterialCosts() {
+  const db = await requireDb();
+  return db
+    .select({
+      productId: formulaItems.productId,
+      materialCost: sql<string>`COALESCE(SUM(${formulaItems.qty} * ${materials.unitCost}), 0)`,
+    })
+    .from(formulaItems)
+    .leftJoin(materials, eq(formulaItems.materialId, materials.id))
+    .groupBy(formulaItems.productId);
+}
+
+/** Önizlemesi onaylanmış toplu fiyat listesini uygular (formül/CSV güncellemeleri). */
+export async function applyPriceUpdates(updates: { id: number; salePrice: number }[]) {
+  const db = await requireDb();
+  let affected = 0;
+  for (const u of updates) {
+    const [result] = await db
+      .update(products)
+      .set({ salePrice: u.salePrice.toFixed(2) })
+      .where(eq(products.id, u.id));
+    affected += result.affectedRows ?? 0;
+  }
+  return { affected };
+}
+
 export async function bulkUpdatePrices(percent: number, series: string | null) {
   const db = await requireDb();
   const factor = 1 + percent / 100;
@@ -783,6 +1461,59 @@ export async function bulkUpdatePrices(percent: number, series: string | null) {
 }
 
 /* ------------------------- Ayarlar (Şirket / Fatura) ------------------------- */
+
+/* ------------------------- Bildirimler (Faz 1) ------------------------- */
+
+/**
+ * Bildirim oluşturur. Aynı tür+başlıktan son 24 saatte kaydedilmişse tekrar
+ * yazmaz (nöbetçi ajanların spam'ini önler); o durumda null döner.
+ */
+export async function createNotification(data: {
+  kind: string;
+  title: string;
+  body?: string | null;
+  link?: string | null;
+}): Promise<number | null> {
+  const db = await requireDb();
+  const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const dup = await db
+    .select({ id: notifications.id })
+    .from(notifications)
+    .where(and(eq(notifications.kind, data.kind), eq(notifications.title, data.title), gte(notifications.createdAt, dayAgo)))
+    .limit(1);
+  if (dup.length > 0) return null;
+  const [res] = await db.insert(notifications).values({
+    kind: data.kind,
+    title: data.title,
+    body: data.body ?? null,
+    link: data.link ?? null,
+  });
+  return Number(res.insertId);
+}
+
+export async function listNotifications(limit = 30) {
+  const db = await requireDb();
+  return db.select().from(notifications).orderBy(desc(notifications.id)).limit(limit);
+}
+
+export async function unreadNotificationCount(): Promise<number> {
+  const db = await requireDb();
+  const rows = await db
+    .select({ count: sql<number>`COUNT(*)` })
+    .from(notifications)
+    .where(eq(notifications.status, "unread"));
+  return Number(rows[0]?.count ?? 0);
+}
+
+export async function markNotificationRead(id: number) {
+  const db = await requireDb();
+  await db.update(notifications).set({ status: "read" }).where(eq(notifications.id, id));
+}
+
+export async function markAllNotificationsRead() {
+  const db = await requireDb();
+  await db.update(notifications).set({ status: "read" }).where(eq(notifications.status, "unread"));
+}
 
 export async function getSettings() {
   const db = await requireDb();

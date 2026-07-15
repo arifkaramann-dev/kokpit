@@ -1,0 +1,1 @@
+ALTER TABLE `transactions` ADD `supplierName` varchar(255);

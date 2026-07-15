@@ -1,0 +1,25 @@
+ALTER TABLE `accounts` ADD `companyId` int DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `campaigns` ADD `companyId` int DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `cheques` ADD `companyId` int DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `customers` ADD `companyId` int DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `devProjects` ADD `companyId` int DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `devTrialItems` ADD `companyId` int DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `devTrials` ADD `companyId` int DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `expenses` ADD `companyId` int DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `formulaItems` ADD `companyId` int DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `marketingTexts` ADD `companyId` int DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `materials` ADD `companyId` int DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `notifications` ADD `companyId` int DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `orderItems` ADD `companyId` int DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `orders` ADD `companyId` int DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `productImages` ADD `companyId` int DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `productMovements` ADD `companyId` int DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `productionRuns` ADD `companyId` int DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `products` ADD `companyId` int DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `purchaseItems` ADD `companyId` int DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `purchases` ADD `companyId` int DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `stockMovements` ADD `companyId` int DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `suppliers` ADD `companyId` int DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `tasks` ADD `companyId` int DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `templates` ADD `companyId` int DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE `transactions` ADD `companyId` int DEFAULT 1 NOT NULL;

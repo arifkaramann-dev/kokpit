@@ -47,7 +47,12 @@ export const ORDER_STATUSES = [
   { value: "done", label: "Tamamlandı", color: "bg-emerald-500" },
 ] as const;
 
-export type OrderStatus = (typeof ORDER_STATUSES)[number]["value"];
+/** İptal/iade akışın parçası değildir: ciro/cari dışında, ayrı bölümde gösterilir. */
+export const CANCELLED_STATUS = { value: "cancelled", label: "İptal / İade", color: "bg-rose-500" } as const;
+
+export const ALL_ORDER_STATUSES = [...ORDER_STATUSES, CANCELLED_STATUS] as const;
+
+export type OrderStatus = (typeof ALL_ORDER_STATUSES)[number]["value"];
 
 export const CHANNELS = [
   "web",

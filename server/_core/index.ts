@@ -9,6 +9,7 @@ import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { registerWhatsAppRoutes } from "../whatsapp";
 import { registerImageRoutes } from "../images";
+import { startScheduler } from "../scheduler";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 
@@ -34,8 +35,25 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 async function startServer() {
   const app = express();
   const server = createServer(app);
+  // Temel güvenlik başlıkları (Faz 0 güvenlik paketi). Ürün görselleri
+  // (/api/img) pazaryeri/web sitesine servis edildiğinden CORP'a dokunmuyoruz.
+  app.use((_req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "same-origin");
+    next();
+  });
   // Configure body parser with larger size limit for file uploads
-  app.use(express.json({ limit: "50mb" }));
+  app.use(
+    express.json({
+      limit: "50mb",
+      // Webhook imza doğrulaması (WhatsApp X-Hub-Signature-256) ham gövdeyi ister;
+      // parse edilmeden önceki baytları sakla.
+      verify: (req, _res, buf) => {
+        (req as typeof req & { rawBody?: Buffer }).rawBody = buf;
+      },
+    })
+  );
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerStorageProxy(app);
   registerOAuthRoutes(app);
@@ -70,6 +88,8 @@ async function startServer() {
 
   server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);
+    // Faz 1 zamanlayıcısı: oto-senkron + stok nöbetçisi + sabah brifingi.
+    startScheduler();
   });
 }
 

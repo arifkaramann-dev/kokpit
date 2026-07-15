@@ -53,6 +53,7 @@ export type SyncResult = {
   label: string;
   ok: boolean;
   imported: number;
+  updated: number;
   skipped: number;
   error: string | null;
   skippedReason?: "not_configured";
@@ -79,7 +80,7 @@ async function runSyncAll(): Promise<SyncResult[]> {
     key: "trendyol" | "hepsiburada";
     label: string;
     configured: boolean;
-    run: () => Promise<{ imported: number; skipped: number }>;
+    run: () => Promise<{ imported: number; skipped: number; updated?: number }>;
   }[] = [
     { key: "trendyol", label: "Trendyol", configured: isTrendyolConfigured(), run: () => syncTrendyolOrders() },
     { key: "hepsiburada", label: "Hepsiburada", configured: isHepsiburadaConfigured(), run: () => syncHepsiburadaOrders() },
@@ -87,18 +88,19 @@ async function runSyncAll(): Promise<SyncResult[]> {
 
   for (const r of runners) {
     if (!r.configured) {
-      results.push({ key: r.key, label: r.label, ok: false, imported: 0, skipped: 0, error: null, skippedReason: "not_configured" });
+      results.push({ key: r.key, label: r.label, ok: false, imported: 0, updated: 0, skipped: 0, error: null, skippedReason: "not_configured" });
       continue;
     }
     try {
-      const { imported, skipped } = await r.run();
-      results.push({ key: r.key, label: r.label, ok: true, imported, skipped, error: null });
+      const { imported, skipped, updated } = await r.run();
+      results.push({ key: r.key, label: r.label, ok: true, imported, updated: updated ?? 0, skipped, error: null });
     } catch (error) {
       results.push({
         key: r.key,
         label: r.label,
         ok: false,
         imported: 0,
+        updated: 0,
         skipped: 0,
         error: error instanceof Error ? error.message : "Bilinmeyen hata",
       });

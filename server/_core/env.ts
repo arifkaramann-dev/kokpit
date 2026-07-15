@@ -13,6 +13,14 @@ export const ENV = {
   hepsiburadaMerchantId: process.env.HEPSIBURADA_MERCHANT_ID ?? "",
   hepsiburadaUsername: process.env.HEPSIBURADA_USERNAME ?? "",
   hepsiburadaPassword: process.env.HEPSIBURADA_PASSWORD ?? "",
+  // Listing (stok/fiyat) API'si için "Servis Anahtarı"; boşsa şifre kullanılır.
+  hepsiburadaServiceKey: process.env.HEPSIBURADA_SERVICE_KEY ?? "",
+  // Sesli uyandırma (Picovoice Porcupine). AccessKey tarayıcıda kullanılır; repoya girmez.
+  // Keyword/Model yolları boşsa hazır İngilizce kelime + gömülü model kullanılır.
+  picovoiceAccessKey: process.env.PICOVOICE_ACCESS_KEY ?? "",
+  picovoiceKeywordPath: process.env.PICOVOICE_KEYWORD_PATH ?? "",
+  picovoiceKeywordLabel: process.env.PICOVOICE_KEYWORD_LABEL ?? "",
+  picovoiceModelPath: process.env.PICOVOICE_MODEL_PATH ?? "",
   isProduction: process.env.NODE_ENV === "production",
   forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
   forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",

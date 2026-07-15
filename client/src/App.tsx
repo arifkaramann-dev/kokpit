@@ -1,16 +1,23 @@
+import { ConfirmProvider } from "@/components/ConfirmDialog";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import Accounts from "@/pages/Accounts";
 import Analytics from "@/pages/Analytics";
 import Assistant from "@/pages/Assistant";
 import Campaigns from "@/pages/Campaigns";
+import Cheques from "@/pages/Cheques";
 import Costs from "@/pages/Costs";
+import Customers from "@/pages/Customers";
+import Expenses from "@/pages/Expenses";
 import Development from "@/pages/Development";
 import Formulas from "@/pages/Formulas";
 import Home from "@/pages/Home";
+import Ledgers from "@/pages/Ledgers";
 import Marketing from "@/pages/Marketing";
 import NotFound from "@/pages/NotFound";
 import Orders from "@/pages/Orders";
+import Pricing from "@/pages/Pricing";
 import Production from "@/pages/Production";
 import Products from "@/pages/Products";
 import Purchases from "@/pages/Purchases";
@@ -30,6 +37,11 @@ function Router() {
       <Switch>
         <Route path={"/"} component={Home} />
         <Route path={"/siparisler"} component={Orders} />
+        <Route path={"/musteriler"} component={Customers} />
+        <Route path={"/giderler"} component={Expenses} />
+        <Route path={"/kasa"} component={Accounts} />
+        <Route path={"/cari"} component={Ledgers} />
+        <Route path={"/cek-senet"} component={Cheques} />
         <Route path={"/stok"} component={Stock} />
         <Route path={"/faturalar"} component={Purchases} />
         <Route path={"/urunler"} component={Products} />
@@ -37,6 +49,7 @@ function Router() {
         <Route path={"/formuller"} component={Formulas} />
         <Route path={"/uretim"} component={Production} />
         <Route path={"/maliyet"} component={Costs} />
+        <Route path={"/fiyat"} component={Pricing} />
         <Route path={"/analiz"} component={Analytics} />
         <Route path={"/asistan"} component={Assistant} />
         <Route path={"/pazarlama"} component={Marketing} />
@@ -56,10 +69,12 @@ function Router() {
 function App() {
   return (
     <ErrorBoundary>
-      <ThemeProvider defaultTheme="light">
+      <ThemeProvider defaultTheme="light" switchable>
         <TooltipProvider>
-          <Toaster />
-          <Router />
+          <ConfirmProvider>
+            <Toaster />
+            <Router />
+          </ConfirmProvider>
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>

@@ -10,8 +10,10 @@ import { itemsTotal, summarizeItems, toItemRows } from "./orderUtils";
 import { extractInvoice } from "./_core/claude";
 import { executeAssistantCommand, generateOrderNo } from "./assistant";
 import { buildSaleTitle, deriveCombos, parseSetCount } from "./productUtils";
-import { syncTrendyolOrders, pushTrendyolStockPrice } from "./trendyol";
+import { syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf } from "./trendyol";
+import { pushHepsiburadaStockPrice } from "./hepsiburada";
 import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "./marketplace";
+import { ENV } from "./_core/env";
 
 /* ------------------------- Zod schemas ------------------------- */
 
@@ -61,10 +63,54 @@ const orderInput = z.object({
   totalAmount: z.number().min(0).default(0),
   itemsSummary: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
+  customerPhone: z.string().nullable().optional(),
+  customerAddress: z.string().nullable().optional(),
+  paymentStatus: z.enum(["unpaid", "partial", "paid"]).optional(),
+  paidAmount: z.number().min(0).optional(),
+  paymentMethod: z.string().nullable().optional(),
   // Elden/dışarıdan satış girişleri doğrudan "Tamamlandı" olarak eklenebilir.
-  status: z.enum(["new", "production", "ready", "done"]).optional(),
+  status: z.enum(["new", "production", "ready", "done", "cancelled"]).optional(),
   // Kalem listesi gönderilirse toplam tutar ve özet bu satırlardan türetilir.
   items: z.array(orderItemInput).optional(),
+});
+
+const customerInput = z.object({
+  name: z.string().min(1),
+  phone: z.string().nullable().optional(),
+  email: z.string().nullable().optional(),
+  address: z.string().nullable().optional(),
+  city: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+});
+
+const expenseInput = z.object({
+  category: z.string().min(1).default("diğer"),
+  description: z.string().nullable().optional(),
+  amount: z.number().min(0).default(0),
+  expenseDate: z.string().nullable().optional(),
+  note: z.string().nullable().optional(),
+});
+
+const accountInput = z.object({
+  name: z.string().min(1),
+  kind: z.enum(["kasa", "banka"]).default("kasa"),
+  openingBalance: z.number().default(0),
+  note: z.string().nullable().optional(),
+});
+
+const transactionInput = z.object({
+  txnDate: z.string().nullable().optional(),
+  accountId: z.number().nullable().optional(),
+  direction: z.enum(["in", "out"]),
+  amount: z.number().min(0).default(0),
+  category: z.string().min(1).default("diğer"),
+  customerName: z.string().nullable().optional(),
+  supplierName: z.string().nullable().optional(),
+  orderId: z.number().nullable().optional(),
+  orderNo: z.string().nullable().optional(),
+  description: z.string().nullable().optional(),
+  method: z.string().nullable().optional(),
+  note: z.string().nullable().optional(),
 });
 
 export { itemsTotal, summarizeItems } from "./orderUtils";
@@ -244,6 +290,22 @@ export const appRouter = router({
     bulkPrice: protectedProcedure
       .input(z.object({ percent: z.number().min(-90).max(500), series: z.string().nullable().optional() }))
       .mutation(({ input }) => db.bulkUpdatePrices(input.percent, input.series ?? null)),
+    // Fiyat & Kâr tablosu: tüm ürünlerin hammadde maliyeti tek sorguda.
+    costSummary: protectedProcedure.query(async () => {
+      const rows = await db.listProductMaterialCosts();
+      return rows.map(r => ({ productId: r.productId, materialCost: parseFloat(String(r.materialCost)) || 0 }));
+    }),
+    // Önizlemede onaylanan yeni fiyat listesi (formülle/CSV ile toplu güncelleme).
+    applyPrices: protectedProcedure
+      .input(
+        z.object({
+          updates: z
+            .array(z.object({ id: z.number(), salePrice: z.number().min(0).max(1000000) }))
+            .min(1)
+            .max(2000),
+        }),
+      )
+      .mutation(({ input }) => db.applyPriceUpdates(input.updates)),
     // Barkodlu ürünlerin stok ve fiyatını Trendyol'a gönderir (mevcut listelemeleri günceller).
     pushToTrendyol: protectedProcedure
       .input(z.object({ ids: z.array(z.number()).optional() }))
@@ -274,6 +336,38 @@ export const appRouter = router({
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: error instanceof Error ? error.message : "Trendyol'a gönderim başarısız",
+          });
+        }
+      }),
+    // Barkodlu ürünlerin stok ve fiyatını Hepsiburada'ya gönderir (barkod = merchantSku varsayımı).
+    pushToHepsiburada: protectedProcedure
+      .input(z.object({ ids: z.array(z.number()).optional() }))
+      .mutation(async ({ input }) => {
+        const all = await db.listProducts();
+        const chosen = input.ids?.length ? all.filter(p => input.ids!.includes(p.id)) : all;
+        const items = chosen
+          .filter(p => p.barcode && p.barcode.trim())
+          .map(p => {
+            const list = parseFloat(String(p.salePrice)) || 0;
+            const disc = parseFloat(String(p.discountPercent)) || 0;
+            return {
+              merchantSku: p.barcode!.trim(),
+              price: +(list * (1 - disc / 100)).toFixed(2),
+              availableStock: p.stockQty ?? 0,
+            };
+          });
+        if (items.length === 0) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Barkodu olan ürün yok. Ürün düzenlemede barkod girin, sonra tekrar deneyin.",
+          });
+        }
+        try {
+          return await pushHepsiburadaStockPrice(items);
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Hepsiburada'ya gönderim başarısız",
           });
         }
       }),
@@ -321,8 +415,13 @@ export const appRouter = router({
             await db.adjustStock(f.materialId, "out", need, `Üretim: ${input.qty}× ${product.name}`);
           }
         }
+        // Üretim emri kaydı + mamul stok girişi (Faz 0.2): üretilen adet
+        // ürünün stoğuna eklenir, üretim geçmişi productionRuns'ta izlenir.
+        await db.recordProductionRun(input.productId, Math.round(input.qty), missing.length > 0 ? `Eksik stokla zorlandı: ${missing.join(", ")}` : null);
         return { deducted: formula.length, missing };
       }),
+    // Üretim geçmişi: son üretim emirleri (ürün adıyla).
+    runs: protectedProcedure.query(() => db.listProductionRuns(50)),
   }),
 
   formula: router({
@@ -357,6 +456,35 @@ export const appRouter = router({
     syncAll: protectedProcedure.mutation(() => syncAllMarketplaces()),
     // Aynı sipariş numaralı mükerrer kayıtları temizler (eski yarış durumu artığı).
     dedupe: protectedProcedure.mutation(() => db.dedupeOrders()),
+    // Pazaryerinin resmi kargo etiketini (Trendyol ortak etiket, ZPL→PDF) çeker.
+    // Base64 PDF döner; istemci yeni sekmede açıp yazdırır.
+    shippingLabel: protectedProcedure
+      .input(z.object({ orderId: z.number() }))
+      .mutation(async ({ input }) => {
+        const order = await db.getOrder(input.orderId);
+        if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "Sipariş bulunamadı" });
+        if (order.channel !== "trendyol") {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Resmi kargo etiketi yalnızca Trendyol siparişleri için çekilebilir.",
+          });
+        }
+        if (!order.cargoTrackingNumber) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Bu siparişte kargo takip numarası yok — kargoya verildikten sonra senkronla ve tekrar dene.",
+          });
+        }
+        try {
+          const pdf = await getTrendyolCommonLabelPdf(order.cargoTrackingNumber);
+          return { pdfBase64: pdf.toString("base64") };
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Etiket alınamadı",
+          });
+        }
+      }),
     // Pazaryerine gerçek istek atıp ham HTTP sonucunu döner (401 teşhisi için).
     testConnection: protectedProcedure
       .input(z.object({ key: z.enum(["trendyol", "hepsiburada"]) }))
@@ -368,7 +496,7 @@ export const appRouter = router({
         order.itemsSummary = summarizeItems(items);
       }
       const id = await db.createOrder({
-        ...(toDecimalFields(order, ["totalAmount"]) as never as object),
+        ...(toDecimalFields(order, ["totalAmount", "paidAmount"]) as never as object),
         orderNo: generateOrderNo(),
       } as never);
       if (items?.length) {
@@ -385,11 +513,28 @@ export const appRouter = router({
           order.itemsSummary = items.length ? summarizeItems(items) : null;
           await db.replaceOrderItems(input.id, toItemRows(items));
         }
-        await db.updateOrder(input.id, toDecimalFields(order, ["totalAmount"]) as never);
+        await db.updateOrder(input.id, toDecimalFields(order, ["totalAmount", "paidAmount"]) as never);
       }),
     setStatus: protectedProcedure
-      .input(z.object({ id: z.number(), status: z.enum(["new", "production", "ready", "done"]) }))
+      .input(z.object({ id: z.number(), status: z.enum(["new", "production", "ready", "done", "cancelled"]) }))
       .mutation(({ input }) => db.updateOrder(input.id, { status: input.status })),
+    // Ödeme durumu/tutarı: kart üzerinden hızlı tahsilat işaretleme.
+    setPayment: protectedProcedure
+      .input(
+        z.object({
+          id: z.number(),
+          paymentStatus: z.enum(["unpaid", "partial", "paid"]),
+          paidAmount: z.number().min(0).default(0),
+          paymentMethod: z.string().nullable().optional(),
+        }),
+      )
+      .mutation(({ input }) =>
+        db.setOrderPayment(input.id, {
+          paymentStatus: input.paymentStatus,
+          paidAmount: String(input.paidAmount),
+          paymentMethod: input.paymentMethod ?? null,
+        }),
+      ),
     delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteOrder(input.id)),
   }),
 
@@ -489,6 +634,14 @@ export const appRouter = router({
   }),
 
   assistant: router({
+    // Sesli uyandırma (Picovoice) yapılandırması. AccessKey varsa istemci
+    // Porcupine'i başlatır; yoksa Web Speech tabanlı uyandırmaya düşer.
+    wakeConfig: protectedProcedure.query(() => ({
+      accessKey: ENV.picovoiceAccessKey,
+      keywordPath: ENV.picovoiceKeywordPath,
+      keywordLabel: ENV.picovoiceKeywordLabel,
+      modelPath: ENV.picovoiceModelPath,
+    })),
     // Sesli/serbest metin komutu: Claude niyeti çözer, sunucu uygular.
     // WhatsApp webhook'u da aynı beyni kullanır (server/assistant.ts).
     command: protectedProcedure
@@ -512,6 +665,16 @@ export const appRouter = router({
       .input(z.record(z.string(), z.string()))
       .mutation(({ input }) => db.setSettings(input)),
     nextInvoiceNo: protectedProcedure.mutation(() => db.nextInvoiceNo()),
+  }),
+
+  // Bildirim merkezi: zamanlayıcı/nöbetçi bildirimleri (zil ikonu).
+  notifications: router({
+    list: protectedProcedure.query(() => db.listNotifications(30)),
+    unreadCount: protectedProcedure.query(() => db.unreadNotificationCount()),
+    markRead: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(({ input }) => db.markNotificationRead(input.id)),
+    markAllRead: protectedProcedure.mutation(() => db.markAllNotificationsRead()),
   }),
 
   tasks: router({
@@ -592,6 +755,104 @@ export const appRouter = router({
 
   report: router({
     data: protectedProcedure.query(() => db.reportData()),
+    vat: protectedProcedure.query(() => db.vatReport()),
+    cashflow: protectedProcedure.query(() => db.cashflowReport()),
+  }),
+
+  customers: router({
+    list: protectedProcedure.query(() => db.listCustomers()),
+    create: protectedProcedure.input(customerInput).mutation(({ input }) => db.createCustomer(input as never)),
+    update: protectedProcedure
+      .input(z.object({ id: z.number(), data: customerInput.partial() }))
+      .mutation(({ input }) => db.updateCustomer(input.id, input.data as never)),
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteCustomer(input.id)),
+    // Müşteri cari ekstresi: siparişler (borç) + tahsilatlar (alacak) + bakiye.
+    ledger: protectedProcedure.input(z.object({ name: z.string() })).query(({ input }) => db.customerLedger(input.name)),
+    // Tüm müşterilerin cari bakiyesi (küçük harf ada göre).
+    balances: protectedProcedure.query(() => db.customerBalances()),
+  }),
+
+  // Çek & Senet portföyü.
+  cheques: router({
+    list: protectedProcedure.query(() => db.listCheques()),
+    create: protectedProcedure
+      .input(
+        z.object({
+          type: z.enum(["cek", "senet"]).default("cek"),
+          direction: z.enum(["alinan", "verilen"]).default("alinan"),
+          partyName: z.string().nullable().optional(),
+          bank: z.string().nullable().optional(),
+          serialNo: z.string().nullable().optional(),
+          amount: z.number().min(0).default(0),
+          dueDate: z.string().nullable().optional(),
+          note: z.string().nullable().optional(),
+        }),
+      )
+      .mutation(({ input }) => {
+        const { dueDate, ...rest } = input;
+        return db.createCheque({
+          ...(toDecimalFields(rest, ["amount"]) as never as object),
+          dueDate: dueDate ? new Date(dueDate) : null,
+        } as never);
+      }),
+    setStatus: protectedProcedure
+      .input(z.object({ id: z.number(), status: z.enum(["portfoyde", "tahsil", "odendi", "karsiliksiz", "iade"]) }))
+      .mutation(({ input }) => db.updateCheque(input.id, { status: input.status })),
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteCheque(input.id)),
+  }),
+
+  // Kasa & Banka hesapları (ön muhasebe).
+  accounts: router({
+    list: protectedProcedure.query(() => db.listAccounts()),
+    create: protectedProcedure.input(accountInput).mutation(({ input }) =>
+      db.createAccount(toDecimalFields(input, ["openingBalance"]) as never),
+    ),
+    update: protectedProcedure
+      .input(z.object({ id: z.number(), data: accountInput.partial() }))
+      .mutation(({ input }) => db.updateAccount(input.id, toDecimalFields(input.data, ["openingBalance"]) as never)),
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteAccount(input.id)),
+    transfer: protectedProcedure
+      .input(z.object({ fromId: z.number(), toId: z.number(), amount: z.number().positive(), note: z.string().nullable().optional() }))
+      .mutation(({ input }) => {
+        if (input.fromId === input.toId) throw new TRPCError({ code: "BAD_REQUEST", message: "Aynı hesaba transfer olmaz." });
+        return db.transferBetweenAccounts(input.fromId, input.toId, input.amount, input.note ?? null);
+      }),
+  }),
+
+  // Para/cari hareketleri: tahsilat, ödeme, gelir, gider, transfer.
+  transactions: router({
+    list: protectedProcedure
+      .input(z.object({ customerName: z.string().optional(), accountId: z.number().optional(), limit: z.number().optional() }).optional())
+      .query(({ input }) => db.listTransactions(input ?? undefined)),
+    create: protectedProcedure.input(transactionInput).mutation(({ input }) => {
+      const { txnDate, ...rest } = input;
+      return db.createTransaction({
+        ...(toDecimalFields(rest, ["amount"]) as never as object),
+        txnDate: txnDate ? new Date(txnDate) : new Date(),
+      } as never);
+    }),
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteTransaction(input.id)),
+  }),
+
+  expenses: router({
+    list: protectedProcedure.query(() => db.listExpenses()),
+    create: protectedProcedure.input(expenseInput).mutation(({ input }) => {
+      const { expenseDate, ...rest } = input;
+      return db.createExpense({
+        ...(toDecimalFields(rest, ["amount"]) as never as object),
+        expenseDate: expenseDate ? new Date(expenseDate) : new Date(),
+      } as never);
+    }),
+    update: protectedProcedure
+      .input(z.object({ id: z.number(), data: expenseInput.partial() }))
+      .mutation(({ input }) => {
+        const { expenseDate, ...rest } = input.data;
+        return db.updateExpense(input.id, {
+          ...(toDecimalFields(rest, ["amount"]) as never as object),
+          ...(expenseDate ? { expenseDate: new Date(expenseDate) } : {}),
+        } as never);
+      }),
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteExpense(input.id)),
   }),
 
   suppliers: router({
@@ -601,6 +862,9 @@ export const appRouter = router({
       .input(z.object({ id: z.number(), data: supplierInput.partial() }))
       .mutation(({ input }) => db.updateSupplier(input.id, input.data as never)),
     delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteSupplier(input.id)),
+    // Tedarikçi cari: alış faturaları (borç) − ödemeler (alacak).
+    ledger: protectedProcedure.input(z.object({ name: z.string() })).query(({ input }) => db.supplierLedger(input.name)),
+    balances: protectedProcedure.query(() => db.supplierBalances()),
   }),
 
   campaigns: router({
@@ -684,14 +948,16 @@ Türkçe yaz. Sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, o
 
   dashboard: router({
     summary: protectedProcedure.query(async () => {
-      const [today, statusCounts, critical, upcoming, openTasks] = await Promise.all([
+      const [today, statusCounts, critical, upcoming, openTasks, finance, unpaid] = await Promise.all([
         db.countOrdersToday(),
         db.orderStatusCounts(),
         db.listCriticalMaterials(),
         db.upcomingCampaigns(30),
         db.listTasks(undefined, "open"),
+        db.financeSummary(),
+        db.listUnpaidOrders(6),
       ]);
-      return { today, statusCounts, critical, upcoming, openTasks };
+      return { today, statusCounts, critical, upcoming, openTasks, finance, unpaid };
     }),
   }),
 });

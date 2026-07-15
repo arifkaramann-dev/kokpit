@@ -10,6 +10,8 @@ import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
+  SidebarGroup,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
@@ -20,12 +22,17 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/useMobile";
+import { useTheme } from "@/contexts/ThemeContext";
 import VoiceButton from "@/components/VoiceButton";
+import CommandPalette from "@/components/CommandPalette";
+import NotificationBell from "@/components/NotificationBell";
 import {
+  BadgePercent,
   BarChart3,
   Beaker,
   Bot,
   CalendarDays,
+  Contact,
   Factory,
   FlaskConical,
   Calculator,
@@ -34,13 +41,20 @@ import {
   LayoutDashboard,
   LibraryBig,
   LogOut,
+  Moon,
   Package,
   PanelLeft,
   ReceiptText,
+  Scale,
+  ScrollText,
+  Search,
   Settings2,
   Sparkles,
+  Sun,
   Target,
+  TrendingDown,
   Truck,
+  Wallet,
   Warehouse,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
@@ -48,26 +62,60 @@ import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import LoginForm from "./LoginForm";
 
-const menuItems = [
-  { icon: LayoutDashboard, label: "Kokpit", path: "/" },
-  { icon: Bot, label: "Asistan", path: "/asistan" },
-  { icon: ClipboardList, label: "Sipariş Panosu", path: "/siparisler" },
-  { icon: ListChecks, label: "Görevler & Eksikler", path: "/gorevler" },
-  { icon: Warehouse, label: "Stok & Hammadde", path: "/stok" },
-  { icon: ReceiptText, label: "Fatura Girişi", path: "/faturalar" },
-  { icon: Package, label: "Ürünler & Türevler", path: "/urunler" },
-  { icon: FlaskConical, label: "Ürün Geliştirme", path: "/gelistirme" },
-  { icon: Beaker, label: "Formül Defteri", path: "/formuller" },
-  { icon: Factory, label: "Üretim", path: "/uretim" },
-  { icon: Calculator, label: "Maliyet & Kar", path: "/maliyet" },
-  { icon: BarChart3, label: "Satış Analizi", path: "/analiz" },
-  { icon: Sparkles, label: "AI Pazarlama", path: "/pazarlama" },
-  { icon: CalendarDays, label: "Kampanya Takvimi", path: "/kampanyalar" },
-  { icon: Truck, label: "Tedarikçiler", path: "/tedarikciler" },
-  { icon: Target, label: "Strateji & Rapor", path: "/strateji" },
-  { icon: LibraryBig, label: "Şablonlar", path: "/sablonlar" },
-  { icon: Settings2, label: "Ayarlar", path: "/ayarlar" },
+const menuGroups = [
+  {
+    label: "Genel",
+    items: [
+      { icon: LayoutDashboard, label: "Kokpit", path: "/" },
+      { icon: Bot, label: "Asistan", path: "/asistan" },
+    ],
+  },
+  {
+    label: "Satış & Müşteri",
+    items: [
+      { icon: ClipboardList, label: "Sipariş Panosu", path: "/siparisler" },
+      { icon: Contact, label: "Müşteriler", path: "/musteriler" },
+      { icon: ListChecks, label: "Görevler & Eksikler", path: "/gorevler" },
+      { icon: CalendarDays, label: "Kampanya Takvimi", path: "/kampanyalar" },
+      { icon: Sparkles, label: "AI Pazarlama", path: "/pazarlama" },
+      { icon: LibraryBig, label: "Şablonlar", path: "/sablonlar" },
+    ],
+  },
+  {
+    label: "Finans",
+    items: [
+      { icon: ReceiptText, label: "Fatura Girişi", path: "/faturalar" },
+      { icon: TrendingDown, label: "Giderler", path: "/giderler" },
+      { icon: Wallet, label: "Kasa & Banka", path: "/kasa" },
+      { icon: Scale, label: "Cari Hesaplar", path: "/cari" },
+      { icon: ScrollText, label: "Çek & Senet", path: "/cek-senet" },
+    ],
+  },
+  {
+    label: "Ürün & Üretim",
+    items: [
+      { icon: Package, label: "Ürünler & Türevler", path: "/urunler" },
+      { icon: FlaskConical, label: "Ürün Geliştirme", path: "/gelistirme" },
+      { icon: Beaker, label: "Formül Defteri", path: "/formuller" },
+      { icon: Factory, label: "Üretim", path: "/uretim" },
+      { icon: Warehouse, label: "Stok & Hammadde", path: "/stok" },
+      { icon: Calculator, label: "Maliyet & Kar", path: "/maliyet" },
+      { icon: BadgePercent, label: "Fiyat & Kâr Motoru", path: "/fiyat" },
+      { icon: Truck, label: "Tedarikçiler", path: "/tedarikciler" },
+    ],
+  },
+  {
+    label: "Analiz & Ayarlar",
+    items: [
+      { icon: BarChart3, label: "Satış Analizi", path: "/analiz" },
+      { icon: Target, label: "Strateji & Rapor", path: "/strateji" },
+      { icon: Settings2, label: "Ayarlar", path: "/ayarlar" },
+    ],
+  },
 ];
+
+// Aktif başlık aramaları ve rota eşleşmesi için düz liste.
+const menuItems = menuGroups.flatMap(g => g.items);
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
 const DEFAULT_WIDTH = 280;
@@ -122,6 +170,7 @@ function DashboardLayoutContent({
   setSidebarWidth,
 }: DashboardLayoutContentProps) {
   const { user, logout } = useAuth();
+  const { theme, toggleTheme, switchable } = useTheme();
   const [location, setLocation] = useLocation();
   const { state, toggleSidebar } = useSidebar();
   const isCollapsed = state === "collapsed";
@@ -194,26 +243,43 @@ function DashboardLayoutContent({
           </SidebarHeader>
 
           <SidebarContent className="gap-0">
-            <SidebarMenu className="px-2 py-1">
-              {menuItems.map(item => {
-                const isActive = location === item.path;
-                return (
-                  <SidebarMenuItem key={item.path}>
-                    <SidebarMenuButton
-                      isActive={isActive}
-                      onClick={() => setLocation(item.path)}
-                      tooltip={item.label}
-                      className={`h-10 transition-all font-normal`}
-                    >
-                      <item.icon
-                        className={`h-4 w-4 ${isActive ? "text-primary" : ""}`}
-                      />
-                      <span>{item.label}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
+            {!isCollapsed && (
+              <div className="px-3 pt-2 pb-1">
+                <button
+                  onClick={() => window.dispatchEvent(new Event("open-command-palette"))}
+                  className="flex w-full items-center gap-2 rounded-lg border bg-background px-2.5 py-1.5 text-sm text-muted-foreground hover:bg-accent transition-colors"
+                >
+                  <Search className="h-4 w-4" />
+                  <span>Ara…</span>
+                  <kbd className="ml-auto rounded border bg-muted px-1.5 text-[10px]">⌘K</kbd>
+                </button>
+              </div>
+            )}
+            {menuGroups.map(group => (
+              <SidebarGroup key={group.label} className="px-2 py-0.5">
+                <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+                <SidebarMenu>
+                  {group.items.map(item => {
+                    const isActive = location === item.path;
+                    return (
+                      <SidebarMenuItem key={item.path}>
+                        <SidebarMenuButton
+                          isActive={isActive}
+                          onClick={() => setLocation(item.path)}
+                          tooltip={item.label}
+                          className={`h-10 transition-all font-normal`}
+                        >
+                          <item.icon
+                            className={`h-4 w-4 ${isActive ? "text-primary" : ""}`}
+                          />
+                          <span>{item.label}</span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    );
+                  })}
+                </SidebarMenu>
+              </SidebarGroup>
+            ))}
           </SidebarContent>
 
           <SidebarFooter className="p-3">
@@ -236,6 +302,16 @@ function DashboardLayoutContent({
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
+                {switchable && (
+                  <DropdownMenuItem onClick={() => toggleTheme?.()} className="cursor-pointer">
+                    {theme === "dark" ? (
+                      <Sun className="mr-2 h-4 w-4" />
+                    ) : (
+                      <Moon className="mr-2 h-4 w-4" />
+                    )}
+                    <span>{theme === "dark" ? "Açık tema" : "Koyu tema"}</span>
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem
                   onClick={logout}
                   className="cursor-pointer text-destructive focus:text-destructive"
@@ -273,7 +349,10 @@ function DashboardLayoutContent({
           </div>
         )}
         <main className="flex-1 p-4">{children}</main>
-        <VoiceButton />
+        {/* Asistan sayfasının kendi mikrofonu var; sabit buton orada gizlenir. */}
+        {location !== "/asistan" && <VoiceButton />}
+        <NotificationBell />
+        <CommandPalette />
       </SidebarInset>
     </>
   );

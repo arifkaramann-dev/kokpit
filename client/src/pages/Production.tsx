@@ -18,6 +18,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatQty, formatTL, num } from "@/lib/format";
+import { useConfirm } from "@/components/ConfirmDialog";
 import { trpc } from "@/lib/trpc";
 import { CheckCircle2, Factory, ListPlus, XCircle } from "lucide-react";
 import { useState } from "react";
@@ -30,6 +31,7 @@ import { toast } from "sonner";
  */
 export default function Production() {
   const utils = trpc.useUtils();
+  const confirm = useConfirm();
   const { data: products } = trpc.products.list.useQuery();
   const { data: materials } = trpc.materials.list.useQuery();
   const [productId, setProductId] = useState<string>("");
@@ -194,8 +196,18 @@ export default function Production() {
                 <Button
                   disabled={produce.isPending}
                   variant={allOk ? "default" : "destructive"}
-                  onClick={() => {
-                    if (!allOk && !confirm("Bazı hammaddeler yetersiz. Yine de üretimi kaydedip stokları düşeyim mi? (Stok 0'ın altına inmez)")) return;
+                  onClick={async () => {
+                    if (
+                      !allOk &&
+                      !(await confirm({
+                        title: "Stok yetersiz",
+                        description:
+                          "Bazı hammaddeler yetersiz. Yine de üretimi kaydedip stokları düşeyim mi? (Stok 0'ın altına inmez)",
+                        confirmText: "Yine de üret",
+                        destructive: true,
+                      }))
+                    )
+                      return;
                     produce.mutate({ productId: Number(productId), qty, force: !allOk });
                   }}
                 >

@@ -394,7 +394,10 @@ function SidebarGroup({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="sidebar-group"
       data-sidebar="group"
-      className={cn("relative flex w-full min-w-0 flex-col p-2", className)}
+      // index.css'teki global `.flex { min-height: 0 }` kuralı grupların içerik
+      // yüksekliğinin altına büzüşmesine izin veriyor; shrink-0 bunu engeller
+      // (menü sığmazsa SidebarContent kaydırır, öğeler üst üste binmez).
+      className={cn("relative flex w-full min-w-0 shrink-0 flex-col p-2", className)}
       {...props}
     />
   );

@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { formatQty, formatTL, MATERIAL_CATEGORIES, num, UNITS } from "@/lib/format";
+import { useConfirm } from "@/components/ConfirmDialog";
 import { trpc } from "@/lib/trpc";
 import { AlertTriangle, ArrowDownToLine, ArrowUpFromLine, Pencil, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -63,6 +64,7 @@ export default function Stock() {
     return Array.from(new Set([...MATERIAL_CATEGORIES, ...fromTemplates]));
   }, [templateList]);
   const utils = trpc.useUtils();
+  const confirm = useConfirm();
   const { data: materials, isLoading } = trpc.materials.list.useQuery();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<MaterialRow | null>(null);
@@ -287,8 +289,15 @@ export default function Stock() {
                         size="icon"
                         variant="ghost"
                         className="h-7 w-7 text-destructive"
-                        onClick={() => {
-                          if (confirm(`"${m.name}" silinsin mi? Formüllerdeki kayıtları da silinir.`))
+                        onClick={async () => {
+                          if (
+                            await confirm({
+                              title: "Hammaddeyi sil",
+                              description: `"${m.name}" silinsin mi? Formüllerdeki kayıtları da silinir.`,
+                              confirmText: "Sil",
+                              destructive: true,
+                            })
+                          )
                             deleteMaterial.mutate({ id: m.id });
                         }}
                       >
@@ -374,7 +383,7 @@ export default function Stock() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label>Birim Maliyet (₺)</Label>
+                <Label>Birim Maliyet (₺, KDV hariç)</Label>
                 <Input
                   type="number"
                   min="0"

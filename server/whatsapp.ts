@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import type { Express, Request, Response } from "express";
 import { executeAssistantCommand } from "./assistant";
 
@@ -10,6 +11,8 @@ import { executeAssistantCommand } from "./assistant";
  *  - WHATSAPP_ACCESS_TOKEN     : Meta uygulamasının kalıcı erişim anahtarı
  *  - WHATSAPP_PHONE_NUMBER_ID  : Cloud API telefon numarası kimliği
  *  - WHATSAPP_ALLOWED_NUMBERS  : cevap verilecek numaralar, virgülle (örn. 905551112233)
+ *  - WHATSAPP_APP_SECRET       : Meta App Dashboard > App Secret; tanımlıysa gelen
+ *                                webhook'ların X-Hub-Signature-256 imzası doğrulanır
  */
 
 const GRAPH_BASE = "https://graph.facebook.com/v21.0";
@@ -36,6 +39,26 @@ function isAllowedSender(from: string): boolean {
   // Liste boşsa güvenlik için kimseye cevap verme.
   if (allowed.length === 0) return false;
   return allowed.includes(normalizeNumber(from));
+}
+
+/**
+ * Meta'nın `X-Hub-Signature-256` başlığını doğrular. İmza, HAM istek gövdesi
+ * üzerinden `sha256=` + HMAC-SHA256(appSecret, rawBody) hex olarak hesaplanır.
+ * Saf fonksiyon: DB/env erişimi yok, birim testi kolay.
+ */
+export function verifyWebhookSignature(
+  rawBody: Buffer,
+  signatureHeader: string | undefined,
+  appSecret: string
+): boolean {
+  if (!signatureHeader || !signatureHeader.startsWith("sha256=")) return false;
+  const provided = signatureHeader.slice("sha256=".length);
+  const expected = crypto.createHmac("sha256", appSecret).update(rawBody).digest("hex");
+  const providedBuf = Buffer.from(provided, "utf8");
+  const expectedBuf = Buffer.from(expected, "utf8");
+  // timingSafeEqual eşit uzunluk ister; farklı uzunluk zaten eşleşmiyor demektir.
+  if (providedBuf.length !== expectedBuf.length) return false;
+  return crypto.timingSafeEqual(providedBuf, expectedBuf);
 }
 
 export async function sendWhatsAppText(to: string, body: string): Promise<void> {
@@ -101,6 +124,12 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
 }
 
 export function registerWhatsAppRoutes(app: Express) {
+  if (!process.env.WHATSAPP_APP_SECRET) {
+    console.warn(
+      "[whatsapp] WHATSAPP_APP_SECRET tanımsız, webhook imza doğrulaması kapalı"
+    );
+  }
+
   // Meta webhook doğrulaması (kurulumda bir kez çağrılır).
   app.get("/api/whatsapp/webhook", (req: Request, res: Response) => {
     const mode = req.query["hub.mode"];
@@ -113,8 +142,18 @@ export function registerWhatsAppRoutes(app: Express) {
     }
   });
 
-  // Gelen mesajlar: hemen 200 dön, işlemeyi arka planda yap (Meta 20 sn bekler).
+  // Gelen mesajlar: imza doğrula, hemen 200 dön, işlemeyi arka planda yap (Meta 20 sn bekler).
   app.post("/api/whatsapp/webhook", (req: Request, res: Response) => {
+    const appSecret = process.env.WHATSAPP_APP_SECRET;
+    if (appSecret) {
+      const rawBody = (req as Request & { rawBody?: Buffer }).rawBody;
+      const signature = req.header("x-hub-signature-256");
+      if (!rawBody || !verifyWebhookSignature(rawBody, signature, appSecret)) {
+        console.warn("[whatsapp] geçersiz webhook imzası, istek reddedildi");
+        res.sendStatus(401);
+        return;
+      }
+    }
     res.sendStatus(200);
     if (!isWhatsAppConfigured()) return;
     try {

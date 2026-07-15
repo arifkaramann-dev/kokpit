@@ -80,3 +80,12 @@ createRoot(document.getElementById("root")!).render(
     </QueryClientProvider>
   </trpc.Provider>
 );
+
+// PWA: service worker yalnızca üretimde kaydedilir (dev'de Vite HMR ile çakışır).
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      /* SW kaydolmazsa uygulama normal çalışmaya devam eder */
+    });
+  });
+}

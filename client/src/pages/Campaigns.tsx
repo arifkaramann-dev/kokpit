@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate } from "@/lib/format";
+import { useConfirm } from "@/components/ConfirmDialog";
 import { trpc } from "@/lib/trpc";
 import { CalendarDays, ChevronLeft, ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -63,6 +64,7 @@ const emptyForm = {
 
 export default function Campaigns() {
   const utils = trpc.useUtils();
+  const confirm = useConfirm();
   const { data: campaigns } = trpc.campaigns.list.useQuery();
   const [month, setMonth] = useState(() => {
     const now = new Date();
@@ -287,8 +289,16 @@ export default function Campaigns() {
                   size="icon"
                   variant="ghost"
                   className="h-7 w-7 text-destructive"
-                  onClick={() => {
-                    if (confirm(`"${c.name}" kampanyası silinsin mi?`)) deleteCampaign.mutate({ id: c.id });
+                  onClick={async () => {
+                    if (
+                      await confirm({
+                        title: "Kampanyayı sil",
+                        description: `"${c.name}" kampanyası silinsin mi?`,
+                        confirmText: "Sil",
+                        destructive: true,
+                      })
+                    )
+                      deleteCampaign.mutate({ id: c.id });
                   }}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
