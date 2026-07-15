@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lte, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   accounts,
@@ -37,6 +37,7 @@ import {
   suppliers,
   users,
 } from "../drizzle/schema";
+import { resolveProductIdForItem } from "./orderUtils";
 import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -267,12 +268,20 @@ export async function listOrders() {
 
 export async function createOrder(data: InsertOrder) {
   const db = await requireDb();
+  // Cari bağ: müşteri adı CRM'de kayıtlıysa ID ile bağla (isim değişse de ekstre kopmaz).
+  if (data.customerId == null && data.customerName) {
+    data = { ...data, customerId: await resolveCustomerIdByName(data.customerName) };
+  }
   const [result] = await db.insert(orders).values(data);
   return result.insertId;
 }
 
 export async function updateOrder(id: number, data: Partial<InsertOrder>) {
   const db = await requireDb();
+  // Müşteri adı değiştirildiyse cari bağı da yeni ada göre tazele.
+  if (data.customerName !== undefined && data.customerId === undefined) {
+    data = { ...data, customerId: await resolveCustomerIdByName(data.customerName) };
+  }
   await db.update(orders).set(data).where(eq(orders.id, id));
 }
 
@@ -308,6 +317,32 @@ export async function setOrderPayment(
 export async function listCustomers() {
   const db = await requireDb();
   return db.select().from(customers).orderBy(customers.name);
+}
+
+/**
+ * Cari ID çözümleme (V2 göçü): isimden müşteri/tedarikçi ID'si bulur.
+ * Türkçe küçük harf + trim ile eşleşir; birden fazla aynı isim varsa en
+ * eski kayıt (en küçük id) esas alınır. Bulunamazsa null — kayıt isimle
+ * yaşamaya devam eder (pazaryeri müşterisi gibi CRM dışı adlar için normal).
+ */
+const trKey = (n: string) => n.trim().toLocaleLowerCase("tr-TR");
+
+export async function resolveCustomerIdByName(name: string | null | undefined): Promise<number | null> {
+  if (!name?.trim()) return null;
+  const db = await requireDb();
+  const rows = await db.select({ id: customers.id, name: customers.name }).from(customers);
+  const needle = trKey(name);
+  const hits = rows.filter(c => trKey(c.name) === needle).sort((a, b) => a.id - b.id);
+  return hits[0]?.id ?? null;
+}
+
+export async function resolveSupplierIdByName(name: string | null | undefined): Promise<number | null> {
+  if (!name?.trim()) return null;
+  const db = await requireDb();
+  const rows = await db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers);
+  const needle = trKey(name);
+  const hits = rows.filter(s => trKey(s.name) === needle).sort((a, b) => a.id - b.id);
+  return hits[0]?.id ?? null;
 }
 
 export async function createCustomer(data: InsertCustomer) {
@@ -391,7 +426,15 @@ export async function deleteAccount(id: number) {
 export async function listTransactions(filter?: { customerName?: string; accountId?: number; limit?: number }) {
   const db = await requireDb();
   const conds = [];
-  if (filter?.customerName) conds.push(eq(transactions.customerName, filter.customerName));
+  if (filter?.customerName) {
+    // ID-öncelikli süzme: kayıtlı müşteriyse ID'yle bağlı tüm hareketler gelir.
+    const customerId = await resolveCustomerIdByName(filter.customerName);
+    conds.push(
+      customerId != null
+        ? or(eq(transactions.customerId, customerId), and(isNull(transactions.customerId), eq(transactions.customerName, filter.customerName)))!
+        : eq(transactions.customerName, filter.customerName),
+    );
+  }
   if (filter?.accountId) conds.push(eq(transactions.accountId, filter.accountId));
   const q = db.select().from(transactions);
   const rows = conds.length ? await q.where(and(...conds)) : await q;
@@ -404,6 +447,13 @@ export async function listTransactions(filter?: { customerName?: string; account
  */
 export async function createTransaction(data: InsertTransaction) {
   const db = await requireDb();
+  // Cari bağ: isim varsa ID'ye çevirip birlikte sakla (isim görüntü/yedek kalır).
+  if (data.customerId == null && data.customerName) {
+    data = { ...data, customerId: await resolveCustomerIdByName(data.customerName) };
+  }
+  if (data.supplierId == null && data.supplierName) {
+    data = { ...data, supplierId: await resolveSupplierIdByName(data.supplierName) };
+  }
   const [res] = await db.insert(transactions).values(data);
   if (data.orderId && data.category === "tahsilat" && data.direction === "in") {
     const [ord] = await db.select().from(orders).where(eq(orders.id, data.orderId)).limit(1);
@@ -448,16 +498,27 @@ export async function transferBetweenAccounts(fromId: number, toId: number, amou
  */
 export async function customerBalances(): Promise<Record<string, number>> {
   const db = await requireDb();
-  const [ords, txns] = await Promise.all([
-    db.select({ name: orders.customerName, total: orders.totalAmount }).from(orders),
-    db.select({ name: transactions.customerName, direction: transactions.direction, amount: transactions.amount, category: transactions.category }).from(transactions),
+  const [ords, txns, custs] = await Promise.all([
+    db.select({ name: orders.customerName, customerId: orders.customerId, total: orders.totalAmount }).from(orders),
+    db.select({ name: transactions.customerName, customerId: transactions.customerId, direction: transactions.direction, amount: transactions.amount, category: transactions.category }).from(transactions),
+    db.select({ id: customers.id, name: customers.name }).from(customers),
   ]);
   const key = (n: string) => n.trim().toLocaleLowerCase("tr-TR");
+  // ID'li kayıtlar müşterinin GÜNCEL adı altında toplanır (ad değişse de cari bölünmez);
+  // ID'siz (CRM dışı) kayıtlar kayıtlı isimle yaşar.
+  const nameById = new Map(custs.map(c => [c.id, c.name]));
+  const canonical = (customerId: number | null, name: string | null) =>
+    (customerId != null ? nameById.get(customerId) : undefined) ?? name ?? "";
   const out: Record<string, number> = {};
-  for (const o of ords) out[key(o.name)] = (out[key(o.name)] ?? 0) + toNum(o.total);
+  for (const o of ords) {
+    const k = key(canonical(o.customerId, o.name));
+    if (k) out[k] = (out[k] ?? 0) + toNum(o.total);
+  }
   for (const t of txns) {
-    if (!t.name || t.category !== "tahsilat") continue;
-    out[key(t.name)] = (out[key(t.name)] ?? 0) - (t.direction === "in" ? toNum(t.amount) : -toNum(t.amount));
+    if (t.category !== "tahsilat") continue;
+    const k = key(canonical(t.customerId, t.name));
+    if (!k) continue;
+    out[k] = (out[k] ?? 0) - (t.direction === "in" ? toNum(t.amount) : -toNum(t.amount));
   }
   return out;
 }
@@ -468,9 +529,18 @@ export async function customerBalances(): Promise<Record<string, number>> {
  */
 export async function customerLedger(name: string) {
   const db = await requireDb();
+  // ID-öncelikli eşleşme: müşteri kayıtlıysa ID ile bağlı TÜM hareketler gelir
+  // (geçmişte farklı yazılmış adlar dahil); ID'siz eski kayıtlar isimle yakalanır.
+  const customerId = await resolveCustomerIdByName(name);
+  const orderCond = customerId != null
+    ? or(eq(orders.customerId, customerId), and(isNull(orders.customerId), eq(orders.customerName, name)))
+    : eq(orders.customerName, name);
+  const txnCond = customerId != null
+    ? or(eq(transactions.customerId, customerId), and(isNull(transactions.customerId), eq(transactions.customerName, name)))
+    : eq(transactions.customerName, name);
   const [ords, txns] = await Promise.all([
-    db.select().from(orders).where(eq(orders.customerName, name)),
-    db.select().from(transactions).where(eq(transactions.customerName, name)),
+    db.select().from(orders).where(orderCond),
+    db.select().from(transactions).where(txnCond),
   ]);
   type Entry = { date: Date; label: string; debit: number; credit: number; ref: string };
   const entries: Entry[] = [];
@@ -535,17 +605,25 @@ export async function vatReport() {
  */
 export async function supplierBalances(): Promise<Record<string, number>> {
   const db = await requireDb();
-  const [purs, txns] = await Promise.all([
-    db.select({ name: purchases.supplierName, total: purchases.totalAmount }).from(purchases),
-    db.select({ name: transactions.supplierName, direction: transactions.direction, amount: transactions.amount }).from(transactions),
+  const [purs, txns, sups] = await Promise.all([
+    db.select({ name: purchases.supplierName, supplierId: purchases.supplierId, total: purchases.totalAmount }).from(purchases),
+    db.select({ name: transactions.supplierName, supplierId: transactions.supplierId, direction: transactions.direction, amount: transactions.amount }).from(transactions),
+    db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers),
   ]);
   const key = (n: string) => n.trim().toLocaleLowerCase("tr-TR");
+  const nameById = new Map(sups.map(s => [s.id, s.name]));
+  const canonical = (supplierId: number | null, name: string | null) =>
+    (supplierId != null ? nameById.get(supplierId) : undefined) ?? name ?? "";
   const out: Record<string, number> = {};
-  for (const p of purs) if (p.name) out[key(p.name)] = (out[key(p.name)] ?? 0) + toNum(p.total);
+  for (const p of purs) {
+    const k = key(canonical(p.supplierId, p.name));
+    if (k) out[k] = (out[k] ?? 0) + toNum(p.total);
+  }
   for (const t of txns) {
-    if (!t.name) continue;
+    const k = key(canonical(t.supplierId, t.name));
+    if (!k) continue;
     // Tedarikçiye ödeme (out) borcumuzu azaltır.
-    out[key(t.name)] = (out[key(t.name)] ?? 0) - (t.direction === "out" ? toNum(t.amount) : -toNum(t.amount));
+    out[k] = (out[k] ?? 0) - (t.direction === "out" ? toNum(t.amount) : -toNum(t.amount));
   }
   return out;
 }
@@ -553,9 +631,16 @@ export async function supplierBalances(): Promise<Record<string, number>> {
 /** Tedarikçi cari ekstresi: alış faturaları (borç) + ödemeler (alacak) + bakiye. */
 export async function supplierLedger(name: string) {
   const db = await requireDb();
+  const supplierId = await resolveSupplierIdByName(name);
+  const purCond = supplierId != null
+    ? or(eq(purchases.supplierId, supplierId), and(isNull(purchases.supplierId), eq(purchases.supplierName, name)))
+    : eq(purchases.supplierName, name);
+  const txnCond = supplierId != null
+    ? or(eq(transactions.supplierId, supplierId), and(isNull(transactions.supplierId), eq(transactions.supplierName, name)))
+    : eq(transactions.supplierName, name);
   const [purs, txns] = await Promise.all([
-    db.select().from(purchases).where(eq(purchases.supplierName, name)),
-    db.select().from(transactions).where(eq(transactions.supplierName, name)),
+    db.select().from(purchases).where(purCond),
+    db.select().from(transactions).where(txnCond),
   ]);
   type Entry = { date: Date; label: string; debit: number; credit: number; ref: string };
   const entries: Entry[] = [];
@@ -731,15 +816,28 @@ export async function listOrderItems(orderId: number) {
   return db.select().from(orderItems).where(eq(orderItems.orderId, orderId)).orderBy(orderItems.id);
 }
 
-/** Siparişin kalemlerini komple değiştirir (sil + yeniden ekle). */
+/**
+ * Siparişin kalemlerini komple değiştirir (sil + yeniden ekle).
+ * Her kalem katalogla eşleştirilir (barkod → ad); eşleşen kaleme productId
+ * yazılır ki ürün bazlı satış raporu ve (ileride) mamul stok düşümü çalışsın.
+ */
 export async function replaceOrderItems(
   orderId: number,
-  items: Omit<InsertOrderItem, "orderId">[]
+  items: (Omit<InsertOrderItem, "orderId"> & { barcode?: string | null })[]
 ) {
   const db = await requireDb();
   await db.delete(orderItems).where(eq(orderItems.orderId, orderId));
   if (items.length > 0) {
-    await db.insert(orderItems).values(items.map(item => ({ ...item, orderId })));
+    const refs = await db
+      .select({ id: products.id, name: products.name, barcode: products.barcode })
+      .from(products);
+    await db.insert(orderItems).values(
+      items.map(({ barcode, ...item }) => ({
+        ...item,
+        productId: item.productId ?? resolveProductIdForItem({ productName: item.productName, barcode }, refs),
+        orderId,
+      })),
+    );
   }
 }
 
@@ -1032,6 +1130,8 @@ export async function createPurchase(
   const total = items.reduce((s, i) => s + i.qty * i.unitCost, 0);
   const [res] = await db.insert(purchases).values({
     supplierName: header.supplierName,
+    // Cari bağ: tedarikçi kayıtlıysa ID ile bağla (ekstre ada değil ID'ye dayanır).
+    supplierId: await resolveSupplierIdByName(header.supplierName),
     invoiceNo: header.invoiceNo,
     invoiceDate: header.invoiceDate,
     note: header.note,

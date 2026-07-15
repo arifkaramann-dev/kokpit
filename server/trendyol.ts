@@ -18,6 +18,8 @@ export type TrendyolLine = {
   quantity: number;
   /** Birim satış fiyatı (indirimler düşülmüş). */
   price: number;
+  /** Ürün barkodu — yerel katalogla kalem eşleşmesi için. */
+  barcode?: string | null;
 };
 
 export type TrendyolPackage = {
@@ -82,6 +84,7 @@ export function mapPackageToOrder(pkg: TrendyolPackage): MappedOrder | null {
     productName: line.productName,
     quantity: line.quantity,
     unitPrice: line.price,
+    barcode: line.barcode ?? null,
   }));
 
   const customerName =

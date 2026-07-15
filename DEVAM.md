@@ -90,6 +90,21 @@ Faz 1: tool-use AI ajanı + proaktif brifing/nöbetçiler; Faz 2: iade/soru-ceva
 e-Fatura/teklif/N11; Faz 3: çok kullanıcı/şirket + REST API + plugin).
 V2 uygulamasına başlarken önce bu belgeyi oku. Yeni ajan: `ux-tasarimci`.
 
+**Faz 0 / Sprint 0.1 ✔ yapıldı (15.07.2026):** migration 0016 —
+(a) cari ID kolonları: `orders.customerId`, `transactions.customerId/supplierId`,
+`purchases.supplierId`, `orderItems.productId` + isim eşleşmeli backfill
+UPDATE'leri; (b) 21 ikincil indeks (orders/transactions/orderItems/products/
+formulaItems/stockMovements/purchases/customers/suppliers/productImages);
+(c) tüm yazma yolları ID çözümlüyor (createOrder/updateOrder/createTransaction/
+createPurchase/replaceOrderItems — pazaryeri kalemlerinde barkod→ad eşleşmesi,
+saf mantık `orderUtils.resolveProductIdForItem`, 6 test); (d) cari ekstre/
+bakiye ID-öncelikli (isim değişse de cari kopmaz; ID'siz eski kayıtlar isimle
+yakalanır); (e) güvenlik: oturum cookie `sameSite=lax`, temel güvenlik
+başlıkları (nosniff/frame-deny/referrer). 89/89 test, 0 tip hatası, build ✓.
+**Migration canlıda deploy'la otomatik koşar (`pnpm db:migrate`).**
+Sırada (Sprint 0.2): mamul stok hareketleri + üretim emri kaydı, görsellerin
+S3'e taşınması, routers/db modül bölünmesi, companyId kolon paketi.
+
 ## Açık işler / sırada ne var (takım denetimi: 15.07.2026, kanıtlı liste todo.md sonunda)
 Sağlık: `pnpm check` 0 hata, 74/74 test geçiyor, kod içi TODO/FIXME borcu yok.
 

@@ -178,6 +178,19 @@ Hepsiburada push yok, web sitesi (Qukasoft) entegrasyonu yok.
 7. [ ] AI görsel üretimi: _core/imageGeneration.ts hazır ama hiçbir router'a bağlı
        değil — kullanıcı talebiyle modül olarak bağlanacak
 
+## KOKPİT V2 — Faz 0 (temel sağlamlaştırma; plan: docs/KOKPIT-V2-ANALIZ.md)
+- [x] 0.1a Cari/ürün ID göçü (migration 0016): orders.customerId, transactions.customerId/
+      supplierId, purchases.supplierId, orderItems.productId + backfill + 21 indeks
+- [x] 0.1b Yazma yolları ID çözümlemeli; ekstre/bakiye ID-öncelikli (isim fallback);
+      pazaryeri kalemlerinde barkod→ad ürün eşleşmesi (resolveProductIdForItem, 6 test)
+- [x] 0.1c Güvenlik hızlı kazanım: cookie sameSite=lax + nosniff/frame-deny/referrer başlıkları
+- [ ] 0.2 Mamul stok hareketleri (üretim +, satış −, iade +) + üretim emri kaydı
+- [ ] 0.3 Ürün görsellerinin S3'e taşınması (/api/img URL'leri korunarak)
+- [ ] 0.4 routers.ts/db.ts modül dizinlerine bölünme + servis katmanı (davranış birebir)
+- [ ] 0.5 companyId kolon paketi (çok şirket hazırlığı, default 1)
+- [ ] 0.6 Oturum süresi kısaltma + sunucu tarafı iptal; body limit'in uca göre daraltılması
+      (S3 göçünden sonra; görseller şu an tRPC'den base64 gidiyor)
+
 ## Canlıda (Render) doğrulama bekleyenler — kod tarafı hazır
 - [ ] Trendyol: "Bağlantıyı Test Et" HTTP 200 + sipariş akışı + "Trendyol'a Gönder" (stok/fiyat)
 - [ ] Trendyol resmi kargo etiketi (ZPL→Labelary→PDF; kargo takip no dolunca)

@@ -33,6 +33,7 @@ describe("Trendyol paket → sipariş eşlemesi", () => {
       productName: "Kırmızı Metalik 1L",
       quantity: 2,
       unitPrice: 450,
+      barcode: null,
     });
   });
 

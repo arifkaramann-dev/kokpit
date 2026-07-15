@@ -39,13 +39,15 @@ export function getSessionCookieOptions(
   //       ? hostname
   //       : undefined;
 
-  // SameSite=None requires Secure; browsers reject the cookie otherwise.
-  // Fall back to Lax on plain-http (local dev) so the session still sticks.
+  // Uygulama tek origin'den servis edilir (Render); Lax hem oturumu korur hem
+  // cross-site istekle gelen mutasyonlara (CSRF) karşı tarayıcı katmanında set
+  // eder. None yalnızca üçüncü taraf iframe gömme senaryosunda gerekirdi — o
+  // senaryo yok. (Güvenlik denetimi 15.07.2026, Kokpit V2 Faz 0.)
   const secure = isSecureRequest(req);
   return {
     httpOnly: true,
     path: "/",
-    sameSite: secure ? "none" : "lax",
+    sameSite: "lax",
     secure,
   };
 }

@@ -20,6 +20,7 @@ type HbLineRaw = {
   productName?: string;
   name?: string;
   sku?: string;
+  merchantSku?: string;
   quantity?: number;
   price?: { amount?: number } | number;
   totalPrice?: { amount?: number } | number;
@@ -102,6 +103,8 @@ export function mapHbOrder(raw: HbOrderRaw): MappedOrder | null {
       productName: l.productName ?? l.name ?? l.sku ?? "Ürün",
       quantity: qty,
       unitPrice: unit,
+      // HB'de merchantSku = barkod varsayımı (stok/fiyat push ile tutarlı).
+      barcode: l.merchantSku ?? l.sku ?? null,
     };
   });
 
