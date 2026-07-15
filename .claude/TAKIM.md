@@ -19,6 +19,7 @@ CTO (ana oturum) her sprint sonunda bu dosyayı gözden geçirir.
 | `guvenlik-denetcisi` | Auth/gizli bilgi/güvenlik | Auth değişiklikleri, periyodik denetim |
 | `buyume-pazarlama-uzmani` | SEO/pazarlama/strateji | İçerik, rakip analizi, veri içgörüsü |
 | `devops-muhendisi` | Render/deploy/env | Dağıtım, build, env değişkeni işleri |
+| `ux-tasarimci` | Bilgi mimarisi/UX desenleri | Yeni modül/ekran akışı tasarımı, menü düzeni, onay kartı desenleri — frontend'den önce |
 
 ## Çalışma kuralları
 
@@ -51,6 +52,7 @@ da aynı şekilde emekli edilir (dosya silinir, günlüğe not düşülür).
 
 | Tarih | Değişiklik | Gerekçe |
 |---|---|---|
+| 2026-07-15 | Kokpit V2 stratejik analizi tamamlandı (`docs/KOKPIT-V2-ANALIZ.md`): mevcut durum, 7 platform karşılaştırması, 30 modüllük değerlendirme, V2 mimarisi, 4 fazlı yol haritası. Yeni ajan: `ux-tasarimci` kuruldu | V2 analizi UX/bilgi mimarisinin tekrarlanan ve sahipsiz bir uzmanlık olduğunu gösterdi (26 maddelik menü, desen tutarsızlığı, onay kartı tasarımı, PWA akışları). Faz 0-3 boyunca her modül yeniden tasarımında frontend'den önce akış tasarımı gerekecek. |
 | 2026-07-15 | Ders: menü gruplama görsel hatası (öğeler üst üste) kod incelemesinden kaçtı; kök neden index.css'teki global `.flex{min-height:0}` kuralıydı. `qa-test-uzmani` risk tablosu güncellendi: yerleşim/navigasyon değişikliği artık tarayıcı görsel doğrulaması ister (yerel MariaDB + Playwright akışı kuruldu). | Statik kod incelemesi flex/overflow etkileşimlerini yakalayamıyor; görsel hatalar ancak render edilince görülür. |
 | 2026-07-15 | İlk takım denetimi: QA + finans/ürün + pazaryeri/AI paralel incelemesi; DEVAM.md ve todo.md açık işleri kanıta dayalı yenilendi | Bulgular: sağlık ✅ (0 tip hatası, 38/38 test, kod içi borç yok), WhatsApp webhook imza eksiği (güvenlik), 6 kayda girmemiş tamamlanmış modül, 2 mükerrer/eskimiş todo maddesi. Yeni ajan ihtiyacı çıkmadı; aday listesi geçerli. |
 | 2026-07-15 | Kuruluş: 12 ajanlık çekirdek kadro oluşturuldu | AI Team Evolution Protocol — tek geliştiricili yapıdan AI yazılım organizasyonuna geçiş. Kadro, projenin fiili modüllerinden türetildi: sunucu/arayüz/DB üçlüsü, iki alan uzmanlığı (finans, ürün/üretim), iki entegrasyon alanı (pazaryeri, AI/otomasyon), üç yatay disiplin (QA, güvenlik, DevOps), bir büyüme rolü ve orkestratör. |

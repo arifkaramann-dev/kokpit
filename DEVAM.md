@@ -81,6 +81,15 @@ orkestratör `proje-yoneticisi`dir.
   price-uploads/stock-uploads, `HEPSIBURADA_SERVICE_KEY` desteği). Saf mantık
   `shared/pricing.ts` (23 test).
 
+## KOKPİT V2 — stratejik analiz hazır (15.07.2026)
+`docs/KOKPIT-V2-ANALIZ.md`: mevcut durum analizi, Odoo/Quka/Shopify/ERPNext/Zoho/
+Monday karşılaştırması, 30 modüllük değerlendirme tablosu, V2 mimarisi (modüler +
+plugin + AI-first + çok şirket) ve **4 fazlı yol haritası** (Faz 0: veri modeli
+borçları — partner-ID göçü, orderItems.productId, FK/indeks, S3 görseller;
+Faz 1: tool-use AI ajanı + proaktif brifing/nöbetçiler; Faz 2: iade/soru-cevap/
+e-Fatura/teklif/N11; Faz 3: çok kullanıcı/şirket + REST API + plugin).
+V2 uygulamasına başlarken önce bu belgeyi oku. Yeni ajan: `ux-tasarimci`.
+
 ## Açık işler / sırada ne var (takım denetimi: 15.07.2026, kanıtlı liste todo.md sonunda)
 Sağlık: `pnpm check` 0 hata, 74/74 test geçiyor, kod içi TODO/FIXME borcu yok.
 
