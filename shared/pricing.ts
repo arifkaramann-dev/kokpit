@@ -13,21 +13,125 @@ export type PriceMode = "percent" | "targetMargin" | "multiplier" | "fixed";
 
 export type Rounding = "none" | "whole" | "ninety" | "ninetynine";
 
+export type ChannelKind = "pazaryeri" | "website" | "elden";
+
 export type ChannelProfile = {
   name: string;
+  /** pazaryeri: komisyon+stopaj'lı; website: sanal POS'lu; elden: kesintisiz. */
+  kind: ChannelKind;
+  /** KDV dahil satış fiyatı üzerinden %. Komisyon KDV'si indirildiği için net maliyet = oran × satış. */
   commissionPercent: number;
+  /** Ödeme bedeli / sanal POS oranı: KDV dahil satış üzerinden %, KDV DAHİL tutar üretir. */
+  paymentFeePercent: number;
+  /** true: ödeme kuruluşu/pazaryeri (%20 KDV'si indirilir); false: banka POS'u (BSMV, indirilemez). */
+  paymentFeeVatDeductible: boolean;
+  /** İşlem bedeli, KDV dahil TL. */
   fixedFee: number;
+  /** Aracı stopajı: KDV HARİÇ satış üzerinden % (pazaryerlerinde %1, kendi sitede 0). */
+  stopajPercent: number;
   vatPercent: number;
+  /** Kanal kargo bedeli, KDV dahil TL. 0 ise ürünün kendi kargo maliyeti kullanılır. */
   shippingCost: number;
 };
 
 /** Ayarlar tablosundaki `channelProfiles` anahtarı boşsa kullanılan varsayılanlar. */
 export const DEFAULT_CHANNEL_PROFILES: ChannelProfile[] = [
   // Elden satış Maliyet & Kar sayfasıyla aynı hesabı versin diye KDV 0 başlar.
-  { name: "Elden / Web", commissionPercent: 0, fixedFee: 0, vatPercent: 0, shippingCost: 0 },
-  { name: "Trendyol", commissionPercent: 20, fixedFee: 10, vatPercent: 20, shippingCost: 0 },
-  { name: "Hepsiburada", commissionPercent: 15, fixedFee: 10, vatPercent: 20, shippingCost: 0 },
+  { name: "Elden", kind: "elden", commissionPercent: 0, paymentFeePercent: 0, paymentFeeVatDeductible: true, fixedFee: 0, stopajPercent: 0, vatPercent: 0, shippingCost: 0 },
+  { name: "Web Sitesi", kind: "website", commissionPercent: 0, paymentFeePercent: 2.5, paymentFeeVatDeductible: true, fixedFee: 0, stopajPercent: 0, vatPercent: 20, shippingCost: 0 },
+  { name: "Trendyol", kind: "pazaryeri", commissionPercent: 20, paymentFeePercent: 0.96, paymentFeeVatDeductible: true, fixedFee: 12.6, stopajPercent: 1, vatPercent: 20, shippingCost: 0 },
+  { name: "Hepsiburada", kind: "pazaryeri", commissionPercent: 15, paymentFeePercent: 0, paymentFeeVatDeductible: true, fixedFee: 10, stopajPercent: 1, vatPercent: 20, shippingCost: 0 },
 ];
+
+/**
+ * Ayarlarda kayıtlı eski biçimli (kind/ödeme bedeli/stopaj alanları olmayan)
+ * profilleri yeni biçime taşır. Stopaj yasal zorunluluk olduğu için pazaryeri
+ * sayılan eski profillere %1 ile eklenir.
+ */
+export function normalizeChannelProfile(p: Partial<ChannelProfile> & { name?: string }): ChannelProfile {
+  const num = (v: unknown, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
+  const kind: ChannelKind =
+    p.kind === "pazaryeri" || p.kind === "website" || p.kind === "elden"
+      ? p.kind
+      : num(p.commissionPercent) > 0
+        ? "pazaryeri"
+        : "elden";
+  return {
+    name: p.name ?? "Kanal",
+    kind,
+    commissionPercent: num(p.commissionPercent),
+    paymentFeePercent: num(p.paymentFeePercent, kind === "pazaryeri" ? 0.96 : 0),
+    paymentFeeVatDeductible: p.paymentFeeVatDeductible ?? true,
+    fixedFee: num(p.fixedFee),
+    stopajPercent: num(p.stopajPercent, kind === "pazaryeri" ? 1 : 0),
+    vatPercent: num(p.vatPercent),
+    shippingCost: num(p.shippingCost),
+  };
+}
+
+/* ------------------------- Kanal net kâr hesabı ------------------------- */
+
+export type ChannelProfitInput = {
+  /** KDV dahil, indirim sonrası nihai satış fiyatı. */
+  salePrice: number;
+  /** KDV HARİÇ ürün maliyeti (hammadde + ambalaj — alışlar KDV hariç tutulur). */
+  productCost: number;
+  profile: ChannelProfile;
+  /** Profil kargosu 0 ise kullanılacak ürün bazlı kargo (KDV dahil). */
+  shippingOverride?: number;
+};
+
+export type ChannelProfit = {
+  /** KDV hariç satış (gerçek hasılat). */
+  saleEx: number;
+  /** KDV'si indirilmiş net kesinti maliyetleri. */
+  commission: number;
+  paymentFee: number;
+  transactionFee: number;
+  shipping: number;
+  stopaj: number;
+  totalFees: number;
+  net: number;
+  /** Net kâr marjı: net / KDV hariç satış (muhasebe doğrusu — KDV hasılat değildir). */
+  margin: number;
+  /** Yatırım geri dönüşü: net / KDV hariç toplam maliyet. */
+  roi: number;
+};
+
+/**
+ * Kanal bazlı gerçek net kâr. KDV mantığı: satış KDV'sinin tamamı gider değildir;
+ * komisyon/işlem bedeli/kargo faturalarındaki KDV indirilir. Bu yüzden hesap tüm
+ * kalemler KDV-hariç baza indirgenerek yapılır (Trendyol resmi hesaplayıcısıyla
+ * kuruş kuruş aynı sonucu verir; finans onayı 15.07.2026).
+ */
+export function calcChannelProfit(input: ChannelProfitInput): ChannelProfit {
+  const p = input.profile;
+  const sale = input.salePrice;
+  const v = 1 + p.vatPercent / 100;
+  const saleEx = sale / v;
+  const commission = (sale * p.commissionPercent) / 100;
+  const paymentRaw = (sale * p.paymentFeePercent) / 100;
+  const paymentFee = p.paymentFeeVatDeductible ? paymentRaw / v : paymentRaw;
+  const transactionFee = p.fixedFee / v;
+  const shippingGross = p.shippingCost > 0 ? p.shippingCost : (input.shippingOverride ?? 0);
+  const shipping = shippingGross / v;
+  const stopaj = (saleEx * p.stopajPercent) / 100;
+  const totalFees = commission + paymentFee + transactionFee + shipping + stopaj;
+  const net = saleEx - totalFees - input.productCost;
+  const totalCostEx = input.productCost + totalFees;
+  return {
+    saleEx,
+    commission,
+    paymentFee,
+    transactionFee,
+    shipping,
+    stopaj,
+    totalFees,
+    net,
+    margin: saleEx > 0 ? (net / saleEx) * 100 : 0,
+    roi: totalCostEx > 0 ? (net / totalCostEx) * 100 : 0,
+  };
+}
 
 /** Psikolojik yuvarlama: en yakın x,90 / x,99 / tam sayı. */
 export function roundPrice(price: number, rounding: Rounding): number {
@@ -50,19 +154,22 @@ export function roundPrice(price: number, rounding: Rounding): number {
 
 export type SuggestInput = {
   currentPrice: number;
+  /** multiplier modunda çarpılan toplam maliyet. */
   totalCost: number;
   mode: PriceMode;
   value: number;
-  /** targetMargin modunda satıştan düşülecek kanal komisyonu %'si (yoksa 0). */
-  commissionPercent?: number;
-  /** targetMargin modunda KDV dahil fiyattan ayrılacak KDV %'si (yoksa 0). */
-  vatPercent?: number;
+  /** targetMargin modunda kesintileri belirleyen kanal profili (zorunlu). */
+  profile?: ChannelProfile;
+  /** targetMargin: KDV hariç ürün maliyeti (hammadde + ambalaj, kargo HARİÇ). */
+  productCost?: number;
+  /** targetMargin: profil kargosu 0 ise ürün bazlı kargo (KDV dahil). */
+  shippingOverride?: number;
   rounding?: Rounding;
 };
 
 /**
- * Yeni fiyat önerisi. Geçersiz kombinasyon (örn. marj+komisyon+KDV toplamı
- * %100'ü aşarsa) null döner — arayüz satırı "hesaplanamadı" olarak işaretler.
+ * Yeni fiyat önerisi. Geçersiz kombinasyon (örn. marj+kesintiler %100'ü aşarsa)
+ * null döner — arayüz satırı "hesaplanamadı" olarak işaretler.
  */
 export function suggestPrice(input: SuggestInput): number | null {
   const rounding = input.rounding ?? "none";
@@ -78,13 +185,19 @@ export function suggestPrice(input: SuggestInput): number | null {
       raw = input.currentPrice + input.value;
       break;
     case "targetMargin": {
-      // KDV dahil fiyat P için: P·vatShare KDV'ye, P·kom/100 komisyona gider;
-      // kalan − maliyet = P·marj/100 olacak şekilde P çözülür.
-      const vat = input.vatPercent ?? 0;
-      const vatShare = vat > 0 ? 1 - 1 / (1 + vat / 100) : 0;
-      const denom = 1 - vatShare - (input.commissionPercent ?? 0) / 100 - input.value / 100;
-      if (denom <= 0.0001 || input.totalCost <= 0) return null;
-      raw = input.totalCost / denom;
+      // calcChannelProfit ile aynı model: net(P) = P·a − C.
+      // Hedef marj KDV hariç satış bazında: net = (m/100)·P/(1+v) → P = C / (a − (m/100)/(1+v)).
+      const p = input.profile;
+      const cost = input.productCost ?? 0;
+      if (!p || cost <= 0) return null;
+      const v = 1 + p.vatPercent / 100;
+      const paymentShare = (p.paymentFeePercent / 100) * (p.paymentFeeVatDeductible ? 1 / v : 1);
+      const a = (1 - p.stopajPercent / 100) / v - p.commissionPercent / 100 - paymentShare;
+      const shippingGross = p.shippingCost > 0 ? p.shippingCost : (input.shippingOverride ?? 0);
+      const fixedCosts = (p.fixedFee + shippingGross) / v + cost;
+      const denom = a - input.value / 100 / v;
+      if (denom <= 0.0001) return null;
+      raw = fixedCosts / denom;
       break;
     }
   }

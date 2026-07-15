@@ -68,7 +68,13 @@ orkestratör `proje-yoneticisi`dir.
 
 - **Fiyat & Kâr Motoru (/fiyat, YENİ):** tüm ürünler tek tabloda — formülden maliyet
   (tek sorguda), kanal profiline (komisyon/KDV/işlem bedeli, ayarlanabilir) göre net kâr
-  ve marj; zararda filtresi; satır içi fiyat düzenleme. **Toplu fiyatlama:** % zam,
+  ve marj; zararda filtresi; satır içi fiyat düzenleme. **Kâr modeli v2 (finans onaylı,
+  15.07.2026):** hesap KDV-hariç baza indirgendi (satış KDV'sinin tamamı gider değil;
+  komisyon/işlem/kargo KDV'leri indirilir), ödeme bedeli %, işlem bedeli ve stopaj (%1)
+  eklendi; kanal profillerinde tür ayrımı (pazaryeri / web sitesi / elden) + web sitesi
+  için banka POS'u (BSMV, KDV indirimsiz) / ödeme kuruluşu seçimi. Trendyol resmi
+  hesaplayıcısıyla kuruş kuruş aynı sonuç (referans vaka testte). Marj artık KDV-hariç
+  satışa göre; saf mantık `shared/pricing.ts` calcChannelProfit. **Toplu fiyatlama:** % zam,
   hedef marj, maliyet×çarpan, sabit tutar + x,90 yuvarlama + önizleme. **Excel/CSV ile
   fiyat güncelleme** (barkod/ID eşleşmeli, diff önizlemeli). Seçili/tüm ürünleri
   **Trendyol'a ve Hepsiburada'ya** tek tıkla stok/fiyat gönderme (HB Listing API

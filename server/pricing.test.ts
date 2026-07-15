@@ -1,11 +1,30 @@
 import { describe, expect, it } from "vitest";
 import {
+  calcChannelProfit,
   matchPriceRows,
+  normalizeChannelProfile,
   parsePriceCsv,
   parsePriceNumber,
   roundPrice,
   suggestPrice,
+  type ChannelProfile,
 } from "../shared/pricing";
+
+/** Test profili: verilen alanlar dışında kesintisiz. */
+function profile(overrides: Partial<ChannelProfile> = {}): ChannelProfile {
+  return {
+    name: "Test",
+    kind: "pazaryeri",
+    commissionPercent: 0,
+    paymentFeePercent: 0,
+    paymentFeeVatDeductible: true,
+    fixedFee: 0,
+    stopajPercent: 0,
+    vatPercent: 0,
+    shippingCost: 0,
+    ...overrides,
+  };
+}
 
 describe("roundPrice", () => {
   it("iki ondalığa yuvarlar (none)", () => {
@@ -43,26 +62,43 @@ describe("suggestPrice", () => {
   it("fixed: sabit tutar ekler", () => {
     expect(suggestPrice({ currentPrice: 100, totalCost: 40, mode: "fixed", value: 15 })).toBe(115);
   });
-  it("targetMargin: KDV'siz/komisyonsuz basit marj", () => {
+  it("targetMargin: KDV'siz/kesintisiz basit marj", () => {
     // fiyat = 40 / (1 - 0.5) = 80 → net 80-40=40, marj %50
-    expect(suggestPrice({ currentPrice: 0, totalCost: 40, mode: "targetMargin", value: 50 })).toBe(80);
+    expect(
+      suggestPrice({ currentPrice: 0, totalCost: 40, mode: "targetMargin", value: 50, profile: profile(), productCost: 40 }),
+    ).toBe(80);
   });
-  it("targetMargin: KDV + komisyon düşüldükten sonra hedef marjı tutturur", () => {
+  it("targetMargin: tüm kesintiler düşüldükten sonra hedef marjı (KDV hariç bazda) tutturur", () => {
+    const prof = profile({ commissionPercent: 20, paymentFeePercent: 0.96, fixedFee: 12.6, stopajPercent: 1, vatPercent: 20, shippingCost: 94.2 });
+    const price = suggestPrice({ currentPrice: 0, totalCost: 40, mode: "targetMargin", value: 30, profile: prof, productCost: 40 });
+    expect(price).not.toBeNull();
+    // Doğrulama: aynı profille kâr hesabı yapılınca marj hedefi tutmalı.
+    const r = calcChannelProfit({ salePrice: price!, productCost: 40, profile: prof });
+    expect(r.margin).toBeCloseTo(30, 3);
+  });
+  it("targetMargin: ürün kargosu (shippingOverride) yolunda da calcChannelProfit ile tutarlı", () => {
+    // Pricing.tsx kablolaması: profil kargosu 0 → ürünün kendi kargosu kullanılır.
+    const prof = profile({ commissionPercent: 14, paymentFeePercent: 0.96, fixedFee: 12.6, stopajPercent: 1, vatPercent: 20, shippingCost: 0 });
     const price = suggestPrice({
       currentPrice: 0,
       totalCost: 40,
       mode: "targetMargin",
-      value: 30,
-      commissionPercent: 20,
-      vatPercent: 20,
+      value: 25,
+      profile: prof,
+      productCost: 88.75,
+      shippingOverride: 94.2,
     });
     expect(price).not.toBeNull();
-    // Doğrulama: KDV ve komisyon düşülünce kalan − maliyet ≈ fiyat × %30
-    const p = price!;
-    const vat = p - p / 1.2;
-    const commission = p * 0.2;
-    const net = p - vat - commission - 40;
-    expect(net / p).toBeCloseTo(0.3, 3);
+    const r = calcChannelProfit({ salePrice: price!, productCost: 88.75, profile: prof, shippingOverride: 94.2 });
+    expect(r.margin).toBeCloseTo(25, 3);
+  });
+  it("targetMargin: banka POS'unda (KDV indirimsiz ödeme bedeli) da marj hedefi tutar", () => {
+    const prof = profile({ paymentFeePercent: 2, paymentFeeVatDeductible: false, vatPercent: 20 });
+    const price = suggestPrice({ currentPrice: 0, totalCost: 40, mode: "targetMargin", value: 30, profile: prof, productCost: 40 });
+    expect(price).not.toBeNull();
+    const r = calcChannelProfit({ salePrice: price!, productCost: 40, profile: prof });
+    // Öneri kuruşa yuvarlandığı için marjda ±0,005 puan sapma normaldir.
+    expect(r.margin).toBeCloseTo(30, 2);
   });
   it("targetMargin: imkânsız kombinasyonda null döner", () => {
     expect(
@@ -71,9 +107,15 @@ describe("suggestPrice", () => {
         totalCost: 40,
         mode: "targetMargin",
         value: 70,
-        commissionPercent: 25,
-        vatPercent: 20,
+        profile: profile({ commissionPercent: 25, vatPercent: 20 }),
+        productCost: 40,
       }),
+    ).toBeNull();
+  });
+  it("targetMargin: profil veya maliyet yoksa null döner", () => {
+    expect(suggestPrice({ currentPrice: 0, totalCost: 40, mode: "targetMargin", value: 30 })).toBeNull();
+    expect(
+      suggestPrice({ currentPrice: 0, totalCost: 0, mode: "targetMargin", value: 30, profile: profile(), productCost: 0 }),
     ).toBeNull();
   });
   it("sonuca yuvarlama uygular", () => {
@@ -83,6 +125,92 @@ describe("suggestPrice", () => {
   });
   it("sıfır/negatif sonuçta null döner", () => {
     expect(suggestPrice({ currentPrice: 10, totalCost: 0, mode: "fixed", value: -10 })).toBeNull();
+  });
+});
+
+describe("calcChannelProfit — kanal bazlı net kâr (finans onaylı model)", () => {
+  it("Trendyol resmi hesaplayıcı referans vakasıyla kuruş kuruş tutar", () => {
+    // Satış 325 (dahil), alış 106,50 dahil = 88,75 hariç, komisyon %14, KDV %20,
+    // kargo 94,20, ödeme %0,96, işlem 12,60, stopaj %1 → beklenen kâr 42,28.
+    const r = calcChannelProfit({
+      salePrice: 325,
+      productCost: 106.5 / 1.2,
+      profile: profile({
+        commissionPercent: 14,
+        paymentFeePercent: 0.96,
+        fixedFee: 12.6,
+        stopajPercent: 1,
+        vatPercent: 20,
+        shippingCost: 94.2,
+      }),
+    });
+    expect(r.saleEx).toBeCloseTo(270.83, 2);
+    expect(r.commission).toBeCloseTo(45.5, 2); // 54,60 KDV dahil faturanın net maliyeti
+    expect(r.paymentFee).toBeCloseTo(2.6, 2); // 3,12 dahil → 2,60 net
+    expect(r.transactionFee).toBeCloseTo(10.5, 2); // 12,60 dahil → 10,50 net
+    expect(r.shipping).toBeCloseTo(78.5, 2); // 94,20 dahil → 78,50 net
+    expect(r.stopaj).toBeCloseTo(2.71, 2);
+    expect(r.net).toBeCloseTo(42.28, 1);
+  });
+
+  it("banka POS'unda ödeme komisyonunun KDV'si indirilmez (BSMV)", () => {
+    const base = { salePrice: 120, productCost: 0 };
+    const kurulus = calcChannelProfit({ ...base, profile: profile({ paymentFeePercent: 2, vatPercent: 20 }) });
+    const banka = calcChannelProfit({
+      ...base,
+      profile: profile({ paymentFeePercent: 2, vatPercent: 20, paymentFeeVatDeductible: false }),
+    });
+    expect(kurulus.paymentFee).toBeCloseTo(2.4 / 1.2, 4); // 2,00
+    expect(banka.paymentFee).toBeCloseTo(2.4, 4); // KDV bölmesi yok
+    expect(banka.net).toBeLessThan(kurulus.net);
+  });
+
+  it("elden satışta (KDV 0, kesintisiz) net = satış − maliyet", () => {
+    const r = calcChannelProfit({ salePrice: 100, productCost: 40, profile: profile() });
+    expect(r.net).toBe(60);
+    expect(r.margin).toBe(60);
+  });
+
+  it("kargo: profil 0 ise ürün kargosu kullanılır, profil doluysa profil kazanır", () => {
+    const withOverride = calcChannelProfit({
+      salePrice: 120,
+      productCost: 0,
+      profile: profile({ vatPercent: 20 }),
+      shippingOverride: 24,
+    });
+    expect(withOverride.shipping).toBeCloseTo(20, 4);
+    const profileWins = calcChannelProfit({
+      salePrice: 120,
+      productCost: 0,
+      profile: profile({ vatPercent: 20, shippingCost: 12 }),
+      shippingOverride: 24,
+    });
+    expect(profileWins.shipping).toBeCloseTo(10, 4);
+  });
+
+  it("satış fiyatı 0 iken marj 0 döner", () => {
+    const r = calcChannelProfit({ salePrice: 0, productCost: 0, profile: profile({ vatPercent: 20 }) });
+    expect(r.margin).toBe(0);
+  });
+});
+
+describe("normalizeChannelProfile — eski kayıtların taşınması", () => {
+  it("eski biçimli pazaryeri profiline stopaj %1 ve ödeme bedeli %0,96 ekler", () => {
+    const p = normalizeChannelProfile({ name: "Trendyol", commissionPercent: 20, fixedFee: 10, vatPercent: 20, shippingCost: 0 });
+    expect(p.kind).toBe("pazaryeri");
+    expect(p.stopajPercent).toBe(1);
+    expect(p.paymentFeePercent).toBe(0.96);
+    expect(p.paymentFeeVatDeductible).toBe(true);
+  });
+  it("komisyonsuz eski profil 'elden' sayılır, kesinti eklenmez", () => {
+    const p = normalizeChannelProfile({ name: "Elden / Web", commissionPercent: 0, fixedFee: 0, vatPercent: 0, shippingCost: 0 });
+    expect(p.kind).toBe("elden");
+    expect(p.stopajPercent).toBe(0);
+    expect(p.paymentFeePercent).toBe(0);
+  });
+  it("yeni biçimli profili olduğu gibi korur", () => {
+    const original = { name: "Web", kind: "website" as const, commissionPercent: 0, paymentFeePercent: 2.5, paymentFeeVatDeductible: false, fixedFee: 0, stopajPercent: 0, vatPercent: 20, shippingCost: 0 };
+    expect(normalizeChannelProfile(original)).toEqual(original);
   });
 });
 

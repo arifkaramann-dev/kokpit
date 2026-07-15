@@ -29,8 +29,10 @@ import {
 import { formatTL, num } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
 import {
+  calcChannelProfit,
   DEFAULT_CHANNEL_PROFILES,
   matchPriceRows,
+  normalizeChannelProfile,
   parsePriceCsv,
   suggestPrice,
   type ChannelProfile,
@@ -50,7 +52,6 @@ import {
 } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { calcMarketplace } from "./Costs";
 import type { ProductRow } from "./Products";
 
 /** Tablo satırı: ürün + hesaplanmış maliyet/kâr değerleri. */
@@ -103,7 +104,8 @@ export default function Pricing() {
   const profiles = useMemo<ChannelProfile[]>(() => {
     try {
       const parsed = JSON.parse(settings?.channelProfiles ?? "");
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed as ChannelProfile[];
+      // Eski kayıtlarda ödeme bedeli/stopaj alanları yok — normalize ederek taşı.
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed.map(normalizeChannelProfile);
     } catch {
       /* ayar yoksa varsayılanlar */
     }
@@ -145,16 +147,13 @@ export default function Pricing() {
     const list = ((products as ProductRow[]) ?? []).map(p => {
       const materialCost = costByProduct.get(p.id) ?? 0;
       const packaging = num(p.packagingCost);
-      const shipping = profile.shippingCost > 0 ? profile.shippingCost : num(p.shippingCost);
       const totalCost = materialCost + packaging + num(p.shippingCost);
       const netPrice = num(p.salePrice) * (1 - num(p.discountPercent) / 100);
-      const mp = calcMarketplace({
+      const mp = calcChannelProfit({
         salePrice: netPrice,
-        vatPercent: profile.vatPercent,
-        commissionPercent: profile.commissionPercent,
-        fixedFee: profile.fixedFee,
-        shippingCost: shipping,
         productCost: materialCost + packaging,
+        profile,
+        shippingOverride: num(p.shippingCost),
       });
       return { p, materialCost, totalCost, netPrice, channelNet: mp.net, channelMargin: mp.margin };
     });
@@ -251,8 +250,9 @@ export default function Pricing() {
         totalCost: r.totalCost,
         mode,
         value,
-        commissionPercent: profile.commissionPercent,
-        vatPercent: profile.vatPercent,
+        profile,
+        productCost: r.materialCost + num(r.p.packagingCost),
+        shippingOverride: num(r.p.shippingCost),
         rounding,
       });
       if (suggested === null || suggested <= 0) {
@@ -330,9 +330,15 @@ export default function Pricing() {
   }
   function setDraftField(i: number, field: keyof ChannelProfile, value: string) {
     setProfileDraft(prev =>
-      prev.map((p, idx) =>
-        idx === i ? { ...p, [field]: field === "name" ? value : parseFloat(value.replace(",", ".")) || 0 } : p,
-      ),
+      prev.map((p, idx) => {
+        if (idx !== i) return p;
+        if (field === "kind") {
+          // Tür değişince stopaj yasal varsayılana çekilir (pazaryeri %1, diğerleri 0) — elle değiştirilebilir.
+          const kind = value as ChannelProfile["kind"];
+          return { ...p, kind, stopajPercent: kind === "pazaryeri" ? 1 : 0 };
+        }
+        return { ...p, [field]: field === "name" ? value : parseFloat(value.replace(",", ".")) || 0 };
+      }),
     );
   }
 
@@ -566,8 +572,9 @@ export default function Pricing() {
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
                 Hedef: <b>{targetRows.length}</b> ürün ({selected.size > 0 ? "işaretli satırlar" : "filtrelenmiş liste"}).
-                Hedef marj modu, seçili kanal profilinin (<b>{profile?.name}</b>, %{profile?.commissionPercent} komisyon,
-                %{profile?.vatPercent} KDV) kesintilerini düşerek hesaplar.
+                Hedef marj modu, seçili kanal profilinin (<b>{profile?.name}</b>) tüm kesintilerini
+                (komisyon, ödeme/işlem bedeli, kargo, stopaj, KDV) düşerek hesaplar; marj KDV hariç
+                satışa göredir.
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="space-y-1">
@@ -776,31 +783,64 @@ export default function Pricing() {
 
       {/* Kanal profilleri dialogu (F5) */}
       <Dialog open={profilesOpen} onOpenChange={setProfilesOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-5xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Settings2 className="h-5 w-5" /> Kanal Profilleri
             </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            Net kâr hesabında kullanılan kanal kesintileri. Kargo 0 ise ürünün kendi kargo maliyeti kullanılır.
+            Net kâr hesabında kullanılan kanal kesintileri. İşlem bedeli ve kargo KDV dahil girilir;
+            kargo 0 ise ürünün kendi kargo maliyeti kullanılır. Stopaj yalnızca pazaryeri satışlarında
+            (%1) uygulanır. POS türü "Banka" ise komisyon BSMV'li olduğu için KDV indirimi yapılmaz.
           </p>
           <div className="space-y-2">
-            <div className="grid grid-cols-[1fr_80px_80px_80px_80px_32px] gap-2 text-xs text-muted-foreground px-1">
+            <div className="grid grid-cols-[1fr_92px_64px_64px_64px_64px_64px_88px_32px] gap-2 text-xs text-muted-foreground px-1">
               <span>Kanal</span>
+              <span>Tür</span>
               <span>Kom. %</span>
+              <span>Ödeme %</span>
               <span>İşlem ₺</span>
+              <span>Stopaj %</span>
               <span>KDV %</span>
-              <span>Kargo ₺</span>
+              <span>Kargo ₺ / POS</span>
               <span />
             </div>
             {profileDraft.map((p, i) => (
-              <div key={i} className="grid grid-cols-[1fr_80px_80px_80px_80px_32px] gap-2 items-center">
+              <div key={i} className="grid grid-cols-[1fr_92px_64px_64px_64px_64px_64px_88px_32px] gap-2 items-center">
                 <Input value={p.name} onChange={e => setDraftField(i, "name", e.target.value)} />
+                <Select value={p.kind} onValueChange={v => setDraftField(i, "kind", v)}>
+                  <SelectTrigger className="h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pazaryeri">Pazaryeri</SelectItem>
+                    <SelectItem value="website">Web Sitesi</SelectItem>
+                    <SelectItem value="elden">Elden</SelectItem>
+                  </SelectContent>
+                </Select>
                 <Input value={String(p.commissionPercent)} onChange={e => setDraftField(i, "commissionPercent", e.target.value)} />
+                <Input value={String(p.paymentFeePercent)} onChange={e => setDraftField(i, "paymentFeePercent", e.target.value)} />
                 <Input value={String(p.fixedFee)} onChange={e => setDraftField(i, "fixedFee", e.target.value)} />
+                <Input value={String(p.stopajPercent)} onChange={e => setDraftField(i, "stopajPercent", e.target.value)} />
                 <Input value={String(p.vatPercent)} onChange={e => setDraftField(i, "vatPercent", e.target.value)} />
-                <Input value={String(p.shippingCost)} onChange={e => setDraftField(i, "shippingCost", e.target.value)} />
+                <div className="flex flex-col gap-1">
+                  <Input value={String(p.shippingCost)} onChange={e => setDraftField(i, "shippingCost", e.target.value)} />
+                  {p.kind === "website" && (
+                    <Select
+                      value={p.paymentFeeVatDeductible ? "kurulus" : "banka"}
+                      onValueChange={v => setProfileDraft(prev => prev.map((x, idx) => (idx === i ? { ...x, paymentFeeVatDeductible: v === "kurulus" } : x)))}
+                    >
+                      <SelectTrigger className="h-7 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="kurulus">Ödeme kuruluşu</SelectItem>
+                        <SelectItem value="banka">Banka POS'u</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
                 <Button
                   variant="ghost"
                   size="icon"
@@ -817,7 +857,17 @@ export default function Pricing() {
               onClick={() =>
                 setProfileDraft(prev => [
                   ...prev,
-                  { name: "Yeni Kanal", commissionPercent: 0, fixedFee: 0, vatPercent: 20, shippingCost: 0 },
+                  {
+                    name: "Yeni Kanal",
+                    kind: "pazaryeri" as const,
+                    commissionPercent: 0,
+                    paymentFeePercent: 0,
+                    paymentFeeVatDeductible: true,
+                    fixedFee: 0,
+                    stopajPercent: 1,
+                    vatPercent: 20,
+                    shippingCost: 0,
+                  },
                 ])
               }
             >

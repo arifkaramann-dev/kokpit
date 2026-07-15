@@ -383,7 +383,7 @@ export default function Stock() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label>Birim Maliyet (₺)</Label>
+                <Label>Birim Maliyet (₺, KDV hariç)</Label>
                 <Input
                   type="number"
                   min="0"

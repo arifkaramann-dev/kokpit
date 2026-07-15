@@ -144,6 +144,20 @@ Hepsiburada push yok, web sitesi (Qukasoft) entegrasyonu yok.
       ayarlanabilir (settings.channelProfiles, migration gerekmedi); F1 tablosu
       ve hedef marj hesabı bu profilleri kullanır.
 
+## F6. Kâr modeli v2 — kanal bazlı doğru hesap (15.07.2026, patron bildirimi üzerine)
+- [x] HATA: eski calcMarketplace satış KDV'sinin tamamını gider düşüyordu (referans
+      vakada kârı 29,78 gösteriyordu, doğrusu 42,28 — ~12,50 TL eksik). Model
+      KDV-hariç baza taşındı: komisyon/işlem/kargo KDV'leri indirilecek KDV.
+- [x] Yeni kesintiler: ödeme bedeli % (Trendyol %0,96), işlem bedeli (KDV dahil),
+      stopaj (%1, KDV-hariç satış üzerinden). Trendyol resmi hesaplayıcısıyla
+      kuruş kuruş aynı (referans vaka birim testte fixture).
+- [x] Kanal türü ayrımı: pazaryeri / web sitesi / elden. Web sitesi için sanal POS:
+      banka POS'u (BSMV, KDV indirimsiz) vs ödeme kuruluşu (KDV indirimli) seçimi.
+- [x] Marj tanımı düzeltildi: net / KDV-hariç satış (finans onayı); ROI ayrıca gösteriliyor.
+- [x] Hedef marj fiyat çözücü aynı modele geçti; eski kayıtlı profiller
+      normalizeChannelProfile ile taşınıyor (stopaj %1 + ödeme %0,96 otomatik eklenir).
+- [x] Süreç: model finans-muhasebe-uzmani onayından, kod qa-test-uzmani denetiminden geçti.
+
 ## Açık işler — 15.07.2026 takım denetimi (öncelik sırasıyla)
 1. [x] GÜVENLİK: WhatsApp POST webhook'una X-Hub-Signature-256 (HMAC, timingSafeEqual)
        imza doğrulaması eklendi — `WHATSAPP_APP_SECRET` tanımlıysa sahte istek 401 alır,
