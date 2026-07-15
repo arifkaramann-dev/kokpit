@@ -52,7 +52,8 @@ orkestratör `proje-yoneticisi`dir.
   hareketleri (tahsilat/ödeme/gelir/gider), müşteri **cari ekstresi** (borç-alacak-bakiye),
   karttan **Tahsilat Ekle** (siparişin ödeme durumunu otomatik günceller), Kokpit'te kasa kartı.
   Tablolar: `accounts`, `transactions` (migration 0013).
-- **Asistan**: WhatsApp + uygulama içi sohbet + mikrofon; satış/stok/sipariş/görev/soru-cevap.
+- **Asistan**: WhatsApp + uygulama içi sohbet + mikrofon; satış/stok/sipariş/görev/soru-cevap
+  + yazma komutları: **gider ekle** ve **tahsilat aldım** (cari + siparişe otomatik işlenir).
   **Sesli uyandırma** ("Hey Kokpit"): opt-in, sürekli dinleyip anahtar kelimeden sonra komutu
   gönderir (Web Speech API, sadece Chrome; tercih localStorage'da). Elle mikrofon uyandırma açıkken kapalı.
 - **Fatura kesme** (KDV dökümlü, yazdırılabilir) + Ayarlar (şirket bilgileri)
@@ -75,7 +76,7 @@ orkestratör `proje-yoneticisi`dir.
   `shared/pricing.ts` (23 test).
 
 ## Açık işler / sırada ne var (takım denetimi: 15.07.2026, kanıtlı liste todo.md sonunda)
-Sağlık: `pnpm check` 0 hata, 67/67 test geçiyor, kod içi TODO/FIXME borcu yok.
+Sağlık: `pnpm check` 0 hata, 74/74 test geçiyor, kod içi TODO/FIXME borcu yok.
 
 **Kullanıcıdan bekleyenler (kod hazır, sadece canlıda test):**
 1. **Hepsiburada 401:** API bilgileri Render'a girilmeli. Hepsiburada anında anahtar
@@ -96,8 +97,10 @@ Sağlık: `pnpm check` 0 hata, 67/67 test geçiyor, kod içi TODO/FIXME borcu yo
    doğrulaması eklendi (`verifyWebhookSignature`, timingSafeEqual, ham gövde üzerinden).
    `WHATSAPP_APP_SECRET` tanımlıysa sahte istek 401; tanımsızsa eski davranış + açılışta
    uyarı. **Render'a `WHATSAPP_APP_SECRET` girilmeli** (Meta → Settings → Basic).
-6. **Asistan yazma intent'leri:** "gider ekle"/"tahsilat aldım" intent enum'unda yok —
-   sadece soru-cevap var; altyapı (kasa/gider API'leri) hazır.
+6. **Asistan yazma intent'leri ✔ yapıldı:** "gider ekle" (expense_add) ve "tahsilat
+   aldım" (collection_add) eklendi. Tahsilat müşteri carisine + ödenmemiş en eski
+   siparişe işlenir (ödeme durumu otomatik güncellenir), varsayılan kasa hesabına yazılır.
+   7 birim testi; yardım metni güncel.
 7. **Hepsiburada stok/fiyat gönderme ✔ yapıldı** (Fiyat & Kâr Motoru F4): Listing API
    push'u + `HEPSIBURADA_SERVICE_KEY` desteği. **Render'a Servis Anahtarı girilmeli**,
    canlıda test edilecek (barkod = merchantSku varsayımı doğrulanmalı).

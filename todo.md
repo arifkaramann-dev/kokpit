@@ -149,8 +149,11 @@ Hepsiburada push yok, web sitesi (Qukasoft) entegrasyonu yok.
        imza doğrulaması eklendi — `WHATSAPP_APP_SECRET` tanımlıysa sahte istek 401 alır,
        tanımsızsa eski davranış + açılış uyarısı. 6 birim testi. **Render'a
        `WHATSAPP_APP_SECRET` girilmeli** (Meta → Settings → Basic → App Secret).
-2. [ ] (ERTELENDİ — önce fiyatlandırma paketi) Asistan yazma intent'leri: "gider ekle" /
-       "tahsilat aldım" (claude.ts intent enum + assistant.ts handler; altyapı hazır)
+2. [x] Asistan yazma intent'leri: "gider ekle" (expense_add → createExpense, kategori
+       tahminli) + "tahsilat aldım" (collection_add → createTransaction; müşteri adı
+       kanonikleştirme, ödenmemiş en eski siparişe bağlama → ödeme durumu otomatik,
+       varsayılan kasa hesabı). Saf eşleştirme orderUtils.findOpenOrderForCollection,
+       7 birim testi (assistant.collection.test.ts). Yardım metni güncellendi.
 3. [x] Hepsiburada stok/fiyat gönderme + HEPSIBURADA_SERVICE_KEY env desteği (F4)
 4. [ ] Finans birim testleri: vatReport, customer/supplierBalances, tahsilat→sipariş
        ödeme senkronu, kasa bakiyesi, senkron tek-uçuş kilidi (38/38 test geçiyor ama

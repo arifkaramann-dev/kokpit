@@ -1,6 +1,6 @@
 import { answerBusinessQuestion, parseVoiceCommand } from "./_core/claude";
 import * as db from "./db";
-import { itemsTotal, summarizeItems, toItemRows } from "./orderUtils";
+import { findOpenOrderForCollection, itemsTotal, summarizeItems, toItemRows } from "./orderUtils";
 
 /**
  * Sesli komut / WhatsApp asistanının ortak beyni: serbest Türkçe metni
@@ -38,6 +38,10 @@ const HELP_TEXT = [
   "📦 *Stok*",
   '• "10 kg beyaz pigment geldi, stok girişi"',
   '• "2 litre tiner kullandım, stoktan düş"',
+  "",
+  "💸 *Gider & Tahsilat*",
+  '• "Gider ekle: kargoya 250 lira" · "Kira ödedim, 5000 TL"',
+  '• "Ahmet 500 lira ödedi" / "Ayşe\'den tahsilat aldım, 300"',
   "",
   "📝 *Eksikler & Görevler*",
   '• "Eksik listesine ekle: etiket, 400 ml kutu"',
@@ -262,6 +266,63 @@ export async function executeAssistantCommand(transcript: string): Promise<{ mes
     return {
       message: `${target.orderNo} (${target.customerName}) → ${STATUS_LABELS[cmd.orderStatus]} olarak güncellendi ✅`,
     };
+  }
+
+  if (cmd.intent === "expense_add") {
+    const amount = cmd.amount ?? 0;
+    if (amount <= 0) {
+      throw new Error('Gider tutarını anlayamadım, tutarla birlikte söyler misin? (örn. "kargoya 250 lira gider ekle")');
+    }
+    const category = cmd.expenseCategory ?? "diğer";
+    await db.createExpense({
+      category,
+      description: (cmd.noteText ?? transcript).slice(0, 255),
+      amount: String(amount),
+    } as never);
+    return { message: `Gider eklendi: ${category} — ${amount.toFixed(2)} TL ✅ (Giderler sayfasında)` };
+  }
+
+  if (cmd.intent === "collection_add") {
+    const amount = cmd.amount ?? 0;
+    if (amount <= 0) {
+      throw new Error('Tahsilat tutarını anlayamadım, tutarla birlikte söyler misin? (örn. "Ahmet 500 lira ödedi")');
+    }
+    if (!cmd.customerName?.trim()) {
+      throw new Error("Kimden tahsilat aldığını anlayamadım, müşteri adını da söyler misin?");
+    }
+    const [customersList, orders, accountList] = await Promise.all([
+      db.listCustomers(),
+      db.listOrders(),
+      db.listAccounts(),
+    ]);
+    // Cari ekstre ada göre bağlandığı için kayıtlı adı esas al.
+    const needle = cmd.customerName.trim().toLowerCase();
+    const canonical =
+      customersList.find(c => c.name.trim().toLowerCase() === needle)?.name ??
+      customersList.find(c => c.name.toLowerCase().includes(needle))?.name ??
+      orders.find(o => o.customerName.toLowerCase().includes(needle))?.customerName ??
+      cmd.customerName.trim();
+    const target = findOpenOrderForCollection(orders, canonical, cmd.orderRef);
+    const account = accountList.find(a => a.kind === "kasa") ?? accountList[0];
+    await db.createTransaction({
+      accountId: account?.id ?? null,
+      direction: "in",
+      category: "tahsilat",
+      amount: String(amount),
+      customerName: canonical,
+      orderId: target?.id ?? null,
+      orderNo: target?.orderNo ?? null,
+      description: "Asistan tahsilatı",
+      note: cmd.noteText,
+    } as never);
+    const num = (v: unknown) => parseFloat(String(v ?? 0)) || 0;
+    let message = `Tahsilat kaydedildi: ${canonical} — ${amount.toFixed(2)} TL ✅`;
+    if (target) {
+      const remaining = Math.max(0, num(target.totalAmount) - num(target.paidAmount) - amount);
+      message += `\n${target.orderNo} siparişine işlendi${remaining > 0.001 ? `, kalan ${remaining.toFixed(2)} TL` : ", sipariş tamamen ödendi 🎉"}`;
+    }
+    if (account) message += `\nHesap: ${account.name}`;
+    return { message };
   }
 
   if (cmd.intent === "help") {
