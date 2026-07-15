@@ -1199,6 +1199,36 @@ export async function deleteTask(id: number) {
 /* ------------------------- Toplu Fiyat Güncelleme ------------------------- */
 
 /** Tüm ürünlerin (ya da bir serinin) satış fiyatını yüzdeyle günceller. */
+/**
+ * Tüm ürünlerin formülden gelen hammadde maliyetini TEK sorguda hesaplar
+ * (Fiyat & Kâr tablosu ürün başına ayrı sorgu atmasın diye).
+ */
+export async function listProductMaterialCosts() {
+  const db = await requireDb();
+  return db
+    .select({
+      productId: formulaItems.productId,
+      materialCost: sql<string>`COALESCE(SUM(${formulaItems.qty} * ${materials.unitCost}), 0)`,
+    })
+    .from(formulaItems)
+    .leftJoin(materials, eq(formulaItems.materialId, materials.id))
+    .groupBy(formulaItems.productId);
+}
+
+/** Önizlemesi onaylanmış toplu fiyat listesini uygular (formül/CSV güncellemeleri). */
+export async function applyPriceUpdates(updates: { id: number; salePrice: number }[]) {
+  const db = await requireDb();
+  let affected = 0;
+  for (const u of updates) {
+    const [result] = await db
+      .update(products)
+      .set({ salePrice: u.salePrice.toFixed(2) })
+      .where(eq(products.id, u.id));
+    affected += result.affectedRows ?? 0;
+  }
+  return { affected };
+}
+
 export async function bulkUpdatePrices(percent: number, series: string | null) {
   const db = await requireDb();
   const factor = 1 + percent / 100;

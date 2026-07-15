@@ -11,6 +11,7 @@ import { extractInvoice } from "./_core/claude";
 import { executeAssistantCommand, generateOrderNo } from "./assistant";
 import { buildSaleTitle, deriveCombos, parseSetCount } from "./productUtils";
 import { syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf } from "./trendyol";
+import { pushHepsiburadaStockPrice } from "./hepsiburada";
 import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "./marketplace";
 import { ENV } from "./_core/env";
 
@@ -289,6 +290,22 @@ export const appRouter = router({
     bulkPrice: protectedProcedure
       .input(z.object({ percent: z.number().min(-90).max(500), series: z.string().nullable().optional() }))
       .mutation(({ input }) => db.bulkUpdatePrices(input.percent, input.series ?? null)),
+    // Fiyat & Kâr tablosu: tüm ürünlerin hammadde maliyeti tek sorguda.
+    costSummary: protectedProcedure.query(async () => {
+      const rows = await db.listProductMaterialCosts();
+      return rows.map(r => ({ productId: r.productId, materialCost: parseFloat(String(r.materialCost)) || 0 }));
+    }),
+    // Önizlemede onaylanan yeni fiyat listesi (formülle/CSV ile toplu güncelleme).
+    applyPrices: protectedProcedure
+      .input(
+        z.object({
+          updates: z
+            .array(z.object({ id: z.number(), salePrice: z.number().min(0).max(1000000) }))
+            .min(1)
+            .max(2000),
+        }),
+      )
+      .mutation(({ input }) => db.applyPriceUpdates(input.updates)),
     // Barkodlu ürünlerin stok ve fiyatını Trendyol'a gönderir (mevcut listelemeleri günceller).
     pushToTrendyol: protectedProcedure
       .input(z.object({ ids: z.array(z.number()).optional() }))
@@ -319,6 +336,38 @@ export const appRouter = router({
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: error instanceof Error ? error.message : "Trendyol'a gönderim başarısız",
+          });
+        }
+      }),
+    // Barkodlu ürünlerin stok ve fiyatını Hepsiburada'ya gönderir (barkod = merchantSku varsayımı).
+    pushToHepsiburada: protectedProcedure
+      .input(z.object({ ids: z.array(z.number()).optional() }))
+      .mutation(async ({ input }) => {
+        const all = await db.listProducts();
+        const chosen = input.ids?.length ? all.filter(p => input.ids!.includes(p.id)) : all;
+        const items = chosen
+          .filter(p => p.barcode && p.barcode.trim())
+          .map(p => {
+            const list = parseFloat(String(p.salePrice)) || 0;
+            const disc = parseFloat(String(p.discountPercent)) || 0;
+            return {
+              merchantSku: p.barcode!.trim(),
+              price: +(list * (1 - disc / 100)).toFixed(2),
+              availableStock: p.stockQty ?? 0,
+            };
+          });
+        if (items.length === 0) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Barkodu olan ürün yok. Ürün düzenlemede barkod girin, sonra tekrar deneyin.",
+          });
+        }
+        try {
+          return await pushHepsiburadaStockPrice(items);
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Hepsiburada'ya gönderim başarısız",
           });
         }
       }),

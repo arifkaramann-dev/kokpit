@@ -110,7 +110,7 @@
 - [ ] e-Fatura/e-Arşiv entegratörü (Foriba/İzibiz/Uyumsoft) — dış servis + anlaşma gerekir;
       şu an yalnızca bilgi/proforma faturası basılıyor (invoice.ts)
 Pazaryeri (Qukasoft):
-- [ ] Hepsiburada stok/fiyat gönderme + "Servis Anahtarı" desteği (Trendyol push'una simetrik; şu an sadece sipariş çekme var)
+- [x] Hepsiburada stok/fiyat gönderme + "Servis Anahtarı" desteği (F4'te yapıldı; canlıda HEPSIBURADA_SERVICE_KEY ile test edilecek)
 - [ ] N11 + Çiçeksepeti entegratörleri (sipariş çekme + stok/fiyat) — iskelet yok
 - [ ] Komisyon/kesinti bazlı net kâr raporu (pazaryeri bazında) — KISMEN: tekil hesaplayıcı var (Costs.tsx marketplaceNet), toplu rapor yok
 - [ ] İade yönetimi (Returned/Cancelled siparişler şu an sessizce atlanıyor) + müşteri soru-cevap yönetimi
@@ -123,23 +123,26 @@ tek ürün seç → kaydet), toplu güncelleme sadece yüzde zam/indirim (bulkUp
 Excel/CSV İÇE aktarım yok (sadece dışa aktarım var), Trendyol fiyat push var,
 Hepsiburada push yok, web sitesi (Qukasoft) entegrasyonu yok.
 
-- [ ] F1. **Fiyat & Kâr tablosu:** tüm ürünler tek tabloda — formülden hammadde
-      maliyeti + ambalaj + kargo = toplam maliyet, mevcut fiyat, komisyon/KDV
-      varsayımıyla net kâr ve marj %; sıralama/filtre (zararına satılanlar üste),
-      satırda fiyat düzenleme. Server'da tek sorguda toplu maliyet endpoint'i.
-- [ ] F2. **Formülle toplu fiyatlama:** hedef marj % / çarpan / sabit tutar gir →
-      önerilen fiyatlar + psikolojik yuvarlama (örn. ,90'a); önizleme (eski→yeni
-      diff) → onayla → toplu uygula (bulkPrice genişletilir: percent'e ek modlar).
-- [ ] F3. **Excel/CSV ile fiyat güncelleme:** mevcut katalog dışa aktarımının
-      simetriği — barkod/ID + yeni fiyat sütunlu dosya yükle → eşleşme + diff
-      önizlemesi → onayla → uygula (hatalı satırlar raporlanır).
-- [ ] F4. **Değişen fiyatı kanallara yansıtma:** güncelleme sonrası tek tıkla
-      Trendyol'a push (mevcut pushTrendyolStockPrice); Hepsiburada stok/fiyat
-      push eklenmeli (eski 3. madde buraya bağlanır). Web sitesi: Qukasoft'un
-      API'si/toplu içe aktarımı araştırılacak; yoksa F3 formatında CSV üret.
-- [ ] F5. **Pazaryeri komisyon profilleri:** kanal başına komisyon/kesinti
-      varsayılanları kaydedilir; F1 tablosu ve toplu net kâr raporu (eski 6.
-      madde) bunları kullanır.
+- [x] F1. **Fiyat & Kâr tablosu** (/fiyat, Pricing.tsx): tüm ürünler tek tabloda —
+      formülden hammadde maliyeti (tek sorgu: products.costSummary) + ambalaj +
+      kargo, kanal profiline göre net kâr ve marj rozeti; arama/seri/zararda
+      filtresi, marj sıralaması, satır içi fiyat düzenleme (Enter/odak kaybı).
+- [x] F2. **Formülle toplu fiyatlama:** % zam/indirim, hedef marj % (KDV+komisyon
+      düşülmüş), maliyet × çarpan, sabit tutar; x,90/x,99/tam sayı yuvarlama;
+      eski→yeni önizleme → onayla → uygula (products.applyPrices). Saf mantık
+      shared/pricing.ts'te, 23 birim testi (pricing.test.ts).
+- [x] F3. **Excel/CSV ile fiyat güncelleme:** Barkod/ID/SKU + Fiyat sütunlu CSV
+      yükle → barkod, sonra ID ile eşleşme + diff önizleme + hatalı satır raporu
+      → onayla → uygula. TR/EN sayı biçimleri ve Türkçe başlıklar desteklenir.
+- [x] F4. **Kanallara yansıtma:** tablodan seçili/tüm ürünleri tek tıkla
+      Trendyol'a VE Hepsiburada'ya gönderme. Hepsiburada Listing API push'u
+      yazıldı (price-uploads + stock-uploads, barkod=merchantSku,
+      HEPSIBURADA_SERVICE_KEY desteği — Render'a girilmeli). Web sitesi
+      (Qukasoft): API yoksa mevcut CSV dışa aktarımı kullanılır; canlıda
+      araştırılacak.
+- [x] F5. **Kanal profilleri:** komisyon/işlem bedeli/KDV/kargo kanal başına
+      ayarlanabilir (settings.channelProfiles, migration gerekmedi); F1 tablosu
+      ve hedef marj hesabı bu profilleri kullanır.
 
 ## Açık işler — 15.07.2026 takım denetimi (öncelik sırasıyla)
 1. [x] GÜVENLİK: WhatsApp POST webhook'una X-Hub-Signature-256 (HMAC, timingSafeEqual)
@@ -148,7 +151,7 @@ Hepsiburada push yok, web sitesi (Qukasoft) entegrasyonu yok.
        `WHATSAPP_APP_SECRET` girilmeli** (Meta → Settings → Basic → App Secret).
 2. [ ] (ERTELENDİ — önce fiyatlandırma paketi) Asistan yazma intent'leri: "gider ekle" /
        "tahsilat aldım" (claude.ts intent enum + assistant.ts handler; altyapı hazır)
-3. [ ] Hepsiburada stok/fiyat gönderme + HEPSIBURADA_SERVICE_KEY env desteği
+3. [x] Hepsiburada stok/fiyat gönderme + HEPSIBURADA_SERVICE_KEY env desteği (F4)
 4. [ ] Finans birim testleri: vatReport, customer/supplierBalances, tahsilat→sipariş
        ödeme senkronu, kasa bakiyesi, senkron tek-uçuş kilidi (38/38 test geçiyor ama
        bunları kapsamıyor; DB'ye gömülü mantık saf fonksiyona çıkarılmalı)

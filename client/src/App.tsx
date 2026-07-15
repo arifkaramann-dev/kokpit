@@ -17,6 +17,7 @@ import Ledgers from "@/pages/Ledgers";
 import Marketing from "@/pages/Marketing";
 import NotFound from "@/pages/NotFound";
 import Orders from "@/pages/Orders";
+import Pricing from "@/pages/Pricing";
 import Production from "@/pages/Production";
 import Products from "@/pages/Products";
 import Purchases from "@/pages/Purchases";
@@ -48,6 +49,7 @@ function Router() {
         <Route path={"/formuller"} component={Formulas} />
         <Route path={"/uretim"} component={Production} />
         <Route path={"/maliyet"} component={Costs} />
+        <Route path={"/fiyat"} component={Pricing} />
         <Route path={"/analiz"} component={Analytics} />
         <Route path={"/asistan"} component={Assistant} />
         <Route path={"/pazarlama"} component={Marketing} />

@@ -26,6 +26,7 @@ import { useTheme } from "@/contexts/ThemeContext";
 import VoiceButton from "@/components/VoiceButton";
 import CommandPalette from "@/components/CommandPalette";
 import {
+  BadgePercent,
   BarChart3,
   Beaker,
   Bot,
@@ -98,6 +99,7 @@ const menuGroups = [
       { icon: Factory, label: "Üretim", path: "/uretim" },
       { icon: Warehouse, label: "Stok & Hammadde", path: "/stok" },
       { icon: Calculator, label: "Maliyet & Kar", path: "/maliyet" },
+      { icon: BadgePercent, label: "Fiyat & Kâr Motoru", path: "/fiyat" },
       { icon: Truck, label: "Tedarikçiler", path: "/tedarikciler" },
     ],
   },

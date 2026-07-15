@@ -65,8 +65,17 @@ orkestratör `proje-yoneticisi`dir.
   kendi barkodlu etiketimize düşer. Senkron artık kargo takip no/sağlayıcı/link'i saklar
   (orders tablosuna `cargoTrackingNumber/ProviderName/TrackingLink` eklendi, migration 0011).
 
+- **Fiyat & Kâr Motoru (/fiyat, YENİ):** tüm ürünler tek tabloda — formülden maliyet
+  (tek sorguda), kanal profiline (komisyon/KDV/işlem bedeli, ayarlanabilir) göre net kâr
+  ve marj; zararda filtresi; satır içi fiyat düzenleme. **Toplu fiyatlama:** % zam,
+  hedef marj, maliyet×çarpan, sabit tutar + x,90 yuvarlama + önizleme. **Excel/CSV ile
+  fiyat güncelleme** (barkod/ID eşleşmeli, diff önizlemeli). Seçili/tüm ürünleri
+  **Trendyol'a ve Hepsiburada'ya** tek tıkla stok/fiyat gönderme (HB Listing API
+  price-uploads/stock-uploads, `HEPSIBURADA_SERVICE_KEY` desteği). Saf mantık
+  `shared/pricing.ts` (23 test).
+
 ## Açık işler / sırada ne var (takım denetimi: 15.07.2026, kanıtlı liste todo.md sonunda)
-Sağlık: `pnpm check` 0 hata, 38/38 test geçiyor, kod içi TODO/FIXME borcu yok.
+Sağlık: `pnpm check` 0 hata, 67/67 test geçiyor, kod içi TODO/FIXME borcu yok.
 
 **Kullanıcıdan bekleyenler (kod hazır, sadece canlıda test):**
 1. **Hepsiburada 401:** API bilgileri Render'a girilmeli. Hepsiburada anında anahtar
@@ -89,7 +98,9 @@ Sağlık: `pnpm check` 0 hata, 38/38 test geçiyor, kod içi TODO/FIXME borcu yo
    uyarı. **Render'a `WHATSAPP_APP_SECRET` girilmeli** (Meta → Settings → Basic).
 6. **Asistan yazma intent'leri:** "gider ekle"/"tahsilat aldım" intent enum'unda yok —
    sadece soru-cevap var; altyapı (kasa/gider API'leri) hazır.
-7. **Hepsiburada stok/fiyat gönderme** + "Servis Anahtarı" desteği kodda hiç yok.
+7. **Hepsiburada stok/fiyat gönderme ✔ yapıldı** (Fiyat & Kâr Motoru F4): Listing API
+   push'u + `HEPSIBURADA_SERVICE_KEY` desteği. **Render'a Servis Anahtarı girilmeli**,
+   canlıda test edilecek (barkod = merchantSku varsayımı doğrulanmalı).
 8. **Finans birim testleri:** vatReport, cari bakiyeler, tahsilat→ödeme senkronu, kasa
    bakiyesi, senkron kilidi test kapsamı dışında.
 9. **Sonraki entegratörler:** N11/Çiçeksepeti (iskelet yok), iade yönetimi, sıfırdan
