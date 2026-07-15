@@ -8,6 +8,12 @@ Art of Colour (butik Türk boya markası: oto rötuş, airbrush, hobi boyaları)
 işletme yönetim uygulaması. React + tRPC + Drizzle/MySQL + Express. Canlı:
 https://artofcolour-kokpit.onrender.com/ (Render, ücretsiz plan). Veritabanı: TiDB Cloud.
 
+## AI Takımı (yeni)
+Proje artık ajan takımıyla yönetiliyor: `CLAUDE.md` (CTO protokolü),
+`.claude/TAKIM.md` (kadro + evrim günlüğü), `.claude/agents/*.md` (12 uzman),
+`.claude/knowledge/art-of-colour.md` (şirket bilgi tabanı). Büyük işlerde
+orkestratör `proje-yoneticisi`dir.
+
 ## Çalışma kuralları (önemli)
 - **Doğrudan `main`'e gönder** (PR yok). Değişiklikten sonra commit + `main`'e push.
 - **Az kredi, çok iş:** doğrulamayı riske göre yap — küçük/güvenli değişiklikte sadece
