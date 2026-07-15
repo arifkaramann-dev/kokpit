@@ -323,7 +323,20 @@ export async function syncTrendyolOrders(daysBack = 14) {
 
     for (const pkg of packages) {
       const mapped = mapPackageToOrder(pkg);
-      if (!mapped) continue; // iptal/iade — panoya alınmaz
+      if (!mapped) {
+        // İptal/iade: yeni içe aktarılmaz; ama daha önce içe alınmış sipariş
+        // varsa iptal edilir (mamul stok iadesi updateOrder'da otomatik).
+        const cancelledNo = `TY-${pkg.orderNumber}`;
+        if (!seen.has(cancelledNo)) {
+          seen.add(cancelledNo);
+          const existing = await db.getOrderByOrderNo(cancelledNo);
+          if (existing && existing.status !== "cancelled") {
+            await db.updateOrder(existing.id, { status: "cancelled" });
+            updated++;
+          }
+        }
+        continue;
+      }
 
       if (seen.has(mapped.orderNo)) {
         skipped++;

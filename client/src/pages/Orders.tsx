@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
-import { CHANNELS, formatDate, formatTL, ORDER_STATUSES, OrderStatus } from "@/lib/format";
+import { ALL_ORDER_STATUSES, CANCELLED_STATUS, CHANNELS, formatDate, formatTL, ORDER_STATUSES, OrderStatus } from "@/lib/format";
 import { printInvoice } from "@/lib/invoice";
 import { printShippingLabel } from "@/lib/shippingLabel";
 import {
@@ -49,6 +49,8 @@ import {
   Settings,
   Truck,
   Trash2,
+  Undo2,
+  XCircle,
   Zap,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -151,7 +153,7 @@ export default function Orders() {
   const [payFilter, setPayFilter] = useState<"all" | "unpaid" | "paid">("all");
   const [channelFilter, setChannelFilter] = useState<string>("all");
   // Tamamlanan siparişler varsayılan olarak katlı — güncel iş üstte kalsın.
-  const [collapsed, setCollapsed] = useState<Set<OrderStatus>>(new Set<OrderStatus>(["done"]));
+  const [collapsed, setCollapsed] = useState<Set<OrderStatus>>(new Set<OrderStatus>(["done", "cancelled"]));
   const autoSynced = useRef(false);
 
   function toggleSection(status: OrderStatus) {
@@ -389,6 +391,11 @@ export default function Orders() {
       paidAmount: paid ? 0 : parseFloat(order.totalAmount) || 0,
       paymentMethod: order.paymentMethod,
     });
+  }
+
+  // İptal/İade: mamul stok iadesi sunucuda otomatik yapılır; geri alınca tekrar düşülür.
+  function handleSetCancelled(order: OrderRow, cancelled: boolean) {
+    setStatus.mutate({ id: order.id, status: cancelled ? "cancelled" : "new" });
   }
 
   // Elden/manuel siparişi bir aşama ileri/geri taşı (dir: +1 ileri, -1 geri).
@@ -912,9 +919,10 @@ export default function Orders() {
         </div>
       ) : (
         <div className="space-y-3">
-          {ORDER_STATUSES.map(status => {
+          {ALL_ORDER_STATUSES.map(status => {
             const list = filteredOrders.filter(o => o.status === status.value);
             if (filterActive && list.length === 0) return null;
+            if (status.value === CANCELLED_STATUS.value && list.length === 0) return null;
             const isCollapsed = collapsed.has(status.value);
             const total = list.reduce((s, o) => s + num(o.totalAmount), 0);
             const due = list
@@ -958,6 +966,7 @@ export default function Orders() {
                           onShippingLabel={handleShippingLabel}
                           onTogglePaid={handleTogglePaid}
                           onAdvance={handleAdvance}
+                          onSetCancelled={handleSetCancelled}
                         />
                       ))
                     )}
@@ -980,6 +989,7 @@ function OrderRowItem({
   onShippingLabel,
   onTogglePaid,
   onAdvance,
+  onSetCancelled,
 }: {
   order: OrderRow;
   onEdit: (o: OrderRow) => void;
@@ -988,6 +998,7 @@ function OrderRowItem({
   onShippingLabel: (o: OrderRow) => void;
   onTogglePaid: (o: OrderRow) => void;
   onAdvance: (o: OrderRow, dir: 1 | -1) => void;
+  onSetCancelled: (o: OrderRow, cancelled: boolean) => void;
 }) {
   const confirm = useConfirm();
   const paid = order.paymentStatus === "paid";
@@ -1071,6 +1082,26 @@ function OrderRowItem({
             {!auto && prev && (
               <DropdownMenuItem onClick={() => onAdvance(order, -1)}>
                 <ArrowLeft className="mr-2 h-4 w-4" /> Geri: {prev.label}
+              </DropdownMenuItem>
+            )}
+            {order.status !== "cancelled" ? (
+              <DropdownMenuItem
+                onSelect={async () => {
+                  if (
+                    await confirm({
+                      title: "İptal / İade",
+                      description: `${order.orderNo} iptal/iade olarak işaretlensin mi? Ciro ve cariden düşülür, ürün stoğu iade edilir.`,
+                      confirmText: "İptal / İade",
+                    })
+                  )
+                    onSetCancelled(order, true);
+                }}
+              >
+                <XCircle className="mr-2 h-4 w-4 text-rose-600" /> İptal / İade et
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem onClick={() => onSetCancelled(order, false)}>
+                <Undo2 className="mr-2 h-4 w-4" /> İptali geri al (Yeni'ye taşı)
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />

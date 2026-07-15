@@ -24,10 +24,13 @@ import {
   InsertUser,
   marketingTexts,
   materials,
+  notifications,
   orderItems,
   orders,
   products,
   productImages,
+  productMovements,
+  productionRuns,
   purchaseItems,
   purchases,
   settings,
@@ -282,11 +285,38 @@ export async function updateOrder(id: number, data: Partial<InsertOrder>) {
   if (data.customerName !== undefined && data.customerId === undefined) {
     data = { ...data, customerId: await resolveCustomerIdByName(data.customerName) };
   }
+  // İptal geçişleri mamul stoğu yönetir: iptale girişte kalemler iade edilir,
+  // iptalden çıkışta yeniden düşülür. (Tüm durum değişimleri bu fonksiyondan
+  // geçer: pano, asistan, pazaryeri senkronu.)
+  if (data.status !== undefined) {
+    const old = await getOrder(id);
+    if (old && old.status !== data.status) {
+      const items = await db
+        .select({ productId: orderItems.productId, quantity: orderItems.quantity })
+        .from(orderItems)
+        .where(eq(orderItems.orderId, id));
+      if (old.status !== "cancelled" && data.status === "cancelled") {
+        await applyItemsStock(items, "in", `İptal/iade: ${old.orderNo}`, id);
+      } else if (old.status === "cancelled" && data.status !== "cancelled") {
+        await applyItemsStock(items, "out", `İptal geri alındı: ${old.orderNo}`, id);
+      }
+    }
+  }
   await db.update(orders).set(data).where(eq(orders.id, id));
 }
 
 export async function deleteOrder(id: number) {
   const db = await requireDb();
+  // Silinen siparişin ürün bağlı kalemleri stoğa iade edilir (iptal değilse —
+  // iptalde iade zaten yapılmıştır).
+  const order = await getOrder(id);
+  if (order && order.status !== "cancelled") {
+    const items = await db
+      .select({ productId: orderItems.productId, quantity: orderItems.quantity })
+      .from(orderItems)
+      .where(eq(orderItems.orderId, id));
+    await applyItemsStock(items, "in", `Sipariş silindi: ${order.orderNo}`, id);
+  }
   await db.delete(orderItems).where(eq(orderItems.orderId, id));
   await db.delete(orders).where(eq(orders.id, id));
 }
@@ -499,7 +529,7 @@ export async function transferBetweenAccounts(fromId: number, toId: number, amou
 export async function customerBalances(): Promise<Record<string, number>> {
   const db = await requireDb();
   const [ords, txns, custs] = await Promise.all([
-    db.select({ name: orders.customerName, customerId: orders.customerId, total: orders.totalAmount }).from(orders),
+    db.select({ name: orders.customerName, customerId: orders.customerId, total: orders.totalAmount, status: orders.status }).from(orders),
     db.select({ name: transactions.customerName, customerId: transactions.customerId, direction: transactions.direction, amount: transactions.amount, category: transactions.category }).from(transactions),
     db.select({ id: customers.id, name: customers.name }).from(customers),
   ]);
@@ -511,6 +541,7 @@ export async function customerBalances(): Promise<Record<string, number>> {
     (customerId != null ? nameById.get(customerId) : undefined) ?? name ?? "";
   const out: Record<string, number> = {};
   for (const o of ords) {
+    if (o.status === "cancelled") continue; // iptal/iade borç doğurmaz
     const k = key(canonical(o.customerId, o.name));
     if (k) out[k] = (out[k] ?? 0) + toNum(o.total);
   }
@@ -545,6 +576,7 @@ export async function customerLedger(name: string) {
   type Entry = { date: Date; label: string; debit: number; credit: number; ref: string };
   const entries: Entry[] = [];
   for (const o of ords) {
+    if (o.status === "cancelled") continue; // iptal/iade cari ekstreye girmez
     entries.push({ date: new Date(o.createdAt), label: "Sipariş", debit: toNum(o.totalAmount), credit: 0, ref: o.orderNo });
   }
   for (const t of txns) {
@@ -574,7 +606,7 @@ export async function vatReport() {
   const db = await requireDb();
   const [vatRow, ords, purs] = await Promise.all([
     db.select().from(settings).where(eq(settings.key, "vatRate")).limit(1),
-    db.select({ total: orders.totalAmount, date: orders.createdAt }).from(orders),
+    db.select({ total: orders.totalAmount, date: orders.createdAt, status: orders.status }).from(orders),
     db.select({ total: purchases.totalAmount, date: purchases.invoiceDate, created: purchases.createdAt }).from(purchases),
   ]);
   const rate = parseFloat(vatRow[0]?.value ?? "") || 20;
@@ -585,7 +617,10 @@ export async function vatReport() {
 
   const calc = (since: number) => {
     let salesGross = 0;
-    for (const o of ords) if (new Date(o.date).getTime() >= since) salesGross += toNum(o.total);
+    for (const o of ords) {
+      if (o.status === "cancelled") continue; // iptal/iade KDV matrahına girmez
+      if (new Date(o.date).getTime() >= since) salesGross += toNum(o.total);
+    }
     let buyGross = 0;
     for (const p of purs) {
       const t = new Date((p.date ?? p.created) as never).getTime();
@@ -737,7 +772,7 @@ export async function listUnpaidOrders(limit = 8) {
       createdAt: orders.createdAt,
     })
     .from(orders)
-    .where(sql`${orders.paymentStatus} <> 'paid'`);
+    .where(sql`${orders.paymentStatus} <> 'paid' AND ${orders.status} <> 'cancelled'`);
   const num = (v: string | null) => parseFloat(v ?? "0") || 0;
   return rows
     .map(o => ({ ...o, due: Math.max(0, num(o.totalAmount) - num(o.paidAmount)) }))
@@ -759,7 +794,7 @@ export async function financeSummary() {
 
   const [orderRows, expenseRows, purchaseRows] = await Promise.all([
     db
-      .select({ total: orders.totalAmount, paid: orders.paidAmount, status: orders.paymentStatus, createdAt: orders.createdAt })
+      .select({ total: orders.totalAmount, paid: orders.paidAmount, status: orders.paymentStatus, orderStatus: orders.status, createdAt: orders.createdAt })
       .from(orders),
     db.select({ amount: expenses.amount, date: expenses.expenseDate }).from(expenses),
     db.select({ amount: purchases.totalAmount, date: purchases.createdAt }).from(purchases),
@@ -768,6 +803,7 @@ export async function financeSummary() {
   let receivables = 0;
   let monthRevenue = 0;
   for (const o of orderRows) {
+    if (o.orderStatus === "cancelled") continue; // iptal/iade ciroya ve alacağa girmez
     if (o.status !== "paid") receivables += Math.max(0, num(o.total) - num(o.paid));
     if (o.createdAt && o.createdAt >= start) monthRevenue += num(o.total);
   }
@@ -816,28 +852,112 @@ export async function listOrderItems(orderId: number) {
   return db.select().from(orderItems).where(eq(orderItems.orderId, orderId)).orderBy(orderItems.id);
 }
 
+/* --------------- Mamul stok hareketleri (Faz 0.2) --------------- */
+
+/**
+ * Mamul stok hareketi kaydeder ve products.stockQty'yi günceller.
+ * stockQty tam sayı olduğundan ondalıklı satış miktarı yuvarlanır (hareket
+ * kaydı gerçek miktarı taşır). Eksi bakiye serbesttir: "üretilecek" sinyali.
+ */
+export async function recordProductMovement(
+  productId: number,
+  type: "in" | "out",
+  qty: number,
+  note?: string | null,
+  orderId?: number | null,
+) {
+  if (!(qty > 0)) return;
+  const db = await requireDb();
+  await db.insert(productMovements).values({
+    productId,
+    type,
+    qty: String(qty),
+    note: note ?? null,
+    orderId: orderId ?? null,
+  });
+  const delta = Math.round(qty);
+  if (delta !== 0) {
+    await db
+      .update(products)
+      .set({ stockQty: sql`${products.stockQty} ${type === "in" ? sql`+` : sql`-`} ${delta}` })
+      .where(eq(products.id, productId));
+  }
+}
+
+/** Kalem listesindeki ürün bağlı satırlar için stok iadesi/düşümü uygular. */
+async function applyItemsStock(
+  items: { productId?: number | null; quantity?: unknown }[],
+  type: "in" | "out",
+  note: string,
+  orderId: number,
+) {
+  for (const item of items) {
+    if (item.productId == null) continue;
+    const qty = toNum(String(item.quantity));
+    if (qty > 0) await recordProductMovement(item.productId, type, qty, note, orderId);
+  }
+}
+
+/** Üretim emri kaydı + mamul stok girişi (hammadde düşümü çağıran tarafta). */
+export async function recordProductionRun(productId: number, qty: number, note?: string | null) {
+  const db = await requireDb();
+  await db.insert(productionRuns).values({ productId, qty, note: note ?? null });
+  await recordProductMovement(productId, "in", qty, "Üretim girişi");
+}
+
+export async function listProductionRuns(limit = 50) {
+  const db = await requireDb();
+  const rows = await db
+    .select({
+      id: productionRuns.id,
+      productId: productionRuns.productId,
+      qty: productionRuns.qty,
+      note: productionRuns.note,
+      createdAt: productionRuns.createdAt,
+      productName: products.name,
+    })
+    .from(productionRuns)
+    .leftJoin(products, eq(productionRuns.productId, products.id))
+    .orderBy(desc(productionRuns.id))
+    .limit(limit);
+  return rows;
+}
+
 /**
  * Siparişin kalemlerini komple değiştirir (sil + yeniden ekle).
  * Her kalem katalogla eşleştirilir (barkod → ad); eşleşen kaleme productId
- * yazılır ki ürün bazlı satış raporu ve (ileride) mamul stok düşümü çalışsın.
+ * yazılır. Mamul stok da burada yürür: eski kalemler iade edilir, yeni
+ * kalemler düşülür (sipariş iptal durumundaysa stok işlemi yapılmaz —
+ * iptalde stok zaten iade edilmiştir).
  */
 export async function replaceOrderItems(
   orderId: number,
   items: (Omit<InsertOrderItem, "orderId"> & { barcode?: string | null })[]
 ) {
   const db = await requireDb();
+  const order = await getOrder(orderId);
+  const stockActive = order != null && order.status !== "cancelled";
+  const oldItems = await db
+    .select({ productId: orderItems.productId, quantity: orderItems.quantity })
+    .from(orderItems)
+    .where(eq(orderItems.orderId, orderId));
+  if (stockActive && oldItems.length > 0) {
+    await applyItemsStock(oldItems, "in", "Kalem güncelleme iadesi", orderId);
+  }
   await db.delete(orderItems).where(eq(orderItems.orderId, orderId));
   if (items.length > 0) {
     const refs = await db
       .select({ id: products.id, name: products.name, barcode: products.barcode })
       .from(products);
-    await db.insert(orderItems).values(
-      items.map(({ barcode, ...item }) => ({
-        ...item,
-        productId: item.productId ?? resolveProductIdForItem({ productName: item.productName, barcode }, refs),
-        orderId,
-      })),
-    );
+    const rows = items.map(({ barcode, ...item }) => ({
+      ...item,
+      productId: item.productId ?? resolveProductIdForItem({ productName: item.productName, barcode }, refs),
+      orderId,
+    }));
+    await db.insert(orderItems).values(rows);
+    if (stockActive) {
+      await applyItemsStock(rows, "out", `Satış: ${order?.orderNo ?? orderId}`, orderId);
+    }
   }
 }
 
@@ -848,7 +968,7 @@ export async function countOrdersToday() {
   const rows = await db
     .select({ count: sql<number>`COUNT(*)`, total: sql<string>`COALESCE(SUM(${orders.totalAmount}), 0)` })
     .from(orders)
-    .where(gte(orders.createdAt, start));
+    .where(and(gte(orders.createdAt, start), sql`${orders.status} <> 'cancelled'`));
   return rows[0];
 }
 
@@ -1101,7 +1221,8 @@ export async function reportData() {
     products: allProducts,
     formulas: formulaRows,
     marketingTexts: textRows,
-    orders: allOrders,
+    // İptal/iade siparişler analiz/ciro grafiklerine girmez.
+    orders: allOrders.filter(o => o.status !== "cancelled"),
     orderItems: allOrderItems,
     materials: allMaterials,
     campaigns: allCampaigns,
@@ -1340,6 +1461,59 @@ export async function bulkUpdatePrices(percent: number, series: string | null) {
 }
 
 /* ------------------------- Ayarlar (Şirket / Fatura) ------------------------- */
+
+/* ------------------------- Bildirimler (Faz 1) ------------------------- */
+
+/**
+ * Bildirim oluşturur. Aynı tür+başlıktan son 24 saatte kaydedilmişse tekrar
+ * yazmaz (nöbetçi ajanların spam'ini önler); o durumda null döner.
+ */
+export async function createNotification(data: {
+  kind: string;
+  title: string;
+  body?: string | null;
+  link?: string | null;
+}): Promise<number | null> {
+  const db = await requireDb();
+  const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const dup = await db
+    .select({ id: notifications.id })
+    .from(notifications)
+    .where(and(eq(notifications.kind, data.kind), eq(notifications.title, data.title), gte(notifications.createdAt, dayAgo)))
+    .limit(1);
+  if (dup.length > 0) return null;
+  const [res] = await db.insert(notifications).values({
+    kind: data.kind,
+    title: data.title,
+    body: data.body ?? null,
+    link: data.link ?? null,
+  });
+  return Number(res.insertId);
+}
+
+export async function listNotifications(limit = 30) {
+  const db = await requireDb();
+  return db.select().from(notifications).orderBy(desc(notifications.id)).limit(limit);
+}
+
+export async function unreadNotificationCount(): Promise<number> {
+  const db = await requireDb();
+  const rows = await db
+    .select({ count: sql<number>`COUNT(*)` })
+    .from(notifications)
+    .where(eq(notifications.status, "unread"));
+  return Number(rows[0]?.count ?? 0);
+}
+
+export async function markNotificationRead(id: number) {
+  const db = await requireDb();
+  await db.update(notifications).set({ status: "read" }).where(eq(notifications.id, id));
+}
+
+export async function markAllNotificationsRead() {
+  const db = await requireDb();
+  await db.update(notifications).set({ status: "read" }).where(eq(notifications.status, "unread"));
+}
 
 export async function getSettings() {
   const db = await requireDb();

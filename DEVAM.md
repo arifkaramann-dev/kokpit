@@ -102,8 +102,36 @@ bakiye ID-öncelikli (isim değişse de cari kopmaz; ID'siz eski kayıtlar isiml
 yakalanır); (e) güvenlik: oturum cookie `sameSite=lax`, temel güvenlik
 başlıkları (nosniff/frame-deny/referrer). 89/89 test, 0 tip hatası, build ✓.
 **Migration canlıda deploy'la otomatik koşar (`pnpm db:migrate`).**
-Sırada (Sprint 0.2): mamul stok hareketleri + üretim emri kaydı, görsellerin
-S3'e taşınması, routers/db modül bölünmesi, companyId kolon paketi.
+
+**Faz 0.2 + Faz 1 çekirdeği + iade yönetimi ✔ yapıldı (15.07.2026, mega-sprint):**
+- **Mamul stok & üretim (0017):** `productMovements` (satışta düş, iptalde iade,
+  üretimde ekle; eksi stok = "üretilecek" sinyali) + `productionRuns` (üretim
+  emri geçmişi, `production.runs` ucu). Tüm kalem yazımları `replaceOrderItems`
+  üzerinden stok yürütür; durum geçişleri `updateOrder`'da.
+- **İade yönetimi:** siparişlerde `cancelled` durumu; Trendyol/HB senkronunda
+  iptal/iade edilen paket yerel siparişi otomatik iptal eder (stok iadesiyle).
+  İptaller ciro/alacak/KDV/cari/analiz hesaplarının TAMAMINDAN hariç. Sipariş
+  kartında "İptal / İade et" + geri alma; panoda ayrı İptal/İade bölümü.
+- **Bildirim merkezi (0017):** `notifications` tablosu + zil UI (mikrofonun
+  üstünde, okunmamış rozeti). `notifyOwner` bildirim + WhatsApp'a kopya
+  (WHATSAPP_ALLOWED_NUMBERS ilk numara), 24 saat tekrar-önleme.
+- **Zamanlayıcı (`server/scheduler.ts`):** 15 dk'da bir pazaryeri OTO-senkron
+  (yeni sipariş → bildirim+WhatsApp; hata → uyarı), saatlik Stok Nöbetçisi
+  (kritik hammadde → eksik listesine otomatik + bildirim; eksi mamul →
+  "üretim gerekli"), her sabah 08:00 TR Sabah Brifingi (ciro/gider/net, kasa,
+  alacaklar, açık işler). İzler settings'te; `SCHEDULER_DISABLED=1` ile kapanır.
+  Render free uykuya dalarsa durur → /api/health'e uptime monitörü şart.
+- **PWA:** service worker eklendi (navigasyon network-first, hash'li asset
+  cache-first, API'ye dokunmaz) + prod kaydı; manifest/ikonlar zaten vardı.
+- **companyId (0018):** 25 iş tablosuna `companyId INT NOT NULL DEFAULT 1` —
+  çok-şirket hazırlığı, davranış değişikliği yok.
+- Doğrulama: 0 tip hatası, 89/89 test, build ✓. **main'e deploy edildi.**
+
+**Kod dışı bekleyenler (kullanıcı/dış taraf):** e-Fatura entegratör anlaşması
+(İzibiz/Foriba), N11-Çiçeksepeti API anahtarları, Hepsiburada API onayı,
+uptime monitörü kurulumu (cron-job.org → /api/health, 10 dk'da bir).
+Sırada (kod): görsellerin S3'e taşınması (0.3), routers/db modül bölünmesi (0.4),
+asistanın tool-use ajanına dönüşümü, teklif modülü, pazaryeri soru-cevap.
 
 ## Açık işler / sırada ne var (takım denetimi: 15.07.2026, kanıtlı liste todo.md sonunda)
 Sağlık: `pnpm check` 0 hata, 74/74 test geçiyor, kod içi TODO/FIXME borcu yok.

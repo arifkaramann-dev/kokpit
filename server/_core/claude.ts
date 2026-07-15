@@ -210,7 +210,7 @@ const VOICE_SCHEMA = {
     taskItems: { anyOf: [{ type: "array", items: { type: "string" } }, { type: "null" }] },
     listKind: { anyOf: [{ type: "string", enum: ["eksik", "gorev", "proje"] }, { type: "null" }] },
     orderRef: { anyOf: [{ type: "string" }, { type: "null" }] },
-    orderStatus: { anyOf: [{ type: "string", enum: ["new", "production", "ready", "done"] }, { type: "null" }] },
+    orderStatus: { anyOf: [{ type: "string", enum: ["new", "production", "ready", "done", "cancelled"] }, { type: "null" }] },
     amount: { anyOf: [{ type: "number" }, { type: "null" }] },
     expenseCategory: {
       anyOf: [
@@ -244,7 +244,7 @@ export type VoiceCommand = {
   taskItems: string[] | null;
   listKind: "eksik" | "gorev" | "proje" | null;
   orderRef: string | null;
-  orderStatus: "new" | "production" | "ready" | "done" | null;
+  orderStatus: "new" | "production" | "ready" | "done" | "cancelled" | null;
   amount: number | null;
   expenseCategory: "kira" | "kargo" | "reklam" | "komisyon" | "maaş" | "fatura" | "ambalaj" | "vergi" | "diğer" | null;
   reply: string;
@@ -273,7 +273,7 @@ export async function parseVoiceCommand(transcript: string): Promise<VoiceComman
         "'projeler ne durumda / geliştirmeler' → task_list, listKind=proje; " +
         "'X aldım / X tamamlandı / listeden çıkar' → task_done, tamamlanan maddeleri taskItems dizisine yaz. " +
         "Sipariş durumu değiştirme ('AOC-... kargoya hazır', 'son siparişi tamamla', 'Ahmet'in siparişi üretimde') → order_status; " +
-        "orderRef alanına sipariş no / müşteri adı / 'son' yaz, orderStatus alanına new|production|ready|done. " +
+        "orderRef alanına sipariş no / müşteri adı / 'son' yaz, orderStatus alanına new|production|ready|done|cancelled (iptal/iade için cancelled) yaz. " +
         "İşletme gideri ('gider ekle', 'kira ödedim', 'kargoya 250 lira verdim', 'reklama 1000 TL harcadım') → expense_add; " +
         "amount alanına tutarı, expenseCategory alanına kategoriyi (kira|kargo|reklam|komisyon|maaş|fatura|ambalaj|vergi|diğer), noteText alanına kısa açıklamayı yaz. " +
         "DİKKAT: 'stok girişi/malzeme geldi' gider DEĞİLDİR (stock_in); satın alma yalnızca 'gider' diye anılırsa expense_add olur. " +

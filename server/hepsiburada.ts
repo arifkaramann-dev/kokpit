@@ -271,7 +271,22 @@ export async function syncHepsiburadaOrders() {
 
     for (const raw of orders) {
       const mapped = mapHbOrder(raw);
-      if (!mapped) continue;
+      if (!mapped) {
+        // İptal/iade: içe alınmış sipariş varsa iptal et (stok iadesi otomatik).
+        const rawNo = raw.orderNumber ?? raw.orderId ?? raw.id;
+        if (rawNo) {
+          const cancelledNo = `HB-${rawNo}`;
+          if (!seen.has(cancelledNo)) {
+            seen.add(cancelledNo);
+            const existing = await db.getOrderByOrderNo(cancelledNo);
+            if (existing && existing.status !== "cancelled") {
+              await db.updateOrder(existing.id, { status: "cancelled" });
+              updated++;
+            }
+          }
+        }
+        continue;
+      }
 
       if (seen.has(mapped.orderNo)) {
         skipped++;

@@ -25,6 +25,7 @@ import { useIsMobile } from "@/hooks/useMobile";
 import { useTheme } from "@/contexts/ThemeContext";
 import VoiceButton from "@/components/VoiceButton";
 import CommandPalette from "@/components/CommandPalette";
+import NotificationBell from "@/components/NotificationBell";
 import {
   BadgePercent,
   BarChart3,
@@ -350,6 +351,7 @@ function DashboardLayoutContent({
         <main className="flex-1 p-4">{children}</main>
         {/* Asistan sayfasının kendi mikrofonu var; sabit buton orada gizlenir. */}
         {location !== "/asistan" && <VoiceButton />}
+        <NotificationBell />
         <CommandPalette />
       </SidebarInset>
     </>

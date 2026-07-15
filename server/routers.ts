@@ -69,7 +69,7 @@ const orderInput = z.object({
   paidAmount: z.number().min(0).optional(),
   paymentMethod: z.string().nullable().optional(),
   // Elden/dışarıdan satış girişleri doğrudan "Tamamlandı" olarak eklenebilir.
-  status: z.enum(["new", "production", "ready", "done"]).optional(),
+  status: z.enum(["new", "production", "ready", "done", "cancelled"]).optional(),
   // Kalem listesi gönderilirse toplam tutar ve özet bu satırlardan türetilir.
   items: z.array(orderItemInput).optional(),
 });
@@ -415,8 +415,13 @@ export const appRouter = router({
             await db.adjustStock(f.materialId, "out", need, `Üretim: ${input.qty}× ${product.name}`);
           }
         }
+        // Üretim emri kaydı + mamul stok girişi (Faz 0.2): üretilen adet
+        // ürünün stoğuna eklenir, üretim geçmişi productionRuns'ta izlenir.
+        await db.recordProductionRun(input.productId, Math.round(input.qty), missing.length > 0 ? `Eksik stokla zorlandı: ${missing.join(", ")}` : null);
         return { deducted: formula.length, missing };
       }),
+    // Üretim geçmişi: son üretim emirleri (ürün adıyla).
+    runs: protectedProcedure.query(() => db.listProductionRuns(50)),
   }),
 
   formula: router({
@@ -511,7 +516,7 @@ export const appRouter = router({
         await db.updateOrder(input.id, toDecimalFields(order, ["totalAmount", "paidAmount"]) as never);
       }),
     setStatus: protectedProcedure
-      .input(z.object({ id: z.number(), status: z.enum(["new", "production", "ready", "done"]) }))
+      .input(z.object({ id: z.number(), status: z.enum(["new", "production", "ready", "done", "cancelled"]) }))
       .mutation(({ input }) => db.updateOrder(input.id, { status: input.status })),
     // Ödeme durumu/tutarı: kart üzerinden hızlı tahsilat işaretleme.
     setPayment: protectedProcedure
@@ -660,6 +665,16 @@ export const appRouter = router({
       .input(z.record(z.string(), z.string()))
       .mutation(({ input }) => db.setSettings(input)),
     nextInvoiceNo: protectedProcedure.mutation(() => db.nextInvoiceNo()),
+  }),
+
+  // Bildirim merkezi: zamanlayıcı/nöbetçi bildirimleri (zil ikonu).
+  notifications: router({
+    list: protectedProcedure.query(() => db.listNotifications(30)),
+    unreadCount: protectedProcedure.query(() => db.unreadNotificationCount()),
+    markRead: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(({ input }) => db.markNotificationRead(input.id)),
+    markAllRead: protectedProcedure.mutation(() => db.markAllNotificationsRead()),
   }),
 
   tasks: router({

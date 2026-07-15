@@ -35,6 +35,7 @@ export type InsertUser = typeof users.$inferInsert;
  */
 export const materials = mysqlTable("materials", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
   name: varchar("name", { length: 255 }).notNull(),
   category: varchar("category", { length: 64 }).notNull().default("diğer"),
   unit: varchar("unit", { length: 32 }).notNull().default("gr"),
@@ -57,6 +58,7 @@ export const stockMovements = mysqlTable(
   "stockMovements",
   {
     id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
     materialId: int("materialId").notNull(),
     type: mysqlEnum("type", ["in", "out"]).notNull(),
     qty: decimal("qty", { precision: 12, scale: 3 }).notNull(),
@@ -77,6 +79,7 @@ export const products = mysqlTable(
   "products",
   {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
   parentId: int("parentId"),
   name: varchar("name", { length: 255 }).notNull(),
   series: varchar("series", { length: 128 }),
@@ -115,6 +118,7 @@ export const formulaItems = mysqlTable(
   "formulaItems",
   {
     id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
     productId: int("productId").notNull(),
     materialId: int("materialId").notNull(),
     qty: decimal("qty", { precision: 12, scale: 3 }).notNull(),
@@ -136,13 +140,15 @@ export const orders = mysqlTable(
   "orders",
   {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
   orderNo: varchar("orderNo", { length: 32 }).notNull(),
   customerName: varchar("customerName", { length: 255 }).notNull(),
   // Cari bağ: müşteri kaydına ID ile bağlanır (isim yalnızca görüntü/yedek).
   // NULL = CRM'de kaydı olmayan müşteri (ör. pazaryeri müşterisi).
   customerId: int("customerId"),
   channel: varchar("channel", { length: 64 }).default("web"),
-  status: mysqlEnum("status", ["new", "production", "ready", "done"]).notNull().default("new"),
+  // cancelled = iptal/iade: ciro-cari-KDV hesaplarına girmez, mamul stoğu iade edilir.
+  status: mysqlEnum("status", ["new", "production", "ready", "done", "cancelled"]).notNull().default("new"),
   totalAmount: decimal("totalAmount", { precision: 12, scale: 2 }).notNull().default("0"),
   itemsSummary: text("itemsSummary"),
   notes: text("notes"),
@@ -179,6 +185,7 @@ export const orderItems = mysqlTable(
   "orderItems",
   {
     id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
     orderId: int("orderId").notNull(),
     productName: varchar("productName", { length: 255 }).notNull(),
     // Ürün bağ: ürün bazlı satış/kâr raporu ve stok düşümü için ID.
@@ -205,6 +212,7 @@ export const customers = mysqlTable(
   "customers",
   {
     id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
     name: varchar("name", { length: 255 }).notNull(),
     phone: varchar("phone", { length: 64 }),
     email: varchar("email", { length: 320 }),
@@ -226,6 +234,7 @@ export type InsertCustomer = typeof customers.$inferInsert;
  */
 export const expenses = mysqlTable("expenses", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
   expenseDate: timestamp("expenseDate").defaultNow().notNull(),
   category: varchar("category", { length: 64 }).notNull().default("diğer"),
   description: varchar("description", { length: 255 }),
@@ -243,6 +252,7 @@ export type InsertExpense = typeof expenses.$inferInsert;
  */
 export const accounts = mysqlTable("accounts", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
   name: varchar("name", { length: 128 }).notNull(),
   kind: mysqlEnum("kind", ["kasa", "banka"]).notNull().default("kasa"),
   openingBalance: decimal("openingBalance", { precision: 14, scale: 2 }).notNull().default("0"),
@@ -262,6 +272,7 @@ export const transactions = mysqlTable(
   "transactions",
   {
     id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
     txnDate: timestamp("txnDate").defaultNow().notNull(),
     accountId: int("accountId"),
     direction: mysqlEnum("direction", ["in", "out"]).notNull(),
@@ -298,6 +309,7 @@ export type InsertTransaction = typeof transactions.$inferInsert;
  */
 export const cheques = mysqlTable("cheques", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
   type: mysqlEnum("type", ["cek", "senet"]).notNull().default("cek"),
   direction: mysqlEnum("direction", ["alinan", "verilen"]).notNull().default("alinan"),
   partyName: varchar("partyName", { length: 255 }),
@@ -319,6 +331,7 @@ export type InsertCheque = typeof cheques.$inferInsert;
  */
 export const devProjects = mysqlTable("devProjects", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
   name: varchar("name", { length: 255 }).notNull(),
   targetUse: text("targetUse"),
   series: varchar("series", { length: 128 }),
@@ -351,6 +364,7 @@ export type InsertDevProject = typeof devProjects.$inferInsert;
 /** Reçete denemeleri: her deneme hammadde satırları taşır, biri "seçili" olur. */
 export const devTrials = mysqlTable("devTrials", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
   projectId: int("projectId").notNull(),
   trialNo: int("trialNo").notNull(),
   result: mysqlEnum("result", ["pending", "success", "partial", "fail"])
@@ -366,6 +380,7 @@ export type InsertDevTrial = typeof devTrials.$inferInsert;
 
 export const devTrialItems = mysqlTable("devTrialItems", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
   trialId: int("trialId").notNull(),
   materialId: int("materialId").notNull(),
   qty: decimal("qty", { precision: 12, scale: 3 }).notNull(),
@@ -383,6 +398,7 @@ export const suppliers = mysqlTable(
   "suppliers",
   {
     id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
     name: varchar("name", { length: 255 }).notNull(),
     contactPerson: varchar("contactPerson", { length: 255 }),
     phone: varchar("phone", { length: 64 }),
@@ -403,6 +419,7 @@ export type Supplier = typeof suppliers.$inferSelect;
  */
 export const campaigns = mysqlTable("campaigns", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
   name: varchar("name", { length: 255 }).notNull(),
   productGroup: varchar("productGroup", { length: 255 }),
   startDate: timestamp("startDate").notNull(),
@@ -421,6 +438,7 @@ export type Campaign = typeof campaigns.$inferSelect;
  */
 export const marketingTexts = mysqlTable("marketingTexts", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
   contentType: varchar("contentType", { length: 64 }).notNull(),
   productName: varchar("productName", { length: 255 }),
   prompt: text("prompt"),
@@ -438,6 +456,7 @@ export const purchases = mysqlTable(
   "purchases",
   {
     id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
     supplierName: varchar("supplierName", { length: 255 }),
     // Cari bağ: tedarikçi kaydına ID ile (isim görüntü/yedek).
     supplierId: int("supplierId"),
@@ -456,6 +475,7 @@ export const purchaseItems = mysqlTable(
   "purchaseItems",
   {
     id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
     purchaseId: int("purchaseId").notNull(),
     materialId: int("materialId").notNull(),
     name: varchar("name", { length: 255 }).notNull(),
@@ -479,6 +499,7 @@ export type PurchaseItem = typeof purchaseItems.$inferSelect;
  */
 export const templates = mysqlTable("templates", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
   kind: mysqlEnum("kind", [
     "etiket_boyutu",
     "etiket_yazisi",
@@ -505,6 +526,7 @@ export const productImages = mysqlTable(
   "productImages",
   {
     id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
     productId: int("productId").notNull(),
     kind: mysqlEnum("kind", ["main", "packaging", "usage"]).notNull(),
     // Base64 görseller 64KB'lık TEXT sınırına sığmaz; MEDIUMTEXT (16MB) kullanılır.
@@ -522,6 +544,7 @@ export type ProductImage = typeof productImages.$inferSelect;
  */
 export const tasks = mysqlTable("tasks", {
   id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
   kind: mysqlEnum("kind", ["eksik", "gorev"]).notNull().default("gorev"),
   title: varchar("title", { length: 500 }).notNull(),
   note: text("note"),
@@ -531,6 +554,71 @@ export const tasks = mysqlTable("tasks", {
 });
 
 export type Task = typeof tasks.$inferSelect;
+
+/**
+ * Mamul (bitmiş ürün) stok hareketleri: üretim girişi, satış çıkışı,
+ * iptal/iade girişi, elle düzeltme. products.stockQty bu hareketlerle yürür;
+ * eksi bakiye "üretilmesi gereken" sinyalidir.
+ */
+export const productMovements = mysqlTable(
+  "productMovements",
+  {
+    id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
+    productId: int("productId").notNull(),
+    type: mysqlEnum("type", ["in", "out"]).notNull(),
+    qty: decimal("qty", { precision: 12, scale: 2 }).notNull(),
+    note: text("note"),
+    orderId: int("orderId"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  t => [
+    index("productMovements_productId_idx").on(t.productId),
+    index("productMovements_orderId_idx").on(t.orderId),
+  ],
+);
+
+export type ProductMovement = typeof productMovements.$inferSelect;
+
+/**
+ * Üretim emri kayıtları: ne zaman, hangi üründen kaç adet üretildi.
+ * Hammadde düşümü stockMovements'a, mamul girişi productMovements'a işlenir.
+ */
+export const productionRuns = mysqlTable(
+  "productionRuns",
+  {
+    id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
+    productId: int("productId").notNull(),
+    qty: int("qty").notNull(),
+    note: text("note"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  t => [index("productionRuns_productId_idx").on(t.productId)],
+);
+
+export type ProductionRun = typeof productionRuns.$inferSelect;
+
+/**
+ * Bildirim merkezi: zamanlayıcı/nöbetçi ajanların ve sistem olaylarının
+ * kullanıcıya düşen kayıtları. WhatsApp'a da kopyalanabilir (notifyOwner).
+ */
+export const notifications = mysqlTable(
+  "notifications",
+  {
+    id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
+    kind: varchar("kind", { length: 48 }).notNull().default("genel"),
+    title: varchar("title", { length: 255 }).notNull(),
+    body: text("body"),
+    link: varchar("link", { length: 255 }),
+    status: mysqlEnum("status", ["unread", "read"]).notNull().default("unread"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  t => [index("notifications_status_idx").on(t.status), index("notifications_createdAt_idx").on(t.createdAt)],
+);
+
+export type Notification = typeof notifications.$inferSelect;
 
 /**
  * Genel ayarlar (anahtar-değer): şirket/fatura bilgileri, fatura sayaç no vb.

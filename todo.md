@@ -113,7 +113,7 @@ Pazaryeri (Qukasoft):
 - [x] Hepsiburada stok/fiyat gönderme + "Servis Anahtarı" desteği (F4'te yapıldı; canlıda HEPSIBURADA_SERVICE_KEY ile test edilecek)
 - [ ] N11 + Çiçeksepeti entegratörleri (sipariş çekme + stok/fiyat) — iskelet yok
 - [ ] Komisyon/kesinti bazlı net kâr raporu (pazaryeri bazında) — KISMEN: tekil hesaplayıcı var (Costs.tsx marketplaceNet), toplu rapor yok
-- [ ] İade yönetimi (Returned/Cancelled siparişler şu an sessizce atlanıyor) + müşteri soru-cevap yönetimi
+- [x] İade yönetimi: cancelled durumu + senkronda otomatik iptal + stok iadesi + rapor/cari hariç tutma (soru-cevap yönetimi hâlâ açık)
 - [ ] Sıfırdan ürün açma (kategori/marka/özellik/görsel) — çoklu pazaryeri
 
 ## YENİ ÖNCELİK — Fiyatlandırma & kâr hızlandırma paketi (15.07.2026, patron kararı)
@@ -184,12 +184,22 @@ Hepsiburada push yok, web sitesi (Qukasoft) entegrasyonu yok.
 - [x] 0.1b Yazma yolları ID çözümlemeli; ekstre/bakiye ID-öncelikli (isim fallback);
       pazaryeri kalemlerinde barkod→ad ürün eşleşmesi (resolveProductIdForItem, 6 test)
 - [x] 0.1c Güvenlik hızlı kazanım: cookie sameSite=lax + nosniff/frame-deny/referrer başlıkları
-- [ ] 0.2 Mamul stok hareketleri (üretim +, satış −, iade +) + üretim emri kaydı
+- [x] 0.2 Mamul stok hareketleri (üretim +, satış −, iade +) + üretim emri kaydı (0017: productMovements/productionRuns)
 - [ ] 0.3 Ürün görsellerinin S3'e taşınması (/api/img URL'leri korunarak)
 - [ ] 0.4 routers.ts/db.ts modül dizinlerine bölünme + servis katmanı (davranış birebir)
-- [ ] 0.5 companyId kolon paketi (çok şirket hazırlığı, default 1)
+- [x] 0.5 companyId kolon paketi (0018: 25 tabloya, default 1)
 - [ ] 0.6 Oturum süresi kısaltma + sunucu tarafı iptal; body limit'in uca göre daraltılması
       (S3 göçünden sonra; görseller şu an tRPC'den base64 gidiyor)
+
+## Faz 1 — AI Business OS çekirdeği (15.07.2026 mega-sprint'te başladı)
+- [x] Bildirim merkezi (notifications tablosu + zil UI + markRead/markAllRead)
+- [x] notifyOwner: bildirim + WhatsApp çıkışı (24 saat tekrar-önleme)
+- [x] Zamanlayıcı: 15dk pazaryeri oto-senkron + saatlik Stok Nöbetçisi + 08:00 Sabah Brifingi
+- [x] PWA service worker + kayıt (manifest/ikonlar mevcuttu)
+- [ ] Asistanın tool-use ajanına dönüşümü + onay katmanı (guvenli/onayli/kritik)
+- [ ] Tahsilat Takipçisi (30+ gün alacaklara hatırlatma taslağı)
+- [ ] Pazaryeri soru-cevap kuyruğu + AI cevap taslağı
+- [ ] Uptime monitörü kurulumu (kullanıcı: cron-job.org → /api/health)
 
 ## Canlıda (Render) doğrulama bekleyenler — kod tarafı hazır
 - [ ] Trendyol: "Bağlantıyı Test Et" HTTP 200 + sipariş akışı + "Trendyol'a Gönder" (stok/fiyat)

@@ -25,6 +25,7 @@ const STATUS_LABELS: Record<string, string> = {
   production: "Üretimde",
   ready: "Kargoya Hazır",
   done: "Tamamlandı",
+  cancelled: "İptal/İade",
 };
 
 const HELP_TEXT = [
@@ -71,12 +72,13 @@ export async function buildBusinessSnapshot(): Promise<string> {
     db.listExpenses(50),
   ]);
   const since30 = Date.now() - 30 * 24 * 60 * 60 * 1000;
-  const last30 = orders.filter(o => new Date(o.createdAt as unknown as string).getTime() >= since30);
+  const active = orders.filter(o => o.status !== "cancelled"); // iptal/iade ciro-alacak dışı
+  const last30 = active.filter(o => new Date(o.createdAt as unknown as string).getTime() >= since30);
   const revenue30 = last30.reduce((s, o) => s + (parseFloat(String(o.totalAmount)) || 0), 0);
 
   // Alacaklar (ödenmemiş siparişler) — "kim borçlu / ne kadar tahsilat" için.
   const num = (v: unknown) => parseFloat(String(v ?? 0)) || 0;
-  const debtors = orders
+  const debtors = active
     .filter(o => o.paymentStatus !== "paid")
     .map(o => ({ name: o.customerName, due: Math.max(0, num(o.totalAmount) - num(o.paidAmount)), orderNo: o.orderNo }))
     .filter(d => d.due > 0)

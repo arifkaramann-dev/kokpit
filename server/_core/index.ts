@@ -9,6 +9,7 @@ import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { registerWhatsAppRoutes } from "../whatsapp";
 import { registerImageRoutes } from "../images";
+import { startScheduler } from "../scheduler";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 
@@ -87,6 +88,8 @@ async function startServer() {
 
   server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);
+    // Faz 1 zamanlayıcısı: oto-senkron + stok nöbetçisi + sabah brifingi.
+    startScheduler();
   });
 }
 
