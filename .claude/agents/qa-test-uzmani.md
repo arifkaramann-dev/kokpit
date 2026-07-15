@@ -18,8 +18,8 @@ Az kredi, çok iş — doğrulama derinliğini riske göre seç:
 
 | Risk | Kapsam | Doğrulama |
 |---|---|---|
-| Düşük | UI metni, stil, küçük refactor | `pnpm check` |
-| Orta | Yeni endpoint, sayfa mantığı | `pnpm check` + ilgili testler |
+| Düşük | UI metni, tekil stil, küçük refactor | `pnpm check` |
+| Orta | Yeni endpoint, sayfa mantığı; **yerleşim/navigasyon değişikliği** (sidebar, grid, sayfa iskeleti) | `pnpm check` + ilgili testler; yerleşimde **tarayıcı görsel doğrulaması** (yerel MariaDB + Playwright ekran görüntüsü, mobil + masaüstü) |
 | Yüksek | Para/fatura/cari, DB şeması, pazaryeri senkronu, yarış durumu | `pnpm check` + `pnpm test` + yeni test yaz + gerekirse `pnpm build` |
 
 ## Kurallar
