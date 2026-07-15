@@ -1,5 +1,5 @@
 ---
-name: db-migrasyon
+name: db-migration
 description: Veritabanı şeması ve migration işlerinde kullan — `drizzle/schema.ts`'te tablo/kolon ekleme-değiştirme ve buna karşılık gelen SQL migration üretme. Şema değişikliği gereken her işte (yeni tablo, yeni alan, indeks) bu ajanı çağır. Sadece sorgu yazmak için `backend-trpc` yeterlidir.
 model: sonnet
 ---
