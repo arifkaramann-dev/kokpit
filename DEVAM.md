@@ -26,7 +26,9 @@ orkestratör `proje-yoneticisi`dir.
 
 ## Şu ana kadar yapılanlar (özet)
 - Kendi e-posta/şifre girişi, Render dağıtımı, otomatik DB kurulumu
-- Sipariş Panosu (kanban), sipariş kalemleri, elden satış
+- Sipariş panosu (kanban kaldırıldı → otomatik akışlı liste + arama/filtre), sipariş kalemleri, elden satış
+- Menü gruplama, native confirm → AlertDialog, Geliştirme panosu (fikir→ürün akışı),
+  Görevler & Alışveriş, Şablonlar, Alış Faturaları
 - Ürünler & türevler: yüzey × ambalaj × renk × **set/paket** türetme, satış başlığı,
   reçete kopyalama, arama, **CSV dışa aktarım (görsel linkleriyle)**, toplu fiyat, etiket yazdırma
 - Ürün görselleri (ana/ambalaj/kullanım) + **herkese açık link**: `/api/img/{id}/{tür}`
@@ -63,27 +65,34 @@ orkestratör `proje-yoneticisi`dir.
   kendi barkodlu etiketimize düşer. Senkron artık kargo takip no/sağlayıcı/link'i saklar
   (orders tablosuna `cargoTrackingNumber/ProviderName/TrackingLink` eklendi, migration 0011).
 
-## Açık işler / sırada ne var
-1. **Hepsiburada 401:** Hepsiburada API bilgileri Render'a girilmeli. Hepsiburada
-   Trendyol gibi anında anahtar VERMEZ — panelden "API Entegrasyon İşlemleri" talebi
-   açılıp onay + canlı test sonrası kullanıcı adı/secret veriliyor. Ayrıca "Servis
-   Anahtarı" olabilir. Kullanıcı bunları alınca: (a) Render'a gir, (b) Ayarlar >
-   "Bağlantıyı Test Et" ile HTTP durumunu gör, (c) Servis Anahtarı gerekiyorsa koda ekle.
-2. **Trendyol'u canlıda tam oturt:** Render'a Trendyol bilgileri girilince
-   "Bağlantıyı Test Et" HTTP 200 dönmeli; sipariş akışı + "Trendyol'a Gönder" (stok/fiyat) doğrulanmalı.
-3. **Trendyol resmi etiketini canlıda doğrula:** Sipariş kargoya verilip senkron çalışınca
-   `cargoTrackingNumber` dolmalı; kart → kamyon butonu resmi PDF etiketi getirmeli. Yalnızca
-   "ortak etiket" anlaşmalı kargolarda çalışır. Bu ortam Trendyol'a/Labelary'ye çıkamadığı için
-   **canlıda test edilmedi**. Not: common-label şu an sadece ZPL veriyor; PDF'e Labelary ile çeviriyoruz
-   (gerekirse `LABELARY_URL` env ile değiştirilebilir).
-4. **Sonraki entegratör adımları:** Hepsiburada'ya stok/fiyat gönderme, sıfırdan ürün
-   açma (kategori/marka/görsel/özellik), N11 / Çiçeksepeti eklemek.
-5. **Sesli uyandırma** ✔ yapıldı. İki motor: **Picovoice Porcupine** (AccessKey girilince,
-   cihaz-üstü, güvenilir) + **Web Speech** yedeği. AccessKey yoksa Web Speech "Hey Kokpit"
-   dinler; AccessKey varsa hazır "Jarvis" ya da özel "Hey Kokpit" `.ppn`. Kurulum: **SESLI.md**.
-   Env: `PICOVOICE_ACCESS_KEY` (+ opsiyonel `PICOVOICE_KEYWORD_PATH/LABEL`, `PICOVOICE_MODEL_PATH`).
-   Picovoice bundle'ı tembel yüklenir (uyandırma açılınca). **Canlıda AccessKey ile test edilmeli.**
-   Gerçek arka plan "Hey Siri" için native uygulama gerekir (ayrı iş).
+## Açık işler / sırada ne var (takım denetimi: 15.07.2026, kanıtlı liste todo.md sonunda)
+Sağlık: `pnpm check` 0 hata, 38/38 test geçiyor, kod içi TODO/FIXME borcu yok.
+
+**Kullanıcıdan bekleyenler (kod hazır, sadece canlıda test):**
+1. **Hepsiburada 401:** API bilgileri Render'a girilmeli. Hepsiburada anında anahtar
+   VERMEZ — panelden "API Entegrasyon İşlemleri" talebi + onay sonrası kullanıcı adı/secret
+   gelir. Alınca: (a) Render'a gir, (b) Ayarlar > "Bağlantıyı Test Et". Mevcut 401 kod
+   hatası değil, kimlik eksikliği (401/403 ayrımı kodda var).
+2. **Trendyol'u canlıda oturt:** anahtarlar girilince "Bağlantıyı Test Et" 200 dönmeli;
+   sipariş akışı + "Trendyol'a Gönder" (stok/fiyat, kod tamam: pushTrendyolStockPrice)
+   doğrulanmalı.
+3. **Trendyol resmi etiket canlı test:** senkron `cargoTrackingNumber` doldurunca kamyon
+   butonu ZPL→Labelary→PDF getirmeli (kod + kendi-barkod fallback tam; `LABELARY_URL`
+   env ile değiştirilebilir). Bu ortam dışarı çıkamadığı için canlıda test edilmedi.
+4. **Sesli uyandırma canlı test:** Picovoice AccessKey ile (iki motor da kodda mevcut;
+   kurulum SESLI.md).
+
+**Geliştirme sırası (takım denetiminin bulguları):**
+5. **GÜVENLİK — WhatsApp webhook imzası:** POST webhook'ta `X-Hub-Signature-256` HMAC
+   doğrulaması yok (verify_token + idempotens var); sahte POST asistanı tetikleyebilir.
+   Düşük efor, öncelikli.
+6. **Asistan yazma intent'leri:** "gider ekle"/"tahsilat aldım" intent enum'unda yok —
+   sadece soru-cevap var; altyapı (kasa/gider API'leri) hazır.
+7. **Hepsiburada stok/fiyat gönderme** + "Servis Anahtarı" desteği kodda hiç yok.
+8. **Finans birim testleri:** vatReport, cari bakiyeler, tahsilat→ödeme senkronu, kasa
+   bakiyesi, senkron kilidi test kapsamı dışında.
+9. **Sonraki entegratörler:** N11/Çiçeksepeti (iskelet yok), iade yönetimi, sıfırdan
+   ürün açma, pazaryeri bazlı toplu net kâr raporu (tekil hesaplayıcı Costs.tsx'te var).
 
 ## Teknik notlar (yeni sohbet için)
 - Branch: `claude/web-site-development-tx6n7h` ama **doğrudan main'e** push ediliyor.

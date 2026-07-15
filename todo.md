@@ -10,6 +10,7 @@
 - [x] Sipariş CRUD (müşteri adı, kanal, tutar, notlar, kalemler)
 - [x] Kanban panosu: Yeni / Üretimde / Kargoya Hazır / Tamamlandı sütunları
 - [x] Sürükle-bırak ile durum değiştirme (optimistic update)
+- [x] Kanban yerine otomatik akışlı sipariş listesi (arama + ödeme/kanal filtreleri) — güncel görünüm
 - [x] Sipariş detay/düzenleme dialogu
 
 ## Modül 2: Hammadde ve Stok Takibi
@@ -87,27 +88,52 @@
 - [x] Karttan "Tahsilat Ekle" → siparişin ödeme durumu otomatik güncellenir
 - [x] Kokpit'te Kasa/Banka bakiye kartı + asistan snapshot'ta kasa bakiyesi
 
+## Modül 14: Kayda girmemiş tamamlanmış işler (15.07.2026 takım denetiminde eklendi)
+- [x] Geliştirme panosu (/gelistirme): 5 adımlı fikir→ürün akışı (devProjects/devTrials/devTrialItems tabloları)
+- [x] Görevler & Alışveriş Listesi (/gorevler, tasks tablosu)
+- [x] Şablon kütüphanesi (/sablonlar): ambalaj/renk/set-paket şablonları (templates tablosu)
+- [x] Alış Faturaları (/faturalar): purchases/purchaseItems + AI fatura okuma
+- [x] Sidebar menü gruplama + native confirm'lerin AlertDialog'a (ConfirmDialog) dönüşümü
+- [x] Üretim planlayıcı + toplu fiyat güncelleme + etiket baskısı
+
 ## Rakip paritesi için yol haritası (Bizimhesap + Qukasoft'u geçmek)
 Ön muhasebe (Bizimhesap):
 - [x] Tedarikçi carisi (alış faturaları → borç, ödeme → alacak, ekstre + bakiye)
 - [x] Kasa/banka: hesaplar arası transfer
 - [x] KDV raporu (satış/alış KDV özeti, bu ay/bu yıl)
 - [x] Müşteri cari bakiyesi tahsilatları da içerir (customers.balances)
-- [x] Tahsilat/Ödeme makbuzu yazdırma (printReceipt)
+- [x] Tahsilat/Ödeme makbuzu yazdırma (printReceipt) — Accounts + Purchases'ta kullanılıyor
 - [x] Cari Hesaplar genel bakış sayfası (/cari) — alacak/borç/net
 - [x] Nakit Akışı raporu (Strateji sekmesi) — giriş/çıkış/net + kategori
-- [x] Çek/senet takibi (/cek-senet) — portföy, vade, durum, vadesi geçen uyarısı
-- [ ] e-Fatura/e-Arşiv (entegratör — dış servis + anlaşma)
-- [ ] Teklif (quote) → siparişe dönüştürme; ürün/hizmet ayrımı
-- [ ] e-Fatura/e-Arşiv (entegratör: Foriba/İzibiz/Uyumsoft) — dış entegrasyon
-- [ ] Çek/senet takibi, tahsilat/ödeme makbuzu yazdırma
+- [x] Çek/senet takibi (/cek-senet) — portföy, vade, durum, vadesi geçen uyarısı (cheques tablosu)
+- [ ] Teklif (quote) → siparişe dönüştürme; ürün/hizmet ayrımı (kodda hiç iz yok)
+- [ ] e-Fatura/e-Arşiv entegratörü (Foriba/İzibiz/Uyumsoft) — dış servis + anlaşma gerekir;
+      şu an yalnızca bilgi/proforma faturası basılıyor (invoice.ts)
 Pazaryeri (Qukasoft):
-- [ ] N11 + Çiçeksepeti entegratörleri (sipariş çekme + stok/fiyat)
-- [ ] Komisyon/kesinti bazlı net kâr raporu (pazaryeri bazında)
-- [ ] İade yönetimi, müşteri soru-cevap yönetimi
+- [ ] Hepsiburada stok/fiyat gönderme + "Servis Anahtarı" desteği (Trendyol push'una simetrik; şu an sadece sipariş çekme var)
+- [ ] N11 + Çiçeksepeti entegratörleri (sipariş çekme + stok/fiyat) — iskelet yok
+- [ ] Komisyon/kesinti bazlı net kâr raporu (pazaryeri bazında) — KISMEN: tekil hesaplayıcı var (Costs.tsx marketplaceNet), toplu rapor yok
+- [ ] İade yönetimi (Returned/Cancelled siparişler şu an sessizce atlanıyor) + müşteri soru-cevap yönetimi
 - [ ] Sıfırdan ürün açma (kategori/marka/özellik/görsel) — çoklu pazaryeri
 
-## Sonraki Oturuma Ertelenenler (opsiyonel geliştirmeler)
-- AI görsel üretimi modülü (ürün fotoğrafı arka plan değiştirme) — kullanıcı talebiyle eklenecek
-- Asistanla sesli "gider ekle" / "tahsilat aldım" komutu (parseVoiceCommand intent)
-- Ürünlerde kritik stok eşiği alanı + düşük stok filtresi
+## Açık işler — 15.07.2026 takım denetimi (öncelik sırasıyla)
+1. [ ] GÜVENLİK: WhatsApp POST webhook'una X-Hub-Signature-256 (HMAC, app secret) imza
+       doğrulaması — imza kontrolü yok, sahte POST asistanı tetikleyebilir (whatsapp.ts;
+       verify_token ve idempotens mevcut). Düşük efor, yüksek öncelik.
+2. [ ] Asistan yazma intent'leri: "gider ekle" / "tahsilat aldım" (claude.ts intent
+       enum + assistant.ts handler; snapshot/kasa altyapısı hazır, sadece okuma var)
+3. [ ] Hepsiburada stok/fiyat gönderme + HEPSIBURADA_SERVICE_KEY env desteği
+4. [ ] Finans birim testleri: vatReport, customer/supplierBalances, tahsilat→sipariş
+       ödeme senkronu, kasa bakiyesi, senkron tek-uçuş kilidi (38/38 test geçiyor ama
+       bunları kapsamıyor; DB'ye gömülü mantık saf fonksiyona çıkarılmalı)
+5. [ ] Ürünlerde kritik stok eşiği alanı (products.criticalQty) + düşük stok filtresi
+       (şu an Products.tsx'te sabit eşikli renklendirme var, yapılandırılamıyor)
+6. [ ] Pazaryeri bazında toplu net kâr raporu (yapı taşları hazır)
+7. [ ] AI görsel üretimi: _core/imageGeneration.ts hazır ama hiçbir router'a bağlı
+       değil — kullanıcı talebiyle modül olarak bağlanacak
+
+## Canlıda (Render) doğrulama bekleyenler — kod tarafı hazır
+- [ ] Trendyol: "Bağlantıyı Test Et" HTTP 200 + sipariş akışı + "Trendyol'a Gönder" (stok/fiyat)
+- [ ] Trendyol resmi kargo etiketi (ZPL→Labelary→PDF; kargo takip no dolunca)
+- [ ] Hepsiburada API onayı → anahtarlar Render'a → bağlantı testi (mevcut 401 = kimlik eksikliği, kod hatası değil)
+- [ ] Sesli uyandırma: Picovoice AccessKey ile canlı test (iki motor da kodda mevcut)
