@@ -171,6 +171,24 @@ export default function Settings() {
           </p>
         </div>
       </Card>
+
+      <Card className="p-5 space-y-3">
+        <h2 className="font-semibold flex items-center gap-2">
+          <ShieldOff className="h-4 w-4 text-primary" /> Güvenlik
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Telefon kaybı veya şüpheli erişim durumunda tüm cihazlardaki oturumları tek seferde
+          sonlandırır; yeniden giriş yapman gerekir.
+        </p>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={revokeAll.isPending}
+          onClick={() => revokeAll.mutate()}
+        >
+          Tüm cihazlarda oturumu kapat
+        </Button>
+      </Card>
     </div>
   );
 }

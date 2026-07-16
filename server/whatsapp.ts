@@ -115,8 +115,11 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
     return;
   }
   try {
-    const { message } = await executeAssistantCommand(msg.text.body);
-    await sendWhatsAppText(msg.from, `✅ ${message}`);
+    // userKey = gönderen numara: bekleyen onaylar (evet/hayır) numaraya bağlı tutulur.
+    const { message, needsConfirmation } = await executeAssistantCommand(msg.text.body, {
+      userKey: msg.from,
+    });
+    await sendWhatsAppText(msg.from, `${needsConfirmation ? "❓" : "✅"} ${message}`);
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Komut işlenemedi";
     await sendWhatsAppText(msg.from, `⚠️ ${reason}`);
