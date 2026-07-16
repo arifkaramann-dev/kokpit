@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
-import { AlertCircle, Building2, CheckCircle2, Store } from "lucide-react";
+import { AlertCircle, Building2, CheckCircle2, ShieldOff, Store } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -39,6 +39,18 @@ export default function Settings() {
   useEffect(() => {
     if (settings) setForm(settings);
   }, [settings]);
+
+  const revokeAll = trpc.auth.revokeAllSessions.useMutation({
+    onSuccess: () => {
+      toast.success("Tüm cihazlardaki oturumlar kapatıldı");
+      try {
+        sessionStorage.removeItem("manus-cookie");
+      } catch {}
+      utils.auth.me.setData(undefined, null);
+      utils.auth.me.invalidate();
+    },
+    onError: e => toast.error(e.message),
+  });
 
   const save = trpc.settings.save.useMutation({
     onSuccess: () => {
@@ -158,6 +170,24 @@ export default function Settings() {
             kullanıcı adı ve şifre alınır.
           </p>
         </div>
+      </Card>
+
+      <Card className="p-5 space-y-3">
+        <h2 className="font-semibold flex items-center gap-2">
+          <ShieldOff className="h-4 w-4 text-primary" /> Güvenlik
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Telefon kaybı veya şüpheli erişim durumunda tüm cihazlardaki oturumları tek seferde
+          sonlandırır; yeniden giriş yapman gerekir.
+        </p>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={revokeAll.isPending}
+          onClick={() => revokeAll.mutate()}
+        >
+          Tüm cihazlarda oturumu kapat
+        </Button>
       </Card>
     </div>
   );

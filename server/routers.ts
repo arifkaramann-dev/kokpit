@@ -13,6 +13,7 @@ import { buildSaleTitle, deriveCombos, parseSetCount } from "./productUtils";
 import { syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf } from "./trendyol";
 import { pushHepsiburadaStockPrice } from "./hepsiburada";
 import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "./marketplace";
+import { aggregateChannelProfit, buildProductCostMap, parseChannelProfiles, periodStart } from "./reportUtils";
 import { ENV } from "./_core/env";
 
 /* ------------------------- Zod schemas ------------------------- */
@@ -44,6 +45,8 @@ const productInput = z.object({
   packaging: z.string().nullable().optional(),
   barcode: z.string().nullable().optional(),
   stockQty: z.number().min(0).optional(),
+  // 0 = eşik tanımlı değil (uyarı yok); >0 ise stok bu değere düşünce düşük stok sayılır.
+  criticalQty: z.number().int().min(0).optional(),
   labelSize: z.string().nullable().optional(),
   labelText: z.string().nullable().optional(),
   usageGuide: z.string().nullable().optional(),
@@ -190,6 +193,15 @@ export const appRouter = router({
       return {
         success: true,
       } as const;
+    }),
+    // "Tüm cihazlarda oturumu kapat": tokenVersion'ı artırarak bu kullanıcı
+    // adına daha önce üretilmiş TÜM JWT'leri (diğer cihazlar dahil) geçersiz
+    // kılar; bu cihazın cookie'sini de temizler.
+    revokeAllSessions: protectedProcedure.mutation(async ({ ctx }) => {
+      await db.incrementTokenVersion(ctx.user.openId);
+      const cookieOptions = getSessionCookieOptions(ctx.req);
+      ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
+      return { success: true } as const;
     }),
   }),
 
@@ -757,6 +769,25 @@ export const appRouter = router({
     data: protectedProcedure.query(() => db.reportData()),
     vat: protectedProcedure.query(() => db.vatReport()),
     cashflow: protectedProcedure.query(() => db.cashflowReport()),
+    // Kanal Kârlılığı: pazaryeri/kanal bazında toplu net kâr (calcChannelProfit
+    // v2 çekirdeğiyle; iptal hariç, maliyeti bilinmeyen kalemler ayrı raporlanır).
+    marketplaceProfit: protectedProcedure
+      .input(z.object({ period: z.enum(["month", "30d", "year"]).default("30d") }))
+      .query(async ({ input }) => {
+        const since = periodStart(input.period);
+        const [data, materialCosts, costFields, settingsMap] = await Promise.all([
+          db.ordersWithItemsSince(since),
+          db.listProductMaterialCosts(),
+          db.listProductCostFields(),
+          db.getSettings(),
+        ]);
+        return aggregateChannelProfit({
+          orders: data.orders,
+          orderItems: data.items,
+          costs: buildProductCostMap(materialCosts, costFields),
+          profiles: parseChannelProfiles(settingsMap.channelProfiles),
+        });
+      }),
   }),
 
   customers: router({

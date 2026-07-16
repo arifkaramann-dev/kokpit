@@ -1,6 +1,15 @@
-import { answerBusinessQuestion, parseVoiceCommand } from "./_core/claude";
+import { answerBusinessQuestion, isClaudeConfigured, parseVoiceCommand } from "./_core/claude";
+import {
+  answerWithTools,
+  clearPendingConfirmation,
+  computeDebtors,
+  executeTool,
+  getPendingConfirmation,
+  parseConfirmationReply,
+  requestToolConfirmation,
+} from "./assistantTools";
 import * as db from "./db";
-import { findOpenOrderForCollection, itemsTotal, summarizeItems, toItemRows } from "./orderUtils";
+import { itemsTotal, summarizeItems, toItemRows } from "./orderUtils";
 
 /**
  * Sesli komut / WhatsApp asistanının ortak beyni: serbest Türkçe metni
@@ -78,11 +87,7 @@ export async function buildBusinessSnapshot(): Promise<string> {
 
   // Alacaklar (ödenmemiş siparişler) — "kim borçlu / ne kadar tahsilat" için.
   const num = (v: unknown) => parseFloat(String(v ?? 0)) || 0;
-  const debtors = active
-    .filter(o => o.paymentStatus !== "paid")
-    .map(o => ({ name: o.customerName, due: Math.max(0, num(o.totalAmount) - num(o.paidAmount)), orderNo: o.orderNo }))
-    .filter(d => d.due > 0)
-    .sort((a, b) => b.due - a.due);
+  const debtors = computeDebtors(active);
   // Bu ayki giderleri kategoriye göre topla.
   const startMonth = new Date();
   startMonth.setDate(1);
@@ -121,8 +126,38 @@ export async function buildBusinessSnapshot(): Promise<string> {
   return lines.join("\n");
 }
 
-/** Komutu çözer ve uygular; kullanıcıya dönecek Türkçe mesajı döndürür. */
-export async function executeAssistantCommand(transcript: string): Promise<{ message: string }> {
+export type AssistantResult = { message: string; needsConfirmation?: boolean };
+
+/**
+ * Komutu çözer ve uygular; kullanıcıya dönecek Türkçe mesajı döndürür.
+ *
+ * Onay katmanı: yazma yapan araçlar (gider, tahsilat, görev ekleme) önce
+ * bekleyen onaya yazılır; kullanıcı "evet/hayır" yanıtıyla tamamlar.
+ * userKey: bekleyen onayın sahibi (WhatsApp'ta telefon no, uygulamada "app").
+ */
+export async function executeAssistantCommand(
+  transcript: string,
+  opts: { userKey?: string } = {}
+): Promise<AssistantResult> {
+  const userKey = opts.userKey ?? "app";
+
+  // 1) Bekleyen onay varsa önce onu çözümle (LLM çağrısı gerekmez).
+  const pending = getPendingConfirmation(userKey);
+  if (pending) {
+    const reply = parseConfirmationReply(transcript);
+    if (reply === "yes") {
+      clearPendingConfirmation(userKey);
+      const message = await executeTool(pending.toolName, pending.input, { confirmed: true });
+      return { message };
+    }
+    if (reply === "no") {
+      clearPendingConfirmation(userKey);
+      return { message: "Tamam, işlemi iptal ettim ❌" };
+    }
+    // Evet/hayır dışında bir mesaj geldi: bekleyen işlemi iptal edip yeni komutu işle.
+    clearPendingConfirmation(userKey);
+  }
+
   const cmd = await parseVoiceCommand(transcript);
 
   if (cmd.intent === "sale" || cmd.intent === "order") {
@@ -198,9 +233,9 @@ export async function executeAssistantCommand(transcript: string): Promise<{ mes
     const titles = (cmd.taskItems ?? []).map(t => t.trim()).filter(Boolean);
     if (titles.length === 0 && cmd.noteText) titles.push(cmd.noteText);
     if (titles.length === 0) throw new Error("Ne ekleyeceğimi anlayamadım, tekrar söyler misin?");
-    for (const title of titles) await db.createTask({ kind, title });
-    const label = kind === "eksik" ? "eksik listesine" : "görevlere";
-    return { message: `${titles.map(t => `"${t}"`).join(", ")} ${label} eklendi ✅ (${titles.length} madde)` };
+    // Yazma işlemi: onay iste (gorev_ekle aracı onaylanınca çalışır).
+    const message = requestToolConfirmation(userKey, "gorev_ekle", { kind, titles });
+    return { message, needsConfirmation: true };
   }
 
   if (cmd.intent === "task_list") {
@@ -276,12 +311,13 @@ export async function executeAssistantCommand(transcript: string): Promise<{ mes
       throw new Error('Gider tutarını anlayamadım, tutarla birlikte söyler misin? (örn. "kargoya 250 lira gider ekle")');
     }
     const category = cmd.expenseCategory ?? "diğer";
-    await db.createExpense({
+    // Yazma işlemi: onay iste (gider_ekle aracı onaylanınca çalışır).
+    const message = requestToolConfirmation(userKey, "gider_ekle", {
+      amount,
       category,
       description: (cmd.noteText ?? transcript).slice(0, 255),
-      amount: String(amount),
-    } as never);
-    return { message: `Gider eklendi: ${category} — ${amount.toFixed(2)} TL ✅ (Giderler sayfasında)` };
+    });
+    return { message, needsConfirmation: true };
   }
 
   if (cmd.intent === "collection_add") {
@@ -292,39 +328,15 @@ export async function executeAssistantCommand(transcript: string): Promise<{ mes
     if (!cmd.customerName?.trim()) {
       throw new Error("Kimden tahsilat aldığını anlayamadım, müşteri adını da söyler misin?");
     }
-    const [customersList, orders, accountList] = await Promise.all([
-      db.listCustomers(),
-      db.listOrders(),
-      db.listAccounts(),
-    ]);
-    // Cari ekstre ada göre bağlandığı için kayıtlı adı esas al.
-    const needle = cmd.customerName.trim().toLowerCase();
-    const canonical =
-      customersList.find(c => c.name.trim().toLowerCase() === needle)?.name ??
-      customersList.find(c => c.name.toLowerCase().includes(needle))?.name ??
-      orders.find(o => o.customerName.toLowerCase().includes(needle))?.customerName ??
-      cmd.customerName.trim();
-    const target = findOpenOrderForCollection(orders, canonical, cmd.orderRef);
-    const account = accountList.find(a => a.kind === "kasa") ?? accountList[0];
-    await db.createTransaction({
-      accountId: account?.id ?? null,
-      direction: "in",
-      category: "tahsilat",
-      amount: String(amount),
-      customerName: canonical,
-      orderId: target?.id ?? null,
-      orderNo: target?.orderNo ?? null,
-      description: "Asistan tahsilatı",
-      note: cmd.noteText,
-    } as never);
-    const num = (v: unknown) => parseFloat(String(v ?? 0)) || 0;
-    let message = `Tahsilat kaydedildi: ${canonical} — ${amount.toFixed(2)} TL ✅`;
-    if (target) {
-      const remaining = Math.max(0, num(target.totalAmount) - num(target.paidAmount) - amount);
-      message += `\n${target.orderNo} siparişine işlendi${remaining > 0.001 ? `, kalan ${remaining.toFixed(2)} TL` : ", sipariş tamamen ödendi 🎉"}`;
-    }
-    if (account) message += `\nHesap: ${account.name}`;
-    return { message };
+    // Yazma işlemi: onay iste. Müşteri/sipariş eşleme (findOpenOrderForCollection
+    // dahil) onay anında tahsilat_ekle aracının içinde yapılır.
+    const message = requestToolConfirmation(userKey, "tahsilat_ekle", {
+      customerName: cmd.customerName.trim(),
+      amount,
+      orderRef: cmd.orderRef ?? null,
+      note: cmd.noteText ?? null,
+    });
+    return { message, needsConfirmation: true };
   }
 
   if (cmd.intent === "help") {
@@ -332,8 +344,22 @@ export async function executeAssistantCommand(transcript: string): Promise<{ mes
   }
 
   if (cmd.intent === "query") {
+    const question = cmd.noteText ?? transcript;
+    // Tool-use döngüsü: LLM güvenli (salt-okur) araçlarla veriyi kendisi çeker.
+    if (isClaudeConfigured()) {
+      try {
+        const result = await answerWithTools(question, userKey);
+        return { message: result.message, needsConfirmation: result.needsConfirmation };
+      } catch (error) {
+        console.warn(
+          "[assistant] tool-use döngüsü başarısız, snapshot yoluna düşülüyor:",
+          error instanceof Error ? error.message : error
+        );
+      }
+    }
+    // Geri düşüş: mevcut davranış (tam veri özeti + tek LLM yanıtı).
     const snapshot = await buildBusinessSnapshot();
-    const answer = await answerBusinessQuestion(cmd.noteText ?? transcript, snapshot);
+    const answer = await answerBusinessQuestion(question, snapshot);
     return { message: answer };
   }
 
