@@ -1,4 +1,4 @@
-import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+import { COOKIE_NAME, SESSION_TTL_MS } from "@shared/const";
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import * as db from "../db";
@@ -81,13 +81,22 @@ export function registerLocalAuthRoutes(app: Express) {
       return;
     }
 
+    // Bind the fresh token to the user's current tokenVersion so a later
+    // "log out everywhere" (tokenVersion bump) invalidates it server-side.
+    const owner = await db.getUserByOpenId(LOCAL_OWNER_OPEN_ID);
+
     const sessionToken = await sdk.signSession(
-      { openId: LOCAL_OWNER_OPEN_ID, appId: ENV.appId || "local", name },
-      { expiresInMs: ONE_YEAR_MS }
+      {
+        openId: LOCAL_OWNER_OPEN_ID,
+        appId: ENV.appId || "local",
+        name,
+        tokenVersion: owner?.tokenVersion ?? 0,
+      },
+      { expiresInMs: SESSION_TTL_MS }
     );
 
     const cookieOptions = getSessionCookieOptions(req);
-    res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+    res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: SESSION_TTL_MS });
     res.json({ success: true });
   });
 }

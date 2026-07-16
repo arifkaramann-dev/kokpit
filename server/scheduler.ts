@@ -115,7 +115,8 @@ async function runMarketplaceSync() {
 
 /**
  * Stok Nöbetçisi: kritik eşik altındaki hammaddeleri eksik listesine ekler ve
- * bildirir; eksi stoktaki mamulleri "üretilecek" diye bildirir.
+ * bildirir; eksi stoktaki veya kritik eşiğine düşen mamulleri (criticalQty>0
+ * ve stok <= eşik) "üretim gerekli" diye bildirir.
  */
 async function runStockSentry() {
   const [critical, products, openTasks] = await Promise.all([
@@ -143,14 +144,20 @@ async function runStockSentry() {
     });
   }
 
-  const negatives = products.filter(p => (p.stockQty ?? 0) < 0);
-  if (negatives.length > 0) {
+  // Mamul tarafı: eksi stok her zaman dahil; criticalQty>0 tanımlıysa eşiğe
+  // düşen ürünler de "üretim gerekli" sayılır (criticalQty=0 → eşik yok).
+  const lowProducts = products.filter(p => {
+    const qty = p.stockQty ?? 0;
+    const threshold = p.criticalQty ?? 0;
+    return qty < 0 || (threshold > 0 && qty <= threshold);
+  });
+  if (lowProducts.length > 0) {
     await notifyOwner({
       kind: "uretim-gerekli",
-      title: `🏭 ${negatives.length} ürün eksi stokta — üretim gerekli`,
-      body: negatives
+      title: `🏭 ${lowProducts.length} ürün stoğu kritik — üretim gerekli`,
+      body: lowProducts
         .slice(0, 15)
-        .map(p => `• ${p.name}: ${p.stockQty} adet`)
+        .map(p => `• ${p.name}: ${p.stockQty} adet${(p.criticalQty ?? 0) > 0 ? ` (eşik ${p.criticalQty})` : ""}`)
         .join("\n"),
       link: "/uretim",
     });

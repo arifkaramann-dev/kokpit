@@ -1,4 +1,4 @@
-import { AXIOS_TIMEOUT_MS, COOKIE_NAME, ONE_YEAR_MS, decodeOAuthState } from "@shared/const";
+import { AXIOS_TIMEOUT_MS, COOKIE_NAME, SESSION_TTL_MS, decodeOAuthState } from "@shared/const";
 import { ForbiddenError } from "@shared/_core/errors";
 import axios, { type AxiosInstance } from "axios";
 import { parse as parseCookieHeader } from "cookie";
@@ -22,6 +22,13 @@ export type SessionPayload = {
   openId: string;
   appId: string;
   name: string;
+  /**
+   * Server-side revocation counter. Compared against `users.tokenVersion` on
+   * every authenticated request; a mismatch invalidates the session. Old
+   * tokens without this claim are treated as version 0 (the DB default), so
+   * existing sessions keep working after deploy.
+   */
+  tokenVersion?: number;
 };
 
 const EXCHANGE_TOKEN_PATH = `/webdev.v1.WebDevAuthPublicService/ExchangeToken`;
@@ -165,13 +172,14 @@ class SDKServer {
    */
   async createSessionToken(
     openId: string,
-    options: { expiresInMs?: number; name?: string } = {}
+    options: { expiresInMs?: number; name?: string; tokenVersion?: number } = {}
   ): Promise<string> {
     return this.signSession(
       {
         openId,
         appId: ENV.appId,
         name: options.name || "",
+        tokenVersion: options.tokenVersion,
       },
       options
     );
@@ -182,7 +190,7 @@ class SDKServer {
     options: { expiresInMs?: number } = {}
   ): Promise<string> {
     const issuedAt = Date.now();
-    const expiresInMs = options.expiresInMs ?? ONE_YEAR_MS;
+    const expiresInMs = options.expiresInMs ?? SESSION_TTL_MS;
     const expirationSeconds = Math.floor((issuedAt + expiresInMs) / 1000);
     const secretKey = this.getSessionSecret();
 
@@ -190,6 +198,7 @@ class SDKServer {
       openId: payload.openId,
       appId: payload.appId,
       name: payload.name,
+      tokenVersion: payload.tokenVersion ?? 0,
     })
       .setProtectedHeader({ alg: "HS256", typ: "JWT" })
       .setExpirationTime(expirationSeconds)
@@ -198,7 +207,7 @@ class SDKServer {
 
   async verifySession(
     cookieValue: string | undefined | null
-  ): Promise<{ openId: string; appId: string; name: string } | null> {
+  ): Promise<{ openId: string; appId: string; name: string; tokenVersion: number } | null> {
     if (!cookieValue) {
       console.warn("[Auth] Missing session cookie");
       return null;
@@ -209,7 +218,7 @@ class SDKServer {
       const { payload } = await jwtVerify(cookieValue, secretKey, {
         algorithms: ["HS256"],
       });
-      const { openId, appId, name } = payload as Record<string, unknown>;
+      const { openId, appId, name, tokenVersion } = payload as Record<string, unknown>;
 
       if (
         !isNonEmptyString(openId) ||
@@ -224,6 +233,10 @@ class SDKServer {
         openId,
         appId,
         name,
+        // Backwards compatibility: tokens minted before the revocation
+        // feature carry no tokenVersion claim — treat them as version 0,
+        // which matches the DB column default.
+        tokenVersion: typeof tokenVersion === "number" ? tokenVersion : 0,
       };
     } catch (error) {
       console.warn("[Auth] Session verification failed", String(error));
@@ -311,6 +324,13 @@ class SDKServer {
       throw ForbiddenError("User not found");
     }
 
+    // Server-side revocation: the token's version must match the user's
+    // current tokenVersion. "Tüm oturumları kapat" bumps the DB value, which
+    // instantly invalidates every previously issued token for this user.
+    if (session.tokenVersion !== (user.tokenVersion ?? 0)) {
+      throw ForbiddenError("Session revoked");
+    }
+
     await db.upsertUser({
       openId: user.openId,
       lastSignedIn: signedInAt,
@@ -339,6 +359,7 @@ function buildCronUser(
     email: null,
     loginMethod: null,
     role: "user",
+    tokenVersion: 0,
     createdAt: now,
     updatedAt: now,
     lastSignedIn: now,

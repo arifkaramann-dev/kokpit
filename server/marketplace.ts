@@ -1,4 +1,5 @@
 import { ENV } from "./_core/env";
+import { singleFlight } from "./financeUtils";
 import { isHepsiburadaConfigured, syncHepsiburadaOrders, testHepsiburadaConnection } from "./hepsiburada";
 import { isTrendyolConfigured, syncTrendyolOrders, testTrendyolConnection } from "./trendyol";
 
@@ -60,18 +61,11 @@ export type SyncResult = {
 };
 
 // Aynı anda birden fazla çekme çalışırsa (otomatik + elle) aynı sipariş iki kez
-// eklenebilir (yarış durumu). Kilit: çekme sürüyorken gelen çağrılar aynı
-// sonucu paylaşır, ikinci bir çekme başlatmaz.
-let inFlight: Promise<SyncResult[]> | null = null;
+// eklenebilir (yarış durumu). Tek-uçuş kilidi (financeUtils.singleFlight):
+// çekme sürüyorken gelen çağrılar aynı sonucu paylaşır, ikinci çekme başlamaz.
 
 /** Yapılandırılmış tüm pazaryerlerinden sipariş çeker; her biri için sonuç döner. */
-export function syncAllMarketplaces(): Promise<SyncResult[]> {
-  if (inFlight) return inFlight;
-  inFlight = runSyncAll().finally(() => {
-    inFlight = null;
-  });
-  return inFlight;
-}
+export const syncAllMarketplaces: () => Promise<SyncResult[]> = singleFlight(runSyncAll);
 
 async function runSyncAll(): Promise<SyncResult[]> {
   const results: SyncResult[] = [];

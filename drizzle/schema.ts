@@ -7,6 +7,7 @@ import {
   mysqlTable,
   text,
   timestamp,
+  uniqueIndex,
   varchar,
 } from "drizzle-orm/mysql-core";
 
@@ -20,6 +21,9 @@ export const users = mysqlTable("users", {
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
   role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
+  // Sunucu tarafı oturum iptali: JWT'ye yazılır, doğrulamada karşılaştırılır.
+  // Değer artınca eski token'lar geçersiz olur.
+  tokenVersion: int("tokenVersion").notNull().default(0),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
@@ -96,6 +100,8 @@ export const products = mysqlTable(
   // Pazaryeri eşleştirmesi için barkod (Trendyol/Hepsiburada bununla eşler).
   barcode: varchar("barcode", { length: 64 }),
   stockQty: int("stockQty").notNull().default(0),
+  // Mamul kritik stok eşiği; 0 = eşik yok (eski davranış).
+  criticalQty: int("criticalQty").notNull().default(0),
   labelSize: varchar("labelSize", { length: 64 }),
   labelText: text("labelText"),
   usageGuide: text("usageGuide"),
@@ -631,3 +637,39 @@ export const settings = mysqlTable("settings", {
 });
 
 export type Setting = typeof settings.$inferSelect;
+
+/**
+ * Pazaryeri müşteri soruları (Trendyol/Hepsiburada soru-cevap).
+ * questionId pazaryerinin kendi kimliğidir; (marketplace, questionId) benzersizdir,
+ * senkron tekrar koştuğunda aynı soru ikinci kez eklenmez.
+ * status: open=yeni geldi, draft=AI taslak cevap hazır, answered=pazaryerine
+ * gönderildi, rejected=pazaryeri cevabı reddetti.
+ */
+export const marketplaceQuestions = mysqlTable(
+  "marketplaceQuestions",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    marketplace: varchar("marketplace", { length: 32 }).notNull(),
+    questionId: varchar("questionId", { length: 64 }).notNull(),
+    // Ürün bağ: barkodla eşleşirse ID dolar; NULL = katalogda eşleşmeyen ürün.
+    productId: int("productId"),
+    productBarcode: varchar("productBarcode", { length: 128 }),
+    customerName: varchar("customerName", { length: 255 }),
+    questionText: text("questionText").notNull(),
+    askedAt: timestamp("askedAt"),
+    status: mysqlEnum("status", ["open", "draft", "answered", "rejected"]).notNull().default("open"),
+    draftAnswer: text("draftAnswer"),
+    finalAnswer: text("finalAnswer"),
+    answeredAt: timestamp("answeredAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  t => [
+    uniqueIndex("marketplaceQuestions_marketplace_questionId_idx").on(t.marketplace, t.questionId),
+    index("marketplaceQuestions_status_idx").on(t.status),
+    index("marketplaceQuestions_askedAt_idx").on(t.askedAt),
+  ],
+);
+
+export type MarketplaceQuestion = typeof marketplaceQuestions.$inferSelect;
+export type InsertMarketplaceQuestion = typeof marketplaceQuestions.$inferInsert;

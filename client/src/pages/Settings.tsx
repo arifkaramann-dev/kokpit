@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
-import { AlertCircle, Building2, CheckCircle2, Store } from "lucide-react";
+import { AlertCircle, Building2, CheckCircle2, ShieldOff, Store } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -39,6 +39,18 @@ export default function Settings() {
   useEffect(() => {
     if (settings) setForm(settings);
   }, [settings]);
+
+  const revokeAll = trpc.auth.revokeAllSessions.useMutation({
+    onSuccess: () => {
+      toast.success("Tüm cihazlardaki oturumlar kapatıldı");
+      try {
+        sessionStorage.removeItem("manus-cookie");
+      } catch {}
+      utils.auth.me.setData(undefined, null);
+      utils.auth.me.invalidate();
+    },
+    onError: e => toast.error(e.message),
+  });
 
   const save = trpc.settings.save.useMutation({
     onSuccess: () => {

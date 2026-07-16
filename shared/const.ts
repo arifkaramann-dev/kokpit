@@ -8,6 +8,9 @@ export const OAUTH_STATE_COOKIE = "oauth_state";
 
 export const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
 
+/** Oturum (JWT + cookie) ömrü: 7 gün. Süre dolunca yeniden giriş gerekir. */
+export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 export const AXIOS_TIMEOUT_MS = 30_000;
 
 /** Error messages shared between server (thrown) and client (matched). */

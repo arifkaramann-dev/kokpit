@@ -44,6 +44,8 @@ const productInput = z.object({
   packaging: z.string().nullable().optional(),
   barcode: z.string().nullable().optional(),
   stockQty: z.number().min(0).optional(),
+  // 0 = eşik tanımlı değil (uyarı yok); >0 ise stok bu değere düşünce düşük stok sayılır.
+  criticalQty: z.number().int().min(0).optional(),
   labelSize: z.string().nullable().optional(),
   labelText: z.string().nullable().optional(),
   usageGuide: z.string().nullable().optional(),
@@ -190,6 +192,15 @@ export const appRouter = router({
       return {
         success: true,
       } as const;
+    }),
+    // "Tüm cihazlarda oturumu kapat": tokenVersion'ı artırarak bu kullanıcı
+    // adına daha önce üretilmiş TÜM JWT'leri (diğer cihazlar dahil) geçersiz
+    // kılar; bu cihazın cookie'sini de temizler.
+    revokeAllSessions: protectedProcedure.mutation(async ({ ctx }) => {
+      await db.incrementTokenVersion(ctx.user.openId);
+      const cookieOptions = getSessionCookieOptions(ctx.req);
+      ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
+      return { success: true } as const;
     }),
   }),
 
