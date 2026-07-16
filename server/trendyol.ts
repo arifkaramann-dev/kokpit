@@ -1,6 +1,6 @@
 import { ENV } from "./_core/env";
 import * as db from "./db";
-import { itemsTotal, summarizeItems, toItemRows, type OrderItemLike } from "./orderUtils";
+import { itemsTotal, shouldSyncOrderStatus, summarizeItems, toItemRows, type OrderItemLike } from "./orderUtils";
 
 /**
  * Trendyol Satıcı API entegrasyonu.
@@ -350,7 +350,9 @@ export async function syncTrendyolOrders(daysBack = 14) {
         // (Shipped→Hazır, Delivered→Tamamlandı) ve kargoya verilince dolan takip
         // no/kargo bilgisi burada otomatik akıtılır. Kullanıcı elle taşımaz.
         const patch: Record<string, unknown> = {};
-        if (mapped.status !== existing.status) patch.status = mapped.status;
+        // Durum yalnızca ileri akar: elle "Üretimde"ye alınan sipariş,
+        // Trendyol hâlâ "Picking" derken geri "Yeni"ye basılmaz.
+        if (shouldSyncOrderStatus(existing.status, mapped.status)) patch.status = mapped.status;
         if (mapped.cargoTrackingNumber && mapped.cargoTrackingNumber !== existing.cargoTrackingNumber)
           patch.cargoTrackingNumber = mapped.cargoTrackingNumber;
         if (mapped.cargoProviderName && mapped.cargoProviderName !== existing.cargoProviderName)

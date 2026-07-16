@@ -7,8 +7,9 @@ const order = (
   customerName: string,
   totalAmount: string,
   paidAmount: string,
-  createdAt: string
-) => ({ id, orderNo, customerName, totalAmount, paidAmount, createdAt });
+  createdAt: string,
+  status = "new"
+) => ({ id, orderNo, customerName, totalAmount, paidAmount, createdAt, status });
 
 describe("findOpenOrderForCollection (asistan tahsilatı → sipariş eşleştirme)", () => {
   const orders = [
@@ -45,5 +46,17 @@ describe("findOpenOrderForCollection (asistan tahsilatı → sipariş eşleştir
 
   it("eşleşme yoksa undefined döner (tahsilat siparişsiz cariye işlenir)", () => {
     expect(findOpenOrderForCollection(orders, "Mehmet")).toBeUndefined();
+  });
+
+  it("iptal edilmiş sipariş aday olmaz — sipariş no ile bile", () => {
+    const withCancelled = [
+      order(5, "AOC-20260705-EEEE", "Ali Kaya", "400", "0", "2026-07-05", "cancelled"),
+      order(6, "AOC-20260711-FFFF", "Ali Kaya", "250", "0", "2026-07-11"),
+    ];
+    // Ada göre: iptal atlanır, aktif olan seçilir (daha eski olsa bile iptal seçilmez).
+    expect(findOpenOrderForCollection(withCancelled, "Ali Kaya")?.id).toBe(6);
+    // Sipariş no ile doğrudan iptal sipariş istense de ona bağlanmaz;
+    // müşterinin açık siparişine düşer.
+    expect(findOpenOrderForCollection(withCancelled, "Ali Kaya", "EEEE")?.id).toBe(6);
   });
 });

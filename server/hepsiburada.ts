@@ -1,6 +1,6 @@
 import { ENV } from "./_core/env";
 import * as db from "./db";
-import { itemsTotal, summarizeItems, toItemRows, type OrderItemLike } from "./orderUtils";
+import { itemsTotal, shouldSyncOrderStatus, summarizeItems, toItemRows, type OrderItemLike } from "./orderUtils";
 
 /**
  * Hepsiburada OMS (Sipariş Yönetim Sistemi) entegrasyonu.
@@ -79,6 +79,7 @@ export type MappedOrder = {
   totalAmount: string;
   itemsSummary: string;
   notes: string | null;
+  paymentStatus: "paid";
   items: OrderItemLike[];
 };
 
@@ -122,6 +123,8 @@ export function mapHbOrder(raw: HbOrderRaw): MappedOrder | null {
     totalAmount: String(money(raw.totalPrice) || itemsTotal(items)),
     itemsSummary: summarizeItems(items),
     notes: null,
+    // Pazaryeri ödemeyi tahsil eder; bu siparişler alacak sayılmaz (Trendyol ile aynı kural).
+    paymentStatus: "paid",
     items,
   };
 }
@@ -297,8 +300,9 @@ export async function syncHepsiburadaOrders() {
       const existing = await db.getOrderByOrderNo(mapped.orderNo);
       if (existing) {
         // Hepsiburada siparişin kaynağıdır: durum (Shipped→Hazır, Delivered→
-        // Tamamlandı) senkronda otomatik akıtılır; kullanıcı elle taşımaz.
-        if (mapped.status !== existing.status) {
+        // Tamamlandı) senkronda otomatik akıtılır; ama yalnızca İLERİ —
+        // elle "Üretimde"ye alınan sipariş geri "Yeni"ye basılmaz.
+        if (shouldSyncOrderStatus(existing.status, mapped.status)) {
           await db.updateOrder(existing.id, { status: mapped.status } as never);
           updated++;
         } else {

@@ -94,7 +94,9 @@ function istanbulDateString(d: Date): string {
 }
 
 function istanbulHour(d: Date): number {
-  return parseInt(d.toLocaleString("en-GB", { timeZone: "Europe/Istanbul", hour: "2-digit", hour12: false }), 10);
+  // hourCycle "h23": hour12:false bazı ortamlarda gece yarısını "24" döndürür
+  // (h24 çevrimi) — bu da 24 >= 8 sayılıp brifingi gece 00:00'da tetiklerdi.
+  return parseInt(d.toLocaleString("en-GB", { timeZone: "Europe/Istanbul", hour: "2-digit", hourCycle: "h23" }), 10);
 }
 
 /** Pazaryeri oto-senkronu: içe alınan sipariş varsa haber verir, hata varsa uyarır. */

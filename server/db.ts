@@ -227,13 +227,15 @@ export async function updateProduct(id: number, data: Partial<InsertProduct>) {
 
 export async function deleteProduct(id: number) {
   const db = await requireDb();
-  // Türevleri ve formülleri de temizle
+  // Türevleri, formülleri, görselleri ve mamul stok hareketlerini de temizle —
+  // özellikle görseller (base64, MEDIUMTEXT) öksüz kalırsa veritabanını şişirir.
   const children = await db.select({ id: products.id }).from(products).where(eq(products.parentId, id));
-  for (const child of children) {
-    await db.delete(formulaItems).where(eq(formulaItems.productId, child.id));
+  for (const pid of [...children.map(c => c.id), id]) {
+    await db.delete(formulaItems).where(eq(formulaItems.productId, pid));
+    await db.delete(productImages).where(eq(productImages.productId, pid));
+    await db.delete(productMovements).where(eq(productMovements.productId, pid));
   }
   await db.delete(products).where(eq(products.parentId, id));
-  await db.delete(formulaItems).where(eq(formulaItems.productId, id));
   await db.delete(products).where(eq(products.id, id));
 }
 
@@ -858,7 +860,9 @@ export async function financeSummary() {
 
 /**
  * Aynı sipariş numarasından birden fazla varsa (eski yarış durumundan kalma
- * mükerrerler) en eskisini (en küçük id) tutup diğerlerini siler.
+ * mükerrerler) en eskisini (en küçük id) tutup diğerlerini siler. Silme
+ * deleteOrder üzerinden yürür ki mükerrer kaydın düştüğü mamul stok geri gelsin
+ * (yarışta her kopya kendi stok düşümünü yapmıştı).
  */
 export async function dedupeOrders() {
   const db = await requireDb();
@@ -871,8 +875,7 @@ export async function dedupeOrders() {
   let removed = 0;
   for (const o of all) {
     if (keep.get(o.orderNo) !== o.id) {
-      await db.delete(orderItems).where(eq(orderItems.orderId, o.id));
-      await db.delete(orders).where(eq(orders.id, o.id));
+      await deleteOrder(o.id);
       removed++;
     }
   }

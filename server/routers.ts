@@ -572,6 +572,12 @@ export const appRouter = router({
     update: protectedProcedure
       .input(z.object({ id: z.number(), data: quoteInput.partial() }))
       .mutation(async ({ input }) => {
+        // Dönüşmüş teklif dondurulur: kalem/tutar değişse siparişle sessizce ayrışırdı.
+        const existing = await db.getQuote(input.id);
+        if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Teklif bulunamadı" });
+        if (existing.status === "converted") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Siparişe dönüşmüş teklif düzenlenemez." });
+        }
         const { items, validUntil, ...quote } = input.data;
         const data: Record<string, unknown> = { ...quote };
         if (items !== undefined) {
