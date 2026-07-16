@@ -8,11 +8,13 @@ import { TRPCError } from "@trpc/server";
 import * as db from "./db";
 import { itemsTotal, summarizeItems, toItemRows } from "./orderUtils";
 import { extractInvoice } from "./_core/claude";
-import { executeAssistantCommand, generateOrderNo } from "./assistant";
+import { executeAssistantCommand, generateOrderNo, generateQuoteNo } from "./assistant";
 import { buildSaleTitle, deriveCombos, parseSetCount } from "./productUtils";
 import { syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf } from "./trendyol";
 import { pushHepsiburadaStockPrice } from "./hepsiburada";
 import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "./marketplace";
+import { channelProfitReport } from "./reportUtils";
+import { DEFAULT_CHANNEL_PROFILES, normalizeChannelProfile } from "@shared/pricing";
 import { ENV } from "./_core/env";
 
 /* ------------------------- Zod schemas ------------------------- */
@@ -44,6 +46,7 @@ const productInput = z.object({
   packaging: z.string().nullable().optional(),
   barcode: z.string().nullable().optional(),
   stockQty: z.number().min(0).optional(),
+  criticalQty: z.number().min(0).optional(),
   labelSize: z.string().nullable().optional(),
   labelText: z.string().nullable().optional(),
   usageGuide: z.string().nullable().optional(),
@@ -71,6 +74,16 @@ const orderInput = z.object({
   // Elden/dışarıdan satış girişleri doğrudan "Tamamlandı" olarak eklenebilir.
   status: z.enum(["new", "production", "ready", "done", "cancelled"]).optional(),
   // Kalem listesi gönderilirse toplam tutar ve özet bu satırlardan türetilir.
+  items: z.array(orderItemInput).optional(),
+});
+
+const quoteInput = z.object({
+  customerName: z.string().min(1),
+  customerPhone: z.string().nullable().optional(),
+  customerAddress: z.string().nullable().optional(),
+  validUntil: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+  status: z.enum(["draft", "sent", "accepted", "rejected", "expired"]).optional(),
   items: z.array(orderItemInput).optional(),
 });
 
@@ -538,6 +551,88 @@ export const appRouter = router({
     delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteOrder(input.id)),
   }),
 
+  // Teklifler: sipariş öncesi fiyat teklifi; kabul edilince tek tıkla siparişe dönüşür.
+  quotes: router({
+    list: protectedProcedure.query(() => db.listQuotes()),
+    items: protectedProcedure
+      .input(z.object({ quoteId: z.number() }))
+      .query(({ input }) => db.listQuoteItems(input.quoteId)),
+    create: protectedProcedure.input(quoteInput).mutation(async ({ input }) => {
+      const { items, validUntil, ...quote } = input;
+      const data: Record<string, unknown> = { ...quote, quoteNo: generateQuoteNo() };
+      if (items?.length) {
+        data.totalAmount = String(itemsTotal(items));
+        data.itemsSummary = summarizeItems(items);
+      }
+      data.validUntil = validUntil ? new Date(validUntil) : null;
+      const id = await db.createQuote(data as never);
+      if (items?.length) await db.replaceQuoteItems(id, toItemRows(items));
+      return id;
+    }),
+    update: protectedProcedure
+      .input(z.object({ id: z.number(), data: quoteInput.partial() }))
+      .mutation(async ({ input }) => {
+        const { items, validUntil, ...quote } = input.data;
+        const data: Record<string, unknown> = { ...quote };
+        if (items !== undefined) {
+          data.totalAmount = String(itemsTotal(items));
+          data.itemsSummary = items.length ? summarizeItems(items) : null;
+          await db.replaceQuoteItems(input.id, toItemRows(items));
+        }
+        if (validUntil !== undefined) data.validUntil = validUntil ? new Date(validUntil) : null;
+        await db.updateQuote(input.id, data as never);
+      }),
+    setStatus: protectedProcedure
+      .input(z.object({ id: z.number(), status: z.enum(["draft", "sent", "accepted", "rejected", "expired"]) }))
+      .mutation(async ({ input }) => {
+        const quote = await db.getQuote(input.id);
+        if (!quote) throw new TRPCError({ code: "NOT_FOUND", message: "Teklif bulunamadı" });
+        if (quote.status === "converted") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Siparişe dönüşmüş teklifin durumu değiştirilemez." });
+        }
+        await db.updateQuote(input.id, { status: input.status });
+      }),
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteQuote(input.id)),
+    // Kabul edilen teklifi siparişe dönüştürür: sipariş + kalemler oluşur
+    // (mamul stok düşümü replaceOrderItems'ta), teklif "converted" işaretlenir.
+    convert: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        const quote = await db.getQuote(input.id);
+        if (!quote) throw new TRPCError({ code: "NOT_FOUND", message: "Teklif bulunamadı" });
+        if (quote.status === "converted") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Bu teklif zaten siparişe dönüştürülmüş." });
+        }
+        const qItems = await db.listQuoteItems(input.id);
+        const orderNo = generateOrderNo();
+        const orderId = await db.createOrder({
+          orderNo,
+          customerName: quote.customerName,
+          customerId: quote.customerId,
+          channel: "elden",
+          status: "new",
+          totalAmount: quote.totalAmount,
+          itemsSummary: quote.itemsSummary,
+          notes: [quote.notes, `Teklif ${quote.quoteNo} kabulüyle oluşturuldu`].filter(Boolean).join("\n"),
+          customerPhone: quote.customerPhone,
+          customerAddress: quote.customerAddress,
+        } as never);
+        if (qItems.length > 0) {
+          await db.replaceOrderItems(
+            Number(orderId),
+            qItems.map(i => ({
+              productName: i.productName,
+              productId: i.productId,
+              quantity: String(i.quantity),
+              unitPrice: String(i.unitPrice),
+            })),
+          );
+        }
+        await db.updateQuote(input.id, { status: "converted", orderId: Number(orderId) });
+        return { orderId: Number(orderId), orderNo };
+      }),
+  }),
+
   dev: router({
     list: protectedProcedure.query(() => db.listDevProjects()),
     get: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
@@ -757,6 +852,40 @@ export const appRouter = router({
     data: protectedProcedure.query(() => db.reportData()),
     vat: protectedProcedure.query(() => db.vatReport()),
     cashflow: protectedProcedure.query(() => db.cashflowReport()),
+    // Kanal bazlı toplu net kâr: finans onaylı kâr modeli v2 ile, sipariş başına.
+    channelProfit: protectedProcedure
+      .input(z.object({ days: z.number().min(1).max(365).default(30) }).optional())
+      .query(async ({ input }) => {
+        const days = input?.days ?? 30;
+        const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+        const [orders, items, costRows, products, cfg] = await Promise.all([
+          db.listOrders(),
+          db.listAllOrderItemRefs(),
+          db.listProductMaterialCosts(),
+          db.listProducts(),
+          db.getSettings(),
+        ]);
+        let profiles = DEFAULT_CHANNEL_PROFILES;
+        try {
+          const parsed = JSON.parse(cfg.channelProfiles ?? "");
+          if (Array.isArray(parsed) && parsed.length > 0) profiles = parsed.map(normalizeChannelProfile);
+        } catch {
+          /* kayıtlı profil yoksa varsayılanlar */
+        }
+        const costByProduct = new Map(costRows.map(r => [r.productId, parseFloat(String(r.materialCost)) || 0]));
+        const num = (v: unknown) => parseFloat(String(v ?? 0)) || 0;
+        const costs = new Map(
+          products.map(p => [
+            p.id,
+            {
+              materialCost: costByProduct.get(p.id) ?? 0,
+              packagingCost: num(p.packagingCost),
+              shippingCost: num(p.shippingCost),
+            },
+          ]),
+        );
+        return { days, ...channelProfitReport(orders, items, costs, profiles, since) };
+      }),
   }),
 
   customers: router({

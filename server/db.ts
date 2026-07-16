@@ -33,6 +33,10 @@ import {
   productionRuns,
   purchaseItems,
   purchases,
+  quoteItems,
+  quotes,
+  InsertQuote,
+  InsertQuoteItem,
   settings,
   tasks,
   templates,
@@ -41,6 +45,14 @@ import {
   users,
 } from "../drizzle/schema";
 import { resolveProductIdForItem } from "./orderUtils";
+import {
+  accountBalance,
+  collectionTotal,
+  customerBalancesFrom,
+  paymentStatusFor,
+  supplierBalancesFrom,
+  vatSummarySince,
+} from "./financeUtils";
 import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -425,14 +437,10 @@ export async function listAccounts() {
     db.select().from(accounts).orderBy(accounts.name),
     db.select({ accountId: transactions.accountId, direction: transactions.direction, amount: transactions.amount }).from(transactions),
   ]);
-  return accs.map(a => {
-    let bal = toNum(a.openingBalance);
-    for (const t of txns) {
-      if (t.accountId !== a.id) continue;
-      bal += t.direction === "in" ? toNum(t.amount) : -toNum(t.amount);
-    }
-    return { ...a, balance: bal };
-  });
+  return accs.map(a => ({
+    ...a,
+    balance: accountBalance(a.openingBalance, txns.filter(t => t.accountId === a.id)),
+  }));
 }
 
 export async function createAccount(data: InsertAccount) {
@@ -488,13 +496,13 @@ export async function createTransaction(data: InsertTransaction) {
   if (data.orderId && data.category === "tahsilat" && data.direction === "in") {
     const [ord] = await db.select().from(orders).where(eq(orders.id, data.orderId)).limit(1);
     if (ord) {
-      const collected = (await db.select({ amount: transactions.amount, direction: transactions.direction, category: transactions.category })
-        .from(transactions)
-        .where(eq(transactions.orderId, data.orderId)))
-        .filter(t => t.category === "tahsilat")
-        .reduce((s, t) => s + (t.direction === "in" ? toNum(t.amount) : -toNum(t.amount)), 0);
-      const total = toNum(ord.totalAmount);
-      const status = collected <= 0 ? "unpaid" : collected + 0.001 >= total ? "paid" : "partial";
+      const collected = collectionTotal(
+        await db
+          .select({ amount: transactions.amount, direction: transactions.direction, category: transactions.category })
+          .from(transactions)
+          .where(eq(transactions.orderId, data.orderId)),
+      );
+      const status = paymentStatusFor(collected, toNum(ord.totalAmount));
       await db.update(orders).set({ paidAmount: String(Math.max(0, collected)), paymentStatus: status }).where(eq(orders.id, data.orderId));
     }
   }
@@ -533,25 +541,10 @@ export async function customerBalances(): Promise<Record<string, number>> {
     db.select({ name: transactions.customerName, customerId: transactions.customerId, direction: transactions.direction, amount: transactions.amount, category: transactions.category }).from(transactions),
     db.select({ id: customers.id, name: customers.name }).from(customers),
   ]);
-  const key = (n: string) => n.trim().toLocaleLowerCase("tr-TR");
-  // ID'li kayıtlar müşterinin GÜNCEL adı altında toplanır (ad değişse de cari bölünmez);
-  // ID'siz (CRM dışı) kayıtlar kayıtlı isimle yaşar.
-  const nameById = new Map(custs.map(c => [c.id, c.name]));
-  const canonical = (customerId: number | null, name: string | null) =>
-    (customerId != null ? nameById.get(customerId) : undefined) ?? name ?? "";
-  const out: Record<string, number> = {};
-  for (const o of ords) {
-    if (o.status === "cancelled") continue; // iptal/iade borç doğurmaz
-    const k = key(canonical(o.customerId, o.name));
-    if (k) out[k] = (out[k] ?? 0) + toNum(o.total);
-  }
-  for (const t of txns) {
-    if (t.category !== "tahsilat") continue;
-    const k = key(canonical(t.customerId, t.name));
-    if (!k) continue;
-    out[k] = (out[k] ?? 0) - (t.direction === "in" ? toNum(t.amount) : -toNum(t.amount));
-  }
-  return out;
+  // ID'li kayıtlar müşterinin GÜNCEL adı altında toplanır (ad değişse de cari
+  // bölünmez); ID'siz (CRM dışı) kayıtlar kayıtlı isimle yaşar. Saf mantık
+  // financeUtils'te (birim testli).
+  return customerBalancesFrom(ords, txns, custs);
 }
 
 /**
@@ -613,25 +606,13 @@ export async function vatReport() {
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
   const yearStart = new Date(now.getFullYear(), 0, 1).getTime();
-  const vatOf = (gross: number) => gross - gross / (1 + rate / 100);
 
-  const calc = (since: number) => {
-    let salesGross = 0;
-    for (const o of ords) {
-      if (o.status === "cancelled") continue; // iptal/iade KDV matrahına girmez
-      if (new Date(o.date).getTime() >= since) salesGross += toNum(o.total);
-    }
-    let buyGross = 0;
-    for (const p of purs) {
-      const t = new Date((p.date ?? p.created) as never).getTime();
-      if (t >= since) buyGross += toNum(p.total);
-    }
-    const salesVat = vatOf(salesGross);
-    const buyVat = vatOf(buyGross);
-    return { salesGross, salesVat, buyGross, buyVat, payable: salesVat - buyVat };
+  // Saf hesap financeUtils'te (birim testli); iptal/iade matraha girmez.
+  return {
+    rate,
+    month: vatSummarySince(ords, purs, rate, monthStart),
+    year: vatSummarySince(ords, purs, rate, yearStart),
   };
-
-  return { rate, month: calc(monthStart), year: calc(yearStart) };
 }
 
 /**
@@ -645,22 +626,8 @@ export async function supplierBalances(): Promise<Record<string, number>> {
     db.select({ name: transactions.supplierName, supplierId: transactions.supplierId, direction: transactions.direction, amount: transactions.amount }).from(transactions),
     db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers),
   ]);
-  const key = (n: string) => n.trim().toLocaleLowerCase("tr-TR");
-  const nameById = new Map(sups.map(s => [s.id, s.name]));
-  const canonical = (supplierId: number | null, name: string | null) =>
-    (supplierId != null ? nameById.get(supplierId) : undefined) ?? name ?? "";
-  const out: Record<string, number> = {};
-  for (const p of purs) {
-    const k = key(canonical(p.supplierId, p.name));
-    if (k) out[k] = (out[k] ?? 0) + toNum(p.total);
-  }
-  for (const t of txns) {
-    const k = key(canonical(t.supplierId, t.name));
-    if (!k) continue;
-    // Tedarikçiye ödeme (out) borcumuzu azaltır.
-    out[k] = (out[k] ?? 0) - (t.direction === "out" ? toNum(t.amount) : -toNum(t.amount));
-  }
-  return out;
+  // Saf mantık financeUtils'te (birim testli).
+  return supplierBalancesFrom(purs, txns, sups);
 }
 
 /** Tedarikçi cari ekstresi: alış faturaları (borç) + ödemeler (alacak) + bakiye. */
@@ -758,6 +725,71 @@ export async function deleteCheque(id: number) {
   await db.delete(cheques).where(eq(cheques.id, id));
 }
 
+/* ------------------------- Teklifler ------------------------- */
+
+export async function listQuotes() {
+  const db = await requireDb();
+  return db.select().from(quotes).orderBy(desc(quotes.createdAt));
+}
+
+export async function getQuote(id: number) {
+  const db = await requireDb();
+  const rows = await db.select().from(quotes).where(eq(quotes.id, id)).limit(1);
+  return rows[0];
+}
+
+export async function createQuote(data: InsertQuote) {
+  const db = await requireDb();
+  // Cari bağ: müşteri kayıtlıysa ID ile bağla (siparişle aynı kural).
+  if (data.customerId == null && data.customerName) {
+    data = { ...data, customerId: await resolveCustomerIdByName(data.customerName) };
+  }
+  const [res] = await db.insert(quotes).values(data);
+  return Number(res.insertId);
+}
+
+export async function updateQuote(id: number, data: Partial<InsertQuote>) {
+  const db = await requireDb();
+  if (data.customerName !== undefined && data.customerId === undefined) {
+    data = { ...data, customerId: await resolveCustomerIdByName(data.customerName) };
+  }
+  await db.update(quotes).set(data).where(eq(quotes.id, id));
+}
+
+export async function deleteQuote(id: number) {
+  const db = await requireDb();
+  await db.delete(quoteItems).where(eq(quoteItems.quoteId, id));
+  await db.delete(quotes).where(eq(quotes.id, id));
+}
+
+export async function listQuoteItems(quoteId: number) {
+  const db = await requireDb();
+  return db.select().from(quoteItems).where(eq(quoteItems.quoteId, quoteId)).orderBy(quoteItems.id);
+}
+
+/**
+ * Teklif kalemlerini komple değiştirir. Siparişten farkı: teklif stok
+ * YÜRÜTMEZ — ürün eşleşmesi yalnızca dönüşümde doğru kalem bağlansın diye
+ * yapılır (barkod → ad, resolveProductIdForItem).
+ */
+export async function replaceQuoteItems(
+  quoteId: number,
+  items: (Omit<InsertQuoteItem, "quoteId"> & { barcode?: string | null })[],
+) {
+  const db = await requireDb();
+  await db.delete(quoteItems).where(eq(quoteItems.quoteId, quoteId));
+  if (items.length === 0) return;
+  const refs = await db
+    .select({ id: products.id, name: products.name, barcode: products.barcode })
+    .from(products);
+  const rows = items.map(({ barcode, ...item }) => ({
+    ...item,
+    productId: item.productId ?? resolveProductIdForItem({ productName: item.productName, barcode }, refs),
+    quoteId,
+  }));
+  await db.insert(quoteItems).values(rows);
+}
+
 /** Ödenmemiş/kısmi ödenmiş siparişleri kalan borca göre döner (tahsilat takibi). */
 export async function listUnpaidOrders(limit = 8) {
   const db = await requireDb();
@@ -850,6 +882,14 @@ export async function dedupeOrders() {
 export async function listOrderItems(orderId: number) {
   const db = await requireDb();
   return db.select().from(orderItems).where(eq(orderItems.orderId, orderId)).orderBy(orderItems.id);
+}
+
+/** Kanal kâr raporu için tüm sipariş kalemlerinin hafif listesi. */
+export async function listAllOrderItemRefs() {
+  const db = await requireDb();
+  return db
+    .select({ orderId: orderItems.orderId, productId: orderItems.productId, quantity: orderItems.quantity })
+    .from(orderItems);
 }
 
 /* --------------- Mamul stok hareketleri (Faz 0.2) --------------- */

@@ -106,13 +106,15 @@
 - [x] Cari Hesaplar genel bakış sayfası (/cari) — alacak/borç/net
 - [x] Nakit Akışı raporu (Strateji sekmesi) — giriş/çıkış/net + kategori
 - [x] Çek/senet takibi (/cek-senet) — portföy, vade, durum, vadesi geçen uyarısı (cheques tablosu)
-- [ ] Teklif (quote) → siparişe dönüştürme; ürün/hizmet ayrımı (kodda hiç iz yok)
+- [x] Teklif (quote) → siparişe dönüştürme (/teklifler, quotes/quoteItems, migration 0019;
+      yazdırma + WhatsApp paylaşımı + kabul→sipariş dönüşümü; 16.07.2026 mega sprint)
 - [ ] e-Fatura/e-Arşiv entegratörü (Foriba/İzibiz/Uyumsoft) — dış servis + anlaşma gerekir;
       şu an yalnızca bilgi/proforma faturası basılıyor (invoice.ts)
 Pazaryeri (Qukasoft):
 - [x] Hepsiburada stok/fiyat gönderme + "Servis Anahtarı" desteği (F4'te yapıldı; canlıda HEPSIBURADA_SERVICE_KEY ile test edilecek)
 - [ ] N11 + Çiçeksepeti entegratörleri (sipariş çekme + stok/fiyat) — iskelet yok
-- [ ] Komisyon/kesinti bazlı net kâr raporu (pazaryeri bazında) — KISMEN: tekil hesaplayıcı var (Costs.tsx marketplaceNet), toplu rapor yok
+- [x] Komisyon/kesinti bazlı net kâr raporu (pazaryeri/kanal bazında) — Analiz sayfasında
+      "Kanal Kârlılığı" tablosu (report.channelProfit, kâr modeli v2; 16.07.2026 mega sprint)
 - [x] İade yönetimi: cancelled durumu + senkronda otomatik iptal + stok iadesi + rapor/cari hariç tutma (soru-cevap yönetimi hâlâ açık)
 - [ ] Sıfırdan ürün açma (kategori/marka/özellik/görsel) — çoklu pazaryeri
 
@@ -169,12 +171,13 @@ Hepsiburada push yok, web sitesi (Qukasoft) entegrasyonu yok.
        varsayılan kasa hesabı). Saf eşleştirme orderUtils.findOpenOrderForCollection,
        7 birim testi (assistant.collection.test.ts). Yardım metni güncellendi.
 3. [x] Hepsiburada stok/fiyat gönderme + HEPSIBURADA_SERVICE_KEY env desteği (F4)
-4. [ ] Finans birim testleri: vatReport, customer/supplierBalances, tahsilat→sipariş
-       ödeme senkronu, kasa bakiyesi, senkron tek-uçuş kilidi (38/38 test geçiyor ama
-       bunları kapsamıyor; DB'ye gömülü mantık saf fonksiyona çıkarılmalı)
-5. [ ] Ürünlerde kritik stok eşiği alanı (products.criticalQty) + düşük stok filtresi
-       (şu an Products.tsx'te sabit eşikli renklendirme var, yapılandırılamıyor)
-6. [ ] Pazaryeri bazında toplu net kâr raporu (yapı taşları hazır)
+4. [x] Finans birim testleri: cari bakiyeler, KDV raporu, tahsilat→sipariş ödeme senkronu,
+       kasa bakiyesi mantığı `server/financeUtils.ts`'e (saf fonksiyon) çıkarıldı, db.ts
+       bunları kullanıyor; 16 birim testi (finance.test.ts). Senkron kilidi hâlâ test dışı.
+5. [x] Ürünlerde kritik stok eşiği (products.criticalQty, migration 0019) + Ürünler'de
+       "Düşük Stok" filtresi + eşiğe göre renklendirme + Stok Nöbetçisi mamul eşiği bildirimi
+6. [x] Pazaryeri/kanal bazında toplu net kâr raporu (report.channelProfit + Analiz sayfası;
+       11 birim testi, işlem bedeli/kargo sipariş başına bir kez)
 7. [ ] AI görsel üretimi: _core/imageGeneration.ts hazır ama hiçbir router'a bağlı
        değil — kullanıcı talebiyle modül olarak bağlanacak
 
@@ -197,9 +200,26 @@ Hepsiburada push yok, web sitesi (Qukasoft) entegrasyonu yok.
 - [x] Zamanlayıcı: 15dk pazaryeri oto-senkron + saatlik Stok Nöbetçisi + 08:00 Sabah Brifingi
 - [x] PWA service worker + kayıt (manifest/ikonlar mevcuttu)
 - [ ] Asistanın tool-use ajanına dönüşümü + onay katmanı (guvenli/onayli/kritik)
-- [ ] Tahsilat Takipçisi (30+ gün alacaklara hatırlatma taslağı)
+- [x] Tahsilat Takipçisi: her gün 09:00 TR, 30+ gündür ödenmemiş siparişler müşteri
+      bazında gruplanıp bildirim + WhatsApp hatırlatma taslağıyla iletilir
+      (scheduler.runCollectionChaser, saf mantık financeUtils.overdueReceivables, testli)
 - [ ] Pazaryeri soru-cevap kuyruğu + AI cevap taslağı
 - [ ] Uptime monitörü kurulumu (kullanıcı: cron-job.org → /api/health)
+
+## MEGA SPRINT — 16.07.2026: Satış Döngüsü & Kârlılık (tamamlandı)
+- [x] Teklif modülü: quotes/quoteItems (migration 0019), CRUD + durum akışı
+      (taslak→gönderildi→kabul/red/süresi doldu), kabul→siparişe dönüştürme (stok
+      düşümü replaceOrderItems üzerinden), yazdırılabilir teklif + WhatsApp paylaşımı,
+      menü + ⌘K kaydı. Teklifler stok/ciro/cari hesaplarına girmez.
+- [x] Mamul kritik stok eşiği: products.criticalQty + Ürünler sayfasında Düşük Stok
+      filtresi ve eşiğe göre renklendirme (türev satırlarında da stok görünür) +
+      Stok Nöbetçisi eşik altı mamulleri de bildirir
+- [x] Tahsilat Takipçisi (Faz 1): günlük vadesi geçen alacak taraması + hatırlatma taslağı
+- [x] Kanal Kârlılığı raporu: Analiz sayfasında kanal bazlı gerçek net kâr tablosu
+      (30/90/365 gün seçimli; maliyeti bilinmeyen kalemler işaretlenir)
+- [x] Finans mantığı saf fonksiyonlara çıkarıldı (financeUtils.ts) + 27 yeni birim testi
+      (finance.test.ts 16 + report.channel.test.ts 11); toplam 116/116 test
+- [x] Doğrulama: 0 tip hatası, build ✓ (migration canlıda otomatik koşar)
 
 ## Canlıda (Render) doğrulama bekleyenler — kod tarafı hazır
 - [ ] Trendyol: "Bağlantıyı Test Et" HTTP 200 + sipariş akışı + "Trendyol'a Gönder" (stok/fiyat)

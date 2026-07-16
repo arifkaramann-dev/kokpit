@@ -9,11 +9,19 @@ import { findOpenOrderForCollection, itemsTotal, summarizeItems, toItemRows } fr
  * hakkında soru-cevap destekler.
  */
 
-export function generateOrderNo() {
+function generateDocNo(prefix: string) {
   const d = new Date();
   const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
   const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
-  return `AOC-${ymd}-${rand}`;
+  return `${prefix}-${ymd}-${rand}`;
+}
+
+export function generateOrderNo() {
+  return generateDocNo("AOC");
+}
+
+export function generateQuoteNo() {
+  return generateDocNo("TKF");
 }
 
 function formatCmdItems(items: { productName: string; quantity: number }[]) {

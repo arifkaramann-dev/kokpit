@@ -96,6 +96,9 @@ export const products = mysqlTable(
   // Pazaryeri eşleştirmesi için barkod (Trendyol/Hepsiburada bununla eşler).
   barcode: varchar("barcode", { length: 64 }),
   stockQty: int("stockQty").notNull().default(0),
+  // Mamul kritik stok eşiği: 0 = takip yok; stok bu eşiğin altına inince
+  // düşük stok uyarısı verilir (Stok Nöbetçisi + Ürünler sayfası filtresi).
+  criticalQty: int("criticalQty").notNull().default(0),
   labelSize: varchar("labelSize", { length: 64 }),
   labelText: text("labelText"),
   usageGuide: text("usageGuide"),
@@ -619,6 +622,61 @@ export const notifications = mysqlTable(
 );
 
 export type Notification = typeof notifications.$inferSelect;
+
+/**
+ * Teklifler: siparişe dönüşmeden önceki fiyat teklifi aşaması (Bizimhesap
+ * paritesi). Kabul edilen teklif tek tıkla siparişe dönüştürülür; orderId
+ * dönüşen siparişi işaret eder. Teklif stok/ciro/cari hesaplarına GİRMEZ —
+ * bu hesaplar ancak dönüşen sipariş üzerinden çalışır.
+ */
+export const quotes = mysqlTable(
+  "quotes",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    quoteNo: varchar("quoteNo", { length: 32 }).notNull(),
+    customerName: varchar("customerName", { length: 255 }).notNull(),
+    customerId: int("customerId"),
+    customerPhone: varchar("customerPhone", { length: 64 }),
+    customerAddress: varchar("customerAddress", { length: 512 }),
+    status: mysqlEnum("status", ["draft", "sent", "accepted", "rejected", "expired", "converted"])
+      .notNull()
+      .default("draft"),
+    validUntil: timestamp("validUntil"),
+    totalAmount: decimal("totalAmount", { precision: 12, scale: 2 }).notNull().default("0"),
+    itemsSummary: text("itemsSummary"),
+    notes: text("notes"),
+    orderId: int("orderId"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  t => [
+    index("quotes_quoteNo_idx").on(t.quoteNo),
+    index("quotes_customerId_idx").on(t.customerId),
+    index("quotes_createdAt_idx").on(t.createdAt),
+  ],
+);
+
+export type Quote = typeof quotes.$inferSelect;
+export type InsertQuote = typeof quotes.$inferInsert;
+
+export const quoteItems = mysqlTable(
+  "quoteItems",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    quoteId: int("quoteId").notNull(),
+    productName: varchar("productName", { length: 255 }).notNull(),
+    productId: int("productId"),
+    quantity: decimal("quantity", { precision: 12, scale: 2 }).notNull().default("1"),
+    unitPrice: decimal("unitPrice", { precision: 12, scale: 2 }).notNull().default("0"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  t => [index("quoteItems_quoteId_idx").on(t.quoteId)],
+);
+
+export type QuoteItem = typeof quoteItems.$inferSelect;
+export type InsertQuoteItem = typeof quoteItems.$inferInsert;
 
 /**
  * Genel ayarlar (anahtar-değer): şirket/fatura bilgileri, fatura sayaç no vb.

@@ -34,6 +34,7 @@ import {
   CalendarDays,
   Contact,
   Factory,
+  FileText,
   FlaskConical,
   Calculator,
   ClipboardList,
@@ -74,6 +75,7 @@ const menuGroups = [
     label: "Satış & Müşteri",
     items: [
       { icon: ClipboardList, label: "Sipariş Panosu", path: "/siparisler" },
+      { icon: FileText, label: "Teklifler", path: "/teklifler" },
       { icon: Contact, label: "Müşteriler", path: "/musteriler" },
       { icon: ListChecks, label: "Görevler & Eksikler", path: "/gorevler" },
       { icon: CalendarDays, label: "Kampanya Takvimi", path: "/kampanyalar" },

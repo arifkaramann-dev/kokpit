@@ -1,7 +1,22 @@
 import { Card } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { formatTL, num } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -56,6 +71,8 @@ function weekLabel(d: Date) {
 
 export default function Analytics() {
   const { data } = trpc.report.data.useQuery();
+  const [profitDays, setProfitDays] = useState(30);
+  const { data: channelProfit } = trpc.report.channelProfit.useQuery({ days: profitDays });
 
   const model = useMemo(() => {
     if (!data) return null;
@@ -285,6 +302,101 @@ export default function Analytics() {
               )}
             </Card>
           </div>
+
+          <Card className="p-5 space-y-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div>
+                <h2 className="font-semibold">Kanal Kârlılığı — gerçek net kâr</h2>
+                <p className="text-xs text-muted-foreground">
+                  Finans onaylı kâr modeliyle (KDV hariç baz; komisyon, ödeme/işlem bedeli, kargo, stopaj düşülür).
+                  İşlem bedeli ve kargo sipariş başına bir kez sayılır.
+                </p>
+              </div>
+              <Select value={String(profitDays)} onValueChange={v => setProfitDays(Number(v))}>
+                <SelectTrigger className="w-[130px] h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="30">Son 30 gün</SelectItem>
+                  <SelectItem value="90">Son 90 gün</SelectItem>
+                  <SelectItem value="365">Son 1 yıl</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {!channelProfit || channelProfit.rows.length === 0 ? (
+              <Empty />
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Kanal</TableHead>
+                      <TableHead className="text-right">Sipariş</TableHead>
+                      <TableHead className="text-right">Ciro (KDV dahil)</TableHead>
+                      <TableHead className="text-right">Ürün Maliyeti</TableHead>
+                      <TableHead className="text-right">Komisyon</TableHead>
+                      <TableHead className="text-right">Diğer Kesintiler</TableHead>
+                      <TableHead className="text-right">Net Kâr</TableHead>
+                      <TableHead className="text-right">Marj</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {channelProfit.rows.map(r => {
+                      const other = r.paymentFee + r.transactionFee + r.shipping + r.stopaj;
+                      return (
+                        <TableRow key={r.channel}>
+                          <TableCell className="font-medium capitalize">
+                            {r.channel}
+                            <span className="text-[11px] text-muted-foreground font-normal"> · {r.profileName} profili</span>
+                            {r.missingCostItems > 0 && (
+                              <span
+                                className="ml-1 text-[11px] text-amber-600"
+                                title="Katalogla eşleşmeyen kalemler maliyet 0 sayıldı — gerçek kâr daha düşük olabilir"
+                              >
+                                ({r.missingCostItems} kalem maliyetsiz)
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right">{r.orders}</TableCell>
+                          <TableCell className="text-right">{formatTL(r.revenue)}</TableCell>
+                          <TableCell className="text-right">{formatTL(r.productCost)}</TableCell>
+                          <TableCell className="text-right">{formatTL(r.commission)}</TableCell>
+                          <TableCell className="text-right" title="Ödeme bedeli + işlem bedeli + kargo + stopaj (KDV indirimli)">
+                            {formatTL(other)}
+                          </TableCell>
+                          <TableCell className={`text-right font-semibold ${r.net < 0 ? "text-rose-600" : "text-emerald-600"}`}>
+                            {formatTL(r.net)}
+                          </TableCell>
+                          <TableCell className={`text-right ${r.margin < 0 ? "text-rose-600" : ""}`}>
+                            %{r.margin.toFixed(1)}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                    <TableRow className="border-t-2 font-semibold">
+                      <TableCell>Toplam</TableCell>
+                      <TableCell className="text-right">{channelProfit.totals.orders}</TableCell>
+                      <TableCell className="text-right">{formatTL(channelProfit.totals.revenue)}</TableCell>
+                      <TableCell className="text-right">{formatTL(channelProfit.totals.productCost)}</TableCell>
+                      <TableCell className="text-right">{formatTL(channelProfit.totals.commission)}</TableCell>
+                      <TableCell className="text-right">
+                        {formatTL(
+                          channelProfit.totals.paymentFee +
+                            channelProfit.totals.transactionFee +
+                            channelProfit.totals.shipping +
+                            channelProfit.totals.stopaj,
+                        )}
+                      </TableCell>
+                      <TableCell className={`text-right ${channelProfit.totals.net < 0 ? "text-rose-600" : "text-emerald-600"}`}>
+                        {formatTL(channelProfit.totals.net)}
+                      </TableCell>
+                      <TableCell className="text-right">%{channelProfit.totals.margin.toFixed(1)}</TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </Card>
         </>
       )}
     </div>

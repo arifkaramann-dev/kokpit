@@ -1,4 +1,5 @@
 import * as db from "./db";
+import { overdueReceivables } from "./financeUtils";
 import { isHepsiburadaConfigured } from "./hepsiburada";
 import { isTrendyolConfigured } from "./trendyol";
 import { syncAllMarketplaces } from "./marketplace";
@@ -11,9 +12,11 @@ import { notifyOwner } from "./notify";
  *
  * İşler:
  *  - Pazaryeri oto-senkron (15 dk): yeni sipariş → bildirim + WhatsApp
- *  - Stok Nöbetçisi (60 dk): kritik hammadde + eksi mamul stoğu → bildirim,
- *    kritik hammaddeler eksik listesine otomatik eklenir
+ *  - Stok Nöbetçisi (60 dk): kritik hammadde + eksi/eşik altı mamul stoğu →
+ *    bildirim, kritik hammaddeler eksik listesine otomatik eklenir
  *  - Sabah Brifingi (her gün 08:00 İstanbul): işletme özeti → bildirim + WhatsApp
+ *  - Tahsilat Takipçisi (her gün 09:00 İstanbul): 30+ gündür ödenmemiş
+ *    siparişleri müşteri bazında toplar → bildirim + WhatsApp
  *
  * Not: Render ücretsiz planda süreç uykuya dalarsa zamanlayıcı da durur;
  * /api/health'e bağlı bir uptime monitörü süreci ayakta tutar.
@@ -23,10 +26,13 @@ import { notifyOwner } from "./notify";
 const SYNC_INTERVAL_MS = 15 * 60 * 1000;
 const STOCK_INTERVAL_MS = 60 * 60 * 1000;
 const BRIEFING_HOUR_TR = 8; // İstanbul saatiyle
+const COLLECTION_HOUR_TR = 9; // İstanbul saatiyle
+const COLLECTION_MIN_DAYS = 30; // bu kadar gündür ödenmemişse hatırlat
 
 const KEY_LAST_SYNC = "scheduler.lastSyncAt";
 const KEY_LAST_STOCK = "scheduler.lastStockCheckAt";
 const KEY_LAST_BRIEFING = "scheduler.lastBriefingDate";
+const KEY_LAST_COLLECTION = "scheduler.lastCollectionDate";
 
 let ticking = false;
 
@@ -38,7 +44,7 @@ export function startScheduler() {
   setInterval(() => {
     void tick();
   }, 60 * 1000);
-  console.log("[scheduler] başladı (senkron 15dk, stok nöbeti 60dk, brifing 08:00 TR)");
+  console.log("[scheduler] başladı (senkron 15dk, stok nöbeti 60dk, brifing 08:00 TR, tahsilat takibi 09:00 TR)");
 }
 
 async function tick() {
@@ -65,6 +71,11 @@ async function tick() {
     if (istanbulHour(new Date()) >= BRIEFING_HOUR_TR && cfg[KEY_LAST_BRIEFING] !== todayTR) {
       await db.setSettings({ [KEY_LAST_BRIEFING]: todayTR });
       await runMorningBriefing();
+    }
+
+    if (istanbulHour(new Date()) >= COLLECTION_HOUR_TR && cfg[KEY_LAST_COLLECTION] !== todayTR) {
+      await db.setSettings({ [KEY_LAST_COLLECTION]: todayTR });
+      await runCollectionChaser();
     }
   } catch (error) {
     // DB yoksa (yerel araç çalıştırma) sessizce geç; diğer hataları logla.
@@ -143,18 +154,54 @@ async function runStockSentry() {
     });
   }
 
-  const negatives = products.filter(p => (p.stockQty ?? 0) < 0);
-  if (negatives.length > 0) {
+  // Eksi stok = üretilecek sinyali; kritik eşik tanımlıysa eşiğin altı da uyarılır.
+  const lowProducts = products.filter(
+    p => (p.stockQty ?? 0) < 0 || ((p.criticalQty ?? 0) > 0 && (p.stockQty ?? 0) <= (p.criticalQty ?? 0)),
+  );
+  if (lowProducts.length > 0) {
     await notifyOwner({
       kind: "uretim-gerekli",
-      title: `🏭 ${negatives.length} ürün eksi stokta — üretim gerekli`,
-      body: negatives
+      title: `🏭 ${lowProducts.length} ürün düşük stokta — üretim gerekli`,
+      body: lowProducts
         .slice(0, 15)
-        .map(p => `• ${p.name}: ${p.stockQty} adet`)
+        .map(p =>
+          (p.stockQty ?? 0) < 0
+            ? `• ${p.name}: ${p.stockQty} adet (eksi stok)`
+            : `• ${p.name}: ${p.stockQty} adet (eşik ${p.criticalQty})`,
+        )
         .join("\n"),
       link: "/uretim",
     });
   }
+}
+
+/**
+ * Tahsilat Takipçisi: 30+ gündür ödenmemiş siparişleri müşteri bazında toplar,
+ * hazır bir WhatsApp hatırlatma taslağıyla birlikte bildirir. Alacak yoksa
+ * sessiz kalır (spam yok).
+ */
+async function runCollectionChaser() {
+  const orders = await db.listOrders();
+  const overdue = overdueReceivables(orders, COLLECTION_MIN_DAYS);
+  if (overdue.length === 0) return;
+  const tl = (n: number) => `${n.toLocaleString("tr-TR", { maximumFractionDigits: 0 })} TL`;
+  const total = overdue.reduce((s, c) => s + c.totalDue, 0);
+  const lines = overdue.slice(0, 10).map(c => {
+    const refs = c.orders.map(o => o.orderNo).slice(0, 3).join(", ");
+    return `• ${c.customerName}: ${tl(c.totalDue)} (${c.oldestDays} gündür açık · ${refs})`;
+  });
+  const top = overdue[0];
+  lines.push(
+    "",
+    "Hatırlatma taslağı (kopyala-gönder):",
+    `"Merhaba ${top.customerName}, ${top.orders[0].orderNo} numaralı siparişinizin ${tl(top.totalDue)} tutarındaki bakiyesi görünüyor. Müsait olduğunuzda ödemenizi rica ederiz. İyi günler! 🎨"`,
+  );
+  await notifyOwner({
+    kind: "tahsilat-takip",
+    title: `💰 ${overdue.length} müşteride vadesi geçen alacak — ${tl(total)}`,
+    body: lines.join("\n"),
+    link: "/cari",
+  });
 }
 
 /** Sabah Brifingi: işletmenin güncel durumunu tek mesajda özetler. */

@@ -44,6 +44,7 @@ export type ProductRow = {
   packaging: string | null;
   barcode: string | null;
   stockQty: number;
+  criticalQty: number;
   labelSize: string | null;
   labelText: string | null;
   usageGuide: string | null;
@@ -67,6 +68,7 @@ const emptyForm = {
   packaging: "",
   barcode: "",
   stockQty: "",
+  criticalQty: "",
   labelSize: "",
   labelText: "",
   usageGuide: "",
@@ -114,6 +116,17 @@ export default function Products() {
   });
 
   const [search, setSearch] = useState("");
+  const [lowStockOnly, setLowStockOnly] = useState(false);
+
+  // Düşük stok: sıfır/eksi her zaman; kritik eşik tanımlıysa eşiğin altı da.
+  const isLowStock = (p: ProductRow) =>
+    p.stockQty <= 0 || (p.criticalQty > 0 && p.stockQty <= p.criticalQty);
+  const stockCls = (p: ProductRow) =>
+    p.stockQty <= 0
+      ? "text-rose-600 font-medium"
+      : p.criticalQty > 0 && p.stockQty <= p.criticalQty
+        ? "text-amber-600 font-medium"
+        : "";
 
   const childrenOf = useMemo(() => {
     const map = new Map<number, ProductRow[]>();
@@ -129,7 +142,10 @@ export default function Products() {
 
   // Arama: ana ürünün kendisi ya da türevlerinden biri eşleşirse göster.
   const mains = useMemo(() => {
-    const all = ((products as ProductRow[]) ?? []).filter(p => p.parentId === null);
+    let all = ((products as ProductRow[]) ?? []).filter(p => p.parentId === null);
+    if (lowStockOnly) {
+      all = all.filter(p => isLowStock(p) || (childrenOf.get(p.id) ?? []).some(isLowStock));
+    }
     const q = search.trim().toLowerCase();
     if (!q) return all;
     return all.filter(
@@ -138,7 +154,8 @@ export default function Products() {
         (p.series ?? "").toLowerCase().includes(q) ||
         (childrenOf.get(p.id) ?? []).some(c => c.name.toLowerCase().includes(q)),
     );
-  }, [products, search, childrenOf]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [products, search, childrenOf, lowStockOnly]);
 
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkPercent, setBulkPercent] = useState("10");
@@ -291,6 +308,7 @@ export default function Products() {
       packaging: p.packaging ?? "",
       barcode: p.barcode ?? "",
       stockQty: p.stockQty != null ? String(p.stockQty) : "",
+      criticalQty: p.criticalQty ? String(p.criticalQty) : "",
       labelSize: p.labelSize ?? "",
       labelText: p.labelText ?? "",
       usageGuide: p.usageGuide ?? "",
@@ -320,6 +338,7 @@ export default function Products() {
       packaging: form.packaging || null,
       barcode: form.barcode.trim() || null,
       stockQty: parseInt(form.stockQty, 10) || 0,
+      criticalQty: parseInt(form.criticalQty, 10) || 0,
       labelSize: form.labelSize || null,
       labelText: form.labelText || null,
       usageGuide: form.usageGuide || null,
@@ -365,14 +384,24 @@ export default function Products() {
         </div>
       </div>
 
-      <div className="relative max-w-sm">
-        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Ürün veya türev ara..."
-          className="pl-8"
-        />
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="relative max-w-sm flex-1 min-w-[200px]">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Ürün veya türev ara..."
+            className="pl-8"
+          />
+        </div>
+        <Button
+          variant={lowStockOnly ? "default" : "outline"}
+          size="sm"
+          onClick={() => setLowStockOnly(v => !v)}
+          title="Sıfır/eksi stok veya kritik eşiğin altındakiler"
+        >
+          Düşük Stok
+        </Button>
       </div>
 
       {isLoading && <div className="h-40 rounded-xl bg-muted animate-pulse" />}
@@ -420,9 +449,7 @@ export default function Products() {
                   </div>
                   <p className="text-xs text-muted-foreground">
                     {variants.length} türev · Satış: {formatTL(main.salePrice)} · Stok:{" "}
-                    <span className={main.stockQty <= 0 ? "text-rose-600 font-medium" : main.stockQty < 5 ? "text-amber-600 font-medium" : ""}>
-                      {main.stockQty}
-                    </span>
+                    <span className={stockCls(main)}>{main.stockQty}</span>
                   </p>
                 </div>
                 <div className="flex items-center gap-1">
@@ -514,6 +541,9 @@ export default function Products() {
                           </p>
                         )}
                       </div>
+                      <span className={`text-xs whitespace-nowrap ${stockCls(v) || "text-muted-foreground"}`}>
+                        Stok: {v.stockQty}
+                      </span>
                       <span className="text-sm font-medium whitespace-nowrap">{formatTL(v.salePrice)}</span>
                       <div className="flex items-center gap-0.5">
                         <Button
@@ -653,6 +683,22 @@ export default function Products() {
                   onChange={e => setForm(f => ({ ...f, stockQty: e.target.value }))}
                   placeholder="0"
                 />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Kritik Stok Eşiği</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  value={form.criticalQty}
+                  onChange={e => setForm(f => ({ ...f, criticalQty: e.target.value }))}
+                  placeholder="0 = takip yok"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Stok bu adede inince düşük stok uyarısı verilir (Stok Nöbetçisi bildirir).
+                </p>
               </div>
             </div>
 
