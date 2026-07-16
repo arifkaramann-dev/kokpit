@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, isNull, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   accounts,
@@ -22,6 +22,8 @@ import {
   InsertOrderItem,
   InsertProduct,
   InsertUser,
+  InsertMarketplaceQuestion,
+  marketplaceQuestions,
   marketingTexts,
   materials,
   notifications,
@@ -1578,4 +1580,94 @@ export async function listProductCostFields() {
   return db
     .select({ id: products.id, packagingCost: products.packagingCost, shippingCost: products.shippingCost })
     .from(products);
+}
+
+/* ------------------------- Pazaryeri Soruları (Q&A) ------------------------- */
+
+/** Katalog eşleşmesi için hafif ürün referansları (id, ad, barkod). */
+export async function listProductRefs() {
+  const db = await requireDb();
+  return db
+    .select({ id: products.id, name: products.name, barcode: products.barcode })
+    .from(products);
+}
+
+/** Soru listesi (en yeni önce); durum verilirse filtrelenir. Ürün adı katalogdan bağlanır. */
+export async function listMarketplaceQuestions(
+  status?: "open" | "draft" | "answered" | "rejected",
+  limit = 200,
+) {
+  const db = await requireDb();
+  return db
+    .select({
+      id: marketplaceQuestions.id,
+      marketplace: marketplaceQuestions.marketplace,
+      questionId: marketplaceQuestions.questionId,
+      productId: marketplaceQuestions.productId,
+      productBarcode: marketplaceQuestions.productBarcode,
+      customerName: marketplaceQuestions.customerName,
+      questionText: marketplaceQuestions.questionText,
+      askedAt: marketplaceQuestions.askedAt,
+      status: marketplaceQuestions.status,
+      draftAnswer: marketplaceQuestions.draftAnswer,
+      finalAnswer: marketplaceQuestions.finalAnswer,
+      answeredAt: marketplaceQuestions.answeredAt,
+      createdAt: marketplaceQuestions.createdAt,
+      productName: products.name,
+    })
+    .from(marketplaceQuestions)
+    .leftJoin(products, eq(marketplaceQuestions.productId, products.id))
+    .where(status ? eq(marketplaceQuestions.status, status) : undefined)
+    .orderBy(desc(marketplaceQuestions.askedAt), desc(marketplaceQuestions.id))
+    .limit(limit);
+}
+
+export async function getMarketplaceQuestion(id: number) {
+  const db = await requireDb();
+  const rows = await db
+    .select()
+    .from(marketplaceQuestions)
+    .where(eq(marketplaceQuestions.id, id))
+    .limit(1);
+  return rows[0];
+}
+
+/** (marketplace, questionId) benzersiz anahtarıyla mevcut kaydı bulur. */
+export async function getMarketplaceQuestionByKey(marketplace: string, questionId: string) {
+  const db = await requireDb();
+  const rows = await db
+    .select()
+    .from(marketplaceQuestions)
+    .where(
+      and(
+        eq(marketplaceQuestions.marketplace, marketplace),
+        eq(marketplaceQuestions.questionId, questionId),
+      ),
+    )
+    .limit(1);
+  return rows[0];
+}
+
+export async function insertMarketplaceQuestion(values: InsertMarketplaceQuestion) {
+  const db = await requireDb();
+  const [res] = await db.insert(marketplaceQuestions).values(values);
+  return Number(res.insertId);
+}
+
+export async function updateMarketplaceQuestion(
+  id: number,
+  patch: Partial<InsertMarketplaceQuestion>,
+) {
+  const db = await requireDb();
+  await db.update(marketplaceQuestions).set(patch).where(eq(marketplaceQuestions.id, id));
+}
+
+/** Bekleyen soru sayısı (açık + taslak) — sidebar rozeti için. */
+export async function countPendingMarketplaceQuestions(): Promise<number> {
+  const db = await requireDb();
+  const rows = await db
+    .select({ count: sql<number>`COUNT(*)` })
+    .from(marketplaceQuestions)
+    .where(inArray(marketplaceQuestions.status, ["open", "draft"]));
+  return Number(rows[0]?.count ?? 0);
 }

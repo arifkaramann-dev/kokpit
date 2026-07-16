@@ -1,6 +1,7 @@
 import { ENV } from "./_core/env";
 import * as db from "./db";
-import { itemsTotal, summarizeItems, toItemRows, type OrderItemLike } from "./orderUtils";
+import { itemsTotal, resolveProductIdForItem, summarizeItems, toItemRows, type OrderItemLike } from "./orderUtils";
+import { mergeQuestion, type MappedQuestion, type RemoteQuestionStatus } from "./questionUtils";
 
 /**
  * Trendyol Satıcı API entegrasyonu.
@@ -378,4 +379,191 @@ export async function syncTrendyolOrders(daysBack = 14) {
   }
 
   return { imported, skipped, updated };
+}
+
+/* ------------------------- Soru & Cevap (Q&A) ------------------------- */
+
+/**
+ * Trendyol müşteri soruları API'si.
+ * Belgeler: developers.trendyol.com → Soru & Cevap Entegrasyonu
+ * (GET questions/filter, POST questions/{id}/answers).
+ */
+
+export type TrendyolQuestion = {
+  id: number;
+  text: string;
+  status: string;
+  creationDate?: number;
+  /** Soruyu soran müşterinin görünen adı (gizliyse boş gelebilir). */
+  userName?: string | null;
+  customerName?: string | null;
+  productName?: string | null;
+  /** Sorunun sorulduğu listelemenin barkodu — katalog eşleşmesi için. */
+  barcode?: string | null;
+  answer?: { text?: string | null; creationDate?: number } | null;
+};
+
+type TrendyolQuestionsResponse = {
+  page: number;
+  size: number;
+  totalPages?: number;
+  totalElements?: number;
+  content?: TrendyolQuestion[];
+};
+
+/** Trendyol soru durumu → yerel durum. Bilinmeyen durumlar açık sayılır (görünür kalsın). */
+const QUESTION_STATUS_MAP: Record<string, RemoteQuestionStatus> = {
+  WAITING_FOR_ANSWER: "open",
+  // Cevap gönderildi, Trendyol onayı bekliyor — kuyruktan düşür.
+  WAITING_FOR_APPROVE: "answered",
+  ANSWERED: "answered",
+  // Soru satıcı tarafından raporlandı ya da cevap Trendyol tarafından reddedildi.
+  REPORTED: "rejected",
+  REJECTED: "rejected",
+};
+
+/** Bir Trendyol sorusunu yerel şemaya çevirir (saf fonksiyon). */
+export function mapTrendyolQuestion(q: TrendyolQuestion): MappedQuestion {
+  const remoteStatus = QUESTION_STATUS_MAP[q.status] ?? "open";
+  const answerText = q.answer?.text?.trim() || null;
+  return {
+    marketplace: "trendyol",
+    questionId: String(q.id),
+    questionText: (q.text ?? "").trim(),
+    customerName: q.userName?.trim() || q.customerName?.trim() || null,
+    productName: q.productName?.trim() || null,
+    productBarcode: q.barcode?.trim() || null,
+    productId: null, // senkron katalogla eşleştirip doldurur
+    askedAt: q.creationDate ? new Date(q.creationDate) : null,
+    remoteStatus,
+    remoteAnswer: answerText,
+    remoteAnsweredAt: q.answer?.creationDate ? new Date(q.answer.creationDate) : null,
+  };
+}
+
+// Q&A endpoint'i sayfa başına en fazla 50 kayıt kabul eder.
+const QUESTION_PAGE_SIZE = 50;
+
+async function fetchQuestionsPage(page: number, startDate: number, endDate: number) {
+  const url = new URL(
+    `${TRENDYOL_API_BASE}/integration/qna/sellers/${ENV.trendyolSellerId}/questions/filter`
+  );
+  url.searchParams.set("startDate", String(startDate));
+  url.searchParams.set("endDate", String(endDate));
+  url.searchParams.set("page", String(page));
+  url.searchParams.set("size", String(QUESTION_PAGE_SIZE));
+  url.searchParams.set("orderByField", "LastModifiedDate");
+  url.searchParams.set("orderByDirection", "DESC");
+
+  const res = await fetch(url, {
+    headers: { ...trendyolHeaders(), Accept: "application/json" },
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    throw new Error(
+      "Trendyol API bilgileri reddedildi (yetki hatası). API Key/Secret ve Satıcı ID'yi kontrol edin."
+    );
+  }
+  if (!res.ok) {
+    const body = (await res.text()).slice(0, 200);
+    throw new Error(`Trendyol soru API hatası (${res.status}): ${body}`);
+  }
+  return (await res.json()) as TrendyolQuestionsResponse;
+}
+
+/**
+ * Son `daysBack` günün Trendyol müşteri sorularını çekip yerel kuyruğa işler.
+ * (marketplace, questionId) benzersizdir: aynı soru ikinci senkronda mükerrer
+ * YARATMAZ; değişen alanlar güncellenir, pazaryerinde cevaplanmışsa durum
+ * answered'a çekilir (birleştirme kuralları: questionUtils.mergeQuestion).
+ */
+export async function syncTrendyolQuestions(daysBack = 14) {
+  if (!isTrendyolConfigured()) {
+    throw new Error(
+      "Trendyol entegrasyonu yapılandırılmamış: TRENDYOL_SELLER_ID, TRENDYOL_API_KEY ve TRENDYOL_API_SECRET ortam değişkenlerini ayarlayın."
+    );
+  }
+
+  const endDate = Date.now();
+  const startDate = endDate - daysBack * 24 * 60 * 60 * 1000;
+
+  const refs = await db.listProductRefs();
+  let imported = 0;
+  let updated = 0;
+  let skipped = 0;
+  // Aynı soru sayfalar arasında tekrar gelebilir; tek çekimde bir kez işle.
+  const seen = new Set<string>();
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const data = await fetchQuestionsPage(page, startDate, endDate);
+    const questions = data.content ?? [];
+
+    for (const raw of questions) {
+      const mapped = mapTrendyolQuestion(raw);
+      if (!mapped.questionText) {
+        skipped++;
+        continue;
+      }
+      if (seen.has(mapped.questionId)) {
+        skipped++;
+        continue;
+      }
+      seen.add(mapped.questionId);
+
+      // Barkod → ad sırasıyla katalog eşleşmesi (sipariş kalemleriyle aynı mantık).
+      mapped.productId = resolveProductIdForItem(
+        { productName: mapped.productName ?? "", barcode: mapped.productBarcode },
+        refs,
+      );
+
+      const existing = await db.getMarketplaceQuestionByKey("trendyol", mapped.questionId);
+      const merge = mergeQuestion(existing ?? null, mapped);
+      if (merge.action === "insert") {
+        await db.insertMarketplaceQuestion(merge.values);
+        imported++;
+      } else if (merge.action === "update") {
+        await db.updateMarketplaceQuestion(existing!.id, merge.patch);
+        updated++;
+      } else {
+        skipped++;
+      }
+    }
+
+    if (page >= (data.totalPages ?? 1) - 1) break;
+  }
+
+  return { imported, updated, skipped };
+}
+
+/**
+ * Trendyol sorusuna cevap gönderir (POST answers). Trendyol cevap metnini
+ * 10–2000 karakter arası ister; sınır dışıysa istek atılmadan hata verilir.
+ */
+export async function answerTrendyolQuestion(questionId: string, text: string) {
+  if (!isTrendyolConfigured()) {
+    throw new Error("Trendyol entegrasyonu yapılandırılmamış (Satıcı ID, API Key, API Secret gerekli).");
+  }
+  const trimmed = text.trim();
+  if (trimmed.length < 10) {
+    throw new Error("Trendyol cevabı en az 10 karakter olmalı.");
+  }
+  if (trimmed.length > 2000) {
+    throw new Error("Trendyol cevabı en fazla 2000 karakter olabilir.");
+  }
+
+  const url = `${TRENDYOL_API_BASE}/integration/qna/sellers/${ENV.trendyolSellerId}/questions/${encodeURIComponent(questionId)}/answers`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { ...trendyolHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ text: trimmed }),
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    throw new Error("Trendyol API bilgileri reddedildi (yetki hatası). API Key/Secret ve Satıcı ID'yi kontrol edin.");
+  }
+  if (!res.ok) {
+    const body = (await res.text()).slice(0, 300);
+    throw new Error(`Trendyol cevap gönderimi başarısız (${res.status}): ${body}`);
+  }
+  return { ok: true as const, answer: trimmed };
 }
