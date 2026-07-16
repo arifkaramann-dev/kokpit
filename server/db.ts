@@ -222,6 +222,20 @@ export async function createProduct(data: InsertProduct) {
 
 export async function updateProduct(id: number, data: Partial<InsertProduct>) {
   const db = await requireDb();
+  // Stok, ürün kartından mutlak değerle değiştirildiyse aradaki fark hareket
+  // defterine işlenir; böylece productMovements ile stockQty sessizce ayrışmaz.
+  if (data.stockQty !== undefined && data.stockQty !== null) {
+    const current = await getProduct(id);
+    const delta = data.stockQty - (current?.stockQty ?? 0);
+    if (current && delta !== 0) {
+      await db.insert(productMovements).values({
+        productId: id,
+        type: delta > 0 ? "in" : "out",
+        qty: String(Math.abs(delta)),
+        note: "Elle düzeltme (ürün kartı)",
+      });
+    }
+  }
   await db.update(products).set(data).where(eq(products.id, id));
 }
 
@@ -274,6 +288,42 @@ export async function updateFormulaItem(id: number, qty: number, note?: string) 
 export async function deleteFormulaItem(id: number) {
   const db = await requireDb();
   await db.delete(formulaItems).where(eq(formulaItems.id, id));
+}
+
+/**
+ * Kaynak ürünün reçetesini hedefe kopyalar (hedefin mevcut kalemleri silinir).
+ * Çarpan set/paket türevleri için: miktarlar multiplier ile çarpılır.
+ */
+export async function copyFormula(fromProductId: number, toProductId: number, multiplier = 1) {
+  const db = await requireDb();
+  const source = await listFormulaItems(fromProductId);
+  if (source.length === 0) return { copied: 0 };
+  await db.delete(formulaItems).where(eq(formulaItems.productId, toProductId));
+  for (const item of source) {
+    await addFormulaItem(
+      toProductId,
+      item.materialId,
+      (parseFloat(String(item.qty)) || 0) * multiplier,
+      item.note ?? undefined,
+    );
+  }
+  return { copied: source.length };
+}
+
+/** Hammaddenin geçtiği ürün reçeteleri (kritik stok "neyi etkiliyor" analizi). */
+export async function listMaterialUsage(materialId: number) {
+  const db = await requireDb();
+  return db
+    .select({
+      productId: formulaItems.productId,
+      qty: formulaItems.qty,
+      productName: products.name,
+      parentId: products.parentId,
+    })
+    .from(formulaItems)
+    .leftJoin(products, eq(formulaItems.productId, products.id))
+    .where(eq(formulaItems.materialId, materialId))
+    .orderBy(products.name);
 }
 
 /* ------------------------- Orders (Siparişler) ------------------------- */
@@ -941,11 +991,33 @@ async function applyItemsStock(
   }
 }
 
+/** Ürünün mamul stok hareket geçmişi (üretim/satış/iade/elle düzeltme). */
+export async function listProductMovements(productId: number, limit = 50) {
+  const db = await requireDb();
+  return db
+    .select()
+    .from(productMovements)
+    .where(eq(productMovements.productId, productId))
+    .orderBy(desc(productMovements.id))
+    .limit(limit);
+}
+
 /** Üretim emri kaydı + mamul stok girişi (hammadde düşümü çağıran tarafta). */
 export async function recordProductionRun(productId: number, qty: number, note?: string | null) {
   const db = await requireDb();
   await db.insert(productionRuns).values({ productId, qty, note: note ?? null });
   await recordProductMovement(productId, "in", qty, "Üretim girişi");
+}
+
+export async function getProductionRun(id: number) {
+  const db = await requireDb();
+  const rows = await db.select().from(productionRuns).where(eq(productionRuns.id, id)).limit(1);
+  return rows[0];
+}
+
+export async function setProductionRunNote(id: number, note: string) {
+  const db = await requireDb();
+  await db.update(productionRuns).set({ note }).where(eq(productionRuns.id, id));
 }
 
 export async function listProductionRuns(limit = 50) {

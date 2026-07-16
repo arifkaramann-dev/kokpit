@@ -26,10 +26,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { formatQty, formatTL, MATERIAL_CATEGORIES, num, UNITS } from "@/lib/format";
+import { formatDate, formatQty, formatTL, MATERIAL_CATEGORIES, num, UNITS } from "@/lib/format";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { trpc } from "@/lib/trpc";
-import { AlertTriangle, ArrowDownToLine, ArrowUpFromLine, Pencil, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowDownToLine, ArrowUpFromLine, History, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -52,6 +52,7 @@ const emptyForm = {
   stockQty: "",
   criticalQty: "",
   unitCost: "",
+  supplierId: "",
   notes: "",
 };
 
@@ -66,6 +67,7 @@ export default function Stock() {
   const utils = trpc.useUtils();
   const confirm = useConfirm();
   const { data: materials, isLoading } = trpc.materials.list.useQuery();
+  const { data: supplierList } = trpc.suppliers.list.useQuery();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<MaterialRow | null>(null);
   const [form, setForm] = useState(emptyForm);
@@ -73,6 +75,21 @@ export default function Stock() {
   const [stockQty, setStockQty] = useState("");
   const [stockNote, setStockNote] = useState("");
   const [filter, setFilter] = useState("all");
+  const [search, setSearch] = useState("");
+  // Hareket geçmişi + "hangi ürünlerde kullanılıyor" dialogu.
+  const [detailFor, setDetailFor] = useState<MaterialRow | null>(null);
+  const { data: movementList } = trpc.materials.movements.useQuery(
+    { materialId: detailFor?.id ?? 0 },
+    { enabled: !!detailFor },
+  );
+  const { data: usageList } = trpc.materials.usage.useQuery(
+    { materialId: detailFor?.id ?? 0 },
+    { enabled: !!detailFor },
+  );
+  const supplierById = useMemo(
+    () => new Map((supplierList ?? []).map(s => [s.id, s.name])),
+    [supplierList],
+  );
 
   const createMaterial = trpc.materials.create.useMutation({
     onSuccess: () => {
@@ -116,14 +133,30 @@ export default function Stock() {
   });
 
   const filtered = useMemo(() => {
-    const list = (materials as MaterialRow[]) ?? [];
-    if (filter === "all") return list;
-    if (filter === "critical") return list.filter(m => num(m.stockQty) <= num(m.criticalQty));
-    return list.filter(m => m.category === filter);
-  }, [materials, filter]);
+    let list = (materials as MaterialRow[]) ?? [];
+    if (filter === "critical") list = list.filter(m => num(m.stockQty) <= num(m.criticalQty));
+    else if (filter !== "all") list = list.filter(m => m.category === filter);
+    const q = search.trim().toLowerCase();
+    if (q) {
+      list = list.filter(
+        m => m.name.toLowerCase().includes(q) || (m.notes ?? "").toLowerCase().includes(q),
+      );
+    }
+    return list;
+  }, [materials, filter, search]);
 
   const criticalCount = useMemo(
     () => ((materials as MaterialRow[]) ?? []).filter(m => num(m.stockQty) <= num(m.criticalQty)).length,
+    [materials],
+  );
+
+  // Envanter değeri: eldeki hammaddenin toplam maliyet karşılığı.
+  const inventoryValue = useMemo(
+    () =>
+      ((materials as MaterialRow[]) ?? []).reduce(
+        (sum, m) => sum + num(m.stockQty) * num(m.unitCost),
+        0,
+      ),
     [materials],
   );
 
@@ -142,6 +175,7 @@ export default function Stock() {
       stockQty: m.stockQty,
       criticalQty: m.criticalQty,
       unitCost: m.unitCost,
+      supplierId: m.supplierId ? String(m.supplierId) : "",
       notes: m.notes ?? "",
     });
     setDialogOpen(true);
@@ -159,6 +193,7 @@ export default function Stock() {
       stockQty: parseFloat(form.stockQty) || 0,
       criticalQty: parseFloat(form.criticalQty) || 0,
       unitCost: parseFloat(form.unitCost) || 0,
+      supplierId: form.supplierId ? Number(form.supplierId) : null,
       notes: form.notes || null,
     };
     if (editing) {
@@ -195,6 +230,15 @@ export default function Stock() {
       )}
 
       <div className="flex items-center gap-2 flex-wrap">
+        <div className="relative max-w-xs flex-1 min-w-[180px]">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Hammadde ara..."
+            className="pl-8"
+          />
+        </div>
         <Select value={filter} onValueChange={setFilter}>
           <SelectTrigger className="w-52">
             <SelectValue />
@@ -210,6 +254,9 @@ export default function Stock() {
           </SelectContent>
         </Select>
         <span className="text-sm text-muted-foreground">{filtered.length} malzeme</span>
+        <span className="ml-auto text-sm text-muted-foreground">
+          Envanter değeri: <span className="font-semibold text-foreground">{formatTL(inventoryValue)}</span>
+        </span>
       </div>
 
       <Card className="overflow-hidden p-0">
@@ -245,7 +292,11 @@ export default function Stock() {
                 <TableRow key={m.id} className={isCritical ? "bg-amber-50/60 dark:bg-amber-950/20" : ""}>
                   <TableCell>
                     <div className="font-medium">{m.name}</div>
-                    {m.notes && <div className="text-xs text-muted-foreground line-clamp-1">{m.notes}</div>}
+                    <div className="text-xs text-muted-foreground line-clamp-1">
+                      {[m.supplierId ? supplierById.get(m.supplierId) : null, m.notes]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </div>
                   </TableCell>
                   <TableCell>
                     <Badge variant="secondary">{m.category}</Badge>
@@ -281,6 +332,15 @@ export default function Stock() {
                         onClick={() => setStockDialog({ material: m, type: "out" })}
                       >
                         <ArrowUpFromLine className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7"
+                        title="Hareket geçmişi + hangi ürünlerde kullanılıyor"
+                        onClick={() => setDetailFor(m)}
+                      >
+                        <History className="h-3.5 w-3.5" />
                       </Button>
                       <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(m)}>
                         <Pencil className="h-3.5 w-3.5" />
@@ -395,12 +455,31 @@ export default function Stock() {
               </div>
             </div>
             <div className="space-y-1.5">
+              <Label>Tedarikçi</Label>
+              <Select
+                value={form.supplierId || "__none__"}
+                onValueChange={v => setForm(f => ({ ...f, supplierId: v === "__none__" ? "" : v }))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Tedarikçi seç (opsiyonel)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— Tedarikçi yok —</SelectItem>
+                  {(supplierList ?? []).map(s => (
+                    <SelectItem key={s.id} value={String(s.id)}>
+                      {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
               <Label>Notlar</Label>
               <Textarea
                 value={form.notes}
                 onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
                 rows={2}
-                placeholder="Tedarikçi bilgisi, ürün kodu vb."
+                placeholder="Ürün kodu, parti bilgisi vb."
               />
             </div>
           </div>
@@ -473,6 +552,70 @@ export default function Stock() {
               Onayla
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Hareket geçmişi + kullanım dialogu */}
+      <Dialog open={!!detailFor} onOpenChange={open => !open && setDetailFor(null)}>
+        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{detailFor?.name} — Hareketler &amp; Kullanım</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <p className="text-xs font-medium text-muted-foreground">
+                Bu hammaddeyi kullanan reçeteler
+              </p>
+              {(usageList ?? []).length === 0 && (
+                <p className="text-xs text-muted-foreground py-1">
+                  Hiçbir ürün reçetesinde geçmiyor.
+                </p>
+              )}
+              <div className="max-h-40 overflow-y-auto space-y-1">
+                {(usageList ?? []).map((u, i) => (
+                  <div
+                    key={`${u.productId}-${i}`}
+                    className="flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs"
+                  >
+                    <span className="font-medium flex-1 min-w-0 truncate">
+                      {u.productName ?? "Silinmiş ürün"}
+                    </span>
+                    <span className="text-muted-foreground whitespace-nowrap">
+                      {formatQty(u.qty)} {detailFor?.unit}/adet
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-xs font-medium text-muted-foreground">
+                Son stok hareketleri
+              </p>
+              {(movementList ?? []).length === 0 && (
+                <p className="text-xs text-muted-foreground py-1">Henüz hareket kaydı yok.</p>
+              )}
+              <div className="max-h-64 overflow-y-auto space-y-1">
+                {(movementList ?? []).map(mv => (
+                  <div
+                    key={mv.id}
+                    className="flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs"
+                  >
+                    <span className="text-muted-foreground whitespace-nowrap">
+                      {formatDate(mv.createdAt)}
+                    </span>
+                    <Badge
+                      variant="outline"
+                      className={`text-[10px] ${mv.type === "in" ? "text-emerald-600 border-emerald-300" : "text-rose-600 border-rose-300"}`}
+                    >
+                      {mv.type === "in" ? "+" : "−"}
+                      {formatQty(mv.qty)} {detailFor?.unit}
+                    </Badge>
+                    <span className="text-muted-foreground truncate">{mv.note ?? "-"}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

@@ -161,6 +161,29 @@ tetikleyebiliyordu); (5) `dedupeOrders` artık `deleteOrder` üzerinden siler
 (base64/MEDIUMTEXT) + mamul hareket artıklarını da temizler; (7) dönüşmüş teklif
 düzenlenemez (siparişle sessiz ayrışma engellendi). 124/124 test, build ✓.
 
+**Ürün & Üretim sprint'i ✔ yapıldı (16.07.2026):** modül baştan sona denetlendi,
+8 eksik kapatıldı (migration gerekmedi, mevcut tablolar yetti):
+- **Üretim Kuyruğu:** eksi stok / kritik eşik altındaki mamuller Üretim sayfasının
+  tepesinde önerilen adetle listelenir (Stok Nöbetçisi kuralıyla aynı); "X adet
+  planla" tıklayınca planlayıcı dolar. Reçetesiz ürünler işaretli.
+- **Üretim geçmişi + geri alma:** `production.runs` artık ekranda (tarih/ürün/
+  adet/not); yanlış emir "geri al" ile düzeltilir (`production.undo`: hammadde
+  güncel reçeteye göre iade, mamul stok düşümü, kayıt silinmez — nota ⛔ damgası).
+- **Planlayıcı akıllandı:** hiyerarşik ürün seçici (ana → türev, reçetesizler
+  "(reçete yok)"), mevcut hammaddeyle üretilebilecek azami adet, adet başı maliyet;
+  üretim kaydı artık ürün stoğu/kokpit/geçmiş önbelleklerini de tazeliyor.
+- **Mamul stok defteri UI:** ürün satırında kutu ikonu → giriş/çıkış (not ile,
+  `products.adjustStock`) + hareket geçmişi (`products.movements`). Ürün kartından
+  mutlak stok değişikliği de artık otomatik hareket kaydı düşer (defter ayrışmaz).
+- **Hammadde derinliği:** Stok sayfasında arama, toplam envanter değeri, formda
+  tedarikçi seçimi (schema'daki supplierId nihayet bağlandı), hareket geçmişi +
+  "hangi reçetelerde kullanılıyor" dialogu (`materials.usage`).
+- **Reçete kopyalama:** Formül Defteri'nde "Reçete Kopyala" — kaynak ürün + çarpan
+  (2'li set→2, yarım boy→0,5), mevcut kalemler değiştirilir (`formula.copyFrom`).
+  Kalem satırında maliyet payı %.
+- **Ürünler:** arama artık barkod/renk kodunu da bulur; "HB'ye Gönder" butonu
+  (Trendyol'un yanında). Doğrulama: 0 tip hatası, 124/124 test, build ✓.
+
 **Kod dışı bekleyenler (kullanıcı/dış taraf):** e-Fatura entegratör anlaşması
 (İzibiz/Foriba), N11-Çiçeksepeti API anahtarları, Hepsiburada API onayı,
 uptime monitörü kurulumu (cron-job.org → /api/health, 10 dk'da bir).

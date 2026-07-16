@@ -221,6 +221,23 @@ Hepsiburada push yok, web sitesi (Qukasoft) entegrasyonu yok.
       (finance.test.ts 16 + report.channel.test.ts 11); toplam 116/116 test
 - [x] Doğrulama: 0 tip hatası, build ✓ (migration canlıda otomatik koşar)
 
+## ÜRÜN & ÜRETİM SPRINT — 16.07.2026 (tamamlandı)
+- [x] Üretim Kuyruğu: eksi stok / kritik eşik altı mamuller + önerilen adet + tıkla-planla
+      (Üretim sayfası; Stok Nöbetçisi kuralıyla aynı filtre)
+- [x] Üretim geçmişi ekranda (production.runs) + üretim emri geri alma (production.undo:
+      hammadde iadesi güncel reçeteyle, mamul stok düşümü, kayıt nota ⛔ damgasıyla korunur)
+- [x] Planlayıcı: hiyerarşik ürün seçici + "(reçete yok)" işareti, azami üretilebilir adet,
+      adet başı maliyet, doğru önbellek tazeleme (ürün stoğu/kokpit/geçmiş)
+- [x] Mamul stok defteri UI: ürün satırından giriş/çıkış + hareket geçmişi
+      (products.adjustStock / products.movements); ürün kartındaki mutlak stok değişikliği
+      artık otomatik hareket kaydı düşer (defter-stok ayrışması kapatıldı)
+- [x] Stok sayfası: hammadde arama, envanter değeri toplamı, tedarikçi seçimi (supplierId
+      bağlandı), hareket geçmişi + "hangi reçetelerde kullanılıyor" (materials.usage)
+- [x] Formül Defteri: başka üründen reçete kopyalama (formula.copyFrom, çarpanlı) +
+      kalem başına maliyet payı %
+- [x] Ürünler: aramada barkod/renk kodu; "HB'ye Gönder" (pushToHepsiburada butonu)
+- [x] Doğrulama: 0 tip hatası, 124/124 test, build ✓ (migration gerekmedi)
+
 ## Canlıda (Render) doğrulama bekleyenler — kod tarafı hazır
 - [ ] Trendyol: "Bağlantıyı Test Et" HTTP 200 + sipariş akışı + "Trendyol'a Gönder" (stok/fiyat)
 - [ ] Trendyol resmi kargo etiketi (ZPL→Labelary→PDF; kargo takip no dolunca)

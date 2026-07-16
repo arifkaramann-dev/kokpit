@@ -222,6 +222,8 @@ export const appRouter = router({
       .input(z.object({ materialId: z.number(), type: z.enum(["in", "out"]), qty: z.number().positive(), note: z.string().optional() }))
       .mutation(({ input }) => db.adjustStock(input.materialId, input.type, input.qty, input.note)),
     movements: protectedProcedure.input(z.object({ materialId: z.number() })).query(({ input }) => db.listStockMovements(input.materialId)),
+    // Hammaddenin geçtiği reçeteler: kritik stok "hangi ürünleri etkiliyor" analizi.
+    usage: protectedProcedure.input(z.object({ materialId: z.number() })).query(({ input }) => db.listMaterialUsage(input.materialId)),
   }),
 
   products: router({
@@ -236,6 +238,21 @@ export const appRouter = router({
         db.updateProduct(input.id, toDecimalFields(input.data, ["salePrice", "discountPercent", "packagingCost", "shippingCost"]) as never),
       ),
     delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteProduct(input.id)),
+    // Mamul stok hareket geçmişi: üretim/satış/iade/elle düzeltme kayıtları.
+    movements: protectedProcedure
+      .input(z.object({ productId: z.number() }))
+      .query(({ input }) => db.listProductMovements(input.productId)),
+    // Mamul stok giriş/çıkışı hareket kaydıyla (sayım farkı, fire, numune vb.).
+    adjustStock: protectedProcedure
+      .input(z.object({ productId: z.number(), type: z.enum(["in", "out"]), qty: z.number().positive(), note: z.string().optional() }))
+      .mutation(({ input }) =>
+        db.recordProductMovement(
+          input.productId,
+          input.type,
+          input.qty,
+          input.note?.trim() || (input.type === "in" ? "Elle giriş" : "Elle çıkış"),
+        ),
+      ),
     // Ana üründen yüzey × ambalaj × renk kombinasyonlarını tek tıkla türetir.
     deriveMany: protectedProcedure
       .input(
@@ -435,6 +452,30 @@ export const appRouter = router({
       }),
     // Üretim geçmişi: son üretim emirleri (ürün adıyla).
     runs: protectedProcedure.query(() => db.listProductionRuns(50)),
+    // Yanlış girilen üretim emrini geri alır: hammaddeler GÜNCEL reçeteye göre
+    // stoğa iade edilir, mamul stok girişi geri düşülür. Kayıt silinmez —
+    // notuna "geri alındı" damgası vurulur (izlenebilirlik).
+    undo: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        const run = await db.getProductionRun(input.id);
+        if (!run) throw new TRPCError({ code: "NOT_FOUND", message: "Üretim kaydı bulunamadı" });
+        if (run.note?.startsWith("⛔")) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Bu üretim kaydı zaten geri alınmış." });
+        }
+        const product = await db.getProduct(run.productId);
+        const formula = await db.listFormulaItems(run.productId);
+        for (const f of formula) {
+          const back = run.qty * (parseFloat(String(f.qty)) || 0);
+          if (back > 0) {
+            await db.adjustStock(f.materialId, "in", back, `Üretim geri alındı: ${run.qty}× ${product?.name ?? `#${run.productId}`}`);
+          }
+        }
+        await db.recordProductMovement(run.productId, "out", run.qty, "Üretim geri alındı");
+        const stamp = new Date().toLocaleDateString("tr-TR");
+        await db.setProductionRunNote(input.id, `⛔ Geri alındı (${stamp})${run.note ? ` — ${run.note}` : ""}`);
+        return { restoredMaterials: formula.length };
+      }),
   }),
 
   formula: router({
@@ -446,6 +487,26 @@ export const appRouter = router({
       .input(z.object({ id: z.number(), qty: z.number().positive(), note: z.string().optional() }))
       .mutation(({ input }) => db.updateFormulaItem(input.id, input.qty, input.note)),
     delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteFormulaItem(input.id)),
+    // Başka ürünün reçetesini bu ürüne kopyalar (mevcut kalemler değiştirilir).
+    // Çarpan: set/paket türevleri için miktarları katlar (örn. 2'li set → 2).
+    copyFrom: protectedProcedure
+      .input(
+        z.object({
+          fromProductId: z.number(),
+          toProductId: z.number(),
+          multiplier: z.number().positive().max(100).default(1),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        if (input.fromProductId === input.toProductId) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Kaynak ve hedef ürün aynı olamaz." });
+        }
+        const result = await db.copyFormula(input.fromProductId, input.toProductId, input.multiplier);
+        if (result.copied === 0) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Kaynak ürünün reçetesi boş — kopyalanacak kalem yok." });
+        }
+        return result;
+      }),
   }),
 
   orders: router({

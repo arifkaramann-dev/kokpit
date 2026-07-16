@@ -18,10 +18,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { formatTL } from "@/lib/format";
+import { formatDate, formatQty, formatTL } from "@/lib/format";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { trpc } from "@/lib/trpc";
-import { Beaker, ChevronDown, ChevronRight, Download, Layers, Package, Pencil, Percent, Plus, Printer, Search, Store, Trash2 } from "lucide-react";
+import { Beaker, Boxes, ChevronDown, ChevronRight, Download, Layers, Package, Pencil, Percent, Plus, Printer, Search, Store, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import TemplatePicker from "@/components/TemplatePicker";
 import { toast } from "sonner";
@@ -148,12 +148,13 @@ export default function Products() {
     }
     const q = search.trim().toLowerCase();
     if (!q) return all;
-    return all.filter(
-      p =>
-        p.name.toLowerCase().includes(q) ||
-        (p.series ?? "").toLowerCase().includes(q) ||
-        (childrenOf.get(p.id) ?? []).some(c => c.name.toLowerCase().includes(q)),
-    );
+    // Ad, seri, barkod ve renk kodu üzerinden eşleşir (ana ürün veya türevlerinden biri).
+    const matches = (p: ProductRow) =>
+      p.name.toLowerCase().includes(q) ||
+      (p.series ?? "").toLowerCase().includes(q) ||
+      (p.barcode ?? "").toLowerCase().includes(q) ||
+      (p.colorCode ?? "").toLowerCase().includes(q);
+    return all.filter(p => matches(p) || (childrenOf.get(p.id) ?? []).some(matches));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [products, search, childrenOf, lowStockOnly]);
 
@@ -184,6 +185,39 @@ export default function Products() {
       ),
     onError: e => toast.error(e.message, { duration: 8000 }),
   });
+
+  const pushHepsiburada = trpc.products.pushToHepsiburada.useMutation({
+    onSuccess: r =>
+      toast.success(`Hepsiburada'ya ${r.sent} ürünün stok/fiyatı gönderildi`, { duration: 8000 }),
+    onError: e => toast.error(e.message, { duration: 8000 }),
+  });
+
+  // Mamul stok hareketi: giriş/çıkış + hareket geçmişi dialogu.
+  const [stockFor, setStockFor] = useState<ProductRow | null>(null);
+  const [stockType, setStockType] = useState<"in" | "out">("in");
+  const [stockQtyText, setStockQtyText] = useState("");
+  const [stockNote, setStockNote] = useState("");
+  const { data: productMovementList } = trpc.products.movements.useQuery(
+    { productId: stockFor?.id ?? 0 },
+    { enabled: !!stockFor },
+  );
+  const adjustProductStock = trpc.products.adjustStock.useMutation({
+    onSuccess: () => {
+      utils.products.invalidate();
+      utils.dashboard.summary.invalidate();
+      toast.success("Mamul stok güncellendi");
+      setStockQtyText("");
+      setStockNote("");
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  function openStockDialog(p: ProductRow) {
+    setStockFor(p);
+    setStockType("in");
+    setStockQtyText("");
+    setStockNote("");
+  }
 
   // Satışa hazır katalog dosyası: Excel/pazaryeri şablonlarına yapıştırılabilir.
   function exportCsv() {
@@ -372,6 +406,14 @@ export default function Products() {
           >
             <Store className="h-4 w-4 mr-1" /> Trendyol'a Gönder
           </Button>
+          <Button
+            variant="outline"
+            onClick={() => pushHepsiburada.mutate({})}
+            disabled={pushHepsiburada.isPending}
+            title="Barkodlu ürünlerin stok ve fiyatını Hepsiburada'ya gönder"
+          >
+            <Store className="h-4 w-4 mr-1" /> HB'ye Gönder
+          </Button>
           <Button variant="outline" onClick={() => setBulkOpen(true)}>
             <Percent className="h-4 w-4 mr-1" /> Toplu Fiyat
           </Button>
@@ -480,6 +522,15 @@ export default function Products() {
                     size="icon"
                     variant="ghost"
                     className="h-8 w-8"
+                    title="Mamul stok: giriş/çıkış + hareket geçmişi"
+                    onClick={() => openStockDialog(main)}
+                  >
+                    <Boxes className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-8 w-8"
                     title="Etiket yazdır"
                     onClick={() => printLabel(main)}
                   >
@@ -563,6 +614,15 @@ export default function Products() {
                           onClick={() => setLocation(`/formuller?urun=${v.id}`)}
                         >
                           <Beaker className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7"
+                          title="Mamul stok: giriş/çıkış + hareket geçmişi"
+                          onClick={() => openStockDialog(v)}
+                        >
+                          <Boxes className="h-3.5 w-3.5" />
                         </Button>
                         <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(v)}>
                           <Pencil className="h-3.5 w-3.5" />
@@ -1043,6 +1103,105 @@ export default function Products() {
               Uygula
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!stockFor} onOpenChange={o => !o && setStockFor(null)}>
+        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Mamul Stok — {stockFor?.name}</DialogTitle>
+          </DialogHeader>
+          {stockFor && (() => {
+            // Güncel stok değeri listeden okunur (hareket sonrası tazelenir).
+            const fresh = ((products as ProductRow[]) ?? []).find(p => p.id === stockFor.id) ?? stockFor;
+            return (
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Mevcut stok:{" "}
+                  <span className={`font-semibold ${stockCls(fresh) || "text-foreground"}`}>
+                    {fresh.stockQty} adet
+                  </span>
+                  {fresh.criticalQty > 0 && ` · kritik eşik ${fresh.criticalQty}`}
+                </p>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>İşlem</Label>
+                    <Select value={stockType} onValueChange={v => setStockType(v as "in" | "out")}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="in">Giriş (+)</SelectItem>
+                        <SelectItem value="out">Çıkış (−)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Adet</Label>
+                    <Input
+                      type="number"
+                      min="1"
+                      value={stockQtyText}
+                      onChange={e => setStockQtyText(e.target.value)}
+                      placeholder="0"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Not</Label>
+                    <Input
+                      value={stockNote}
+                      onChange={e => setStockNote(e.target.value)}
+                      placeholder="Sayım farkı, fire, numune..."
+                    />
+                  </div>
+                </div>
+                <Button
+                  className="w-full"
+                  disabled={adjustProductStock.isPending}
+                  onClick={() => {
+                    const q = parseFloat(stockQtyText.replace(",", "."));
+                    if (!q || q <= 0) return toast.error("Geçerli bir adet gir");
+                    adjustProductStock.mutate({
+                      productId: stockFor.id,
+                      type: stockType,
+                      qty: q,
+                      note: stockNote || undefined,
+                    });
+                  }}
+                >
+                  {stockType === "in" ? "Stok Girişi Yap" : "Stok Çıkışı Yap"}
+                </Button>
+                <div className="space-y-1.5">
+                  <p className="text-xs font-medium text-muted-foreground">
+                    Hareket Geçmişi (üretim, satış, iade, düzeltme)
+                  </p>
+                  {(productMovementList ?? []).length === 0 && (
+                    <p className="text-xs text-muted-foreground py-2">Henüz hareket kaydı yok.</p>
+                  )}
+                  <div className="max-h-64 overflow-y-auto space-y-1">
+                    {(productMovementList ?? []).map(mv => (
+                      <div
+                        key={mv.id}
+                        className="flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs"
+                      >
+                        <span className="text-muted-foreground whitespace-nowrap">
+                          {formatDate(mv.createdAt)}
+                        </span>
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] ${mv.type === "in" ? "text-emerald-600 border-emerald-300" : "text-rose-600 border-rose-300"}`}
+                        >
+                          {mv.type === "in" ? "+" : "−"}
+                          {formatQty(mv.qty)}
+                        </Badge>
+                        <span className="text-muted-foreground truncate">{mv.note ?? "-"}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </DialogContent>
       </Dialog>
     </div>

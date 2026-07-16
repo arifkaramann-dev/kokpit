@@ -28,7 +28,7 @@ import {
 import { formatQty, formatTL, num } from "@/lib/format";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { trpc } from "@/lib/trpc";
-import { Beaker, Pencil, Plus, Trash2 } from "lucide-react";
+import { Beaker, Copy, Pencil, Plus, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useSearch } from "wouter";
@@ -85,6 +85,19 @@ export default function Formulas() {
     onSuccess: () => {
       utils.formula.list.invalidate();
       toast.success("Formül kalemi silindi");
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  // Başka üründen reçete kopyalama (mevcut kalemler değiştirilir).
+  const [copyOpen, setCopyOpen] = useState(false);
+  const [copySourceId, setCopySourceId] = useState("");
+  const [copyMultiplier, setCopyMultiplier] = useState("1");
+  const copyFrom = trpc.formula.copyFrom.useMutation({
+    onSuccess: r => {
+      utils.formula.list.invalidate();
+      toast.success(`${r.copied} kalem kopyalandı`);
+      setCopyOpen(false);
     },
     onError: e => toast.error(e.message),
   });
@@ -181,6 +194,19 @@ export default function Formulas() {
             <Plus className="h-4 w-4 mr-1" /> Hammadde Ekle
           </Button>
         )}
+        {productId && (
+          <Button
+            variant="outline"
+            onClick={() => {
+              setCopySourceId("");
+              setCopyMultiplier("1");
+              setCopyOpen(true);
+            }}
+            title="Başka ürünün reçetesini bu ürüne kopyala"
+          >
+            <Copy className="h-4 w-4 mr-1" /> Reçete Kopyala
+          </Button>
+        )}
       </div>
 
       {!productId && (
@@ -260,6 +286,11 @@ export default function Formulas() {
                     </TableCell>
                     <TableCell className="text-right font-medium">
                       {formatTL(num(item.qty) * num(item.materialUnitCost))}
+                      {totalCost > 0 && (
+                        <div className="text-[10px] text-muted-foreground">
+                          %{(((num(item.qty) * num(item.materialUnitCost)) / totalCost) * 100).toFixed(0)} pay
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground max-w-40 truncate">
                       {item.note ?? "-"}
@@ -359,6 +390,77 @@ export default function Formulas() {
             </Button>
             <Button onClick={submit} disabled={addItem.isPending || updateItem.isPending}>
               {editingItem ? "Kaydet" : "Ekle"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reçete kopyalama dialogu */}
+      <Dialog open={copyOpen} onOpenChange={setCopyOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reçete Kopyala — {selectedProduct?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Seçtiğin ürünün reçetesi bu ürüne kopyalanır.
+              {(formulaItems ?? []).length > 0 && (
+                <span className="text-amber-600 font-medium">
+                  {" "}
+                  Bu ürünün mevcut {formulaItems?.length} kalemi silinip yenisiyle değiştirilir.
+                </span>
+              )}
+            </p>
+            <div className="space-y-1.5">
+              <Label>Kaynak Ürün *</Label>
+              <Select value={copySourceId} onValueChange={setCopySourceId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Reçetesi kopyalanacak ürünü seç..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {sortedProducts
+                    .filter(({ p }) => p.id !== productId)
+                    .map(({ p, label }) => (
+                      <SelectItem key={p.id} value={String(p.id)}>
+                        {label}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Çarpan</Label>
+              <Input
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={copyMultiplier}
+                onChange={e => setCopyMultiplier(e.target.value)}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Miktarlar bu sayıyla çarpılır. Örn. 2'li set için 2, yarım boy için 0,5.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCopyOpen(false)}>
+              İptal
+            </Button>
+            <Button
+              disabled={copyFrom.isPending}
+              onClick={() => {
+                if (!copySourceId) return toast.error("Kaynak ürün seç");
+                const mult = parseFloat(copyMultiplier.replace(",", "."));
+                if (!mult || mult <= 0) return toast.error("Geçerli bir çarpan gir");
+                if (!productId) return;
+                copyFrom.mutate({
+                  fromProductId: Number(copySourceId),
+                  toProductId: productId,
+                  multiplier: mult,
+                });
+              }}
+            >
+              Kopyala
             </Button>
           </DialogFooter>
         </DialogContent>
