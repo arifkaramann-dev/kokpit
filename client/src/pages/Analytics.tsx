@@ -1,7 +1,17 @@
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { formatTL, num } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -285,9 +295,165 @@ export default function Analytics() {
               )}
             </Card>
           </div>
+
+          <ChannelProfitSection />
         </>
       )}
     </div>
+  );
+}
+
+/* ------------------------- Kanal Kârlılığı ------------------------- */
+
+type ProfitPeriod = "month" | "30d" | "year";
+
+const PERIODS: { key: ProfitPeriod; label: string }[] = [
+  { key: "month", label: "Bu Ay" },
+  { key: "30d", label: "30 Gün" },
+  { key: "year", label: "Bu Yıl" },
+];
+
+/** Pricing.tsx'teki marj rozeti deseniyle aynı eşikler. */
+function marginBadge(margin: number, hasRevenue: boolean) {
+  if (!hasRevenue) return <Badge variant="outline">veri yok</Badge>;
+  if (margin < 0) return <Badge variant="destructive">%{margin.toFixed(1)}</Badge>;
+  if (margin < 15)
+    return (
+      <Badge variant="outline" className="border-amber-500 text-amber-600">
+        %{margin.toFixed(1)}
+      </Badge>
+    );
+  return (
+    <Badge variant="outline" className="border-emerald-500 text-emerald-600">
+      %{margin.toFixed(1)}
+    </Badge>
+  );
+}
+
+function ChannelProfitSection() {
+  const [period, setPeriod] = useState<ProfitPeriod>("30d");
+  const { data, isLoading } = trpc.report.marketplaceProfit.useQuery({ period });
+
+  const missingProfiles = (data?.channels ?? []).filter(c => !c.hasProfile).map(c => c.channel);
+  const unknownTotal = data?.totals.unknownCostRevenue ?? 0;
+
+  return (
+    <Card className="p-5 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="font-semibold">Kanal Kârlılığı</h2>
+          <p className="text-xs text-muted-foreground">
+            Komisyon, ödeme/işlem bedeli, stopaj ve kargo düşülmüş gerçek net kâr — marj KDV hariç ciroya göredir
+            (Fiyat &amp; Kâr sayfasıyla aynı model). İptal siparişler hariçtir.
+          </p>
+        </div>
+        <div className="flex gap-1">
+          {PERIODS.map(p => (
+            <Button
+              key={p.key}
+              size="sm"
+              variant={period === p.key ? "default" : "outline"}
+              onClick={() => setPeriod(p.key)}
+            >
+              {p.label}
+            </Button>
+          ))}
+        </div>
+      </div>
+
+      {missingProfiles.length > 0 && (
+        <p className="text-xs text-amber-600">
+          Profili tanımlı olmayan kanal: {missingProfiles.join(", ")} — kesintiler hesaba katılmadı, net kâr iyimser
+          olabilir. Fiyat &amp; Kâr sayfasından kanal profili ekleyin.
+        </p>
+      )}
+      {unknownTotal > 0 && (
+        <p className="text-xs text-amber-600">
+          Maliyeti bilinmeyen kalemler (katalog eşleşmesi veya formülü yok) net kâra kâr olarak YAZILMADI; ciroları
+          "maliyeti eksik" sütununda gösterilir. Formül girildikçe net kâr netleşir.
+        </p>
+      )}
+
+      {isLoading ? (
+        <div className="h-32 rounded-xl bg-muted animate-pulse" />
+      ) : !data || data.channels.length === 0 ? (
+        <Empty />
+      ) : (
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Kanal</TableHead>
+                <TableHead className="text-right">Sipariş</TableHead>
+                <TableHead className="text-right">Ciro (KDV dahil)</TableHead>
+                <TableHead className="text-right">Ciro (KDV hariç)</TableHead>
+                <TableHead className="text-right">Kesintiler</TableHead>
+                <TableHead className="text-right">Ürün Maliyeti</TableHead>
+                <TableHead className="text-right">Maliyeti Eksik</TableHead>
+                <TableHead className="text-right">Net Kâr</TableHead>
+                <TableHead className="text-right">Marj</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.channels.map(c => (
+                <TableRow key={c.channel}>
+                  <TableCell className="font-medium">
+                    {c.channel}
+                    {!c.hasProfile && (
+                      <Badge variant="outline" className="ml-2 border-amber-500 text-amber-600">
+                        profil yok
+                      </Badge>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">{c.orderCount}</TableCell>
+                  <TableCell className="text-right">{formatTL(c.revenue)}</TableCell>
+                  <TableCell className="text-right">{formatTL(c.revenueEx)}</TableCell>
+                  <TableCell
+                    className="text-right"
+                    title={`Komisyon ${formatTL(c.commission)} + Ödeme ${formatTL(c.paymentFee)} + İşlem ${formatTL(c.transactionFee)} + Stopaj ${formatTL(c.stopaj)} + Kargo ${formatTL(c.shipping)}`}
+                  >
+                    {formatTL(c.totalFees)}
+                  </TableCell>
+                  <TableCell className="text-right">{formatTL(c.productCost)}</TableCell>
+                  <TableCell className="text-right">
+                    {c.unknownCostItemCount > 0 ? (
+                      <span className="text-amber-600" title={`${c.unknownCostItemCount} kalem — cironun %${c.unknownCostShare.toFixed(1)}'i`}>
+                        {formatTL(c.unknownCostRevenue)}
+                      </span>
+                    ) : (
+                      "—"
+                    )}
+                  </TableCell>
+                  <TableCell className={`text-right font-medium ${c.net < 0 ? "text-red-600" : ""}`}>
+                    {formatTL(c.net)}
+                  </TableCell>
+                  <TableCell className="text-right">{marginBadge(c.margin, c.revenueEx > 0)}</TableCell>
+                </TableRow>
+              ))}
+              <TableRow className="font-semibold border-t-2">
+                <TableCell>Toplam</TableCell>
+                <TableCell className="text-right">{data.totals.orderCount}</TableCell>
+                <TableCell className="text-right">{formatTL(data.totals.revenue)}</TableCell>
+                <TableCell className="text-right">{formatTL(data.totals.revenueEx)}</TableCell>
+                <TableCell className="text-right">{formatTL(data.totals.totalFees)}</TableCell>
+                <TableCell className="text-right">{formatTL(data.totals.productCost)}</TableCell>
+                <TableCell className="text-right">
+                  {data.totals.unknownCostRevenue > 0 ? (
+                    <span className="text-amber-600">{formatTL(data.totals.unknownCostRevenue)}</span>
+                  ) : (
+                    "—"
+                  )}
+                </TableCell>
+                <TableCell className={`text-right ${data.totals.net < 0 ? "text-red-600" : ""}`}>
+                  {formatTL(data.totals.net)}
+                </TableCell>
+                <TableCell className="text-right">{marginBadge(data.totals.margin, data.totals.revenueEx > 0)}</TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </Card>
   );
 }
 

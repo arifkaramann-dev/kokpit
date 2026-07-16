@@ -14,6 +14,8 @@ import { notifyOwner } from "./notify";
  *  - Stok Nöbetçisi (60 dk): kritik hammadde + eksi mamul stoğu → bildirim,
  *    kritik hammaddeler eksik listesine otomatik eklenir
  *  - Sabah Brifingi (her gün 08:00 İstanbul): işletme özeti → bildirim + WhatsApp
+ *  - Tahsilat Takipçisi (her gün 09:00 İstanbul): 30+ gün gecikmiş alacaklar →
+ *    yalnız patrona bildirim (müşteriye otomatik mesaj YOK)
  *
  * Not: Render ücretsiz planda süreç uykuya dalarsa zamanlayıcı da durur;
  * /api/health'e bağlı bir uptime monitörü süreci ayakta tutar.
@@ -23,10 +25,13 @@ import { notifyOwner } from "./notify";
 const SYNC_INTERVAL_MS = 15 * 60 * 1000;
 const STOCK_INTERVAL_MS = 60 * 60 * 1000;
 const BRIEFING_HOUR_TR = 8; // İstanbul saatiyle
+const COLLECTIONS_HOUR_TR = 9; // Tahsilat Takipçisi — brifingin ardından
+const OVERDUE_MIN_DAYS = 30;
 
 const KEY_LAST_SYNC = "scheduler.lastSyncAt";
 const KEY_LAST_STOCK = "scheduler.lastStockCheckAt";
 const KEY_LAST_BRIEFING = "scheduler.lastBriefingDate";
+const KEY_LAST_COLLECTIONS = "scheduler.lastCollectionsDate";
 
 let ticking = false;
 
@@ -38,7 +43,7 @@ export function startScheduler() {
   setInterval(() => {
     void tick();
   }, 60 * 1000);
-  console.log("[scheduler] başladı (senkron 15dk, stok nöbeti 60dk, brifing 08:00 TR)");
+  console.log("[scheduler] başladı (senkron 15dk, stok nöbeti 60dk, brifing 08:00 TR, tahsilat takibi 09:00 TR)");
 }
 
 async function tick() {
@@ -65,6 +70,11 @@ async function tick() {
     if (istanbulHour(new Date()) >= BRIEFING_HOUR_TR && cfg[KEY_LAST_BRIEFING] !== todayTR) {
       await db.setSettings({ [KEY_LAST_BRIEFING]: todayTR });
       await runMorningBriefing();
+    }
+
+    if (istanbulHour(new Date()) >= COLLECTIONS_HOUR_TR && cfg[KEY_LAST_COLLECTIONS] !== todayTR) {
+      await db.setSettings({ [KEY_LAST_COLLECTIONS]: todayTR });
+      await runCollectionsChaser();
     }
   } catch (error) {
     // DB yoksa (yerel araç çalıştırma) sessizce geç; diğer hataları logla.
@@ -162,6 +172,30 @@ async function runStockSentry() {
       link: "/uretim",
     });
   }
+}
+
+/**
+ * Tahsilat Takipçisi: 30+ gündür ödenmemiş/kısmi kalmış siparişi olan
+ * müşterileri patrona özetler. Müşteriye OTOMATİK MESAJ GÖNDERMEZ — patron
+ * Müşteriler sayfasındaki WhatsApp linkiyle kendisi ulaşır. Gecikmiş alacak
+ * yoksa sessiz kalır; günlük tarih anahtarı aynı gün ikinci koşuyu engeller.
+ */
+async function runCollectionsChaser() {
+  const overdue = await db.listOverdueReceivables(OVERDUE_MIN_DAYS);
+  if (overdue.length === 0) return;
+  const tl = (n: number) => `${n.toLocaleString("tr-TR", { maximumFractionDigits: 0 })} TL`;
+  const total = overdue.reduce((s, c) => s + c.overdueAmount, 0);
+  const lines = overdue
+    .slice(0, 10)
+    .map(c => `• ${c.name}: ${tl(c.overdueAmount)} (${c.overdueDays} gün${c.orderCount > 1 ? `, ${c.orderCount} sipariş` : ""})`);
+  if (overdue.length > 10) lines.push(`… ve ${overdue.length - 10} müşteri daha`);
+  lines.push("", "Müşteriler sayfasındaki WhatsApp linkinden hatırlatma gönderebilirsin.");
+  await notifyOwner({
+    kind: "tahsilat-gecikmis",
+    title: `💰 ${overdue.length} müşteride toplam ${tl(total)} ${OVERDUE_MIN_DAYS}+ gün gecikmiş alacak`,
+    body: lines.join("\n"),
+    link: "/musteriler",
+  });
 }
 
 /** Sabah Brifingi: işletmenin güncel durumunu tek mesajda özetler. */

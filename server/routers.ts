@@ -13,6 +13,7 @@ import { buildSaleTitle, deriveCombos, parseSetCount } from "./productUtils";
 import { syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf } from "./trendyol";
 import { pushHepsiburadaStockPrice } from "./hepsiburada";
 import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "./marketplace";
+import { aggregateChannelProfit, buildProductCostMap, parseChannelProfiles, periodStart } from "./reportUtils";
 import { ENV } from "./_core/env";
 
 /* ------------------------- Zod schemas ------------------------- */
@@ -768,6 +769,25 @@ export const appRouter = router({
     data: protectedProcedure.query(() => db.reportData()),
     vat: protectedProcedure.query(() => db.vatReport()),
     cashflow: protectedProcedure.query(() => db.cashflowReport()),
+    // Kanal Kârlılığı: pazaryeri/kanal bazında toplu net kâr (calcChannelProfit
+    // v2 çekirdeğiyle; iptal hariç, maliyeti bilinmeyen kalemler ayrı raporlanır).
+    marketplaceProfit: protectedProcedure
+      .input(z.object({ period: z.enum(["month", "30d", "year"]).default("30d") }))
+      .query(async ({ input }) => {
+        const since = periodStart(input.period);
+        const [data, materialCosts, costFields, settingsMap] = await Promise.all([
+          db.ordersWithItemsSince(since),
+          db.listProductMaterialCosts(),
+          db.listProductCostFields(),
+          db.getSettings(),
+        ]);
+        return aggregateChannelProfit({
+          orders: data.orders,
+          orderItems: data.items,
+          costs: buildProductCostMap(materialCosts, costFields),
+          profiles: parseChannelProfiles(settingsMap.channelProfiles),
+        });
+      }),
   }),
 
   customers: router({

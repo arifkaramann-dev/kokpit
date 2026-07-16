@@ -45,6 +45,7 @@ import {
   collectionTotal,
   computeAccountBalance,
   computeCustomerBalances,
+  computeOverdueReceivables,
   computeSupplierBalances,
   computeVatReport,
   paymentStateFor,
@@ -747,6 +748,30 @@ export async function listUnpaidOrders(limit = 8) {
     .filter(o => o.due > 0)
     .sort((a, b) => b.due - a.due)
     .slice(0, limit);
+}
+
+/**
+ * Tahsilat Takipçisi: `minDays` (varsayılan 30) günden eski, ödenmemiş/kısmi
+ * siparişi olan müşteriler (gecikmiş tutara göre azalan). Çekirdek: financeUtils.
+ */
+export async function listOverdueReceivables(minDays = 30) {
+  const db = await requireDb();
+  const [ords, txns, custs] = await Promise.all([
+    db
+      .select({
+        name: orders.customerName,
+        customerId: orders.customerId,
+        total: orders.totalAmount,
+        status: orders.status,
+        paymentStatus: orders.paymentStatus,
+        paidAmount: orders.paidAmount,
+        createdAt: orders.createdAt,
+      })
+      .from(orders),
+    db.select({ name: transactions.customerName, customerId: transactions.customerId, direction: transactions.direction, amount: transactions.amount, category: transactions.category }).from(transactions),
+    db.select({ id: customers.id, name: customers.name }).from(customers),
+  ]);
+  return computeOverdueReceivables({ orders: ords, transactions: txns, customers: custs, minDays });
 }
 
 /**
@@ -1513,4 +1538,44 @@ export async function nextInvoiceNo() {
     .values({ key: "invoiceCounter", value: String(next) })
     .onDuplicateKeyUpdate({ set: { value: String(next) } });
   return next;
+}
+
+/* --------------- Kanal Kârlılığı raporu (reportUtils çekirdeği besler) --------------- */
+
+/**
+ * Dönem içi siparişler + kalemleri (Kanal Kârlılığı raporu için).
+ * Kalemler siparişe join'lenerek çekilir; iptal filtrelemesi saf çekirdekte yapılır.
+ */
+export async function ordersWithItemsSince(since: Date) {
+  const db = await requireDb();
+  const [ords, items] = await Promise.all([
+    db
+      .select({
+        id: orders.id,
+        channel: orders.channel,
+        status: orders.status,
+        totalAmount: orders.totalAmount,
+      })
+      .from(orders)
+      .where(gte(orders.createdAt, since)),
+    db
+      .select({
+        orderId: orderItems.orderId,
+        productId: orderItems.productId,
+        quantity: orderItems.quantity,
+        unitPrice: orderItems.unitPrice,
+      })
+      .from(orderItems)
+      .innerJoin(orders, eq(orderItems.orderId, orders.id))
+      .where(gte(orders.createdAt, since)),
+  ]);
+  return { orders: ords, items };
+}
+
+/** Ürün başına ambalaj/kargo maliyeti — formül maliyetiyle birleşip maliyet haritası olur. */
+export async function listProductCostFields() {
+  const db = await requireDb();
+  return db
+    .select({ id: products.id, packagingCost: products.packagingCost, shippingCost: products.shippingCost })
+    .from(products);
 }

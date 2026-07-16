@@ -232,6 +232,7 @@ describe("executeAssistantCommand — onay akışı (LLM çağrısı olmadan)", 
       await executeAssistantCommand("evet", { userKey: "wa-3" }).catch(() => undefined);
       expect(state.executed).toBe(false);
     } finally {
+      if (savedKey !== undefined) process.env.ANTHROPIC_API_KEY = savedKey;
       toolRegistry.delete(tool.name);
       clearPendingConfirmation("wa-3");
     }

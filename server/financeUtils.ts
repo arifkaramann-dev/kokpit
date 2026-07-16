@@ -183,6 +183,96 @@ export function paymentStateFor(total: number, collected: number): PaymentState 
   return { paidAmount: Math.max(0, collected), status };
 }
 
+/* --------------------- Tahsilat Takipçisi — gecikmiş alacaklar --------------------- */
+
+export type OverdueOrderRow = CustomerOrderRow & {
+  paymentStatus: string | null;
+  paidAmount: string | null;
+  createdAt: Date | string;
+};
+
+export type OverdueCustomer = {
+  /** Cari ID'si (CRM dışı müşteride null). */
+  customerId: number | null;
+  /** Kanonik görünen ad (ID'liyse carinin GÜNCEL adı). */
+  name: string;
+  /** 30+ gün gecikmiş siparişlerden kalan toplam borç (cari bakiyeyle sınırlı). */
+  overdueAmount: number;
+  /** En eski gecikmiş siparişin tarihi. */
+  oldestOrderDate: Date;
+  /** En eski gecikmiş siparişin yaşı (tam gün). */
+  overdueDays: number;
+  /** Gecikmiş sipariş adedi. */
+  orderCount: number;
+};
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const EPS = 0.005; // kuruş toleransı
+
+/**
+ * Tahsilat Takipçisi seçim çekirdeği: `minDays` (varsayılan 30) günden eski,
+ * ödenmemiş/kısmi kalmış siparişi olan müşterileri döner (gecikmiş tutara göre
+ * azalan). Kurallar:
+ *  - İptal (cancelled) siparişler ve paymentStatus=paid olanlar sayılmaz.
+ *  - Sipariş başına kalan = toplam − ödenen; sınır DAHİL: tam `minDays` gün
+ *    önce açılmış sipariş gecikmiş sayılır.
+ *  - Cari bakiye çapraz kontrolü computeCustomerBalances'tan gelir (kopya hesap
+ *    yok): siparişe bağlanmadan işlenmiş tahsilatlar yüzünden bakiyesi sıfır/
+ *    negatif olan müşteri listeye girmez; gecikmiş tutar bakiyeyi aşamaz.
+ */
+export function computeOverdueReceivables(input: {
+  orders: OverdueOrderRow[];
+  transactions: CustomerTxnRow[];
+  customers: PartyRef[];
+  now?: Date;
+  minDays?: number;
+}): OverdueCustomer[] {
+  const now = input.now ?? new Date();
+  const minDays = input.minDays ?? 30;
+  const nameById = new Map(input.customers.map(c => [c.id, c.name]));
+  const balances = computeCustomerBalances(input);
+
+  const groups = new Map<string, OverdueCustomer>();
+  for (const o of input.orders) {
+    if (o.status === "cancelled" || o.paymentStatus === "paid") continue;
+    const due = toNum(o.total) - toNum(o.paidAmount);
+    if (due <= EPS) continue;
+    const days = Math.floor((now.getTime() - new Date(o.createdAt).getTime()) / DAY_MS);
+    if (days < minDays) continue; // sınır dahil: tam minDays gün → gecikmiş
+    const display = canonicalName(nameById, o.customerId, o.name);
+    const key = trKey(display);
+    if (!key) continue;
+    const g = groups.get(key);
+    if (!g) {
+      groups.set(key, {
+        customerId: o.customerId,
+        name: display,
+        overdueAmount: due,
+        oldestOrderDate: new Date(o.createdAt),
+        overdueDays: days,
+        orderCount: 1,
+      });
+    } else {
+      g.overdueAmount += due;
+      g.orderCount += 1;
+      g.customerId ??= o.customerId;
+      const d = new Date(o.createdAt);
+      if (d.getTime() < g.oldestOrderDate.getTime()) {
+        g.oldestOrderDate = d;
+        g.overdueDays = days;
+      }
+    }
+  }
+
+  const out: OverdueCustomer[] = [];
+  groups.forEach((g, key) => {
+    const balance = balances[key] ?? 0;
+    if (balance <= EPS) return; // siparişsiz işlenmiş tahsilatlarla kapanmış cari
+    out.push({ ...g, overdueAmount: Math.min(g.overdueAmount, balance) });
+  });
+  return out.sort((a, b) => b.overdueAmount - a.overdueAmount);
+}
+
 /* ----------------------------- Kasa hesap bakiyesi ----------------------------- */
 
 export type AccountTxnRow = { accountId: number | null; direction: string; amount: string | null };

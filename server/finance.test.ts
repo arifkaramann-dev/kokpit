@@ -3,6 +3,7 @@ import {
   collectionTotal,
   computeAccountBalance,
   computeCustomerBalances,
+  computeOverdueReceivables,
   computeSupplierBalances,
   computeVatReport,
   paymentStateFor,
@@ -207,6 +208,115 @@ describe("collectionTotal + paymentStateFor — tahsilat→ödeme durumu senkron
   it("sıfır/negatif net tahsilat unpaid; paidAmount asla negatif yazılmaz", () => {
     expect(paymentStateFor(100, 0)).toEqual({ paidAmount: 0, status: "unpaid" });
     expect(paymentStateFor(100, -25)).toEqual({ paidAmount: 0, status: "unpaid" });
+  });
+});
+
+describe("computeOverdueReceivables — Tahsilat Takipçisi (30+ gün gecikmiş alacak)", () => {
+  // Sabit "şimdi": 16 Temmuz 2026 12:00 (yerel). 30 gün sınırı = 16 Haziran 12:00.
+  const now = new Date(2026, 6, 16, 12, 0, 0);
+  const DAY = 24 * 60 * 60 * 1000;
+  const daysAgo = (d: number) => new Date(now.getTime() - d * DAY);
+  const customers = [{ id: 1, name: "Ahmet Yılmaz" }];
+  const order = (over: Partial<Parameters<typeof computeOverdueReceivables>[0]["orders"][number]>) => ({
+    name: "Ahmet",
+    customerId: 1,
+    total: "100.00",
+    status: "done",
+    paymentStatus: "unpaid",
+    paidAmount: "0",
+    createdAt: daysAgo(45),
+    ...over,
+  });
+
+  it("30 gün sınırı DAHİL: tam 30 gün önceki sipariş gecikmiş, 30 güne 1 sn kala değil", () => {
+    const out = computeOverdueReceivables({
+      customers,
+      transactions: [],
+      now,
+      orders: [
+        order({ createdAt: daysAgo(30) }), // tam sınır → gecikmiş
+        order({ createdAt: new Date(now.getTime() - 30 * DAY + 1000), total: "999.00" }), // 29,99 gün → değil
+      ],
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0].overdueAmount).toBe(100);
+    expect(out[0].overdueDays).toBe(30);
+  });
+
+  it("kısmi ödemede yalnız KALAN gecikmiş sayılır", () => {
+    const out = computeOverdueReceivables({
+      customers,
+      transactions: [{ name: "Ahmet", customerId: 1, direction: "in", amount: "60.00", category: "tahsilat" }],
+      now,
+      orders: [order({ paymentStatus: "partial", paidAmount: "60.00" })],
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0].overdueAmount).toBeCloseTo(40, 10);
+  });
+
+  it("iptal (cancelled) ve paid siparişler listeye girmez", () => {
+    const out = computeOverdueReceivables({
+      customers,
+      transactions: [],
+      now,
+      orders: [
+        order({ status: "cancelled" }),
+        order({ paymentStatus: "paid", paidAmount: "100.00" }),
+      ],
+    });
+    expect(out).toEqual([]);
+  });
+
+  it("en eski sipariş tarihi ve gün sayısı seçilir; adet ve toplam doğru", () => {
+    const out = computeOverdueReceivables({
+      customers,
+      transactions: [],
+      now,
+      orders: [
+        order({ createdAt: daysAgo(35), total: "100.00" }),
+        order({ createdAt: daysAgo(90), total: "50.00" }), // en eski
+        order({ createdAt: daysAgo(10), total: "999.00" }), // 30 gün altı → sayılmaz
+      ],
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0].orderCount).toBe(2);
+    expect(out[0].overdueAmount).toBe(150);
+    expect(out[0].overdueDays).toBe(90);
+    expect(out[0].oldestOrderDate.getTime()).toBe(daysAgo(90).getTime());
+    expect(out[0].name).toBe("Ahmet Yılmaz"); // ID → carinin güncel adı
+  });
+
+  it("siparişe bağlanmadan işlenmiş tahsilat cari bakiyeden düşer: kapanmış cari listeye girmez, kısmi kapanan tutarı sınırlar", () => {
+    // Sipariş 100 TL unpaid duruyor ama 100 TL tahsilat siparişsiz işlenmiş → bakiye 0.
+    const kapali = computeOverdueReceivables({
+      customers,
+      transactions: [{ name: "Ahmet", customerId: 1, direction: "in", amount: "100.00", category: "tahsilat" }],
+      now,
+      orders: [order({})],
+    });
+    expect(kapali).toEqual([]);
+    // 70 TL siparişsiz tahsilat → bakiye 30: gecikmiş tutar 100 değil 30 raporlanır.
+    const kismi = computeOverdueReceivables({
+      customers,
+      transactions: [{ name: "Ahmet", customerId: 1, direction: "in", amount: "70.00", category: "tahsilat" }],
+      now,
+      orders: [order({})],
+    });
+    expect(kismi).toHaveLength(1);
+    expect(kismi[0].overdueAmount).toBeCloseTo(30, 10);
+  });
+
+  it("birden çok müşteri gecikmiş tutara göre azalan sıralanır", () => {
+    const out = computeOverdueReceivables({
+      customers: [],
+      transactions: [],
+      now,
+      orders: [
+        order({ name: "Küçük", customerId: null, total: "50.00" }),
+        order({ name: "Büyük", customerId: null, total: "500.00" }),
+      ],
+    });
+    expect(out.map(c => c.name)).toEqual(["Büyük", "Küçük"]);
   });
 });
 
