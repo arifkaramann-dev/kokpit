@@ -238,6 +238,20 @@ Hepsiburada push yok, web sitesi (Qukasoft) entegrasyonu yok.
 - [x] Ürünler: aramada barkod/renk kodu; "HB'ye Gönder" (pushToHepsiburada butonu)
 - [x] Doğrulama: 0 tip hatası, 124/124 test, build ✓ (migration gerekmedi)
 
+## ÜRÜN ÇEKİRDEĞİ — ana temel kararı (17.07.2026, patron kararı)
+Program bundan sonra Ürünler & Türevler çekirdeği üzerine inşa edilecek.
+Tam analiz + fazlı yol haritası: **docs/URUN-CEKIRDEGI-YOL-HARITASI.md**
+- Faz A: temel sağlamlaştırma (barkod/SKU tekilliği, seri bağı, yaşam döngüsü,
+  türev hiyerarşi koruması, ürün sağlık skoru)
+- Faz B: tam sayfa ürün detayı (/urun/:id) + türev karşılaştırma + override işaretleri
+- Faz C: pazaryerinde sıfırdan ürün açma (kategori/özellik eşleme, productMainId
+  ile varyant gruplu gönderim, batch takibi) — stratejik hedef
+- Faz D: kalem=ürün bağı + stok rezervasyonu + üretim önerisi v2
+- Faz E: AI içerik stüdyosu + görsel üretimi + soru-cevap kuyruğu
+- Faz F: ürün bazlı kârlılık raporu + liste ölçeklenmesi
+Yapılan hazırlık (17.07): ürün diyaloğu sabit boyut + HTML temizleme +
+"Türevlere Uygula" (products.propagateToVariants).
+
 ## Canlıda (Render) doğrulama bekleyenler — kod tarafı hazır
 - [ ] Trendyol: "Bağlantıyı Test Et" HTTP 200 + sipariş akışı + "Trendyol'a Gönder" (stok/fiyat)
 - [ ] Trendyol resmi kargo etiketi (ZPL→Labelary→PDF; kargo takip no dolunca)
