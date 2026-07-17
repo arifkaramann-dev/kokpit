@@ -477,6 +477,9 @@ export const appRouter = router({
           groups: z
             .array(z.enum(["aciklamalar", "etiket", "pazaryeri", "medya", "maliyet"]))
             .min(1),
+          // true: türevde dolu olan alanın üzerine yazılmaz, yalnız boşlar doldurulur
+          // (bilinçli farklılaştırılmış türev içeriği korunur).
+          onlyEmpty: z.boolean().default(false),
         }),
       )
       .mutation(async ({ input }) => {
@@ -494,16 +497,22 @@ export const appRouter = router({
           maliyet: ["profitMargin", "vatRate", "desi", "discountPercent", "shippingCost"],
         } as const;
         // Değerler DB'den okunduğu için decimal alanlar zaten string; dönüşüm gerekmez.
-        const patch: Record<string, unknown> = {};
-        for (const group of input.groups) {
-          for (const field of groupFields[group]) {
-            patch[field] = (parent as Record<string, unknown>)[field];
+        const isFilled = (v: unknown) => v !== null && v !== undefined && String(v).trim() !== "";
+        let updated = 0;
+        for (const variant of variants) {
+          const patch: Record<string, unknown> = {};
+          for (const group of input.groups) {
+            for (const field of groupFields[group]) {
+              if (input.onlyEmpty && isFilled((variant as Record<string, unknown>)[field])) continue;
+              patch[field] = (parent as Record<string, unknown>)[field];
+            }
+          }
+          if (Object.keys(patch).length > 0) {
+            await db.updateProduct(variant.id, patch as never);
+            updated++;
           }
         }
-        for (const variant of variants) {
-          await db.updateProduct(variant.id, patch as never);
-        }
-        return { count: variants.length };
+        return { count: updated };
       }),
     // Toplu zam/indirim: tüm ürünlerin (veya bir serinin) fiyatı yüzdeyle güncellenir.
     bulkPrice: protectedProcedure

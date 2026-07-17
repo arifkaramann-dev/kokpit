@@ -25,7 +25,7 @@ import { jsonListHasItems, productHealth, type ProductHealth } from "@shared/pro
 import { useConfirm } from "@/components/ConfirmDialog";
 import { trpc } from "@/lib/trpc";
 import { Beaker, Boxes, ChevronDown, ChevronRight, CopyCheck, Download, Eraser, Layers, Package, Pencil, Percent, Plus, Printer, Search, Sparkles, Store, Trash2, Wand2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import TemplatePicker from "@/components/TemplatePicker";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
@@ -229,6 +229,7 @@ export default function Products() {
   const [propagateGroups, setPropagateGroups] = useState<Set<PropagateGroupKey>>(
     new Set<PropagateGroupKey>(["aciklamalar", "etiket"]),
   );
+  const [propagateOnlyEmpty, setPropagateOnlyEmpty] = useState(false);
   const { data: templateList } = trpc.templates.list.useQuery();
   const { data: seriesRecords } = trpc.series.list.useQuery();
   const { data: imageRefs } = trpc.products.allImageRefs.useQuery();
@@ -666,6 +667,18 @@ export default function Products() {
 
   const isVariantForm = !!parentForNew || (editing !== null && editing.parentId !== null);
 
+  // Detay sayfasındaki "Kartı Düzenle": /urunler?duzenle=ID ile gelinince diyalog açılır.
+  useEffect(() => {
+    const idStr = new URLSearchParams(window.location.search).get("duzenle");
+    if (!idStr || !products) return;
+    const target = (products as ProductRow[]).find(p => p.id === Number(idStr));
+    if (target) {
+      openEdit(target);
+      window.history.replaceState(null, "", "/urunler");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [products]);
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -796,7 +809,13 @@ export default function Products() {
                 />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-semibold">{main.name}</span>
+                    <button
+                      className="font-semibold hover:underline text-left"
+                      title="Ürün detay sayfasını aç"
+                      onClick={() => setLocation(`/urun/${main.id}`)}
+                    >
+                      {main.name}
+                    </button>
                     {main.series && <Badge variant="secondary">{main.series}</Badge>}
                     {main.colorCode && (
                       <Badge variant="outline" className="font-mono text-[10px]">
@@ -911,7 +930,13 @@ export default function Products() {
                       />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-medium text-sm">{v.name}</span>
+                          <button
+                            className="font-medium text-sm hover:underline text-left"
+                            title="Ürün detay sayfasını aç"
+                            onClick={() => setLocation(`/urun/${v.id}`)}
+                          >
+                            {v.name}
+                          </button>
                           {v.surfaceType && (
                             <Badge className="bg-accent text-accent-foreground border-0 text-[10px]">
                               {v.surfaceType}
@@ -1637,8 +1662,21 @@ export default function Products() {
                 {(products ?? []).filter(p => p.parentId === propagateFor?.id).length} türevin
               </span>{" "}
               tümüne kopyalanır. Türeve özgü alanlara (ad, fiyat, ambalaj, barkod, SKU, stok, renk)
-              dokunulmaz; türevlerdeki mevcut değerlerin üzerine yazılır.
+              dokunulmaz.
             </p>
+            <label className="flex items-start gap-2.5 rounded-lg border border-dashed p-2.5 cursor-pointer hover:bg-muted/40">
+              <Checkbox
+                checked={propagateOnlyEmpty}
+                onCheckedChange={c => setPropagateOnlyEmpty(c === true)}
+                className="mt-0.5"
+              />
+              <span className="flex-1">
+                <span className="block text-sm font-medium">Dolu alanların üzerine yazma</span>
+                <span className="block text-[11px] text-muted-foreground">
+                  Yalnız türevde boş olan alanlar doldurulur; bilinçli farklılaştırılmış içerik korunur.
+                </span>
+              </span>
+            </label>
             <div className="space-y-2">
               {PROPAGATE_GROUPS.map(g => (
                 <label
@@ -1676,6 +1714,7 @@ export default function Products() {
                 propagateToVariants.mutate({
                   parentId: propagateFor.id,
                   groups: Array.from(propagateGroups),
+                  onlyEmpty: propagateOnlyEmpty,
                 })
               }
             >
