@@ -80,6 +80,20 @@ orkestratör `proje-yoneticisi`dir.
   **Trendyol'a ve Hepsiburada'ya** tek tıkla stok/fiyat gönderme (HB Listing API
   price-uploads/stock-uploads, `HEPSIBURADA_SERVICE_KEY` desteği). Saf mantık
   `shared/pricing.ts` (23 test).
+- **Ürün kartı otomatik doldurma (17.07.2026, ÜRÜN KAYIT Excel paritesi):**
+  `productSeries` tablosu (seri bazlı **kâr oranı + KDV + hazır açıklamalar**;
+  Şablonlar sayfasında "Ürün Serileri" bölümünden yönetilir) + products'a pazaryeri
+  alanları eklendi: sku, category, profitMargin, vatRate, desi, paintType,
+  features(JSON), shortDescription, longDescription, applicationText,
+  imageUrls(JSON), videoUrl, mockupUrl, labelWarnings (migration 0020).
+  Ürün formunda **"Otomatik Doldur"** (reçete maliyeti × seri kârı → fiyat önerisi,
+  SKU/barkod, seri açıklamaları; `products.autofill`) ve **"AI ile Yaz"**
+  (Claude: açıklamalar + etiket yazısı/uyarıları + 5 özellik; `products.aiFill`).
+  Türev sihirbazı ve ürünleştirme (devProjects.convert) da bu alanları doldurur.
+  Excel verileri repoda: `scripts/data/urun-kayit.json`; canlıya aktarım:
+  **`pnpm import:urun-kayit`** (idempotent — Render'da bir kez çalıştırılmalı).
+  Saf mantık `server/autofill.ts` (12 test). Görsel ÜRETİMİ (ana görselden ürün
+  görseli) henüz yok — ayrı görsel API'si gerektirir, faz 2.
 
 ## KOKPİT V2 — stratejik analiz hazır (15.07.2026)
 `docs/KOKPIT-V2-ANALIZ.md`: mevcut durum analizi, Odoo/Quka/Shopify/ERPNext/Zoho/

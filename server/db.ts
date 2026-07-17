@@ -30,6 +30,8 @@ import {
   products,
   productImages,
   productMovements,
+  productSeries,
+  InsertProductSeries,
   productionRuns,
   purchaseItems,
   purchases,
@@ -1316,7 +1318,19 @@ export async function getChosenDevTrialItems(projectId: number) {
     .where(and(eq(devTrials.projectId, projectId), eq(devTrials.isChosen, 1)))
     .limit(1);
   if (!chosen) return null;
-  return db.select().from(devTrialItems).where(eq(devTrialItems.trialId, chosen.id));
+  // Hammadde birim maliyeti de döner: ürünleştirmede fiyat önerisi hesaplanabilsin.
+  return db
+    .select({
+      id: devTrialItems.id,
+      trialId: devTrialItems.trialId,
+      materialId: devTrialItems.materialId,
+      qty: devTrialItems.qty,
+      note: devTrialItems.note,
+      unitCost: materials.unitCost,
+    })
+    .from(devTrialItems)
+    .leftJoin(materials, eq(devTrialItems.materialId, materials.id))
+    .where(eq(devTrialItems.trialId, chosen.id));
 }
 
 /* ------------------------- Strateji & Rapor ------------------------- */
@@ -1561,6 +1575,52 @@ export async function listProductMaterialCosts() {
     .from(formulaItems)
     .leftJoin(materials, eq(formulaItems.materialId, materials.id))
     .groupBy(formulaItems.productId);
+}
+
+/** Tek ürünün formülden gelen hammadde maliyeti (otomatik doldurma için). */
+export async function getProductMaterialCost(productId: number) {
+  const db = await requireDb();
+  const rows = await db
+    .select({
+      materialCost: sql<string>`COALESCE(SUM(${formulaItems.qty} * ${materials.unitCost}), 0)`,
+    })
+    .from(formulaItems)
+    .leftJoin(materials, eq(formulaItems.materialId, materials.id))
+    .where(eq(formulaItems.productId, productId));
+  return parseFloat(String(rows[0]?.materialCost ?? "0")) || 0;
+}
+
+/* ------------------------- Ürün Serileri ------------------------- */
+
+export async function listProductSeries() {
+  const db = await requireDb();
+  return db.select().from(productSeries).orderBy(productSeries.name);
+}
+
+export async function getProductSeriesByName(name: string) {
+  const db = await requireDb();
+  const rows = await db
+    .select()
+    .from(productSeries)
+    .where(sql`LOWER(${productSeries.name}) = LOWER(${name})`)
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+export async function createProductSeries(data: InsertProductSeries) {
+  const db = await requireDb();
+  const [r] = await db.insert(productSeries).values(data);
+  return r.insertId;
+}
+
+export async function updateProductSeries(id: number, data: Partial<InsertProductSeries>) {
+  const db = await requireDb();
+  await db.update(productSeries).set(data).where(eq(productSeries.id, id));
+}
+
+export async function deleteProductSeries(id: number) {
+  const db = await requireDb();
+  await db.delete(productSeries).where(eq(productSeries.id, id));
 }
 
 /** Önizlemesi onaylanmış toplu fiyat listesini uygular (formül/CSV güncellemeleri). */

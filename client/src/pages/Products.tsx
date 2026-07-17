@@ -21,7 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatQty, formatTL } from "@/lib/format";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { trpc } from "@/lib/trpc";
-import { Beaker, Boxes, ChevronDown, ChevronRight, Download, Layers, Package, Pencil, Percent, Plus, Printer, Search, Store, Trash2 } from "lucide-react";
+import { Beaker, Boxes, ChevronDown, ChevronRight, Download, Layers, Package, Pencil, Percent, Plus, Printer, Search, Sparkles, Store, Trash2, Wand2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import TemplatePicker from "@/components/TemplatePicker";
 import { toast } from "sonner";
@@ -50,6 +50,20 @@ export type ProductRow = {
   usageGuide: string | null;
   safetyNotes: string | null;
   extraInfo: string | null;
+  sku: string | null;
+  category: string | null;
+  profitMargin: string | null;
+  vatRate: string | null;
+  desi: string | null;
+  paintType: string | null;
+  features: string | null;
+  shortDescription: string | null;
+  longDescription: string | null;
+  applicationText: string | null;
+  imageUrls: string | null;
+  videoUrl: string | null;
+  mockupUrl: string | null;
+  labelWarnings: string | null;
   isActive: number;
 };
 
@@ -74,7 +88,41 @@ const emptyForm = {
   usageGuide: "",
   safetyNotes: "",
   extraInfo: "",
+  sku: "",
+  category: "",
+  profitMargin: "",
+  vatRate: "",
+  desi: "",
+  paintType: "",
+  featuresText: "",
+  shortDescription: "",
+  longDescription: "",
+  applicationText: "",
+  imageUrlsText: "",
+  videoUrl: "",
+  mockupUrl: "",
+  labelWarnings: "",
 };
+
+/** DB'de JSON dizi olarak duran alanı (features/imageUrls) form metnine çevirir. */
+function jsonListToText(value: string | null): string {
+  if (!value) return "";
+  try {
+    const arr = JSON.parse(value);
+    return Array.isArray(arr) ? arr.join(", ") : String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+/** Virgül/yeni satır ayrılmış form metnini JSON dizi string'ine çevirir. */
+function textToJsonList(text: string): string | null {
+  const items = text
+    .split(/[\n,]/)
+    .map(s => s.trim())
+    .filter(Boolean);
+  return items.length ? JSON.stringify(items) : null;
+}
 
 export default function Products() {
   const utils = trpc.useUtils();
@@ -96,6 +144,7 @@ export default function Products() {
   const [deriveSets, setDeriveSets] = useState<Set<string>>(new Set());
   const [customSet, setCustomSet] = useState("");
   const { data: templateList } = trpc.templates.list.useQuery();
+  const { data: seriesRecords } = trpc.series.list.useQuery();
   const { data: imageRefs } = trpc.products.allImageRefs.useQuery();
   const packOptions = (templateList ?? []).filter(t => t.kind === "ambalaj").map(t => t.name);
   const colorOptions = (templateList ?? []).filter(t => t.kind === "renk").map(t => t.name);
@@ -295,6 +344,67 @@ export default function Products() {
     onError: e => toast.error(e.message),
   });
 
+  // Otomatik doldurma: reçete maliyeti + seri kâr oranı → fiyat; seri
+  // şablonlarından açıklamalar; SKU/barkod önerisi. Boş alanları doldurur,
+  // elle girilen değerlerin üzerine yazmaz.
+  const [autofilling, setAutofilling] = useState(false);
+  async function runAutofill() {
+    if (!form.name.trim()) return toast.error("Önce ürün adını gir");
+    setAutofilling(true);
+    try {
+      const r = await utils.client.products.autofill.query({
+        name: form.name.trim(),
+        series: form.series || null,
+        packaging: form.packaging || null,
+        recipeProductId: editing?.id ?? parentForNew?.id ?? null,
+      });
+      setForm(f => ({
+        ...f,
+        sku: f.sku || r.sku,
+        barcode: f.barcode || r.barcode,
+        category: f.category || (r.category ?? ""),
+        profitMargin: f.profitMargin || String(r.profitMargin),
+        vatRate: f.vatRate || String(r.vatRate),
+        salePrice: parseFloat(f.salePrice) > 0 ? f.salePrice : r.salePrice > 0 ? String(r.salePrice) : f.salePrice,
+        shortDescription: f.shortDescription || (r.shortDescription ?? ""),
+        longDescription: f.longDescription || (r.longDescription ?? ""),
+        applicationText: f.applicationText || (r.applicationText ?? ""),
+      }));
+      if (r.hasRecipe) {
+        toast.success(
+          `Maliyet ₺${r.cost.toFixed(2)} → önerilen satış ₺${r.salePrice.toFixed(2)} (KDV dahil ₺${r.priceWithVat.toFixed(2)})`,
+          { duration: 8000 },
+        );
+      } else if (r.seriesFound) {
+        toast.success("Seri bilgileri dolduruldu. Fiyat önerisi için ürüne reçete ekleyin.", { duration: 6000 });
+      } else {
+        toast.success("SKU/barkod önerildi. Seri kaydı bulunamadı — Şablonlar > Seriler'den ekleyebilirsiniz.", { duration: 6000 });
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Otomatik doldurma başarısız");
+    } finally {
+      setAutofilling(false);
+    }
+  }
+
+  // AI içerik üretimi: açıklamalar, etiket yazısı/uyarıları ve özellikler.
+  // Kullanıcı bilerek tıkladığı için mevcut metinlerin üzerine yazar.
+  const aiFill = trpc.products.aiFill.useMutation({
+    onSuccess: r => {
+      setForm(f => ({
+        ...f,
+        shortDescription: r.shortDescription ?? f.shortDescription,
+        longDescription: r.longDescription ?? f.longDescription,
+        applicationText: r.applicationText ?? f.applicationText,
+        labelText: r.labelText ?? f.labelText,
+        labelWarnings: r.labelWarnings ?? f.labelWarnings,
+        featuresText: r.features.length ? r.features.join(", ") : f.featuresText,
+      }));
+      toast.success("AI içerikleri yazdı — kontrol edip kaydedin", { duration: 6000 });
+    },
+    onError: e => toast.error(e.message, { duration: 8000 }),
+  });
+
   function toggleExpand(id: number) {
     setExpanded(prev => {
       const next = new Set(prev);
@@ -348,6 +458,20 @@ export default function Products() {
       usageGuide: p.usageGuide ?? "",
       safetyNotes: p.safetyNotes ?? "",
       extraInfo: p.extraInfo ?? "",
+      sku: p.sku ?? "",
+      category: p.category ?? "",
+      profitMargin: p.profitMargin ?? "",
+      vatRate: p.vatRate ?? "",
+      desi: p.desi ?? "",
+      paintType: p.paintType ?? "",
+      featuresText: jsonListToText(p.features),
+      shortDescription: p.shortDescription ?? "",
+      longDescription: p.longDescription ?? "",
+      applicationText: p.applicationText ?? "",
+      imageUrlsText: jsonListToText(p.imageUrls),
+      videoUrl: p.videoUrl ?? "",
+      mockupUrl: p.mockupUrl ?? "",
+      labelWarnings: p.labelWarnings ?? "",
     });
     setDialogOpen(true);
   }
@@ -378,6 +502,20 @@ export default function Products() {
       usageGuide: form.usageGuide || null,
       safetyNotes: form.safetyNotes || null,
       extraInfo: form.extraInfo || null,
+      sku: form.sku.trim() || null,
+      category: form.category || null,
+      profitMargin: form.profitMargin ? parseFloat(form.profitMargin.replace(",", ".")) : null,
+      vatRate: form.vatRate ? parseFloat(form.vatRate.replace(",", ".")) : null,
+      desi: form.desi ? parseFloat(form.desi.replace(",", ".")) : null,
+      paintType: form.paintType || null,
+      features: textToJsonList(form.featuresText),
+      shortDescription: form.shortDescription || null,
+      longDescription: form.longDescription || null,
+      applicationText: form.applicationText || null,
+      imageUrls: textToJsonList(form.imageUrlsText),
+      videoUrl: form.videoUrl.trim() || null,
+      mockupUrl: form.mockupUrl.trim() || null,
+      labelWarnings: form.labelWarnings || null,
     };
     if (editing) {
       updateProduct.mutate({ id: editing.id, data: payload });
@@ -684,7 +822,13 @@ export default function Products() {
                   value={form.series}
                   onChange={e => setForm(f => ({ ...f, series: e.target.value }))}
                   placeholder="Örn. Meteor, Vivid, RAL"
+                  list="series-options"
                 />
+                <datalist id="series-options">
+                  {(seriesRecords ?? []).map(s => (
+                    <option key={s.id} value={s.name} />
+                  ))}
+                </datalist>
               </div>
               <div className="space-y-1.5">
                 <Label>Renk Kodu</Label>
@@ -694,6 +838,42 @@ export default function Products() {
                   placeholder="Örn. RAL 9005, M1128"
                 />
               </div>
+            </div>
+
+            <div className="flex items-center gap-2 rounded-lg border bg-muted/40 p-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={autofilling}
+                onClick={runAutofill}
+                title="Reçete maliyeti + seri kâr oranından fiyat, SKU/barkod ve seri açıklamalarını doldurur"
+              >
+                <Wand2 className="h-3.5 w-3.5 mr-1" /> Otomatik Doldur
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={aiFill.isPending}
+                onClick={() => {
+                  if (!form.name.trim()) return toast.error("Önce ürün adını gir");
+                  aiFill.mutate({
+                    name: form.name.trim(),
+                    series: form.series || null,
+                    packaging: form.packaging || null,
+                    color: form.colorCode || null,
+                    surfaceType: form.surfaceType || null,
+                    paintType: form.paintType || null,
+                  });
+                }}
+                title="Claude ile açıklama, uygulama metni, etiket yazısı ve özellikleri üretir"
+              >
+                <Sparkles className="h-3.5 w-3.5 mr-1" /> {aiFill.isPending ? "AI yazıyor..." : "AI ile Yaz"}
+              </Button>
+              <p className="text-[11px] text-muted-foreground flex-1">
+                Ad + seri + ambalajı girin; maliyet, fiyat, SKU ve açıklamalar otomatik dolsun.
+              </p>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
@@ -829,6 +1009,161 @@ export default function Products() {
                 onChange={e => setForm(f => ({ ...f, safetyNotes: e.target.value }))}
                 placeholder="Saklama koşulları, güvenlik uyarıları..."
               />
+            </div>
+
+            <div className="rounded-lg border p-3 space-y-3">
+              <p className="text-sm font-semibold">Pazaryeri &amp; İçerik</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Satıcı Stok Kodu (SKU)</Label>
+                  <Input
+                    value={form.sku}
+                    onChange={e => setForm(f => ({ ...f, sku: e.target.value }))}
+                    placeholder="Örn. aocairx30ml"
+                    className="font-mono"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label>Kategori</Label>
+                    <TemplatePicker kind="kategori" onPick={t => setForm(f => ({ ...f, category: t.name }))} />
+                  </div>
+                  <Input
+                    value={form.category}
+                    onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
+                    placeholder="Boya, Sprey, Yardımcı Ürünler"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Kâr Oranı %</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={form.profitMargin}
+                    onChange={e => setForm(f => ({ ...f, profitMargin: e.target.value }))}
+                    placeholder="Seriden"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>KDV %</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={form.vatRate}
+                    onChange={e => setForm(f => ({ ...f, vatRate: e.target.value }))}
+                    placeholder="20"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Desi</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={form.desi}
+                    onChange={e => setForm(f => ({ ...f, desi: e.target.value }))}
+                    placeholder="1"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label>Ürün Türü</Label>
+                    <TemplatePicker kind="urun_turu" onPick={t => setForm(f => ({ ...f, paintType: t.name }))} />
+                  </div>
+                  <Input
+                    value={form.paintType}
+                    onChange={e => setForm(f => ({ ...f, paintType: e.target.value }))}
+                    placeholder="Akrilik 2k, Astar, Bazkat..."
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label>Özellikler (en fazla 5)</Label>
+                    <TemplatePicker
+                      kind="ozellik"
+                      onPick={t =>
+                        setForm(f => ({
+                          ...f,
+                          featuresText: f.featuresText ? `${f.featuresText}, ${t.name}` : t.name,
+                        }))
+                      }
+                    />
+                  </div>
+                  <Input
+                    value={form.featuresText}
+                    onChange={e => setForm(f => ({ ...f, featuresText: e.target.value }))}
+                    placeholder="Hızlı Kuruma, Parlak, Opak"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Kısa Açıklama</Label>
+                <Textarea
+                  rows={2}
+                  value={form.shortDescription}
+                  onChange={e => setForm(f => ({ ...f, shortDescription: e.target.value }))}
+                  placeholder="Pazaryeri kısa açıklaması (1-2 cümle)"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Uzun Açıklama</Label>
+                <Textarea
+                  rows={4}
+                  value={form.longDescription}
+                  onChange={e => setForm(f => ({ ...f, longDescription: e.target.value }))}
+                  placeholder="Detaylı ürün açıklaması (HTML destekler)"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Uygulama Metni</Label>
+                <Textarea
+                  rows={3}
+                  value={form.applicationText}
+                  onChange={e => setForm(f => ({ ...f, applicationText: e.target.value }))}
+                  placeholder="Adım adım uygulama talimatı"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Etiket Uyarıları</Label>
+                <Textarea
+                  rows={2}
+                  value={form.labelWarnings}
+                  onChange={e => setForm(f => ({ ...f, labelWarnings: e.target.value }))}
+                  placeholder="Isı/güneşten koruyun, çocuklardan uzak tutun..."
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Görsel Linkleri (virgül veya satırla ayır)</Label>
+                <Textarea
+                  rows={2}
+                  value={form.imageUrlsText}
+                  onChange={e => setForm(f => ({ ...f, imageUrlsText: e.target.value }))}
+                  placeholder="https://... , https://..."
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Video Linki</Label>
+                  <Input
+                    value={form.videoUrl}
+                    onChange={e => setForm(f => ({ ...f, videoUrl: e.target.value }))}
+                    placeholder="https://..."
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Mockup Görsel Linki</Label>
+                  <Input
+                    value={form.mockupUrl}
+                    onChange={e => setForm(f => ({ ...f, mockupUrl: e.target.value }))}
+                    placeholder="https://..."
+                  />
+                </div>
+              </div>
             </div>
 
             {editing && (

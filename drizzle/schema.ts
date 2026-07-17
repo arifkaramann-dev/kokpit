@@ -71,6 +71,29 @@ export const stockMovements = mysqlTable(
 export type StockMovement = typeof stockMovements.$inferSelect;
 
 /**
+ * Ürün serileri (CANDY, METEOR, GLOSS...): seri bazlı kâr oranı, KDV ve
+ * hazır pazarlama metinleri. Ürün oluştururken "otomatik doldur" bu tablodan
+ * beslenir; fiyat önerisi = maliyet × (1 + kâr oranı).
+ */
+export const productSeries = mysqlTable("productSeries", {
+  id: int("id").autoincrement().primaryKey(),
+  companyId: int("companyId").notNull().default(1),
+  name: varchar("name", { length: 128 }).notNull(),
+  profitMargin: decimal("profitMargin", { precision: 5, scale: 2 }).notNull().default("35"),
+  vatRate: decimal("vatRate", { precision: 5, scale: 2 }).notNull().default("20"),
+  category: varchar("category", { length: 64 }),
+  shortDescription: mediumtext("shortDescription"),
+  longDescription: mediumtext("longDescription"),
+  applicationText: mediumtext("applicationText"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ProductSeries = typeof productSeries.$inferSelect;
+export type InsertProductSeries = typeof productSeries.$inferInsert;
+
+/**
  * Ürünler: ana ürün ve türev ürün aynı tabloda, self-referencing.
  * parentId NULL => ana ürün; parentId dolu => o ana ürünün türevi.
  * Türev tipi (surfaceType) serbest metin — tamamen esnek.
@@ -104,6 +127,25 @@ export const products = mysqlTable(
   usageGuide: text("usageGuide"),
   safetyNotes: text("safetyNotes"),
   extraInfo: text("extraInfo"),
+  // Pazaryeri ürün kartı alanları (ÜRÜN KAYIT Excel paritesi).
+  // sku = satıcı stok kodu; barkodla aynı olabilir ama ayrı tutulur.
+  sku: varchar("sku", { length: 64 }),
+  category: varchar("category", { length: 64 }),
+  // NULL = seriden/varsayılandan gelir; dolu = ürüne özel değer.
+  profitMargin: decimal("profitMargin", { precision: 5, scale: 2 }),
+  vatRate: decimal("vatRate", { precision: 5, scale: 2 }),
+  desi: decimal("desi", { precision: 8, scale: 2 }),
+  paintType: varchar("paintType", { length: 64 }),
+  // JSON dizi: ["Hızlı Kuruma","Parlak",...] — en fazla 5 özellik.
+  features: text("features"),
+  shortDescription: mediumtext("shortDescription"),
+  longDescription: mediumtext("longDescription"),
+  applicationText: mediumtext("applicationText"),
+  // JSON dizi: harici görsel linkleri (gorsel1..4 paritesi).
+  imageUrls: text("imageUrls"),
+  videoUrl: varchar("videoUrl", { length: 512 }),
+  mockupUrl: varchar("mockupUrl", { length: 512 }),
+  labelWarnings: text("labelWarnings"),
   isActive: int("isActive").notNull().default(1),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -516,6 +558,10 @@ export const templates = mysqlTable("templates", {
     "kuruma_suresi",
     "kat_sayisi",
     "test_sonucu",
+    "ozellik",
+    "urun_turu",
+    "zemin",
+    "kategori",
   ]).notNull(),
   name: varchar("name", { length: 255 }).notNull(),
   content: text("content"),

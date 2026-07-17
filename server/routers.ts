@@ -10,6 +10,7 @@ import { itemsTotal, summarizeItems, toItemRows } from "./orderUtils";
 import { extractInvoice } from "./_core/claude";
 import { executeAssistantCommand, generateOrderNo, generateQuoteNo } from "./assistant";
 import { buildSaleTitle, deriveCombos, parseSetCount } from "./productUtils";
+import { computePrice, extractJson, suggestSku } from "./autofill";
 import { syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf } from "./trendyol";
 import { pushHepsiburadaStockPrice } from "./hepsiburada";
 import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "./marketplace";
@@ -52,7 +53,44 @@ const productInput = z.object({
   usageGuide: z.string().nullable().optional(),
   safetyNotes: z.string().nullable().optional(),
   extraInfo: z.string().nullable().optional(),
+  // Pazaryeri ürün kartı alanları (ÜRÜN KAYIT paritesi).
+  sku: z.string().nullable().optional(),
+  category: z.string().nullable().optional(),
+  profitMargin: z.number().min(0).max(999).nullable().optional(),
+  vatRate: z.number().min(0).max(100).nullable().optional(),
+  desi: z.number().min(0).nullable().optional(),
+  paintType: z.string().nullable().optional(),
+  features: z.string().nullable().optional(),
+  shortDescription: z.string().nullable().optional(),
+  longDescription: z.string().nullable().optional(),
+  applicationText: z.string().nullable().optional(),
+  imageUrls: z.string().nullable().optional(),
+  videoUrl: z.string().nullable().optional(),
+  mockupUrl: z.string().nullable().optional(),
+  labelWarnings: z.string().nullable().optional(),
 });
+
+const productSeriesInput = z.object({
+  name: z.string().min(1),
+  profitMargin: z.number().min(0).max(999).default(35),
+  vatRate: z.number().min(0).max(100).default(20),
+  category: z.string().nullable().optional(),
+  shortDescription: z.string().nullable().optional(),
+  longDescription: z.string().nullable().optional(),
+  applicationText: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+});
+
+/** products tablosundaki decimal alanlar (mutation girişinde stringe çevrilir). */
+const productDecimalFields = [
+  "salePrice",
+  "discountPercent",
+  "packagingCost",
+  "shippingCost",
+  "profitMargin",
+  "vatRate",
+  "desi",
+];
 
 const orderItemInput = z.object({
   productName: z.string().min(1),
@@ -230,12 +268,12 @@ export const appRouter = router({
     list: protectedProcedure.query(() => db.listProducts()),
     get: protectedProcedure.input(z.object({ id: z.number() })).query(({ input }) => db.getProduct(input.id)),
     create: protectedProcedure.input(productInput).mutation(({ input }) =>
-      db.createProduct(toDecimalFields(input, ["salePrice", "discountPercent", "packagingCost", "shippingCost"]) as never),
+      db.createProduct(toDecimalFields(input, productDecimalFields) as never),
     ),
     update: protectedProcedure
       .input(z.object({ id: z.number(), data: productInput.partial() }))
       .mutation(({ input }) =>
-        db.updateProduct(input.id, toDecimalFields(input.data, ["salePrice", "discountPercent", "packagingCost", "shippingCost"]) as never),
+        db.updateProduct(input.id, toDecimalFields(input.data, productDecimalFields) as never),
       ),
     delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteProduct(input.id)),
     // Mamul stok hareket geçmişi: üretim/satış/iade/elle düzeltme kayıtları.
@@ -282,9 +320,10 @@ export const appRouter = router({
         for (const combo of combos) {
           // Set/paket türevlerinde fiyat ve ambalaj maliyeti adetle çarpılır.
           const setCount = parseSetCount(combo.set);
+          const title = buildSaleTitle(parent.name, combo.use, combo.packaging, combo.color, combo.set);
           const id = await db.createProduct({
             parentId: parent.id,
-            name: buildSaleTitle(parent.name, combo.use, combo.packaging, combo.color, combo.set),
+            name: title,
             series: parent.series,
             colorCode: parent.colorCode,
             colorHex: parent.colorHex,
@@ -300,6 +339,18 @@ export const appRouter = router({
             usageGuide: parent.usageGuide,
             safetyNotes: parent.safetyNotes,
             extraInfo: parent.extraInfo,
+            // Pazaryeri alanları ana üründen devralınır; SKU türev başlığından üretilir.
+            sku: suggestSku(title, combo.packaging ?? parent.packaging),
+            category: parent.category,
+            profitMargin: parent.profitMargin,
+            vatRate: parent.vatRate,
+            desi: parent.desi,
+            paintType: parent.paintType,
+            features: parent.features,
+            shortDescription: parent.shortDescription,
+            longDescription: parent.longDescription,
+            applicationText: parent.applicationText,
+            labelWarnings: parent.labelWarnings,
           } as never);
           await db.copyProductImages(parent.id, Number(id));
           // Reçete de kopyalanır ki türevin maliyet analizi boş kalmasın;
@@ -325,6 +376,109 @@ export const appRouter = router({
       const rows = await db.listProductMaterialCosts();
       return rows.map(r => ({ productId: r.productId, materialCost: parseFloat(String(r.materialCost)) || 0 }));
     }),
+    // Otomatik doldurma (ÜRÜN KAYIT Excel mantığı): reçete maliyeti + seri kâr
+    // oranı → fiyat önerisi; seri şablonlarından açıklamalar; SKU/barkod önerisi.
+    autofill: protectedProcedure
+      .input(
+        z.object({
+          name: z.string().min(1),
+          series: z.string().nullable().optional(),
+          packaging: z.string().nullable().optional(),
+          // Reçetesi/maliyeti okunacak ürün: düzenlenen ürünün kendisi veya ana ürün.
+          recipeProductId: z.number().nullable().optional(),
+        }),
+      )
+      .query(async ({ input }) => {
+        const seriesRec = input.series ? await db.getProductSeriesByName(input.series) : null;
+        const recipeProduct = input.recipeProductId ? await db.getProduct(input.recipeProductId) : null;
+        const materialCost = input.recipeProductId
+          ? await db.getProductMaterialCost(input.recipeProductId)
+          : 0;
+        const packagingCost = recipeProduct ? parseFloat(String(recipeProduct.packagingCost)) || 0 : 0;
+        const shippingCost = recipeProduct ? parseFloat(String(recipeProduct.shippingCost)) || 0 : 0;
+        const profitMargin = seriesRec ? parseFloat(String(seriesRec.profitMargin)) || 35 : 35;
+        const vatRate = seriesRec ? parseFloat(String(seriesRec.vatRate)) || 20 : 20;
+        const price = computePrice({ materialCost, packagingCost, shippingCost, profitMargin, vatRate });
+        const sku = suggestSku(input.name, input.packaging);
+        return {
+          sku,
+          // Excel'de barkod = satıcı stok kodu; pazaryerinde ayrı barkod varsa elle değiştirilir.
+          barcode: sku,
+          profitMargin,
+          vatRate,
+          category: seriesRec?.category ?? null,
+          shortDescription: seriesRec?.shortDescription ?? null,
+          longDescription: seriesRec?.longDescription ?? null,
+          applicationText: seriesRec?.applicationText ?? null,
+          seriesFound: !!seriesRec,
+          hasRecipe: materialCost > 0,
+          materialCost,
+          packagingCost,
+          shippingCost,
+          ...price,
+        };
+      }),
+    // AI ile içerik üretimi: kısa/uzun açıklama, uygulama metni, etiket yazısı,
+    // uyarılar ve 5 özellik. Seri şablonu yoksa veya ürüne özel metin istenince kullanılır.
+    aiFill: protectedProcedure
+      .input(
+        z.object({
+          name: z.string().min(1),
+          series: z.string().nullable().optional(),
+          packaging: z.string().nullable().optional(),
+          color: z.string().nullable().optional(),
+          surfaceType: z.string().nullable().optional(),
+          paintType: z.string().nullable().optional(),
+          extraInstructions: z.string().nullable().optional(),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const systemPrompt = `Sen Art of Colour markasının ürün içerik yazarısın. Art of Colour; oto rötuş boyaları, renk değiştiren efekt boyalar (METEOR), sedefli boyalar (VİVİD), transparan boyalar (CANDY), vernik (GLOSS), astarlar (PRİMER/PRIME X), RAL kodlu spreyler ve airbrush boyaları üreten butik bir Türk boya markasıdır.
+Görevin: verilen ürün için pazaryeri ürün kartı içeriği üretmek. Türkçe yaz, sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, örtücülük). Abartılı/yanıltıcı iddia yazma.
+YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şey yazma:
+{
+  "shortDescription": "1-2 cümlelik vurucu özet (düz metin)",
+  "longDescription": "Başlık + madde işaretli özellikler + kullanım alanları içeren HTML (<p>, <ul>, <li>, <strong> kullan)",
+  "applicationText": "Adım adım uygulama talimatı (yüzey hazırlığı, çalkalama, kat sayısı, kuruma süreleri) HTML formatında",
+  "labelText": "Etiket üzerine basılacak 2-3 cümlelik kısa tanıtım (düz metin)",
+  "labelWarnings": "Etiket güvenlik uyarıları: ısı/güneş, çocuklardan uzak, havalandırma vb. (düz metin, kısa)",
+  "features": ["en fazla 5 özellik", "örn. Hızlı Kuruma", "Parlak", "Tüm Yüzeylere"]
+}`;
+        const userPrompt = [
+          `Ürün adı: ${input.name}`,
+          input.series ? `Seri: ${input.series}` : null,
+          input.packaging ? `Ambalaj: ${input.packaging}` : null,
+          input.color ? `Renk: ${input.color}` : null,
+          input.surfaceType ? `Yüzey/kullanım alanı: ${input.surfaceType}` : null,
+          input.paintType ? `Ürün türü: ${input.paintType}` : null,
+          input.extraInstructions ? `Ek yönergeler: ${input.extraInstructions}` : null,
+        ]
+          .filter(Boolean)
+          .join("\n");
+        const response = await invokeLLM({
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+        });
+        const raw = response.choices[0]?.message?.content;
+        const parsed = extractJson(typeof raw === "string" ? raw : "");
+        if (!parsed) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "AI içerik üretemedi, lütfen tekrar deneyin." });
+        }
+        const str = (k: string) => (typeof parsed[k] === "string" ? (parsed[k] as string) : null);
+        const features = Array.isArray(parsed.features)
+          ? (parsed.features as unknown[]).filter((f): f is string => typeof f === "string").slice(0, 5)
+          : [];
+        return {
+          shortDescription: str("shortDescription"),
+          longDescription: str("longDescription"),
+          applicationText: str("applicationText"),
+          labelText: str("labelText"),
+          labelWarnings: str("labelWarnings"),
+          features,
+        };
+      }),
     // Önizlemede onaylanan yeni fiyat listesi (formülle/CSV ile toplu güncelleme).
     applyPrices: protectedProcedure
       .input(
@@ -523,6 +677,22 @@ export const appRouter = router({
         }
         return result;
       }),
+  }),
+
+  // Ürün serileri: seri bazlı kâr oranı, KDV ve hazır açıklama şablonları.
+  series: router({
+    list: protectedProcedure.query(() => db.listProductSeries()),
+    create: protectedProcedure.input(productSeriesInput).mutation(async ({ input }) => {
+      const existing = await db.getProductSeriesByName(input.name);
+      if (existing) throw new TRPCError({ code: "BAD_REQUEST", message: "Bu isimde bir seri zaten var." });
+      return db.createProductSeries(toDecimalFields(input, ["profitMargin", "vatRate"]) as never);
+    }),
+    update: protectedProcedure
+      .input(z.object({ id: z.number(), data: productSeriesInput.partial() }))
+      .mutation(({ input }) =>
+        db.updateProductSeries(input.id, toDecimalFields(input.data, ["profitMargin", "vatRate"]) as never),
+      ),
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteProductSeries(input.id)),
   }),
 
   orders: router({
@@ -782,6 +952,24 @@ export const appRouter = router({
           project.coats ? `Önerilen kat sayısı: ${project.coats}` : null,
           project.testNotes ? `Test notları: ${project.testNotes}` : null,
         ].filter(Boolean);
+        // Seri şablonu varsa açıklamalar/kâr oranı otomatik dolar; projede fiyat
+        // girilmediyse seçili reçete maliyetinden seri kârıyla fiyat önerilir.
+        const seriesRec = project.series ? await db.getProductSeriesByName(project.series) : null;
+        const projectPrice = parseFloat(String(project.salePrice)) || 0;
+        let suggestedPrice = projectPrice;
+        if (!projectPrice && seriesRec) {
+          const materialCost = chosenItems.reduce(
+            (sum, item) => sum + (parseFloat(String(item.qty)) || 0) * (parseFloat(String(item.unitCost ?? 0)) || 0),
+            0,
+          );
+          suggestedPrice = computePrice({
+            materialCost,
+            packagingCost: parseFloat(String(project.packagingCost)) || 0,
+            shippingCost: parseFloat(String(project.shippingCost)) || 0,
+            profitMargin: parseFloat(String(seriesRec.profitMargin)) || 35,
+            vatRate: parseFloat(String(seriesRec.vatRate)) || 20,
+          }).salePrice;
+        }
         const productId = await db.createProduct({
           name: project.name,
           series: project.series,
@@ -795,9 +983,16 @@ export const appRouter = router({
           labelText: project.labelText,
           usageGuide: project.usageGuide,
           safetyNotes: project.safetyNotes,
-          salePrice: project.salePrice,
+          salePrice: String(suggestedPrice),
           packagingCost: project.packagingCost,
           shippingCost: project.shippingCost,
+          sku: suggestSku(project.name, project.packaging),
+          category: seriesRec?.category ?? null,
+          profitMargin: seriesRec?.profitMargin ?? null,
+          vatRate: seriesRec?.vatRate ?? null,
+          shortDescription: seriesRec?.shortDescription ?? null,
+          longDescription: seriesRec?.longDescription ?? null,
+          applicationText: seriesRec?.applicationText ?? null,
         } as never);
         for (const item of chosenItems) {
           await db.addFormulaItem(Number(productId), item.materialId, parseFloat(item.qty), item.note ?? undefined);
@@ -871,7 +1066,7 @@ export const appRouter = router({
     create: protectedProcedure
       .input(
         z.object({
-          kind: z.enum(["etiket_boyutu", "etiket_yazisi", "kilavuz", "guvenlik", "ambalaj", "renk", "set_paket", "hammadde_kategori", "uygulama_yontemi", "kuruma_suresi", "kat_sayisi", "test_sonucu"]),
+          kind: z.enum(["etiket_boyutu", "etiket_yazisi", "kilavuz", "guvenlik", "ambalaj", "renk", "set_paket", "hammadde_kategori", "uygulama_yontemi", "kuruma_suresi", "kat_sayisi", "test_sonucu", "ozellik", "urun_turu", "zemin", "kategori"]),
           name: z.string().min(1),
           content: z.string().nullable().optional(),
         }),
