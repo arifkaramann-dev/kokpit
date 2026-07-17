@@ -22,7 +22,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatQty, formatTL } from "@/lib/format";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { trpc } from "@/lib/trpc";
-import { Beaker, Boxes, ChevronDown, ChevronRight, Download, Layers, Package, Pencil, Percent, Plus, Printer, Search, Sparkles, Store, Trash2, Wand2 } from "lucide-react";
+import { Beaker, Boxes, ChevronDown, ChevronRight, Download, Eraser, Layers, Package, Pencil, Percent, Plus, Printer, Search, Sparkles, Store, Trash2, Wand2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import TemplatePicker from "@/components/TemplatePicker";
 import { toast } from "sonner";
@@ -123,6 +123,46 @@ function textToJsonList(text: string): string | null {
     .map(s => s.trim())
     .filter(Boolean);
   return items.length ? JSON.stringify(items) : null;
+}
+
+/** Alan HTML etiketi veya entity içeriyor mu? (pazaryerinden yapıştırılan metinler) */
+function looksLikeHtml(value: string): boolean {
+  return /<[a-z][^>]*>|&[a-z]+\d*;|&#\d+;/i.test(value);
+}
+
+/** Pazaryerinden gelen inline-stilli HTML'i satır yapısını koruyarak düz metne çevirir. */
+function htmlToPlainText(html: string): string {
+  const withBreaks = html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li|tr|h[1-6])>/gi, "\n");
+  const doc = new DOMParser().parseFromString(withBreaks, "text/html");
+  return (doc.body.textContent ?? "")
+    .replace(/ /g, " ")
+    .split("\n")
+    .map(line => line.replace(/\s+/g, " ").trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/** Alan HTML içeriyorsa görünen, tek tıkla düz metne çeviren küçük buton. */
+function HtmlCleanButton({ value, onClean }: { value: string; onClean: (clean: string) => void }) {
+  if (!looksLikeHtml(value)) return null;
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant="ghost"
+      className="h-6 px-2 text-[11px] text-muted-foreground"
+      title="HTML etiketlerini ve stillerini temizleyip okunur düz metne çevirir"
+      onClick={() => {
+        onClean(htmlToPlainText(value));
+        toast.success("HTML temizlendi, düz metne çevrildi");
+      }}
+    >
+      <Eraser className="h-3 w-3 mr-1" /> HTML'i Temizle
+    </Button>
+  );
 }
 
 export default function Products() {
@@ -827,8 +867,10 @@ export default function Products() {
       </div>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
+        {/* Sabit yükseklik: sekmeler arasında geçişte diyalog boyutu değişmez,
+            yalnızca sekme içeriği kayar; başlık, sekme çubuğu ve butonlar hep görünür. */}
+        <DialogContent className="flex h-[92dvh] flex-col gap-0 overflow-hidden p-0 sm:h-[85vh] sm:max-w-2xl">
+          <DialogHeader className="px-6 pt-6">
             <DialogTitle>
               {editing
                 ? editing.parentId
@@ -839,7 +881,7 @@ export default function Products() {
                   : "Yeni Ana Ürün"}
             </DialogTitle>
           </DialogHeader>
-          <div className="space-y-3">
+          <div className="space-y-3 px-6 pt-3">
             <div className="space-y-1.5">
               <Label>Ürün Adı *</Label>
               <Input
@@ -909,15 +951,20 @@ export default function Products() {
               </p>
             </div>
 
-            <Tabs defaultValue="temel" className="w-full">
+          </div>
+
+          <Tabs defaultValue="temel" className="flex min-h-0 flex-1 flex-col">
+            <div className="px-6 pt-3">
               <TabsList className="grid w-full grid-cols-4">
                 <TabsTrigger value="temel">Temel</TabsTrigger>
                 <TabsTrigger value="etiket">Etiket &amp; İçerik</TabsTrigger>
                 <TabsTrigger value="pazaryeri">Pazaryeri</TabsTrigger>
                 <TabsTrigger value="maliyet">Maliyet</TabsTrigger>
               </TabsList>
+            </div>
 
-              <TabsContent value="temel" className="space-y-3 mt-3">
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-4 pt-3">
+              <TabsContent value="temel" className="space-y-3 mt-0">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Renk Önizleme</Label>
@@ -950,14 +997,6 @@ export default function Products() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label>Barkod (pazaryeri eşleştirme)</Label>
-                <Input
-                  value={form.barcode}
-                  onChange={e => setForm(f => ({ ...f, barcode: e.target.value }))}
-                  placeholder="Trendyol/HB barkodu"
-                />
-              </div>
-              <div className="space-y-1.5">
                 <Label>Stok Adedi</Label>
                 <Input
                   type="number"
@@ -967,9 +1006,6 @@ export default function Products() {
                   placeholder="0"
                 />
               </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Kritik Stok Eşiği</Label>
                 <Input
@@ -987,6 +1023,14 @@ export default function Products() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
+                <Label>Barkod (pazaryeri eşleştirme)</Label>
+                <Input
+                  value={form.barcode}
+                  onChange={e => setForm(f => ({ ...f, barcode: e.target.value }))}
+                  placeholder="Trendyol/HB barkodu"
+                />
+              </div>
+              <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <Label>Ambalaj</Label>
                   <TemplatePicker kind="ambalaj" onPick={t => setForm(f => ({ ...f, packaging: t.name }))} />
@@ -997,6 +1041,9 @@ export default function Products() {
                   placeholder="Örn. 400 ml Sprey"
                 />
               </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <Label>Etiket Boyutu</Label>
@@ -1054,7 +1101,7 @@ export default function Products() {
             </div>
               </TabsContent>
 
-              <TabsContent value="etiket" className="space-y-3 mt-3">
+              <TabsContent value="etiket" className="space-y-3 mt-0">
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <Label>Etiket Yazısı</Label>
@@ -1070,7 +1117,10 @@ export default function Products() {
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <Label>Kullanım Kılavuzu</Label>
-                <TemplatePicker kind="kilavuz" onPick={t => setForm(f => ({ ...f, usageGuide: t.content ?? t.name }))} />
+                <div className="flex items-center gap-1">
+                  <HtmlCleanButton value={form.usageGuide} onClean={v => setForm(f => ({ ...f, usageGuide: v }))} />
+                  <TemplatePicker kind="kilavuz" onPick={t => setForm(f => ({ ...f, usageGuide: t.content ?? t.name }))} />
+                </div>
               </div>
               <Textarea
                 rows={3}
@@ -1139,7 +1189,7 @@ export default function Products() {
             )}
               </TabsContent>
 
-              <TabsContent value="pazaryeri" className="space-y-3 mt-3">
+              <TabsContent value="pazaryeri" className="space-y-3 mt-0">
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label>Satıcı Stok Kodu (SKU)</Label>
@@ -1195,7 +1245,10 @@ export default function Products() {
                 </div>
               </div>
               <div className="space-y-1.5">
-                <Label>Kısa Açıklama</Label>
+                <div className="flex items-center justify-between">
+                  <Label>Kısa Açıklama</Label>
+                  <HtmlCleanButton value={form.shortDescription} onClean={v => setForm(f => ({ ...f, shortDescription: v }))} />
+                </div>
                 <Textarea
                   rows={2}
                   value={form.shortDescription}
@@ -1204,7 +1257,10 @@ export default function Products() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label>Uzun Açıklama</Label>
+                <div className="flex items-center justify-between">
+                  <Label>Uzun Açıklama</Label>
+                  <HtmlCleanButton value={form.longDescription} onClean={v => setForm(f => ({ ...f, longDescription: v }))} />
+                </div>
                 <Textarea
                   rows={4}
                   value={form.longDescription}
@@ -1213,7 +1269,10 @@ export default function Products() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label>Uygulama Metni</Label>
+                <div className="flex items-center justify-between">
+                  <Label>Uygulama Metni</Label>
+                  <HtmlCleanButton value={form.applicationText} onClean={v => setForm(f => ({ ...f, applicationText: v }))} />
+                </div>
                 <Textarea
                   rows={3}
                   value={form.applicationText}
@@ -1250,7 +1309,7 @@ export default function Products() {
               </div>
               </TabsContent>
 
-              <TabsContent value="maliyet" className="space-y-3 mt-3">
+              <TabsContent value="maliyet" className="space-y-3 mt-0">
             <div className="grid grid-cols-3 gap-3">
               <div className="space-y-1.5">
                 <Label>Kâr Oranı %</Label>
@@ -1321,9 +1380,9 @@ export default function Products() {
               </div>
             </div>
               </TabsContent>
-            </Tabs>
-          </div>
-          <DialogFooter>
+            </div>
+          </Tabs>
+          <DialogFooter className="border-t px-6 py-4">
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               İptal
             </Button>
