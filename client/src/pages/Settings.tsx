@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
-import { AlertCircle, Building2, CheckCircle2, Store } from "lucide-react";
+import { AlertCircle, Building2, CheckCircle2, DatabaseZap, Store } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -46,6 +46,22 @@ export default function Settings() {
       toast.success("Ayarlar kaydedildi");
     },
     onError: e => toast.error(e.message),
+  });
+
+  // ÜRÜN KAYIT Excel verilerini tek tuşla yükleme (Shell gerektirmez).
+  const [importResult, setImportResult] = useState<{
+    series: number;
+    materials: number;
+    templates: number;
+    products: number;
+  } | null>(null);
+  const importSeed = trpc.settings.importUrunKayit.useMutation({
+    onSuccess: r => {
+      setImportResult(r);
+      utils.invalidate();
+      toast.success("İçe aktarma tamamlandı");
+    },
+    onError: e => toast.error(e.message, { duration: 8000 }),
   });
 
   return (
@@ -158,6 +174,28 @@ export default function Settings() {
             kullanıcı adı ve şifre alınır.
           </p>
         </div>
+      </Card>
+
+      <Card className="p-5 space-y-3">
+        <h2 className="font-semibold flex items-center gap-2">
+          <DatabaseZap className="h-4 w-4 text-primary" /> ÜRÜN KAYIT Verilerini İçe Aktar
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Excel'den taşınan başlangıç verilerini yükler: 9 ürün serisi (açıklama metinleri ve kâr
+          oranlarıyla), hammadde/ambalaj fiyat listesi, renk-özellik-tür listeleri ve örnek ürünler.
+          Tekrar basmak güvenlidir — var olan kayıtlara dokunmaz, yalnızca eksikleri ekler.
+        </p>
+        {importResult && (
+          <p className="text-sm font-medium text-emerald-600">
+            Eklendi → seri: {importResult.series}, hammadde: {importResult.materials}, şablon:{" "}
+            {importResult.templates}, ürün: {importResult.products}
+            {importResult.series + importResult.materials + importResult.templates + importResult.products === 0 &&
+              " (her şey zaten yüklüymüş)"}
+          </p>
+        )}
+        <Button onClick={() => importSeed.mutate()} disabled={importSeed.isPending}>
+          {importSeed.isPending ? "Aktarılıyor..." : "Verileri İçe Aktar"}
+        </Button>
       </Card>
     </div>
   );

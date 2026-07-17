@@ -11,6 +11,7 @@ import { extractInvoice } from "./_core/claude";
 import { executeAssistantCommand, generateOrderNo, generateQuoteNo } from "./assistant";
 import { buildSaleTitle, deriveCombos, parseSetCount } from "./productUtils";
 import { computePrice, extractJson, suggestSku } from "./autofill";
+import { importUrunKayit } from "./importSeed";
 import { syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf } from "./trendyol";
 import { pushHepsiburadaStockPrice } from "./hepsiburada";
 import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "./marketplace";
@@ -1038,6 +1039,18 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
       .input(z.record(z.string(), z.string()))
       .mutation(({ input }) => db.setSettings(input)),
     nextInvoiceNo: protectedProcedure.mutation(() => db.nextInvoiceNo()),
+    // ÜRÜN KAYIT Excel verilerini tek tuşla aktarır (Render ücretsiz planda
+    // Shell yok). Idempotent: tekrar basmak var olan kayıtları ezmez.
+    importUrunKayit: protectedProcedure.mutation(async () => {
+      try {
+        return await importUrunKayit();
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: error instanceof Error ? error.message : "İçe aktarma başarısız",
+        });
+      }
+    }),
   }),
 
   // Bildirim merkezi: zamanlayıcı/nöbetçi bildirimleri (zil ikonu).
