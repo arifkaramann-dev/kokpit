@@ -346,7 +346,9 @@ export default function Products() {
   });
 
   // Otomatik doldurma: reçete maliyeti + seri kâr oranı → fiyat; seri
-  // şablonlarından açıklamalar; SKU/barkod önerisi. Boş alanları doldurur,
+  // şablonlarından açıklamalar; SKU/barkod önerisi. Ayrıca türev ekleniyorsa
+  // ana üründen, değilse aynı serideki en dolu ürün kartından etiket, kılavuz,
+  // güvenlik, desi, maliyet gibi alanlar kopyalanır. Boş alanları doldurur,
   // elle girilen değerlerin üzerine yazmaz.
   const [autofilling, setAutofilling] = useState(false);
   async function runAutofill() {
@@ -358,7 +360,10 @@ export default function Products() {
         series: form.series || null,
         packaging: form.packaging || null,
         recipeProductId: editing?.id ?? parentForNew?.id ?? null,
+        parentProductId: parentForNew?.id ?? null,
+        excludeProductId: editing?.id ?? null,
       });
+      const ref = r.reference;
       setForm(f => ({
         ...f,
         sku: f.sku || r.sku,
@@ -370,14 +375,41 @@ export default function Products() {
         shortDescription: f.shortDescription || (r.shortDescription ?? ""),
         longDescription: f.longDescription || (r.longDescription ?? ""),
         applicationText: f.applicationText || (r.applicationText ?? ""),
+        packaging: f.packaging || (ref?.packaging ?? ""),
+        labelSize: f.labelSize || (ref?.labelSize ?? ""),
+        labelText: f.labelText || (ref?.labelText ?? ""),
+        usageGuide: f.usageGuide || (ref?.usageGuide ?? ""),
+        safetyNotes: f.safetyNotes || (ref?.safetyNotes ?? ""),
+        extraInfo: f.extraInfo || (ref?.extraInfo ?? ""),
+        labelWarnings: f.labelWarnings || (ref?.labelWarnings ?? ""),
+        paintType: f.paintType || (ref?.paintType ?? ""),
+        featuresText: f.featuresText || (ref?.features.length ? ref.features.join(", ") : ""),
+        desi: f.desi || (ref?.desi != null ? String(ref.desi) : ""),
+        criticalQty: f.criticalQty || (ref?.criticalQty != null ? String(ref.criticalQty) : ""),
+        packagingCost:
+          parseFloat(f.packagingCost) > 0
+            ? f.packagingCost
+            : ref?.packagingCost != null
+              ? String(ref.packagingCost)
+              : f.packagingCost,
+        shippingCost:
+          parseFloat(f.shippingCost) > 0
+            ? f.shippingCost
+            : ref?.shippingCost != null
+              ? String(ref.shippingCost)
+              : f.shippingCost,
       }));
+      const refNote = ref ? ` "${ref.name}" kartı referans alındı.` : "";
       if (r.hasRecipe) {
         toast.success(
-          `Maliyet ₺${r.cost.toFixed(2)} → önerilen satış ₺${r.salePrice.toFixed(2)} (KDV dahil ₺${r.priceWithVat.toFixed(2)})`,
+          `Maliyet ₺${r.cost.toFixed(2)} → önerilen satış ₺${r.salePrice.toFixed(2)} (KDV dahil ₺${r.priceWithVat.toFixed(2)}).${refNote}`,
           { duration: 8000 },
         );
-      } else if (r.seriesFound) {
-        toast.success("Seri bilgileri dolduruldu. Fiyat önerisi için ürüne reçete ekleyin.", { duration: 6000 });
+      } else if (r.seriesFound || ref) {
+        toast.success(
+          `Seri bilgileri dolduruldu.${refNote} Fiyat önerisi için ürüne reçete ekleyin.`,
+          { duration: 6000 },
+        );
       } else {
         toast.success("SKU/barkod önerildi. Seri kaydı bulunamadı — Şablonlar > Seriler'den ekleyebilirsiniz.", { duration: 6000 });
       }
@@ -848,7 +880,7 @@ export default function Products() {
                 variant="secondary"
                 disabled={autofilling}
                 onClick={runAutofill}
-                title="Reçete maliyeti + seri kâr oranından fiyat, SKU/barkod ve seri açıklamalarını doldurur"
+                title="Fiyat, SKU/barkod, seri açıklamaları + aynı serideki en dolu ürün kartından etiket, kılavuz, güvenlik, desi ve maliyet alanlarını doldurur"
               >
                 <Wand2 className="h-3.5 w-3.5 mr-1" /> Otomatik Doldur
               </Button>
@@ -873,7 +905,7 @@ export default function Products() {
                 <Sparkles className="h-3.5 w-3.5 mr-1" /> {aiFill.isPending ? "AI yazıyor..." : "AI ile Yaz"}
               </Button>
               <p className="text-[11px] text-muted-foreground flex-1">
-                Ad + seri + ambalajı girin; maliyet, fiyat, SKU ve açıklamalar otomatik dolsun.
+                Ad + seriyi girin; fiyat, SKU ve tüm kart alanları serideki benzer üründen otomatik dolsun.
               </p>
             </div>
 

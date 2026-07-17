@@ -1607,6 +1607,22 @@ export async function getProductSeriesByName(name: string) {
   return rows[0] ?? null;
 }
 
+/**
+ * Otomatik doldurma referans adayları: aynı serideki en son güncellenen
+ * ürünler (düzenlenen ürünün kendisi hariç). Seçim (en dolu kart) saf
+ * fonksiyonla yapılır — bkz. autofill.ts / pickReferenceProduct.
+ */
+export async function listSeriesReferenceCandidates(series: string, excludeId: number | null) {
+  const db = await requireDb();
+  const bySeries = sql`LOWER(${products.series}) = LOWER(${series})`;
+  return db
+    .select()
+    .from(products)
+    .where(excludeId ? and(bySeries, sql`${products.id} != ${excludeId}`) : bySeries)
+    .orderBy(desc(products.updatedAt))
+    .limit(15);
+}
+
 export async function createProductSeries(data: InsertProductSeries) {
   const db = await requireDb();
   const [r] = await db.insert(productSeries).values(data);

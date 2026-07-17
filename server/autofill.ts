@@ -62,6 +62,71 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/**
+ * Referans karttan yeni ürüne kopyalanabilir içerik alanları.
+ * Renk/stok/fiyat gibi ürüne özgü alanlar bilerek dışarıda.
+ */
+export const REFERENCE_FIELDS = [
+  "labelSize",
+  "labelText",
+  "usageGuide",
+  "safetyNotes",
+  "extraInfo",
+  "labelWarnings",
+  "paintType",
+  "features",
+  "category",
+  "desi",
+  "criticalQty",
+  "shortDescription",
+  "longDescription",
+  "applicationText",
+] as const;
+
+type ReferenceLike = Partial<Record<(typeof REFERENCE_FIELDS)[number], unknown>> & {
+  packagingCost?: unknown;
+  shippingCost?: unknown;
+};
+
+/** Kaç içerik alanı dolu? (kopyalamaya değer kartı seçmek için puan). */
+export function scoreReference(p: ReferenceLike): number {
+  return REFERENCE_FIELDS.reduce((score, key) => {
+    const v = p[key];
+    if (v === null || v === undefined) return score;
+    const s = String(v).trim();
+    return s && s !== "0" && s !== "0.00" ? score + 1 : score;
+  }, 0);
+}
+
+/**
+ * Aday listesinden en dolu ürün kartını seçer; hiç dolu alan yoksa null.
+ * Liste güncellenme tarihine göre sıralı geldiğinden eşitlikte en yenisi kazanır.
+ */
+export function pickReferenceProduct<T extends ReferenceLike>(candidates: T[]): T | null {
+  let best: T | null = null;
+  let bestScore = 0;
+  for (const c of candidates) {
+    const s = scoreReference(c);
+    if (s > bestScore) {
+      best = c;
+      bestScore = s;
+    }
+  }
+  return best;
+}
+
+/** DB'deki features alanı JSON dizi metnidir; toleranslı ayrıştırır. */
+export function parseFeatures(raw: unknown): string[] {
+  if (typeof raw !== "string" || !raw.trim()) return [];
+  try {
+    const arr = JSON.parse(raw) as unknown;
+    return Array.isArray(arr) ? arr.filter((f): f is string => typeof f === "string").slice(0, 5) : [];
+  } catch {
+    // JSON değilse virgülle ayrılmış kabul et.
+    return raw.split(",").map(s => s.trim()).filter(Boolean).slice(0, 5);
+  }
+}
+
 /** LLM yanıtından JSON gövdesini ayıklar (kod bloğu/başındaki metin toleranslı). */
 export function extractJson(text: string): Record<string, unknown> | null {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);

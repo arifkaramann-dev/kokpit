@@ -10,7 +10,7 @@ import { itemsTotal, summarizeItems, toItemRows } from "./orderUtils";
 import { extractInvoice } from "./_core/claude";
 import { executeAssistantCommand, generateOrderNo, generateQuoteNo } from "./assistant";
 import { buildSaleTitle, deriveCombos, parseSetCount } from "./productUtils";
-import { computePrice, extractJson, suggestSku } from "./autofill";
+import { computePrice, extractJson, parseFeatures, pickReferenceProduct, scoreReference, suggestSku } from "./autofill";
 import { importUrunKayit } from "./importSeed";
 import { syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf } from "./trendyol";
 import { pushHepsiburadaStockPrice } from "./hepsiburada";
@@ -379,6 +379,8 @@ export const appRouter = router({
     }),
     // Otomatik doldurma (ÜRÜN KAYIT Excel mantığı): reçete maliyeti + seri kâr
     // oranı → fiyat önerisi; seri şablonlarından açıklamalar; SKU/barkod önerisi.
+    // Ek olarak: türev ekleniyorsa ana üründen, değilse aynı serideki en dolu
+    // ürün kartından etiket/kılavuz/pazaryeri alanları referans alınır.
     autofill: protectedProcedure
       .input(
         z.object({
@@ -387,6 +389,10 @@ export const appRouter = router({
           packaging: z.string().nullable().optional(),
           // Reçetesi/maliyeti okunacak ürün: düzenlenen ürünün kendisi veya ana ürün.
           recipeProductId: z.number().nullable().optional(),
+          // Türev ekleme akışında ana ürün — içerik referansı olarak öncelikli.
+          parentProductId: z.number().nullable().optional(),
+          // Düzenlenen ürünün kendisi referans adayı olmasın diye hariç tutulur.
+          excludeProductId: z.number().nullable().optional(),
         }),
       )
       .query(async ({ input }) => {
@@ -401,16 +407,52 @@ export const appRouter = router({
         const vatRate = seriesRec ? parseFloat(String(seriesRec.vatRate)) || 20 : 20;
         const price = computePrice({ materialCost, packagingCost, shippingCost, profitMargin, vatRate });
         const sku = suggestSku(input.name, input.packaging);
+
+        // İçerik referansı: ana ürün > aynı serideki en dolu kart.
+        const parentProduct = input.parentProductId ? await db.getProduct(input.parentProductId) : null;
+        const siblings = input.series
+          ? await db.listSeriesReferenceCandidates(input.series, input.excludeProductId ?? null)
+          : [];
+        const ref =
+          (parentProduct && scoreReference(parentProduct) > 0 ? parentProduct : null) ??
+          pickReferenceProduct(siblings.filter(s => s.id !== input.parentProductId));
+        const refStr = (v: string | null | undefined) => (v && v.trim() ? v : null);
+        const refNum = (v: unknown) => {
+          const n = parseFloat(String(v ?? ""));
+          return Number.isFinite(n) && n > 0 ? n : null;
+        };
+
         return {
           sku,
           // Excel'de barkod = satıcı stok kodu; pazaryerinde ayrı barkod varsa elle değiştirilir.
           barcode: sku,
           profitMargin,
           vatRate,
-          category: seriesRec?.category ?? null,
-          shortDescription: seriesRec?.shortDescription ?? null,
-          longDescription: seriesRec?.longDescription ?? null,
-          applicationText: seriesRec?.applicationText ?? null,
+          // Seri şablonu öncelikli, yoksa referans ürünün kartı.
+          category: seriesRec?.category ?? refStr(ref?.category) ?? null,
+          shortDescription: seriesRec?.shortDescription ?? refStr(ref?.shortDescription) ?? null,
+          longDescription: seriesRec?.longDescription ?? refStr(ref?.longDescription) ?? null,
+          applicationText: seriesRec?.applicationText ?? refStr(ref?.applicationText) ?? null,
+          // Referans karttan gelen alanlar (yalnızca boş form alanlarına yazılır).
+          reference: ref
+            ? {
+                id: ref.id,
+                name: ref.name,
+                labelSize: refStr(ref.labelSize),
+                labelText: refStr(ref.labelText),
+                usageGuide: refStr(ref.usageGuide),
+                safetyNotes: refStr(ref.safetyNotes),
+                extraInfo: refStr(ref.extraInfo),
+                labelWarnings: refStr(ref.labelWarnings),
+                paintType: refStr(ref.paintType),
+                features: parseFeatures(ref.features),
+                desi: refNum(ref.desi),
+                criticalQty: ref.criticalQty > 0 ? ref.criticalQty : null,
+                packagingCost: refNum(ref.packagingCost),
+                shippingCost: refNum(ref.shippingCost),
+                packaging: refStr(ref.packaging),
+              }
+            : null,
           seriesFound: !!seriesRec,
           hasRecipe: materialCost > 0,
           materialCost,

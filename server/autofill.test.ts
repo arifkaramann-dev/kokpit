@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { computePrice, extractJson, slugifyCode, suggestSku } from "./autofill";
+import {
+  computePrice,
+  extractJson,
+  parseFeatures,
+  pickReferenceProduct,
+  scoreReference,
+  slugifyCode,
+  suggestSku,
+} from "./autofill";
 
 describe("slugifyCode", () => {
   it("Türkçe karakterleri sadeleştirir ve boşlukları atar", () => {
@@ -72,5 +80,51 @@ describe("extractJson", () => {
 
   it("geçersiz girdide null döner", () => {
     expect(extractJson("JSON yok burada")).toBeNull();
+  });
+});
+
+describe("scoreReference", () => {
+  it("dolu içerik alanlarını sayar; boş/sıfır değerleri saymaz", () => {
+    expect(scoreReference({})).toBe(0);
+    expect(scoreReference({ labelSize: "6x9", desi: "0.00", usageGuide: "  " })).toBe(1);
+    expect(scoreReference({ labelText: "metin", paintType: "Astar", criticalQty: 5 })).toBe(3);
+  });
+});
+
+describe("pickReferenceProduct", () => {
+  it("en dolu kartı seçer", () => {
+    const az = { id: 1, labelText: "x" };
+    const dolu = { id: 2, labelText: "x", usageGuide: "y", desi: "1.5" };
+    expect(pickReferenceProduct([az, dolu])?.id).toBe(2);
+  });
+
+  it("eşitlikte listedeki ilk (en yeni) kazanır", () => {
+    const a = { id: 1, labelText: "x" };
+    const b = { id: 2, labelText: "y" };
+    expect(pickReferenceProduct([a, b])?.id).toBe(1);
+  });
+
+  it("hiç dolu kart yoksa null döner", () => {
+    expect(pickReferenceProduct([{}, { labelSize: "" }])).toBeNull();
+  });
+});
+
+describe("parseFeatures", () => {
+  it("JSON dizi metnini ayrıştırır", () => {
+    expect(parseFeatures('["Hızlı Kuruma","Parlak"]')).toEqual(["Hızlı Kuruma", "Parlak"]);
+  });
+
+  it("virgülle ayrılmış metni tolere eder", () => {
+    expect(parseFeatures("Hızlı Kuruma, Parlak")).toEqual(["Hızlı Kuruma", "Parlak"]);
+  });
+
+  it("boş/geçersiz girdide boş dizi döner", () => {
+    expect(parseFeatures(null)).toEqual([]);
+    expect(parseFeatures("")).toEqual([]);
+    expect(parseFeatures("[1,2]")).toEqual([]);
+  });
+
+  it("en fazla 5 özellik döner", () => {
+    expect(parseFeatures("a,b,c,d,e,f,g")).toHaveLength(5);
   });
 });
