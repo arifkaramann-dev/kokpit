@@ -17,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatQty, formatTL } from "@/lib/format";
 import { useConfirm } from "@/components/ConfirmDialog";
@@ -794,7 +795,7 @@ export default function Products() {
       </div>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {editing
@@ -875,6 +876,16 @@ export default function Products() {
                 Ad + seri + ambalajı girin; maliyet, fiyat, SKU ve açıklamalar otomatik dolsun.
               </p>
             </div>
+
+            <Tabs defaultValue="temel" className="w-full">
+              <TabsList className="grid w-full grid-cols-4">
+                <TabsTrigger value="temel">Temel</TabsTrigger>
+                <TabsTrigger value="etiket">Etiket &amp; İçerik</TabsTrigger>
+                <TabsTrigger value="pazaryeri">Pazaryeri</TabsTrigger>
+                <TabsTrigger value="maliyet">Maliyet</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="temel" className="space-y-3 mt-3">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Renk Önizleme</Label>
@@ -974,6 +985,44 @@ export default function Products() {
                 />
               </div>
             </div>
+
+            {isVariantForm && (
+              <>
+                <div className="space-y-1.5">
+                  <Label>Yüzey / Kullanım Alanı</Label>
+                  <Input
+                    value={form.surfaceType}
+                    onChange={e => setForm(f => ({ ...f, surfaceType: e.target.value }))}
+                    placeholder="Serbest girin: jant, araba, 3D baskı, ahşap, plastik, metal, cam..."
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Sabit liste yok — boyanın kullanılacağı her yüzey/alan için istediğiniz tanımı yazabilirsiniz.
+                  </p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Katkı Maddeleri ve Oran Farkları</Label>
+                  <Textarea
+                    value={form.additives}
+                    onChange={e => setForm(f => ({ ...f, additives: e.target.value }))}
+                    rows={2}
+                    placeholder="Örn. %5 elastikiyet katkısı, %2 UV koruyucu; solvent oranı %10 azaltıldı"
+                  />
+                </div>
+              </>
+            )}
+
+            <div className="space-y-1.5">
+              <Label>Açıklama</Label>
+              <Textarea
+                value={form.description}
+                onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                rows={2}
+                placeholder="Ürün hakkında notlar"
+              />
+            </div>
+              </TabsContent>
+
+              <TabsContent value="etiket" className="space-y-3 mt-3">
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <Label>Etiket Yazısı</Label>
@@ -1010,9 +1059,55 @@ export default function Products() {
                 placeholder="Saklama koşulları, güvenlik uyarıları..."
               />
             </div>
+            <div className="space-y-1.5">
+              <Label>Etiket Uyarıları</Label>
+              <Textarea
+                rows={2}
+                value={form.labelWarnings}
+                onChange={e => setForm(f => ({ ...f, labelWarnings: e.target.value }))}
+                placeholder="Isı/güneşten koruyun, çocuklardan uzak tutun..."
+              />
+            </div>
 
-            <div className="rounded-lg border p-3 space-y-3">
-              <p className="text-sm font-semibold">Pazaryeri &amp; İçerik</p>
+            {editing && (
+              <div className="space-y-1.5">
+                <Label>Görseller</Label>
+                <div className="grid grid-cols-3 gap-2">
+                  <ImageSlot
+                    label="1. Ana / Pazarlama"
+                    kind="main"
+                    productId={editing.id}
+                    images={productImages}
+                    onUpload={(kind, data) => setImage.mutate({ productId: editing.id, kind, data })}
+                    onDelete={kind => deleteImage.mutate({ productId: editing.id, kind })}
+                  />
+                  <ImageSlot
+                    label="2. Ambalaj"
+                    kind="packaging"
+                    productId={editing.id}
+                    images={productImages}
+                    onUpload={(kind, data) => setImage.mutate({ productId: editing.id, kind, data })}
+                    onDelete={kind => deleteImage.mutate({ productId: editing.id, kind })}
+                  />
+                  <ImageSlot
+                    label="3. Kullanım"
+                    kind="usage"
+                    productId={editing.id}
+                    images={productImages}
+                    onUpload={(kind, data) => setImage.mutate({ productId: editing.id, kind, data })}
+                    onDelete={kind => deleteImage.mutate({ productId: editing.id, kind })}
+                  />
+                </div>
+              </div>
+            )}
+            {!editing && (
+              <p className="text-[11px] text-muted-foreground">
+                Görselleri eklemek için ürünü kaydettikten sonra düzenle penceresini aç.
+              </p>
+            )}
+              </TabsContent>
+
+              <TabsContent value="pazaryeri" className="space-y-3 mt-3">
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label>Satıcı Stok Kodu (SKU)</Label>
@@ -1032,40 +1127,6 @@ export default function Products() {
                     value={form.category}
                     onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
                     placeholder="Boya, Sprey, Yardımcı Ürünler"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-3 gap-3">
-                <div className="space-y-1.5">
-                  <Label>Kâr Oranı %</Label>
-                  <Input
-                    type="number"
-                    min="0"
-                    value={form.profitMargin}
-                    onChange={e => setForm(f => ({ ...f, profitMargin: e.target.value }))}
-                    placeholder="Seriden"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>KDV %</Label>
-                  <Input
-                    type="number"
-                    min="0"
-                    max="100"
-                    value={form.vatRate}
-                    onChange={e => setForm(f => ({ ...f, vatRate: e.target.value }))}
-                    placeholder="20"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Desi</Label>
-                  <Input
-                    type="number"
-                    min="0"
-                    step="0.1"
-                    value={form.desi}
-                    onChange={e => setForm(f => ({ ...f, desi: e.target.value }))}
-                    placeholder="1"
                   />
                 </div>
               </div>
@@ -1129,15 +1190,6 @@ export default function Products() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label>Etiket Uyarıları</Label>
-                <Textarea
-                  rows={2}
-                  value={form.labelWarnings}
-                  onChange={e => setForm(f => ({ ...f, labelWarnings: e.target.value }))}
-                  placeholder="Isı/güneşten koruyun, çocuklardan uzak tutun..."
-                />
-              </div>
-              <div className="space-y-1.5">
                 <Label>Görsel Linkleri (virgül veya satırla ayır)</Label>
                 <Textarea
                   rows={2}
@@ -1164,80 +1216,43 @@ export default function Products() {
                   />
                 </div>
               </div>
-            </div>
+              </TabsContent>
 
-            {editing && (
+              <TabsContent value="maliyet" className="space-y-3 mt-3">
+            <div className="grid grid-cols-3 gap-3">
               <div className="space-y-1.5">
-                <Label>Görseller</Label>
-                <div className="grid grid-cols-3 gap-2">
-                  <ImageSlot
-                    label="1. Ana / Pazarlama"
-                    kind="main"
-                    productId={editing.id}
-                    images={productImages}
-                    onUpload={(kind, data) => setImage.mutate({ productId: editing.id, kind, data })}
-                    onDelete={kind => deleteImage.mutate({ productId: editing.id, kind })}
-                  />
-                  <ImageSlot
-                    label="2. Ambalaj"
-                    kind="packaging"
-                    productId={editing.id}
-                    images={productImages}
-                    onUpload={(kind, data) => setImage.mutate({ productId: editing.id, kind, data })}
-                    onDelete={kind => deleteImage.mutate({ productId: editing.id, kind })}
-                  />
-                  <ImageSlot
-                    label="3. Kullanım"
-                    kind="usage"
-                    productId={editing.id}
-                    images={productImages}
-                    onUpload={(kind, data) => setImage.mutate({ productId: editing.id, kind, data })}
-                    onDelete={kind => deleteImage.mutate({ productId: editing.id, kind })}
-                  />
-                </div>
+                <Label>Kâr Oranı %</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  value={form.profitMargin}
+                  onChange={e => setForm(f => ({ ...f, profitMargin: e.target.value }))}
+                  placeholder="Seriden"
+                />
               </div>
-            )}
-            {!editing && (
-              <p className="text-[11px] text-muted-foreground">
-                Görselleri eklemek için ürünü kaydettikten sonra düzenle penceresini aç.
-              </p>
-            )}
-
-            {isVariantForm && (
-              <>
-                <div className="space-y-1.5">
-                  <Label>Yüzey / Kullanım Alanı</Label>
-                  <Input
-                    value={form.surfaceType}
-                    onChange={e => setForm(f => ({ ...f, surfaceType: e.target.value }))}
-                    placeholder="Serbest girin: jant, araba, 3D baskı, ahşap, plastik, metal, cam..."
-                  />
-                  <p className="text-[11px] text-muted-foreground">
-                    Sabit liste yok — boyanın kullanılacağı her yüzey/alan için istediğiniz tanımı yazabilirsiniz.
-                  </p>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Katkı Maddeleri ve Oran Farkları</Label>
-                  <Textarea
-                    value={form.additives}
-                    onChange={e => setForm(f => ({ ...f, additives: e.target.value }))}
-                    rows={2}
-                    placeholder="Örn. %5 elastikiyet katkısı, %2 UV koruyucu; solvent oranı %10 azaltıldı"
-                  />
-                </div>
-              </>
-            )}
-
-            <div className="space-y-1.5">
-              <Label>Açıklama</Label>
-              <Textarea
-                value={form.description}
-                onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-                rows={2}
-                placeholder="Ürün hakkında notlar"
-              />
+              <div className="space-y-1.5">
+                <Label>KDV %</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={form.vatRate}
+                  onChange={e => setForm(f => ({ ...f, vatRate: e.target.value }))}
+                  placeholder="20"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Desi</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  value={form.desi}
+                  onChange={e => setForm(f => ({ ...f, desi: e.target.value }))}
+                  placeholder="1"
+                />
+              </div>
             </div>
-
             <div className="grid grid-cols-3 gap-3">
               <div className="space-y-1.5">
                 <Label>İndirim %</Label>
@@ -1273,6 +1288,8 @@ export default function Products() {
                 />
               </div>
             </div>
+              </TabsContent>
+            </Tabs>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
