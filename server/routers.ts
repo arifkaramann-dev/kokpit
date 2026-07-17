@@ -368,6 +368,44 @@ export const appRouter = router({
         }
         return { count: combos.length };
       }),
+    // Ana ürün kartındaki seçili alan gruplarını tüm türevlere kopyalar.
+    // Türeve özgü alanlara (ad, fiyat, ambalaj, barkod, SKU, stok, renk,
+    // yüzey, katkılar) bilinçli olarak dokunulmaz.
+    propagateToVariants: protectedProcedure
+      .input(
+        z.object({
+          parentId: z.number(),
+          groups: z
+            .array(z.enum(["aciklamalar", "etiket", "pazaryeri", "medya", "maliyet"]))
+            .min(1),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const parent = await db.getProduct(input.parentId);
+        if (!parent) throw new TRPCError({ code: "NOT_FOUND", message: "Ana ürün bulunamadı" });
+        const variants = (await db.listProducts()).filter(p => p.parentId === parent.id);
+        if (variants.length === 0) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Bu ana ürünün türevi yok" });
+        }
+        const groupFields = {
+          aciklamalar: ["description", "shortDescription", "longDescription", "applicationText"],
+          etiket: ["labelText", "usageGuide", "safetyNotes", "labelWarnings", "labelSize", "extraInfo"],
+          pazaryeri: ["category", "paintType", "features"],
+          medya: ["imageUrls", "videoUrl", "mockupUrl"],
+          maliyet: ["profitMargin", "vatRate", "desi", "discountPercent", "shippingCost"],
+        } as const;
+        // Değerler DB'den okunduğu için decimal alanlar zaten string; dönüşüm gerekmez.
+        const patch: Record<string, unknown> = {};
+        for (const group of input.groups) {
+          for (const field of groupFields[group]) {
+            patch[field] = (parent as Record<string, unknown>)[field];
+          }
+        }
+        for (const variant of variants) {
+          await db.updateProduct(variant.id, patch as never);
+        }
+        return { count: variants.length };
+      }),
     // Toplu zam/indirim: tüm ürünlerin (veya bir serinin) fiyatı yüzdeyle güncellenir.
     bulkPrice: protectedProcedure
       .input(z.object({ percent: z.number().min(-90).max(500), series: z.string().nullable().optional() }))

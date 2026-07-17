@@ -8,6 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -22,7 +23,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatQty, formatTL } from "@/lib/format";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { trpc } from "@/lib/trpc";
-import { Beaker, Boxes, ChevronDown, ChevronRight, Download, Eraser, Layers, Package, Pencil, Percent, Plus, Printer, Search, Sparkles, Store, Trash2, Wand2 } from "lucide-react";
+import { Beaker, Boxes, ChevronDown, ChevronRight, CopyCheck, Download, Eraser, Layers, Package, Pencil, Percent, Plus, Printer, Search, Sparkles, Store, Trash2, Wand2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import TemplatePicker from "@/components/TemplatePicker";
 import { toast } from "sonner";
@@ -125,6 +126,16 @@ function textToJsonList(text: string): string | null {
   return items.length ? JSON.stringify(items) : null;
 }
 
+/** "Türevlere Uygula" diyaloğundaki alan grupları (sunucudaki enum ile birebir). */
+const PROPAGATE_GROUPS = [
+  { key: "aciklamalar", label: "Açıklamalar", desc: "Açıklama, kısa/uzun açıklama, uygulama metni" },
+  { key: "etiket", label: "Etiket & Kılavuz", desc: "Etiket yazısı, kullanım kılavuzu, güvenlik, uyarılar, etiket boyutu, ek bilgiler" },
+  { key: "pazaryeri", label: "Pazaryeri Künyesi", desc: "Kategori, ürün türü, özellikler" },
+  { key: "medya", label: "Medya Linkleri", desc: "Görsel linkleri, video ve mockup linki" },
+  { key: "maliyet", label: "Maliyet Parametreleri", desc: "Kâr oranı, KDV, desi, indirim, kargo maliyeti" },
+] as const;
+type PropagateGroupKey = (typeof PROPAGATE_GROUPS)[number]["key"];
+
 /** Alan HTML etiketi veya entity içeriyor mu? (pazaryerinden yapıştırılan metinler) */
 function looksLikeHtml(value: string): boolean {
   return /<[a-z][^>]*>|&[a-z]+\d*;|&#\d+;/i.test(value);
@@ -184,6 +195,10 @@ export default function Products() {
   const [customColor, setCustomColor] = useState("");
   const [deriveSets, setDeriveSets] = useState<Set<string>>(new Set());
   const [customSet, setCustomSet] = useState("");
+  const [propagateFor, setPropagateFor] = useState<ProductRow | null>(null);
+  const [propagateGroups, setPropagateGroups] = useState<Set<PropagateGroupKey>>(
+    new Set<PropagateGroupKey>(["aciklamalar", "etiket"]),
+  );
   const { data: templateList } = trpc.templates.list.useQuery();
   const { data: seriesRecords } = trpc.series.list.useQuery();
   const { data: imageRefs } = trpc.products.allImageRefs.useQuery();
@@ -381,6 +396,15 @@ export default function Products() {
     onSuccess: () => {
       utils.products.invalidate();
       toast.success("Ürün silindi");
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  const propagateToVariants = trpc.products.propagateToVariants.useMutation({
+    onSuccess: r => {
+      utils.products.invalidate();
+      toast.success(`${r.count} türev ana üründen güncellendi`);
+      setPropagateFor(null);
     },
     onError: e => toast.error(e.message),
   });
@@ -720,6 +744,17 @@ export default function Products() {
                   <Button size="sm" variant="outline" onClick={() => openCreateVariant(main)}>
                     <Layers className="h-3.5 w-3.5 mr-1" /> Türev Ekle
                   </Button>
+                  {variants.length > 0 && (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8"
+                      title="Türevlere uygula: ana üründeki seçili alanları tüm türevlere kopyala"
+                      onClick={() => setPropagateFor(main)}
+                    >
+                      <CopyCheck className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
                   <Button
                     size="icon"
                     variant="ghost"
@@ -1471,6 +1506,66 @@ export default function Products() {
               }
             >
               Türevleri Oluştur
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={propagateFor !== null} onOpenChange={o => !o && setPropagateFor(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Türevlere Uygula — {propagateFor?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Ana üründeki seçili alan grupları{" "}
+              <span className="font-medium text-foreground">
+                {(products ?? []).filter(p => p.parentId === propagateFor?.id).length} türevin
+              </span>{" "}
+              tümüne kopyalanır. Türeve özgü alanlara (ad, fiyat, ambalaj, barkod, SKU, stok, renk)
+              dokunulmaz; türevlerdeki mevcut değerlerin üzerine yazılır.
+            </p>
+            <div className="space-y-2">
+              {PROPAGATE_GROUPS.map(g => (
+                <label
+                  key={g.key}
+                  className="flex items-start gap-2.5 rounded-lg border p-2.5 cursor-pointer hover:bg-muted/40"
+                >
+                  <Checkbox
+                    checked={propagateGroups.has(g.key)}
+                    onCheckedChange={checked => {
+                      setPropagateGroups(prev => {
+                        const next = new Set(prev);
+                        if (checked) next.add(g.key);
+                        else next.delete(g.key);
+                        return next;
+                      });
+                    }}
+                    className="mt-0.5"
+                  />
+                  <span className="flex-1">
+                    <span className="block text-sm font-medium">{g.label}</span>
+                    <span className="block text-[11px] text-muted-foreground">{g.desc}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPropagateFor(null)}>
+              İptal
+            </Button>
+            <Button
+              disabled={propagateGroups.size === 0 || propagateToVariants.isPending}
+              onClick={() =>
+                propagateFor &&
+                propagateToVariants.mutate({
+                  parentId: propagateFor.id,
+                  groups: Array.from(propagateGroups),
+                })
+              }
+            >
+              {propagateToVariants.isPending ? "Uygulanıyor..." : "Türevlere Uygula"}
             </Button>
           </DialogFooter>
         </DialogContent>
