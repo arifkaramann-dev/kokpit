@@ -274,6 +274,18 @@ export async function listFormulaItems(productId: number) {
     .where(eq(formulaItems.productId, productId));
 }
 
+/** Tüm reçete kalemleri (hafif küme): ürün başına üretilebilirlik hesabı için. */
+export async function listAllFormulaItems() {
+  const db = await requireDb();
+  return db
+    .select({
+      productId: formulaItems.productId,
+      materialId: formulaItems.materialId,
+      qty: formulaItems.qty,
+    })
+    .from(formulaItems);
+}
+
 export async function addFormulaItem(productId: number, materialId: number, qty: number, note?: string) {
   const db = await requireDb();
   const [result] = await db.insert(formulaItems).values({ productId, materialId, qty: String(qty), note });

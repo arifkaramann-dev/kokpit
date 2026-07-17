@@ -184,6 +184,23 @@ düzenlenemez (siparişle sessiz ayrışma engellendi). 124/124 test, build ✓.
 - **Ürünler:** arama artık barkod/renk kodunu da bulur; "HB'ye Gönder" butonu
   (Trendyol'un yanında). Doğrulama: 0 tip hatası, 124/124 test, build ✓.
 
+**Üretim sayfası yenilendi ✔ (17.07.2026):** kullanıcı "hâlâ çok kötü" dedi,
+sayfa baştan tasarlandı (migration yok; `formula.all` + `produce.note` +
+`runs.limit` uçları eklendi):
+- **Özet şerit:** bu ay / son 30 gün üretim (adet+emir, geri alınanlar hariç),
+  kuyruk durumu (kaçı hemen üretilebilir), kritik hammadde sayısı (→ /stok).
+- **Kuyruk akıllandı:** her satırda renk sıvaması, ana→türev etiketi ve hammadde
+  hazırlık rozeti ("hammadde hazır" / "en fazla N" / "hammadde yok" / "reçete
+  yok") — `formula.all` ile istemcide üretilebilirlik hesabı. 8+ satır katlanır.
+- **Planlayıcı:** aranabilir ürün seçici (Command+Popover: isim/seri/renk kodu,
+  sıvama, stok, reçete rozeti), hızlı adet çipleri ("Eşiğe tamamla" / "Azami"),
+  darboğaz hammadde rozeti, eksik hammaddede tedarikçi ipucu, maliyet/marj
+  paneli (toplam, adet başı, satış değeri, birim kâr + %), parti/lot notu
+  (`produce.note` — zorlama notuyla " · " birleşir). Pasif ürünler artık seçici
+  ve kuyruğa girmez.
+- **Geçmiş:** ürün/not araması, boş durumlar, "daha eski kayıtları göster"
+  (limit 50→+100, azami 500), mobilde yatay kaydırma. 0 tip hatası, 124/124 test.
+
 **Kod dışı bekleyenler (kullanıcı/dış taraf):** e-Fatura entegratör anlaşması
 (İzibiz/Foriba), N11-Çiçeksepeti API anahtarları, Hepsiburada API onayı,
 uptime monitörü kurulumu (cron-job.org → /api/health, 10 dk'da bir).

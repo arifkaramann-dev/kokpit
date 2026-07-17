@@ -417,7 +417,14 @@ export const appRouter = router({
   production: router({
     // Üretim kaydı: reçete × adet kadar hammadde stoktan düşülür (hareket notuyla).
     produce: protectedProcedure
-      .input(z.object({ productId: z.number(), qty: z.number().positive(), force: z.boolean().default(false) }))
+      .input(
+        z.object({
+          productId: z.number(),
+          qty: z.number().positive(),
+          force: z.boolean().default(false),
+          note: z.string().max(500).optional(),
+        }),
+      )
       .mutation(async ({ input }) => {
         const product = await db.getProduct(input.productId);
         if (!product) throw new TRPCError({ code: "NOT_FOUND", message: "Ürün bulunamadı" });
@@ -447,11 +454,17 @@ export const appRouter = router({
         }
         // Üretim emri kaydı + mamul stok girişi (Faz 0.2): üretilen adet
         // ürünün stoğuna eklenir, üretim geçmişi productionRuns'ta izlenir.
-        await db.recordProductionRun(input.productId, Math.round(input.qty), missing.length > 0 ? `Eksik stokla zorlandı: ${missing.join(", ")}` : null);
+        const noteParts = [
+          input.note?.trim() || null,
+          missing.length > 0 ? `Eksik stokla zorlandı: ${missing.join(", ")}` : null,
+        ].filter((s): s is string => !!s);
+        await db.recordProductionRun(input.productId, Math.round(input.qty), noteParts.length > 0 ? noteParts.join(" · ") : null);
         return { deducted: formula.length, missing };
       }),
     // Üretim geçmişi: son üretim emirleri (ürün adıyla).
-    runs: protectedProcedure.query(() => db.listProductionRuns(50)),
+    runs: protectedProcedure
+      .input(z.object({ limit: z.number().int().min(1).max(500).default(50) }).optional())
+      .query(({ input }) => db.listProductionRuns(input?.limit ?? 50)),
     // Yanlış girilen üretim emrini geri alır: hammaddeler GÜNCEL reçeteye göre
     // stoğa iade edilir, mamul stok girişi geri düşülür. Kayıt silinmez —
     // notuna "geri alındı" damgası vurulur (izlenebilirlik).
@@ -480,6 +493,9 @@ export const appRouter = router({
 
   formula: router({
     list: protectedProcedure.input(z.object({ productId: z.number() })).query(({ input }) => db.listFormulaItems(input.productId)),
+    // Tüm reçete kalemleri (hafif): Üretim sayfası her ürün için "mevcut
+    // hammaddeyle kaç adet üretilebilir" hesabını istemcide yapar.
+    all: protectedProcedure.query(() => db.listAllFormulaItems()),
     add: protectedProcedure
       .input(z.object({ productId: z.number(), materialId: z.number(), qty: z.number().positive(), note: z.string().optional() }))
       .mutation(({ input }) => db.addFormulaItem(input.productId, input.materialId, input.qty, input.note)),
