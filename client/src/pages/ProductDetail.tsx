@@ -20,9 +20,10 @@ import {
   CheckCircle2,
   ChevronRight,
   Pencil,
+  Store,
   TrendingUp,
 } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useLocation, useRoute } from "wouter";
 import { toast } from "sonner";
 import type { ProductRow } from "./Products";
@@ -120,6 +121,28 @@ export default function ProductDetail() {
       toast.success("Kaydedildi");
     },
     onError: e => toast.error(e.message),
+  });
+
+  // Faz C: Trendyol'da ürün kartı açma (varyant gruplu) + batch takibi.
+  const [cardResult, setCardResult] = useState<{
+    batchRequestId: string | null;
+    sent: number;
+    problems: string[];
+  } | null>(null);
+  const [batchStatus, setBatchStatus] = useState<unknown>(null);
+  const pushCard = trpc.products.pushCardToTrendyol.useMutation({
+    onSuccess: r => {
+      setCardResult(r);
+      setBatchStatus(null);
+      toast.success(`${r.sent} kalem Trendyol'a gönderildi — sonuç batch ile takip edilir`, {
+        duration: 8000,
+      });
+    },
+    onError: e => toast.error(e.message, { duration: 10000 }),
+  });
+  const checkBatch = trpc.products.trendyolCardBatchStatus.useMutation({
+    onSuccess: r => setBatchStatus(r),
+    onError: e => toast.error(e.message, { duration: 8000 }),
   });
 
   if (isLoading) return <div className="h-60 rounded-xl bg-muted animate-pulse" />;
@@ -234,11 +257,61 @@ export default function ProductDetail() {
           <Button variant="outline" onClick={() => setLocation(`/formuller?urun=${id}`)}>
             <Beaker className="h-4 w-4 mr-1" /> Formül
           </Button>
+          {!product.parentId && (
+            <Button
+              variant="outline"
+              disabled={pushCard.isPending}
+              title="Ana ürün + Satışta türevleri, ortak productMainId ile TEK ilan (varyant seçicili) olarak Trendyol'a gönderir. Ayarlar → Trendyol Ürün Açma bölümü dolu olmalı."
+              onClick={() => pushCard.mutate({ parentId: id })}
+            >
+              <Store className="h-4 w-4 mr-1" />
+              {pushCard.isPending ? "Gönderiliyor..." : "Trendyol'da Ürün Aç"}
+            </Button>
+          )}
           <Button onClick={() => setLocation(`/urunler?duzenle=${id}`)}>
             <Pencil className="h-4 w-4 mr-1" /> Kartı Düzenle
           </Button>
         </div>
       </div>
+
+      {cardResult && (
+        <Card className="p-3 text-sm space-y-2">
+          <p>
+            <span className="font-medium">Trendyol ürün kartı gönderimi:</span> {cardResult.sent} kalem
+            gönderildi.
+            {cardResult.batchRequestId && (
+              <>
+                {" "}
+                Parti no: <span className="font-mono text-xs">{cardResult.batchRequestId}</span>
+              </>
+            )}
+          </p>
+          {cardResult.problems.length > 0 && (
+            <ul className="list-disc pl-5 text-xs text-amber-700 dark:text-amber-400">
+              {cardResult.problems.map(p => (
+                <li key={p}>{p}</li>
+              ))}
+            </ul>
+          )}
+          {cardResult.batchRequestId && (
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={checkBatch.isPending}
+                onClick={() => checkBatch.mutate({ batchRequestId: cardResult.batchRequestId! })}
+              >
+                Sonucu Sorgula
+              </Button>
+            </div>
+          )}
+          {batchStatus !== null && (
+            <pre className="max-h-60 overflow-auto rounded-md border bg-muted/30 p-2 text-[11px]">
+              {JSON.stringify(batchStatus, null, 2)}
+            </pre>
+          )}
+        </Card>
+      )}
 
       {/* Sağlık: eksik alanlar */}
       {health.missing.length > 0 ? (

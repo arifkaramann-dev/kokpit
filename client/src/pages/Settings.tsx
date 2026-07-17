@@ -48,6 +48,19 @@ export default function Settings() {
     onError: e => toast.error(e.message),
   });
 
+  // Trendyol ürün açma keşif araçları (Faz C): marka ID + kategori özellikleri.
+  const [brandQuery, setBrandQuery] = useState("");
+  const [categoryIdQuery, setCategoryIdQuery] = useState("");
+  const [discovery, setDiscovery] = useState<unknown>(null);
+  const brandSearch = trpc.products.trendyolBrandSearch.useMutation({
+    onSuccess: r => setDiscovery(r),
+    onError: e => toast.error(e.message, { duration: 8000 }),
+  });
+  const catAttrs = trpc.products.trendyolCategoryAttributes.useMutation({
+    onSuccess: r => setDiscovery(r),
+    onError: e => toast.error(e.message, { duration: 8000 }),
+  });
+
   // ÜRÜN KAYIT Excel verilerini tek tuşla yükleme (Shell gerektirmez).
   const [importResult, setImportResult] = useState<{
     series: number;
@@ -174,6 +187,107 @@ export default function Settings() {
             kullanıcı adı ve şifre alınır.
           </p>
         </div>
+      </Card>
+
+      <Card className="p-5 space-y-4">
+        <h2 className="font-semibold flex items-center gap-2">
+          <Store className="h-4 w-4 text-primary" /> Trendyol Ürün Açma (varyant gruplu)
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Ürün detay sayfasındaki "Trendyol'da Ürün Aç" butonu bu ayarları kullanır. Aynı ana
+          ürünün türevleri ortak <span className="font-mono text-xs">productMainId</span> ile tek
+          ilan (varyant seçicili) olarak gönderilir. Marka ID ve kategori ID'lerini aşağıdaki keşif
+          araçlarıyla bulabilirsiniz.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label>Trendyol Marka ID</Label>
+            <Input
+              value={form.trendyolBrandId ?? ""}
+              onChange={e => setForm(s => ({ ...s, trendyolBrandId: e.target.value }))}
+              placeholder="Örn. 123456"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Anlaşmalı Kargo ID</Label>
+            <Input
+              value={form.trendyolCargoCompanyId ?? ""}
+              onChange={e => setForm(s => ({ ...s, trendyolCargoCompanyId: e.target.value }))}
+              placeholder="Örn. 17 (TEX), 10 (MNG)..."
+            />
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label>Site Adresi (görsel linkleri için)</Label>
+            <Input
+              value={form.publicBaseUrl ?? ""}
+              onChange={e => setForm(s => ({ ...s, publicBaseUrl: e.target.value }))}
+              placeholder="https://artofcolour-kokpit.onrender.com"
+            />
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label>Kategori Eşlemesi (JSON: üründeki kategori adı → Trendyol categoryId)</Label>
+            <Textarea
+              rows={3}
+              className="font-mono text-xs"
+              value={form.trendyolCategoryMap ?? ""}
+              onChange={e => setForm(s => ({ ...s, trendyolCategoryMap: e.target.value }))}
+              placeholder='{"Boya": 1234, "Sprey": 5678}'
+            />
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label>Özellik Varsayılanları (JSON: categoryId → zorunlu özellik listesi, opsiyonel)</Label>
+            <Textarea
+              rows={3}
+              className="font-mono text-xs"
+              value={form.trendyolAttributeDefaults ?? ""}
+              onChange={e => setForm(s => ({ ...s, trendyolAttributeDefaults: e.target.value }))}
+              placeholder='{"1234": [{"attributeId": 338, "attributeValueId": 6980}]}'
+            />
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Input
+              className="w-40"
+              value={brandQuery}
+              onChange={e => setBrandQuery(e.target.value)}
+              placeholder="Marka adı ara..."
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={brandSearch.isPending || brandQuery.trim().length < 2}
+              onClick={() => brandSearch.mutate({ name: brandQuery.trim() })}
+            >
+              Marka ID Bul
+            </Button>
+            <Input
+              className="w-36"
+              value={categoryIdQuery}
+              onChange={e => setCategoryIdQuery(e.target.value)}
+              placeholder="Kategori ID"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={catAttrs.isPending || !parseInt(categoryIdQuery, 10)}
+              onClick={() => catAttrs.mutate({ categoryId: parseInt(categoryIdQuery, 10) })}
+            >
+              Kategori Özelliklerini Getir
+            </Button>
+          </div>
+          <Button onClick={() => save.mutate(form)} disabled={save.isPending}>
+            Kaydet
+          </Button>
+        </div>
+        {discovery !== null && (
+          <pre className="max-h-72 overflow-auto rounded-md border bg-muted/30 p-2 text-[11px]">
+            {JSON.stringify(discovery, null, 2)}
+          </pre>
+        )}
+        <p className="text-xs text-muted-foreground">
+          Keşif araçları canlı Trendyol API'sine bağlanır — yalnızca canlı ortamda (Render) çalışır.
+        </p>
       </Card>
 
       <Card className="p-5 space-y-3">

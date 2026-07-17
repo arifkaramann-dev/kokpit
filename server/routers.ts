@@ -13,6 +13,14 @@ import { buildSaleTitle, deriveCombos, parseSetCount } from "./productUtils";
 import { computePrice, extractJson, parseFeatures, pickReferenceProduct, scoreReference, suggestSku } from "./autofill";
 import { importUrunKayit } from "./importSeed";
 import { syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf } from "./trendyol";
+import {
+  fetchTrendyolCategoryAttributes,
+  getTrendyolProductBatchStatus,
+  mapProductsToTrendyolItems,
+  parseCardSettings,
+  pushTrendyolProductCards,
+  searchTrendyolBrands,
+} from "./trendyolProducts";
 import { pushHepsiburadaStockPrice } from "./hepsiburada";
 import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "./marketplace";
 import { channelProfitReport } from "./reportUtils";
@@ -743,6 +751,86 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: error instanceof Error ? error.message : "Hepsiburada'ya gönderim başarısız",
+          });
+        }
+      }),
+    // Faz C: Trendyol'da SIFIRDAN ürün kartı açma — ana ürünün "satista" türevleri
+    // ortak productMainId ile TEK ilan (varyant seçicili) olarak gönderilir.
+    // Ayarlar: Ayarlar sayfası → Trendyol Ürün Açma. Sonuç asenkron: batchRequestId.
+    pushCardToTrendyol: protectedProcedure
+      .input(z.object({ parentId: z.number() }))
+      .mutation(async ({ input }) => {
+        const parent = await db.getProduct(input.parentId);
+        if (!parent) throw new TRPCError({ code: "NOT_FOUND", message: "Ürün bulunamadı" });
+        if (parent.parentId) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Türev seçildi — ürün kartı ana üründen açılır." });
+        }
+        const cfg = parseCardSettings(await db.getSettings());
+        if (!cfg.ok) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Trendyol ürün açma ayarları eksik: ${cfg.missing.join(" · ")} (Ayarlar sayfasından girin)`,
+          });
+        }
+        const all = await db.listProducts();
+        const variants = all.filter(p => p.parentId === parent.id);
+        const refs = await db.listAllProductImageRefs();
+        const imageKinds = new Map<number, string[]>();
+        for (const r of refs) {
+          imageKinds.set(r.productId, [...(imageKinds.get(r.productId) ?? []), r.kind]);
+        }
+        const { items, problems } = mapProductsToTrendyolItems(parent, variants, imageKinds, cfg.value);
+        if (items.length === 0) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Gönderilebilir ürün yok — ${problems.join(" · ")}`,
+          });
+        }
+        try {
+          const result = await pushTrendyolProductCards(items);
+          return { ...result, problems };
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Trendyol ürün gönderimi başarısız",
+          });
+        }
+      }),
+    // Batch sonucu sorgulama: kalem bazında başarı/hata mesajları.
+    trendyolCardBatchStatus: protectedProcedure
+      .input(z.object({ batchRequestId: z.string().min(1) }))
+      .mutation(async ({ input }) => {
+        try {
+          return await getTrendyolProductBatchStatus(input.batchRequestId);
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Batch sorgusu başarısız",
+          });
+        }
+      }),
+    // Keşif uçları (Ayarlar → eşleme kurarken): marka ID ve kategori özellikleri.
+    trendyolBrandSearch: protectedProcedure
+      .input(z.object({ name: z.string().min(2) }))
+      .mutation(async ({ input }) => {
+        try {
+          return await searchTrendyolBrands(input.name);
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Marka araması başarısız",
+          });
+        }
+      }),
+    trendyolCategoryAttributes: protectedProcedure
+      .input(z.object({ categoryId: z.number() }))
+      .mutation(async ({ input }) => {
+        try {
+          return await fetchTrendyolCategoryAttributes(input.categoryId);
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Kategori özellikleri alınamadı",
           });
         }
       }),
