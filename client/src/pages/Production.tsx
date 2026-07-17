@@ -61,6 +61,8 @@ export default function Production() {
   const { data: materials } = trpc.materials.list.useQuery();
   const { data: suppliers } = trpc.suppliers.list.useQuery();
   const { data: formulaAll } = trpc.formula.all.useQuery();
+  // Üretim önerisi v2: son 30 günün satış hızı hedef stoku belirler.
+  const { data: sales30 } = trpc.report.productSales.useQuery({ days: 30 });
 
   const [historyLimit, setHistoryLimit] = useState(50);
   const [historySearch, setHistorySearch] = useState("");
@@ -157,19 +159,30 @@ export default function Production() {
   );
 
   // Üretim kuyruğu: eksi stok = üretilecek; kritik eşik tanımlıysa eşik altı da
-  // (Stok Nöbetçisi'yle aynı kural). Önerilen adet stoku eşiğe tamamlar.
+  // (Stok Nöbetçisi'yle aynı kural). Önerilen adet (v2): hedef stok = 30 günlük
+  // satış (1 aylık tampon) ile kritik eşiğin büyüğü; öneri stoku hedefe tamamlar.
+  const salesByProduct = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const s of sales30 ?? []) if (s.productId !== null) map.set(s.productId, s.qty);
+    return map;
+  }, [sales30]);
   const queue = useMemo(() => {
     return sortedProducts
       .filter(({ p }) => p.stockQty < 0 || (p.criticalQty > 0 && p.stockQty <= p.criticalQty))
-      .map(({ p, label }) => ({
-        p,
-        label,
-        suggested: Math.max(1, (p.criticalQty > 0 ? p.criticalQty : 0) - p.stockQty),
-        maxNow: maxProducibleOf(p.id),
-      }))
+      .map(({ p, label }) => {
+        const monthlySales = Math.ceil(salesByProduct.get(p.id) ?? 0);
+        const target = Math.max(p.criticalQty > 0 ? p.criticalQty : 0, monthlySales);
+        return {
+          p,
+          label,
+          suggested: Math.max(1, target - p.stockQty),
+          monthlySales,
+          maxNow: maxProducibleOf(p.id),
+        };
+      })
       .sort((a, b) => a.p.stockQty - b.p.stockQty);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortedProducts, formulasByProduct, matById]);
+  }, [sortedProducts, formulasByProduct, matById, salesByProduct]);
   const queueReady = queue.filter(q => q.maxNow !== null && q.maxNow >= q.suggested);
   const visibleQueue = queueExpanded ? queue : queue.slice(0, 8);
 
@@ -319,7 +332,7 @@ export default function Production() {
             </h2>
           </div>
           <div className="space-y-1.5">
-            {visibleQueue.map(({ p, label, suggested, maxNow }) => (
+            {visibleQueue.map(({ p, label, suggested, monthlySales, maxNow }) => (
               <div
                 key={p.id}
                 className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border bg-card px-3 py-2 text-sm"
@@ -336,6 +349,14 @@ export default function Production() {
                   Stok: {p.stockQty}
                   {p.criticalQty > 0 && <span className="text-muted-foreground"> / eşik {p.criticalQty}</span>}
                 </span>
+                {monthlySales > 0 && (
+                  <span
+                    className="whitespace-nowrap text-xs text-muted-foreground"
+                    title="Son 30 günde satılan adet — öneri bu hıza göre 1 aylık tampon hedefler"
+                  >
+                    30g satış: {monthlySales}
+                  </span>
+                )}
                 {maxNow === null ? (
                   <Badge variant="outline" className="text-[10px] text-muted-foreground">
                     reçete yok

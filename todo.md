@@ -241,16 +241,25 @@ Hepsiburada push yok, web sitesi (Qukasoft) entegrasyonu yok.
 ## ÜRÜN ÇEKİRDEĞİ — ana temel kararı (17.07.2026, patron kararı)
 Program bundan sonra Ürünler & Türevler çekirdeği üzerine inşa edilecek.
 Tam analiz + fazlı yol haritası: **docs/URUN-CEKIRDEGI-YOL-HARITASI.md**
-- Faz A: temel sağlamlaştırma (barkod/SKU tekilliği, seri bağı, yaşam döngüsü,
-  türev hiyerarşi koruması, ürün sağlık skoru)
-- Faz B: tam sayfa ürün detayı (/urun/:id) + türev karşılaştırma + override işaretleri
-- Faz C: pazaryerinde sıfırdan ürün açma (kategori/özellik eşleme, productMainId
-  ile varyant gruplu gönderim, batch takibi) — stratejik hedef
-- Faz D: kalem=ürün bağı + stok rezervasyonu + üretim önerisi v2
-- Faz E: AI içerik stüdyosu + görsel üretimi + soru-cevap kuyruğu
-- Faz F: ürün bazlı kârlılık raporu + liste ölçeklenmesi
-Yapılan hazırlık (17.07): ürün diyaloğu sabit boyut + HTML temizleme +
-"Türevlere Uygula" (products.propagateToVariants).
+- [x] Faz A: temel sağlamlaştırma — barkod/SKU tekilliği + çift raporu, seri
+      otomatik kaydı, taslak/satista/arsiv yaşam döngüsü (migration 0021),
+      türev hiyerarşi koruması, ürün sağlık skoru (shared/productHealth.ts)
+- [x] Faz B: tam sayfa ürün detayı (/urun/:id) + türev tablosu (satır içi
+      düzenleme) + "yalnız boş alanları doldur" güvenli yayma
+- [x] Faz C (kod hazır, CANLI TEST BEKLER): Trendyol'da sıfırdan ürün açma —
+      server/trendyolProducts.ts, productMainId ile varyant gruplu gönderim,
+      Ayarlar'da eşleme kartı + keşif araçları, batch takibi. C3 (HB listing,
+      N11/Çiçeksepeti) ve C4 (yetim ilan raporu) açık.
+- [x] Faz D: eşleşmeyen kalem uyarısı (sipariş/teklif), üretim önerisi v2
+      (30 gün satış hızı, report.productSales). D2 rezervasyon: mimari gereği
+      gereksiz bulundu (stok sipariş anında düşüyor) — belgede gerekçesi.
+- [x] Faz E1: ürün detayından AI içerik üretimi (doğrudan karta işlenir).
+      E2 (görsel üretimi) ve E3 (soru-cevap kuyruğu) bilinçli ertelendi.
+- [x] Faz F1: Analiz'de Ürün Kârlılığı tablosu (brüt kâr + marj + reçetesiz/
+      eşleşmeyen uyarıları). F2 (sayfalama) katalog 500+ olunca.
+Hazırlık (17.07): ürün diyaloğu sabit boyut + HTML temizleme + Türevlere Uygula.
+Canlıda doğrulanacak: Trendyol ürün açma akışı (Ayarlar → marka/kargo/kategori
+eşlemesi girildikten sonra ürün detayından test) + migration 0021.
 
 ## Canlıda (Render) doğrulama bekleyenler — kod tarafı hazır
 - [ ] Trendyol: "Bağlantıyı Test Et" HTTP 200 + sipariş akışı + "Trendyol'a Gönder" (stok/fiyat)

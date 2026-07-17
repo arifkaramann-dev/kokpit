@@ -20,6 +20,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Pencil,
+  Sparkles,
   Store,
   TrendingUp,
 } from "lucide-react";
@@ -142,6 +143,27 @@ export default function ProductDetail() {
   });
   const checkBatch = trpc.products.trendyolCardBatchStatus.useMutation({
     onSuccess: r => setBatchStatus(r),
+    onError: e => toast.error(e.message, { duration: 8000 }),
+  });
+
+  // E1: AI içerik üretimi — sonuç doğrudan ürün kartına yazılır (diyalogdaki
+  // "AI ile Yaz"dan farkı: form değil, kayıtlı kart güncellenir).
+  const aiWrite = trpc.products.aiFill.useMutation({
+    onSuccess: r => {
+      updateProduct.mutate({
+        id,
+        data: {
+          shortDescription: r.shortDescription ?? undefined,
+          longDescription: r.longDescription ?? undefined,
+          applicationText: r.applicationText ?? undefined,
+          labelText: r.labelText ?? undefined,
+          labelWarnings: r.labelWarnings ?? undefined,
+          features: Array.isArray(r.features) && r.features.length
+            ? JSON.stringify(r.features.slice(0, 5))
+            : undefined,
+        },
+      });
+    },
     onError: e => toast.error(e.message, { duration: 8000 }),
   });
 
@@ -526,6 +548,30 @@ export default function ProductDetail() {
         </TabsContent>
 
         <TabsContent value="pazaryeri" className="mt-3 space-y-3">
+          <div className="flex items-center justify-between rounded-lg border bg-muted/40 p-2">
+            <p className="text-xs text-muted-foreground">
+              Açıklamaları, etiket yazısını ve özellikleri Claude üretsin — sonuç doğrudan karta
+              işlenir (mevcut metinlerin üzerine yazar).
+            </p>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={aiWrite.isPending || updateProduct.isPending}
+              onClick={() =>
+                aiWrite.mutate({
+                  name: product.name,
+                  series: product.series,
+                  packaging: product.packaging,
+                  color: product.colorCode ?? product.colorHex,
+                  surfaceType: product.surfaceType,
+                  paintType: product.paintType,
+                })
+              }
+            >
+              <Sparkles className="h-3.5 w-3.5 mr-1" />
+              {aiWrite.isPending ? "AI yazıyor..." : "AI ile Yaz"}
+            </Button>
+          </div>
           {features.length > 0 && (
             <div className="flex items-center gap-1.5 flex-wrap">
               {features.map(f => (

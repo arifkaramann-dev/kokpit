@@ -1421,6 +1421,10 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
     data: protectedProcedure.query(() => db.reportData()),
     vat: protectedProcedure.query(() => db.vatReport()),
     cashflow: protectedProcedure.query(() => db.cashflowReport()),
+    // Ürün bazlı satış (adet + ciro, iptal hariç): üretim önerisi + kârlılık raporu.
+    productSales: protectedProcedure
+      .input(z.object({ days: z.number().min(1).max(365).default(30) }).optional())
+      .query(({ input }) => db.productSalesSince(input?.days ?? 30)),
     // Kanal bazlı toplu net kâr: finans onaylı kâr modeli v2 ile, sipariş başına.
     channelProfit: protectedProcedure
       .input(z.object({ days: z.number().min(1).max(365).default(30) }).optional())

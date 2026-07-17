@@ -110,40 +110,35 @@ Sıralama mantığı: önce **temel sağlamlığı** (kimlik/bütünlük — üz
 edilecek zemin), sonra **ürünün evi** (tam sayfa detay), sonra **en büyük
 stratejik açık** (pazaryeri ürün açma), sonra satış/stok bağları ve AI katmanı.
 
-### FAZ A — Temel sağlamlaştırma (zemin) · düşük risk, hızlı
+### FAZ A — Temel sağlamlaştırma (zemin) ✅ TAMAMLANDI (17.07.2026)
 
-- [ ] **A1. Barkod & SKU tekilliği:** kayıt/güncellemede uygulama seviyesi
-  kontrol + anlaşılır hata; mevcut çiftleri raporlayan tek seferlik kontrol
-  ekranı; ardından unique indeks migration'ı. *(veritabani-mimari +
-  backend-gelistirici)*
-- [ ] **A2. Seri bağının sağlamlaşması:** ürün kaydında seri adı
-  `productSeries`'te yoksa otomatik oluştur; ad değişikliğinde ürünlere yansıt.
-  (FK'ye tam geçiş sonra; önce davranış birliği.) *(veritabani-mimari)*
-- [ ] **A3. Ürün yaşam döngüsü:** `taslak / satista / arsiv` durumu
-  (isActive → status genişletmesi, migration). Liste filtreleri + pazaryeri
-  push'un yalnız "satista" ürünleri göndermesi. *(backend + frontend)*
-- [ ] **A4. Türev hiyerarşi koruması:** API'de türevin türevi engeli (parentId'li
-  ürüne parentId verilemez). *(backend, küçük iş)*
-- [ ] **A5. Ürün sağlık skoru:** pazaryerine hazırlık yüzdesi — barkod, görsel,
-  açıklamalar, kategori, desi, fiyat, reçete dolu mu? Listede rozet + eksik alan
-  listesi. Faz C'nin (ürün açma) ön doğrulayıcısı. *(backend + frontend)*
+- [x] **A1. Barkod & SKU tekilliği:** create/update'te uygulama seviyesi kontrol,
+  Hızlı Türet SKU çakışmasında otomatik numaralandırma, mevcut çiftler için
+  `duplicateIdentity` raporu + Ürünler sayfasında uyarı bandı. Unique indeks
+  migration'ı canlıdaki çiftler temizlendikten sonra atılacak (açık).
+- [x] **A2. Seri bağı:** ürüne yazılan seri adı kayıtlı değilse `productSeries`'e
+  varsayılanlarla otomatik açılır.
+- [x] **A3. Yaşam döngüsü:** `products.status` (taslak/satista/arsiv, migration
+  0021 + isActive backfill); push yalnız "satista" gönderir; diyalogda durum
+  seçici, listede filtre + rozet.
+- [x] **A4. Hiyerarşi koruması:** türevin altına türev engeli (create/update/deriveMany).
+- [x] **A5. Sağlık skoru:** `shared/productHealth.ts` (pazaryeri zorunlu alan
+  ayrımıyla), liste + detay sayfasında rozet, 8 birim testi.
 
 **Çıktı:** Çift kayıt/kopuk seri riski kapanır; hangi ürünün satışa/pazaryerine
 hazır olduğu tek bakışta görünür.
 
-### FAZ B — Ürünün evi: tam sayfa ürün detayı · orta çaba
+### FAZ B — Ürünün evi: tam sayfa ürün detayı ✅ TAMAMLANDI (17.07.2026)
 
-- [ ] **B1. `/urun/:id` sayfası:** sol tarafta kimlik + görseller + sağlık skoru;
-  sekmeler: Temel · İçerik · Pazaryeri · Maliyet & Fiyat (kanal kârlılığı kartı)
-  · Reçete (formül özeti + maliyet payı) · Stok (hareket defteri) · Türevler
-  (ana üründeyse). Diyalog yalnız hızlı oluşturma/hızlı düzeltme için kalır.
-  *(ux-tasarimci akışı çizer → frontend-gelistirici uygular)*
-- [ ] **B2. Türev karşılaştırma tablosu:** ana ürün detayında türevleri satır
-  satır fiyat/stok/barkod/sağlık ile gösteren düzenlenebilir tablo (satır içi
-  düzenleme, Fiyat & Kâr sayfası deseninden). Toplu barkod girişini hızlandırır.
-- [ ] **B3. Override işaretleri (Z5):** türevde ana üründen bilinçli
-  farklılaştırılan alanların işaretlenmesi; "Türevlere Uygula" override'lı
-  alanların üzerine yazmadan yayar. *(veritabani-mimari şema kararı ile)*
+- [x] **B1. `/urun/:id` sayfası:** kimlik + görsel + sağlık kartı, KPI şeridi
+  (fiyat/stok/maliyet/brüt kâr), sekmeler: Türevler · Genel · İçerik & Etiket ·
+  Pazaryeri · Reçete (maliyet payı %) · Stok Hareketleri. Listeden ada tıklayınca
+  açılır; "Kartı Düzenle" mevcut diyaloğu `?duzenle=ID` ile çağırır.
+- [x] **B2. Türev karşılaştırma tablosu:** fiyat/stok/barkod satır içi düzenleme,
+  durum seçici, satır başına sağlık skoru.
+- [x] **B3 (hafif çözüm). Güvenli yayma:** "Türevlere Uygula"da "dolu alanların
+  üzerine yazma" seçeneği — yalnız boş alanlar doldurulur. Alan bazlı kalıcı
+  override işaretleri (şema değişikliği) ihtiyaç doğarsa sonraki sprintte.
 
 **Çıktı:** Ürünle ilgili her şey tek adreste; katalog büyüdükçe diyalog darboğazı
 biter.
@@ -154,14 +149,14 @@ biter.
 `/api/img` linkleri ilk sürüm için yeterli; S3 göçü (KOKPİT V2 0.3) paralel
 ilerler, URL şeması korunur.*
 
-- [ ] **C1. Trendyol kategori/marka/özellik altyapısı:** kategori ağacı +
-  zorunlu özellik listesi çekme; üründeki kategori/özellik alanlarını Trendyol
-  attribute'larına eşleyen eşleme tablosu (settings ya da yeni tablo).
-  *(pazaryeri-entegratoru)*
-- [ ] **C2. Ürün kartı gönderimi (createProducts):** ana ürünün türevleri ortak
-  `productMainId` ile TEK ilan + varyant seçici olarak gönderilir. Batch takibi
-  (`batchRequestId`) + ürün satırında durum/hata rozeti. Canlıda (Render) test —
-  geliştirme ortamı pazaryerine çıkamaz.
+- [x] **C1. Trendyol kategori/marka/özellik altyapısı:** Ayarlar → "Trendyol Ürün
+  Açma" kartı (marka ID, kargo ID, site adresi, kategori eşlemesi JSON, özellik
+  varsayılanları) + keşif araçları (marka arama, kategori özellikleri). *(17.07)*
+- [x] **C2. Ürün kartı gönderimi (createProducts):** `server/trendyolProducts.ts`
+  — ana ürün + "satista" türevleri ortak `productMainId` ile tek ilan; saf eşleme
+  fonksiyonu 8 birim testli; detay sayfasında "Trendyol'da Ürün Aç" + atlanan
+  kalemlerin neden listesi + "Sonucu Sorgula" (batch takibi). **Kod hazır —
+  CANLIDA (Render) doğrulanacak** (ortam kısıtı). *(17.07)*
 - [ ] **C3. Hepsiburada listing paritesi**, sonra **N11 + Çiçeksepeti** iskeletleri.
 - [ ] **C4. Çift yönlü eşleşme raporu:** pazaryerindeki mevcut ilanlar ↔ kokpit
   ürünleri; barkodu eşleşmeyen/yetim ilan listesi.
@@ -169,32 +164,39 @@ ilerler, URL şeması korunur.*
 **Çıktı:** "Kokpitte ürünü aç → tüm pazaryerlerinde tek tıkla yayınla" vaadi
 gerçek olur. Ürün kartı gerçekten tek doğruluk kaynağına dönüşür.
 
-### FAZ D — Satış & stok döngüsünün ürüne tam bağlanması
+### FAZ D — Satış & stok döngüsünün ürüne tam bağlanması ✅ (17.07.2026)
 
-- [ ] **D1. Kalem = ürün:** sipariş/teklif kaleminde katalogdan seçim öncelikli
-  (arama + barkod okutma); serbest kalem istisna olarak kalır ve raporda
-  "eşleşmedi" görünür. *(backend + frontend)*
-- [ ] **D2. Stok rezervasyonu:** onaylı ama kargolanmamış siparişler "rezerve"
-  düşer; pazaryerine giden müsait stok = eldeki − rezerve. Çifte satışı bitirir.
-  *(qa-test-uzmani zorunlu durak — yarış durumu riski)*
-- [ ] **D3. Üretim önerisi v2:** 30 günlük satış hızı + rezerve + kritik eşikten
-  önerilen üretim adedi (mevcut kuyruğun akıllanması). *(urun-uretim-uzmani)*
+- [x] **D1. Kalem = ürün:** datalist seçici + otomatik fiyat + sunucuda
+  barkod/ad→productId çözümü zaten vardı; eksik olan görsel geri bildirim
+  eklendi — katalogla eşleşmeyen kalem sarı çerçeve + açıklama ile işaretlenir
+  (Sipariş + Teklif formları).
+- [x] **D2. Stok rezervasyonu — GEREKSİZ (analiz kararı):** stok, sipariş
+  oluşturulduğu anda düşer (`replaceOrderItems` → mamul hareket), iptalde geri
+  gelir. "Onaylı ama düşmemiş" ara durumu mimaride yok; çifte satış penceresi
+  yalnızca 15 dk'lık pazaryeri senkron aralığıdır ve rezervasyonla çözülmez.
+  Ayrı rezervasyon katmanı eklemek karmaşıklık katıp değer üretmezdi.
+- [x] **D3. Üretim önerisi v2:** hedef stok = max(kritik eşik, son 30 gün satış)
+  — öneri stoku hedefe tamamlar; kuyruk satırında "30g satış" göstergesi
+  (`report.productSales` ucu).
 
-### FAZ E — İçerik & AI katmanı
+### FAZ E — İçerik & AI katmanı (E1 ✅, E2-E3 planlı)
 
-- [ ] **E1. AI içerik stüdyosu ürün detayında:** başlık/açıklama/SEO tek panelde,
-  pazaryeri-uyumlu TEMİZ HTML şablonuyla üretim (Z6'nın kalıcı çözümü); üretilen
-  metin doğrudan karta işlenir + türevlere yayılabilir.
+- [x] **E1. AI içerik ürün detayında:** Pazaryeri sekmesinde "AI ile Yaz" —
+  Claude'un ürettiği açıklamalar/etiket/özellikler DOĞRUDAN karta işlenir
+  (diyalogdaki form doldurmadan farkı: kalıcı kayıt). aiFill zaten temiz
+  HTML şablonuyla üretiyor (<p>/<ul>/<strong>). *(17.07)*
 - [ ] **E2. Görsel üretimi bağlanması:** `_core/imageGeneration.ts` hazır, router
-  bağlantısı açık iş — mockup/kapak üretimi ürün detayından.
-- [ ] **E3. Pazaryeri soru-cevap kuyruğu:** gelen soruya ürün kartındaki
-  kılavuz/açıklamadan AI cevap taslağı (Faz 1 açık maddesiyle birleşir).
+  bağlantısı açık — görsel üretimi kredi tükettiği için patronun kullanım
+  tercihi netleşince ürün detayına bağlanacak.
+- [ ] **E3. Pazaryeri soru-cevap kuyruğu:** soru çekme API'si canlı erişim
+  gerektirir — C2'nin canlı doğrulamasıyla aynı sprintte ele alınacak.
 
-### FAZ F — Ürün bazlı zekâ ve raporlama
+### FAZ F — Ürün bazlı zekâ ve raporlama (F1 ✅)
 
-- [ ] **F1. Ürün/seri kârlılık raporu:** `orderItems.productId` üzerinden en çok
-  satan türev, seri performansı, kanal × ürün kârlılığı (D1'e bağımlı — eşleşme
-  oranı yükselmeden rapor kör).
+- [x] **F1. Ürün Kârlılığı raporu:** Analiz sayfasında yeni tablo — kalem bazlı
+  satış (iptal hariç) − reçete maliyeti − ambalaj/kargo → brüt kâr + marj;
+  reçetesiz ürünler işaretli; katalogla eşleşmeyen serbest kalem cirosu ayrıca
+  raporlanır (`report.productSales`). *(17.07)*
 - [ ] **F2. Liste ölçeklenmesi (Z14):** sunucu tarafı arama/sayfalama —
   katalog ~500+ ürüne yaklaşınca devreye alınır, öncesinde gereksiz.
 
