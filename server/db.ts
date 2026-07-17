@@ -1518,6 +1518,15 @@ export async function deleteProductImage(productId: number, kind: "main" | "pack
     .where(and(eq(productImages.productId, productId), eq(productImages.kind, kind)));
 }
 
+/** Görseli olan ürün ID'leri (sağlık skoru: görsel var/yok tek sorguda). */
+export async function listProductIdsWithImages(): Promise<number[]> {
+  const db = await requireDb();
+  const rows = await db
+    .selectDistinct({ productId: productImages.productId })
+    .from(productImages);
+  return rows.map(r => r.productId);
+}
+
 export async function copyProductImages(fromProductId: number, toProductId: number) {
   const db = await requireDb();
   const rows = await db.select().from(productImages).where(eq(productImages.productId, fromProductId));

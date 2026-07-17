@@ -69,7 +69,63 @@ const productInput = z.object({
   videoUrl: z.string().nullable().optional(),
   mockupUrl: z.string().nullable().optional(),
   labelWarnings: z.string().nullable().optional(),
+  // Yaşam döngüsü (Faz A3): taslak → satista → arsiv. Push yalnız "satista" gönderir.
+  status: z.enum(["taslak", "satista", "arsiv"]).optional(),
 });
+
+/** Barkod/SKU tekilliği (Faz A1): dolu değer katalogda başka üründe olamaz. */
+async function assertUniqueIdentity(
+  barcode: string | null | undefined,
+  sku: string | null | undefined,
+  excludeId?: number,
+) {
+  const wantedBarcode = barcode?.trim();
+  const wantedSku = sku?.trim();
+  if (!wantedBarcode && !wantedSku) return;
+  const all = await db.listProducts();
+  for (const p of all) {
+    if (excludeId !== undefined && p.id === excludeId) continue;
+    if (wantedBarcode && p.barcode?.trim() === wantedBarcode) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `Bu barkod zaten "${p.name}" ürününde kayıtlı — çift barkod pazaryeri eşleşmesini bozar.`,
+      });
+    }
+    if (wantedSku && p.sku?.trim() === wantedSku) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `Bu SKU zaten "${p.name}" ürününde kayıtlı.`,
+      });
+    }
+  }
+}
+
+/** Seri bağı (Faz A2): ürüne yazılan seri adı kayıtlı değilse varsayılanlarla açılır. */
+async function ensureSeriesRecord(series: string | null | undefined) {
+  const name = series?.trim();
+  if (!name) return;
+  const existing = await db.getProductSeriesByName(name);
+  if (!existing) await db.createProductSeries({ name } as never);
+}
+
+/** Hiyerarşi koruması (Faz A4): türevin altına türev eklenemez. */
+async function assertValidParent(parentId: number | null | undefined) {
+  if (!parentId) return;
+  const parent = await db.getProduct(parentId);
+  if (!parent) throw new TRPCError({ code: "NOT_FOUND", message: "Ana ürün bulunamadı" });
+  if (parent.parentId) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Türev ürünün altına türev eklenemez — ana ürünü seçin.",
+    });
+  }
+}
+
+/** Arşive alınan ürün eski isActive bayrağıyla da tutarlı kalsın (geriye uyum). */
+function withStatusFlags<T extends { status?: "taslak" | "satista" | "arsiv" }>(data: T) {
+  if (!data.status) return data;
+  return { ...data, isActive: data.status === "arsiv" ? 0 : 1 };
+}
 
 const productSeriesInput = z.object({
   name: z.string().min(1),
@@ -268,14 +324,44 @@ export const appRouter = router({
   products: router({
     list: protectedProcedure.query(() => db.listProducts()),
     get: protectedProcedure.input(z.object({ id: z.number() })).query(({ input }) => db.getProduct(input.id)),
-    create: protectedProcedure.input(productInput).mutation(({ input }) =>
-      db.createProduct(toDecimalFields(input, productDecimalFields) as never),
-    ),
+    create: protectedProcedure.input(productInput).mutation(async ({ input }) => {
+      await assertValidParent(input.parentId);
+      await assertUniqueIdentity(input.barcode, input.sku);
+      await ensureSeriesRecord(input.series);
+      return db.createProduct(toDecimalFields(withStatusFlags(input), productDecimalFields) as never);
+    }),
     update: protectedProcedure
       .input(z.object({ id: z.number(), data: productInput.partial() }))
-      .mutation(({ input }) =>
-        db.updateProduct(input.id, toDecimalFields(input.data, productDecimalFields) as never),
-      ),
+      .mutation(async ({ input }) => {
+        if (input.data.parentId !== undefined) await assertValidParent(input.data.parentId);
+        if (input.data.barcode !== undefined || input.data.sku !== undefined) {
+          await assertUniqueIdentity(input.data.barcode, input.data.sku, input.id);
+        }
+        if (input.data.series !== undefined) await ensureSeriesRecord(input.data.series);
+        return db.updateProduct(
+          input.id,
+          toDecimalFields(withStatusFlags(input.data), productDecimalFields) as never,
+        );
+      }),
+    // Faz A1: mevcut verideki çift barkod/SKU grupları (unique indeks öncesi temizlik raporu).
+    duplicateIdentity: protectedProcedure.query(async () => {
+      const all = await db.listProducts();
+      const byBarcode = new Map<string, string[]>();
+      const bySku = new Map<string, string[]>();
+      for (const p of all) {
+        const b = p.barcode?.trim();
+        const s = p.sku?.trim();
+        if (b) byBarcode.set(b, [...(byBarcode.get(b) ?? []), p.name]);
+        if (s) bySku.set(s, [...(bySku.get(s) ?? []), p.name]);
+      }
+      const dupes = (m: Map<string, string[]>, kind: "barkod" | "sku") =>
+        Array.from(m.entries())
+          .filter(([, names]) => names.length > 1)
+          .map(([value, names]) => ({ kind, value, names }));
+      return [...dupes(byBarcode, "barkod"), ...dupes(bySku, "sku")];
+    }),
+    // Faz A5: görseli olan ürün ID'leri (sağlık skoru görsel kontrolü).
+    idsWithImages: protectedProcedure.query(() => db.listProductIdsWithImages()),
     delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteProduct(input.id)),
     // Mamul stok hareket geçmişi: üretim/satış/iade/elle düzeltme kayıtları.
     movements: protectedProcedure
@@ -306,6 +392,19 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         const parent = await db.getProduct(input.parentId);
         if (!parent) throw new TRPCError({ code: "NOT_FOUND", message: "Ana ürün bulunamadı" });
+        if (parent.parentId) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Türevden türetme yapılamaz — ana ürünü seçin." });
+        }
+        // SKU tekilliği (Faz A1): mevcut SKU'larla çakışan öneriye sayı eklenir.
+        const existingSkus = new Set(
+          (await db.listProducts()).map(p => p.sku?.trim()).filter((s): s is string => !!s),
+        );
+        const uniqueSku = (base: string) => {
+          let candidate = base;
+          for (let i = 2; existingSkus.has(candidate); i++) candidate = `${base}-${i}`;
+          existingSkus.add(candidate);
+          return candidate;
+        };
         const combos = deriveCombos(input.uses, input.packagings, input.colors, input.sets);
         const noSelection =
           input.uses.length === 0 &&
@@ -341,7 +440,7 @@ export const appRouter = router({
             safetyNotes: parent.safetyNotes,
             extraInfo: parent.extraInfo,
             // Pazaryeri alanları ana üründen devralınır; SKU türev başlığından üretilir.
-            sku: suggestSku(title, combo.packaging ?? parent.packaging),
+            sku: uniqueSku(suggestSku(title, combo.packaging ?? parent.packaging)),
             category: parent.category,
             profitMargin: parent.profitMargin,
             vatRate: parent.vatRate,
@@ -578,7 +677,8 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
         const all = await db.listProducts();
         const chosen = input.ids?.length ? all.filter(p => input.ids!.includes(p.id)) : all;
         const items = chosen
-          .filter(p => p.barcode && p.barcode.trim())
+          // Yalnız "satista" ürünler pazaryerine gider (Faz A3).
+          .filter(p => p.status === "satista" && p.barcode && p.barcode.trim())
           .map(p => {
             const list = parseFloat(String(p.salePrice)) || 0;
             const disc = parseFloat(String(p.discountPercent)) || 0;
@@ -611,7 +711,8 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
         const all = await db.listProducts();
         const chosen = input.ids?.length ? all.filter(p => input.ids!.includes(p.id)) : all;
         const items = chosen
-          .filter(p => p.barcode && p.barcode.trim())
+          // Yalnız "satista" ürünler pazaryerine gider (Faz A3).
+          .filter(p => p.status === "satista" && p.barcode && p.barcode.trim())
           .map(p => {
             const list = parseFloat(String(p.salePrice)) || 0;
             const disc = parseFloat(String(p.discountPercent)) || 0;

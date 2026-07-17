@@ -21,6 +21,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatQty, formatTL } from "@/lib/format";
+import { jsonListHasItems, productHealth, type ProductHealth } from "@shared/productHealth";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { trpc } from "@/lib/trpc";
 import { Beaker, Boxes, ChevronDown, ChevronRight, CopyCheck, Download, Eraser, Layers, Package, Pencil, Percent, Plus, Printer, Search, Sparkles, Store, Trash2, Wand2 } from "lucide-react";
@@ -67,6 +68,7 @@ export type ProductRow = {
   mockupUrl: string | null;
   labelWarnings: string | null;
   isActive: number;
+  status: "taslak" | "satista" | "arsiv";
 };
 
 const emptyForm = {
@@ -104,6 +106,7 @@ const emptyForm = {
   videoUrl: "",
   mockupUrl: "",
   labelWarnings: "",
+  status: "satista" as "taslak" | "satista" | "arsiv",
 };
 
 /** DB'de JSON dizi olarak duran alanı (features/imageUrls) form metnine çevirir. */
@@ -135,6 +138,33 @@ const PROPAGATE_GROUPS = [
   { key: "maliyet", label: "Maliyet Parametreleri", desc: "Kâr oranı, KDV, desi, indirim, kargo maliyeti" },
 ] as const;
 type PropagateGroupKey = (typeof PROPAGATE_GROUPS)[number]["key"];
+
+const STATUS_META: Record<string, { label: string; cls: string }> = {
+  taslak: { label: "Taslak", cls: "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200" },
+  arsiv: { label: "Arşiv", cls: "bg-zinc-200 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-300" },
+};
+
+/** Sağlık skoru rozeti (Faz A5): kartın pazaryerine hazırlık yüzdesi. */
+function HealthBadge({ health }: { health: ProductHealth }) {
+  const cls =
+    health.score >= 90
+      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300"
+      : health.score >= 60
+        ? "bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300"
+        : "bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300";
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium ${cls}`}
+      title={
+        health.missing.length
+          ? `Eksik alanlar: ${health.missing.join(", ")}${health.missingRequired.length ? ` · Pazaryeri için zorunlu eksik: ${health.missingRequired.join(", ")}` : ""}`
+          : "Ürün kartı tam — pazaryerine hazır"
+      }
+    >
+      %{health.score}
+    </span>
+  );
+}
 
 /** Alan HTML etiketi veya entity içeriyor mu? (pazaryerinden yapıştırılan metinler) */
 function looksLikeHtml(value: string): boolean {
@@ -222,6 +252,12 @@ export default function Products() {
 
   const [search, setSearch] = useState("");
   const [lowStockOnly, setLowStockOnly] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<"all" | "satista" | "taslak" | "arsiv">("all");
+  const { data: imageIdList } = trpc.products.idsWithImages.useQuery();
+  const { data: identityDupes } = trpc.products.duplicateIdentity.useQuery();
+  const imageIds = useMemo(() => new Set(imageIdList ?? []), [imageIdList]);
+  const healthOf = (p: ProductRow) =>
+    productHealth({ ...p, hasImage: imageIds.has(p.id) || jsonListHasItems(p.imageUrls) });
 
   // Düşük stok: sıfır/eksi her zaman; kritik eşik tanımlıysa eşiğin altı da.
   const isLowStock = (p: ProductRow) =>
@@ -248,6 +284,11 @@ export default function Products() {
   // Arama: ana ürünün kendisi ya da türevlerinden biri eşleşirse göster.
   const mains = useMemo(() => {
     let all = ((products as ProductRow[]) ?? []).filter(p => p.parentId === null);
+    if (statusFilter !== "all") {
+      all = all.filter(
+        p => p.status === statusFilter || (childrenOf.get(p.id) ?? []).some(v => v.status === statusFilter),
+      );
+    }
     if (lowStockOnly) {
       all = all.filter(p => isLowStock(p) || (childrenOf.get(p.id) ?? []).some(isLowStock));
     }
@@ -261,7 +302,7 @@ export default function Products() {
       (p.colorCode ?? "").toLowerCase().includes(q);
     return all.filter(p => matches(p) || (childrenOf.get(p.id) ?? []).some(matches));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [products, search, childrenOf, lowStockOnly]);
+  }, [products, search, childrenOf, lowStockOnly, statusFilter]);
 
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkPercent, setBulkPercent] = useState("10");
@@ -569,6 +610,7 @@ export default function Products() {
       videoUrl: p.videoUrl ?? "",
       mockupUrl: p.mockupUrl ?? "",
       labelWarnings: p.labelWarnings ?? "",
+      status: p.status ?? "satista",
     });
     setDialogOpen(true);
   }
@@ -613,6 +655,7 @@ export default function Products() {
       videoUrl: form.videoUrl.trim() || null,
       mockupUrl: form.mockupUrl.trim() || null,
       labelWarnings: form.labelWarnings || null,
+      status: form.status,
     };
     if (editing) {
       updateProduct.mutate({ id: editing.id, data: payload });
@@ -679,7 +722,44 @@ export default function Products() {
         >
           Düşük Stok
         </Button>
+        <div className="flex items-center rounded-lg border p-0.5">
+          {(
+            [
+              ["all", "Tümü"],
+              ["satista", "Satışta"],
+              ["taslak", "Taslak"],
+              ["arsiv", "Arşiv"],
+            ] as const
+          ).map(([value, label]) => (
+            <Button
+              key={value}
+              variant={statusFilter === value ? "secondary" : "ghost"}
+              size="sm"
+              className="h-7 px-2.5 text-xs"
+              onClick={() => setStatusFilter(value)}
+            >
+              {label}
+            </Button>
+          ))}
+        </div>
       </div>
+
+      {(identityDupes?.length ?? 0) > 0 && (
+        <Card className="border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-700 dark:bg-amber-950/40">
+          <p className="font-medium text-amber-800 dark:text-amber-300">
+            ⚠ Çift barkod/SKU tespit edildi — pazaryeri eşleşmesi yanlış ürüne gidebilir:
+          </p>
+          <ul className="mt-1 list-disc pl-5 text-amber-700 dark:text-amber-400">
+            {identityDupes!.slice(0, 5).map(d => (
+              <li key={`${d.kind}-${d.value}`}>
+                {d.kind === "barkod" ? "Barkod" : "SKU"} <span className="font-mono">{d.value}</span>:{" "}
+                {d.names.join(" · ")}
+              </li>
+            ))}
+            {identityDupes!.length > 5 && <li>… ve {identityDupes!.length - 5} grup daha</li>}
+          </ul>
+        </Card>
+      )}
 
       {isLoading && <div className="h-40 rounded-xl bg-muted animate-pulse" />}
 
@@ -721,6 +801,12 @@ export default function Products() {
                     {main.colorCode && (
                       <Badge variant="outline" className="font-mono text-[10px]">
                         {main.colorCode}
+                      </Badge>
+                    )}
+                    <HealthBadge health={healthOf(main)} />
+                    {STATUS_META[main.status] && (
+                      <Badge className={`border-0 text-[10px] ${STATUS_META[main.status].cls}`}>
+                        {STATUS_META[main.status].label}
                       </Badge>
                     )}
                   </div>
@@ -829,6 +915,12 @@ export default function Products() {
                           {v.surfaceType && (
                             <Badge className="bg-accent text-accent-foreground border-0 text-[10px]">
                               {v.surfaceType}
+                            </Badge>
+                          )}
+                          <HealthBadge health={healthOf(v)} />
+                          {STATUS_META[v.status] && (
+                            <Badge className={`border-0 text-[10px] ${STATUS_META[v.status].cls}`}>
+                              {STATUS_META[v.status].label}
                             </Badge>
                           )}
                         </div>
@@ -1002,6 +1094,27 @@ export default function Products() {
               <TabsContent value="temel" className="space-y-3 mt-0">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
+                <Label>Durum</Label>
+                <Select
+                  value={form.status}
+                  onValueChange={v =>
+                    setForm(f => ({ ...f, status: v as "taslak" | "satista" | "arsiv" }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="taslak">Taslak — kart hazırlanıyor</SelectItem>
+                    <SelectItem value="satista">Satışta — pazaryerine gönderilir</SelectItem>
+                    <SelectItem value="arsiv">Arşiv — satıştan kalktı</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground">
+                  Stok/fiyat gönderimi yalnızca "Satışta" ürünler için yapılır.
+                </p>
+              </div>
+              <div className="space-y-1.5">
                 <Label>Renk Önizleme</Label>
                 <div className="flex items-center gap-2">
                   <input
@@ -1017,6 +1130,9 @@ export default function Products() {
                   />
                 </div>
               </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Satış Fiyatı (₺)</Label>
                 <Input
@@ -1028,9 +1144,6 @@ export default function Products() {
                   placeholder="0,00"
                 />
               </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Stok Adedi</Label>
                 <Input
@@ -1041,6 +1154,9 @@ export default function Products() {
                   placeholder="0"
                 />
               </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Kritik Stok Eşiği</Label>
                 <Input
@@ -1054,9 +1170,6 @@ export default function Products() {
                   Stok bu adede inince düşük stok uyarısı verilir (Stok Nöbetçisi bildirir).
                 </p>
               </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Barkod (pazaryeri eşleştirme)</Label>
                 <Input
@@ -1065,6 +1178,9 @@ export default function Products() {
                   placeholder="Trendyol/HB barkodu"
                 />
               </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <Label>Ambalaj</Label>
@@ -1076,9 +1192,6 @@ export default function Products() {
                   placeholder="Örn. 400 ml Sprey"
                 />
               </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <Label>Etiket Boyutu</Label>
@@ -1090,14 +1203,15 @@ export default function Products() {
                   placeholder="Örn. 6x9 cm"
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label>Ek Bilgiler</Label>
-                <Input
-                  value={form.extraInfo}
-                  onChange={e => setForm(f => ({ ...f, extraInfo: e.target.value }))}
-                  placeholder="Turnusol/pH testi, barkod vb."
-                />
-              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Ek Bilgiler</Label>
+              <Input
+                value={form.extraInfo}
+                onChange={e => setForm(f => ({ ...f, extraInfo: e.target.value }))}
+                placeholder="Turnusol/pH testi, barkod vb."
+              />
             </div>
 
             {isVariantForm && (

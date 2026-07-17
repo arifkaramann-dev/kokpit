@@ -147,6 +147,10 @@ export const products = mysqlTable(
   mockupUrl: varchar("mockupUrl", { length: 512 }),
   labelWarnings: text("labelWarnings"),
   isActive: int("isActive").notNull().default(1),
+  // Yaşam döngüsü: taslak = kart eksik/yayına hazır değil; satista = aktif satış;
+  // arsiv = satıştan kalktı (isActive=0 ile eş anlamlı, geriye uyum için ikisi de yazılır).
+  // Pazaryeri push yalnızca "satista" ürünleri gönderir.
+  status: mysqlEnum("status", ["taslak", "satista", "arsiv"]).notNull().default("satista"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
