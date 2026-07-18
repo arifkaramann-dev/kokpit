@@ -23,6 +23,7 @@ import ProductDetail from "@/pages/ProductDetail";
 import ProductImport from "@/pages/ProductImport";
 import Products from "@/pages/Products";
 import Purchases from "@/pages/Purchases";
+import Questions from "@/pages/Questions";
 import Quotes from "@/pages/Quotes";
 import Settings from "@/pages/Settings";
 import Stock from "@/pages/Stock";
@@ -51,6 +52,7 @@ function Router() {
         <Route path={"/urunler"} component={Products} />
         <Route path={"/urun-aktar"} component={ProductImport} />
         <Route path={"/urun/:id"} component={ProductDetail} />
+        <Route path={"/sorular"} component={Questions} />
         <Route path={"/gelistirme"} component={Development} />
         <Route path={"/formuller"} component={Formulas} />
         <Route path={"/uretim"} component={Production} />

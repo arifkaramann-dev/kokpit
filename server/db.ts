@@ -23,6 +23,8 @@ import {
   InsertProduct,
   InsertUser,
   marketingTexts,
+  marketplaceQuestions,
+  InsertMarketplaceQuestion,
   materials,
   notifications,
   orderItems,
@@ -1750,6 +1752,43 @@ export async function markNotificationRead(id: number) {
 export async function markAllNotificationsRead() {
   const db = await requireDb();
   await db.update(notifications).set({ status: "read" }).where(eq(notifications.status, "unread"));
+}
+
+/* ------------------------- Pazaryeri soru-cevap kuyruğu ------------------------- */
+
+export async function listMarketplaceQuestions(status?: "new" | "answered" | "dismissed") {
+  const db = await requireDb();
+  const rows = status
+    ? await db.select().from(marketplaceQuestions).where(eq(marketplaceQuestions.status, status)).orderBy(desc(marketplaceQuestions.id))
+    : await db.select().from(marketplaceQuestions).orderBy(desc(marketplaceQuestions.id));
+  return rows;
+}
+
+export async function getMarketplaceQuestion(id: number) {
+  const db = await requireDb();
+  const rows = await db.select().from(marketplaceQuestions).where(eq(marketplaceQuestions.id, id)).limit(1);
+  return rows[0];
+}
+
+export async function createMarketplaceQuestion(data: InsertMarketplaceQuestion) {
+  const db = await requireDb();
+  const [r] = await db.insert(marketplaceQuestions).values(data);
+  return r.insertId;
+}
+
+export async function updateMarketplaceQuestion(id: number, data: Partial<InsertMarketplaceQuestion>) {
+  const db = await requireDb();
+  await db.update(marketplaceQuestions).set(data).where(eq(marketplaceQuestions.id, id));
+}
+
+/** Yeni (cevaplanmamış) soru sayısı — bildirim/rozet için. */
+export async function countNewMarketplaceQuestions(): Promise<number> {
+  const db = await requireDb();
+  const rows = await db
+    .select({ n: sql<number>`COUNT(*)` })
+    .from(marketplaceQuestions)
+    .where(eq(marketplaceQuestions.status, "new"));
+  return Number(rows[0]?.n ?? 0);
 }
 
 export async function getSettings() {

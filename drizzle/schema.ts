@@ -739,3 +739,37 @@ export const settings = mysqlTable("settings", {
 });
 
 export type Setting = typeof settings.$inferSelect;
+
+/**
+ * Pazaryeri/müşteri soru-cevap kuyruğu (Helpdesk). Trendyol/HB/N11/Çiçeksepeti
+ * soruları + WhatsApp/e-posta soruları tek kuyrukta toplanır; AI cevap taslağı
+ * üretilir, onaylanınca yanıtlanmış işaretlenir. Soru çekme canlıda pazaryeri
+ * API'siyle beslenir; bu tablo kuyruğu + cevap akışını tutar.
+ */
+export const marketplaceQuestions = mysqlTable(
+  "marketplaceQuestions",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    source: mysqlEnum("source", ["trendyol", "hepsiburada", "n11", "ciceksepeti", "whatsapp", "email", "elle"]).notNull().default("elle"),
+    // Pazaryerindeki soru kimliği (çift kayıt önleme); elle eklenende boş.
+    externalId: varchar("externalId", { length: 128 }),
+    customerName: varchar("customerName", { length: 255 }),
+    questionText: text("questionText").notNull(),
+    // İlgili ürün (varsa) — cevap taslağı ürün kılavuzundan beslenir.
+    productId: int("productId"),
+    productName: varchar("productName", { length: 255 }),
+    status: mysqlEnum("status", ["new", "answered", "dismissed"]).notNull().default("new"),
+    answerDraft: text("answerDraft"),
+    answerText: text("answerText"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    answeredAt: timestamp("answeredAt"),
+  },
+  t => [
+    index("mpQuestions_status_idx").on(t.status),
+    index("mpQuestions_source_ext_idx").on(t.source, t.externalId),
+  ],
+);
+
+export type MarketplaceQuestion = typeof marketplaceQuestions.$inferSelect;
+export type InsertMarketplaceQuestion = typeof marketplaceQuestions.$inferInsert;

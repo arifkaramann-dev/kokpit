@@ -1582,6 +1582,78 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
     markAllRead: protectedProcedure.mutation(() => db.markAllNotificationsRead()),
   }),
 
+  // Pazaryeri/müşteri soru-cevap kuyruğu (Helpdesk). Soru çekme canlıda pazaryeri
+  // API'siyle beslenir; burada kuyruk + AI cevap taslağı + yanıtlama akışı.
+  questions: router({
+    list: protectedProcedure
+      .input(z.object({ status: z.enum(["new", "answered", "dismissed"]).optional() }).optional())
+      .query(({ input }) => db.listMarketplaceQuestions(input?.status)),
+    newCount: protectedProcedure.query(() => db.countNewMarketplaceQuestions()),
+    // Elle soru ekleme (pazaryerinden kopyala-yapıştır ya da WhatsApp/e-posta).
+    create: protectedProcedure
+      .input(
+        z.object({
+          source: z.enum(["trendyol", "hepsiburada", "n11", "ciceksepeti", "whatsapp", "email", "elle"]).default("elle"),
+          customerName: z.string().nullable().optional(),
+          questionText: z.string().min(1),
+          productId: z.number().nullable().optional(),
+          productName: z.string().nullable().optional(),
+        }),
+      )
+      .mutation(({ input }) => db.createMarketplaceQuestion(input as never)),
+    // AI cevap taslağı: ürün kılavuzu/açıklaması + soru → nazik, bilgilendirici yanıt.
+    generateDraft: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        const q = await db.getMarketplaceQuestion(input.id);
+        if (!q) throw new TRPCError({ code: "NOT_FOUND", message: "Soru bulunamadı" });
+        const product = q.productId ? await db.getProduct(q.productId) : null;
+        const context = product
+          ? [
+              `Ürün: ${product.name}`,
+              product.usageGuide ? `Kullanım kılavuzu: ${product.usageGuide}` : null,
+              product.applicationText ? `Uygulama: ${product.applicationText}` : null,
+              product.shortDescription ? `Açıklama: ${product.shortDescription}` : null,
+              product.safetyNotes ? `Güvenlik: ${product.safetyNotes}` : null,
+            ]
+              .filter(Boolean)
+              .join("\n")
+          : q.productName
+            ? `Ürün: ${q.productName}`
+            : "Ürün bilgisi yok.";
+        const response = await invokeLLM({
+          messages: [
+            {
+              role: "system",
+              content:
+                "Sen Art of Colour (Türk oto rötuş/hobi boya markası) müşteri hizmetleri temsilcisisin. Pazaryeri/müşteri sorularına Türkçe, nazik, kısa ve doğru cevap yaz. Emin olmadığın teknik detayda uydurma; ürün bilgisine dayan. Satışa teşvik et ama abartma.",
+            },
+            {
+              role: "user",
+              content: `Ürün bilgisi:\n${context}\n\nMüşteri sorusu:\n${q.questionText}\n\nBu soruya gönderilecek cevabı yaz (sadece cevap metni).`,
+            },
+          ],
+        });
+        const raw = response.choices[0]?.message?.content;
+        const draft = (typeof raw === "string" ? raw : "").trim();
+        await db.updateMarketplaceQuestion(input.id, { answerDraft: draft });
+        return { draft };
+      }),
+    // Yanıtla: taslağı (veya düzenlenmiş metni) kalıcı cevap olarak işaretle.
+    answer: protectedProcedure
+      .input(z.object({ id: z.number(), answerText: z.string().min(1) }))
+      .mutation(({ input }) =>
+        db.updateMarketplaceQuestion(input.id, {
+          answerText: input.answerText,
+          status: "answered",
+          answeredAt: new Date(),
+        } as never),
+      ),
+    dismiss: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(({ input }) => db.updateMarketplaceQuestion(input.id, { status: "dismissed" })),
+  }),
+
   tasks: router({
     list: protectedProcedure.query(() => db.listTasks()),
     create: protectedProcedure
