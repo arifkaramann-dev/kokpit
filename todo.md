@@ -257,10 +257,11 @@ Tam analiz + fazlı yol haritası: **docs/URUN-CEKIRDEGI-YOL-HARITASI.md**
       E2 (görsel üretimi) ve E3 (soru-cevap kuyruğu) bilinçli ertelendi.
 - [x] Faz F1: Analiz'de Ürün Kârlılığı tablosu (brüt kâr + marj + reçetesiz/
       eşleşmeyen uyarıları). F2 (sayfalama) katalog 500+ olunca.
-- [x] Faz G: Excel/CSV toplu içe-dışa aktarma (/urun-aktar) — tam katalog dışa
-      aktarma (35+ alan, ondalık nokta/virgül), oluştur-veya-güncelle içe aktarma
-      (ID/barkod/SKU eşleştirme, üst ürün bağlama, boş hücre atla/temizle), diff
-      önizleme + hata raporu; shared/productIO.ts + products.bulkImport, 20 test.
+- [x] Faz G: Excel (.xlsx) toplu içe-dışa aktarma (/urun-aktar) — gerçek xlsx
+      (SheetJS, dinamik import/ayrı parça, sayısal hücreler), tam katalog dışa
+      aktarma (35+ alan), oluştur-veya-güncelle içe aktarma (.xlsx/.xls/.csv;
+      ID/barkod/SKU eşleştirme, üst ürün bağlama, boş hücre atla/temizle), diff
+      önizleme + hata raporu; shared/productIO.ts + products.bulkImport, 23 test.
 Hazırlık (17.07): ürün diyaloğu sabit boyut + HTML temizleme + Türevlere Uygula.
 Canlıda doğrulanacak: Trendyol ürün açma akışı (Ayarlar → marka/kargo/kategori
 eşlemesi girildikten sonra ürün detayından test) + migration 0021.

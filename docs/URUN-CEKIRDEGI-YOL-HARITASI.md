@@ -196,9 +196,11 @@ gerçek olur. Ürün kartı gerçekten tek doğruluk kaynağına dönüşür.
 Rakip panelindeki (Qukasoft) içe/dışa aktarma sisteminin muadili. Yüzlerce
 varyantı Excel'de toplu düzenlemek ürün çekirdeğinin temel operasyonu.
 
-- [x] **G1. Tam katalog dışa aktarma:** `shared/productIO.ts` alan kataloğu (35+
-  düzenlenebilir alan) tek kaynak; ID, üst ürün barkodu ve görsel linkleri bilgi
-  sütunu; ondalık nokta/virgül seçimi (Excel TR uyumu); BOM + `;` ayraç.
+- [x] **G1. Tam katalog dışa aktarma (.xlsx):** `shared/productIO.ts` alan kataloğu
+  (35+ düzenlenebilir alan) tek kaynak; ID, üst ürün barkodu ve görsel linkleri
+  bilgi sütunu. Gerçek `.xlsx` (SheetJS, dinamik import ile ayrı parça); fiyat/
+  stok gerçek sayı hücresi (Excel yerele göre biçimler). CSV içe aktarımı da
+  desteklenir (parseCatalogCsv + BOM/`;`).
 - [x] **G2. Oluştur-veya-güncelle içe aktarma:** eşleştirme sütunu (ID/Barkod/SKU)
   ile eşleşen satır güncellenir, eşleşmeyen (adı olan) satır yeni ürün olur;
   "Üst Ürün Barkodu" ile türev bağlanır. Dosyada olmayan sütun değişmez; boş

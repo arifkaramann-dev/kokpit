@@ -10,16 +10,17 @@ import {
 import { trpc } from "@/lib/trpc";
 import {
   buildExportMatrix,
-  matrixToCsv,
+  matrixToParsed,
   parseCatalogCsv,
   planImport,
   summarizePlan,
   type ImportPlan,
   type MatchBy,
+  type ParsedCsv,
   type ProductIORecord,
 } from "@shared/productIO";
 import { AlertTriangle, ArrowLeft, CheckCircle2, Download, FileUp, Upload } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 
@@ -35,11 +36,13 @@ export default function ProductImport() {
   const { data: products } = trpc.products.list.useQuery();
   const { data: imageRefs } = trpc.products.allImageRefs.useQuery();
 
-  const [decimalSep, setDecimalSep] = useState<"." | ",">(".");
   const [matchBy, setMatchBy] = useState<MatchBy>("barkod");
   const [clearEmpty, setClearEmpty] = useState(false);
-  const [plan, setPlan] = useState<ImportPlan | null>(null);
+  const [parsed, setParsed] = useState<ParsedCsv | null>(null);
   const [fileName, setFileName] = useState<string>("");
+  // bulkImport'tan dönen başarısız satırlar (uygula sonrası gösterilir).
+  const [serverFailures, setServerFailures] = useState<Array<{ ref: string; reason: string }>>([]);
+  const [exporting, setExporting] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const imageKinds = useMemo(() => {
@@ -48,75 +51,94 @@ export default function ProductImport() {
     return map;
   }, [imageRefs]);
 
+  // Plan yalnız parse edilmiş dosya + seçeneklerden türetilir (dosya bir kez okunur).
+  const plan: ImportPlan | null = useMemo(() => {
+    if (!parsed) return null;
+    return planImport((products as ProductIORecord[]) ?? [], parsed, { matchBy, clearEmpty });
+  }, [parsed, matchBy, clearEmpty, products]);
+
+  // Seçenek değişince önceki uygulama sonuçları geçersizleşir.
+  useEffect(() => setServerFailures([]), [parsed, matchBy, clearEmpty]);
+
   const bulkImport = trpc.products.bulkImport.useMutation({
     onSuccess: r => {
       utils.products.invalidate();
       const base = `${r.created} yeni, ${r.updated} güncellendi`;
-      if (r.failed.length > 0) {
-        toast.warning(`${base} · ${r.failed.length} satır başarısız`, { duration: 9000 });
-      } else {
-        toast.success(base, { duration: 6000 });
+      if (r.failed.length > 0) toast.warning(`${base} · ${r.failed.length} satır başarısız`, { duration: 9000 });
+      else toast.success(base, { duration: 6000 });
+      setServerFailures(r.failed);
+      // Başarıyla işlenenleri listeden düşür: dosyayı temizle, yalnız hatalar kalsın.
+      if (r.failed.length === 0) {
+        setParsed(null);
+        setFileName("");
+        if (fileRef.current) fileRef.current.value = "";
       }
-      // Başarısızları planda göstermek için sakla.
-      setPlan(p => (p ? { ...p, errors: [...p.errors, ...r.failed.map((f, i) => ({ line: -1 - i, message: `${f.ref}: ${f.reason}` }))] } : p));
     },
     onError: e => toast.error(e.message, { duration: 9000 }),
   });
 
-  function exportCatalog() {
+  async function exportCatalog() {
     const rows = (products as ProductIORecord[] | undefined) ?? [];
     if (rows.length === 0) return toast.error("Dışa aktarılacak ürün yok");
-    const matrix = buildExportMatrix(rows, {
-      decimalSep,
-      imageKinds,
-      imageBaseUrl: window.location.origin,
-    });
-    const blob = new Blob([matrixToCsv(matrix)], { type: "text/csv;charset=utf-8" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `artofcolour-katalog-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-    toast.success(`${rows.length} ürün dışa aktarıldı`);
+    setExporting(true);
+    try {
+      const XLSX = await import("xlsx");
+      const matrix = buildExportMatrix(rows, {
+        numeric: true, // sayısal alanlar gerçek sayı hücresi olsun (Excel yerele göre biçimler)
+        imageKinds,
+        imageBaseUrl: window.location.origin,
+      });
+      const ws = XLSX.utils.aoa_to_sheet(matrix);
+      // Okunur sütun genişlikleri (başlık uzunluğuna göre, sınırlı).
+      ws["!cols"] = (matrix[0] as string[]).map(h => ({ wch: Math.min(Math.max(h.length + 2, 10), 40) }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Katalog");
+      XLSX.writeFile(wb, `artofcolour-katalog-${new Date().toISOString().slice(0, 10)}.xlsx`);
+      toast.success(`${rows.length} ürün Excel'e aktarıldı`);
+    } catch {
+      toast.error("Excel oluşturulamadı");
+    } finally {
+      setExporting(false);
+    }
   }
 
-  function handleFile(file: File) {
+  async function handleFile(file: File) {
     setFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = String(reader.result ?? "");
-      const { parsed, error } = parseCatalogCsv(text);
-      if (error || !parsed) {
-        toast.error(error ?? "Dosya okunamadı");
-        setPlan(null);
-        return;
+    const isXlsx = /\.xls[xmb]?$/i.test(file.name);
+    try {
+      if (isXlsx) {
+        const XLSX = await import("xlsx");
+        const buf = await file.arrayBuffer();
+        const wb = XLSX.read(buf, { type: "array" });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const aoa = XLSX.utils.sheet_to_json<(string | number)[]>(ws, {
+          header: 1,
+          raw: false,
+          defval: "",
+        });
+        const { parsed: p, error } = matrixToParsed(aoa);
+        if (error || !p) return toast.error(error ?? "Excel okunamadı");
+        setParsed(p);
+      } else {
+        const text = await file.text();
+        const { parsed: p, error } = parseCatalogCsv(text);
+        if (error || !p) return toast.error(error ?? "Dosya okunamadı");
+        setParsed(p);
       }
-      const result = planImport((products as ProductIORecord[]) ?? [], parsed, { matchBy, clearEmpty });
-      setPlan(result);
-    };
-    reader.onerror = () => toast.error("Dosya okunamadı");
-    reader.readAsText(file, "utf-8");
-  }
-
-  // Dosya yüklüyken eşleştirme/temizleme seçeneği değişirse yeniden planla.
-  function replan(next: { matchBy?: MatchBy; clearEmpty?: boolean }) {
-    const mb = next.matchBy ?? matchBy;
-    const ce = next.clearEmpty ?? clearEmpty;
-    if (next.matchBy !== undefined) setMatchBy(next.matchBy);
-    if (next.clearEmpty !== undefined) setClearEmpty(next.clearEmpty);
-    const file = fileRef.current?.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const { parsed } = parseCatalogCsv(String(reader.result ?? ""));
-      if (parsed) {
-        setPlan(planImport((products as ProductIORecord[]) ?? [], parsed, { matchBy: mb, clearEmpty: ce }));
-      }
-    };
-    reader.readAsText(file, "utf-8");
+    } catch {
+      toast.error("Dosya okunamadı");
+      setParsed(null);
+    }
   }
 
   const canApply = plan && (plan.creates.length > 0 || plan.updates.length > 0);
+  // Görüntülenecek hatalar: plan hataları + sunucudan dönen başarısız satırlar.
+  const shownErrors = plan
+    ? [
+        ...plan.errors,
+        ...serverFailures.map((f, i) => ({ line: -1 - i, message: `${f.ref}: ${f.reason}` })),
+      ]
+    : [];
 
   return (
     <div className="space-y-4 max-w-5xl">
@@ -140,24 +162,13 @@ export default function ProductImport() {
           <Download className="h-4 w-4 text-primary" /> Katalog Dışa Aktar
         </h2>
         <p className="text-sm text-muted-foreground">
-          Ana ürünler + türevler tek dosyada; ID, üst ürün barkodu ve görsel linkleri bilgi amaçlı
-          eklenir (içe aktarmada değiştirilmez). Excel'de düzenleyip aynı dosyayı geri yükleyin.
+          Ana ürünler + türevler tek Excel dosyasında; ID, üst ürün barkodu ve görsel linkleri bilgi
+          amaçlı eklenir (içe aktarmada değiştirilmez). Excel'de düzenleyip aynı dosyayı geri
+          yükleyin. Fiyat/stok gerçek sayı hücresidir; Excel yerel biçime göre gösterir.
         </p>
         <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">Ondalık gösterim:</span>
-            <Select value={decimalSep} onValueChange={v => setDecimalSep(v as "." | ",")}>
-              <SelectTrigger className="w-36 h-9">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value=".">Nokta (12.50)</SelectItem>
-                <SelectItem value=",">Virgül (12,50)</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <Button onClick={exportCatalog}>
-            <Download className="h-4 w-4 mr-1" /> Dışa Aktar (CSV)
+          <Button onClick={exportCatalog} disabled={exporting}>
+            <Download className="h-4 w-4 mr-1" /> {exporting ? "Hazırlanıyor..." : "Excel'e Aktar (.xlsx)"}
           </Button>
           <span className="text-xs text-muted-foreground">
             {(products?.length ?? 0)} ürün · Excel'de aç, düzenle, aşağıdan geri yükle.
@@ -174,7 +185,7 @@ export default function ProductImport() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Eşleştirme Sütunu</label>
-            <Select value={matchBy} onValueChange={v => replan({ matchBy: v as MatchBy })}>
+            <Select value={matchBy} onValueChange={v => setMatchBy(v as MatchBy)}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -189,7 +200,7 @@ export default function ProductImport() {
             <label className="text-sm font-medium">Boş Hücre Davranışı</label>
             <Select
               value={clearEmpty ? "clear" : "skip"}
-              onValueChange={v => replan({ clearEmpty: v === "clear" })}
+              onValueChange={v => setClearEmpty(v === "clear")}
             >
               <SelectTrigger>
                 <SelectValue />
@@ -206,7 +217,7 @@ export default function ProductImport() {
           <input
             ref={fileRef}
             type="file"
-            accept=".csv,.txt"
+            accept=".xlsx,.xls,.xlsm,.csv,.txt"
             className="hidden"
             onChange={e => {
               const f = e.target.files?.[0];
@@ -230,19 +241,19 @@ export default function ProductImport() {
               )}
             </div>
 
-            {plan.errors.length > 0 && (
+            {shownErrors.length > 0 && (
               <div className="rounded-lg border border-rose-300 bg-rose-50 p-3 text-sm dark:border-rose-800 dark:bg-rose-950/30">
                 <p className="flex items-center gap-1 font-medium text-rose-700 dark:text-rose-300">
-                  <AlertTriangle className="h-4 w-4" /> {plan.errors.length} sorunlu satır
+                  <AlertTriangle className="h-4 w-4" /> {shownErrors.length} sorunlu satır
                 </p>
                 <ul className="mt-1 max-h-40 overflow-auto list-disc pl-5 text-xs text-rose-700 dark:text-rose-400">
-                  {plan.errors.slice(0, 40).map((e, i) => (
+                  {shownErrors.slice(0, 40).map((e, i) => (
                     <li key={i}>
                       {e.line > 0 ? `Satır ${e.line}: ` : ""}
                       {e.message}
                     </li>
                   ))}
-                  {plan.errors.length > 40 && <li>… ve {plan.errors.length - 40} satır daha</li>}
+                  {shownErrors.length > 40 && <li>… ve {shownErrors.length - 40} satır daha</li>}
                 </ul>
               </div>
             )}
@@ -335,7 +346,7 @@ export default function ProductImport() {
               <Button
                 variant="ghost"
                 onClick={() => {
-                  setPlan(null);
+                  setParsed(null);
                   setFileName("");
                   if (fileRef.current) fileRef.current.value = "";
                 }}

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildExportMatrix,
   matrixToCsv,
+  matrixToParsed,
   parseCatalogCsv,
   planImport,
   type ProductIORecord,
@@ -109,6 +110,35 @@ describe("matrixToCsv + parseCatalogCsv round-trip", () => {
 
   it("başlıksız/tek satır dosya hata döner", () => {
     expect(parseCatalogCsv("sadece-baslik").error).toBeTruthy();
+  });
+
+  it("numeric export sayısal alanları gerçek sayı olarak yazar (XLSX)", () => {
+    const p = make({ salePrice: "216.50", stockQty: 5 });
+    const m = buildExportMatrix([p], { numeric: true });
+    const priceCol = m[0].indexOf("Satış Fiyatı");
+    const stockCol = m[0].indexOf("Stok");
+    expect(m[1][priceCol]).toBe(216.5);
+    expect(typeof m[1][priceCol]).toBe("number");
+    expect(m[1][stockCol]).toBe(5);
+  });
+});
+
+describe("matrixToParsed (XLSX aoa → plan girdisi)", () => {
+  it("array-of-arrays'i ParsedCsv'ye çevirir, sayıları string'e indirger", () => {
+    const aoa: (string | number)[][] = [
+      ["Barkod", "Satış Fiyatı"],
+      ["b1", 150],
+      ["b2", 200],
+    ];
+    const { parsed, error } = matrixToParsed(aoa);
+    expect(error).toBeNull();
+    expect(parsed!.headers).toEqual(["Barkod", "Satış Fiyatı"]);
+    expect(parsed!.rows).toHaveLength(2);
+    expect(parsed!.rows[0].cells).toEqual(["b1", "150"]);
+  });
+
+  it("tamamen boş satırları eler, tek veri satırı yoksa hata", () => {
+    expect(matrixToParsed([["Barkod"], ["", ""], ["", ""]]).error).toBeTruthy();
   });
 });
 

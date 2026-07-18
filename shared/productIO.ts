@@ -131,13 +131,27 @@ function fmtNumber(value: string | number | null | undefined, decimalSep: "." | 
   return decimalSep === "," ? s.replace(".", ",") : s;
 }
 
-function cellFor(p: ProductIORecord, f: FieldDef, decimalSep: "." | ","): string {
+/**
+ * Bir hücrenin değeri. `numeric` açıksa sayısal alanlar gerçek `number` döner
+ * (XLSX: Excel yerele göre biçimler); kapalıysa string döner (CSV: ondalık seçimi).
+ */
+function cellFor(
+  p: ProductIORecord,
+  f: FieldDef,
+  decimalSep: "." | ",",
+  numeric: boolean,
+): string | number {
   const raw = p[f.key];
   switch (f.type) {
     case "number":
-      return fmtNumber(raw as string | number | null, decimalSep);
-    case "int":
-      return raw === null || raw === undefined ? "" : String(raw);
+    case "int": {
+      if (raw === null || raw === undefined || raw === "") return "";
+      if (numeric) {
+        const n = Number(raw);
+        return Number.isFinite(n) ? n : String(raw);
+      }
+      return f.type === "int" ? String(raw) : fmtNumber(raw as string | number, decimalSep);
+    }
     case "list-comma":
       return jsonListToText(raw as string | null, ", ");
     case "list-pipe":
@@ -149,55 +163,83 @@ function cellFor(p: ProductIORecord, f: FieldDef, decimalSep: "." | ","): string
 
 export type ExportOptions = {
   decimalSep?: "." | ",";
+  /** true: sayısal alanlar gerçek sayı hücresi (XLSX için). Varsayılan string (CSV). */
+  numeric?: boolean;
   /** productId → ["main","packaging","usage"] yüklü görsel türleri. */
   imageKinds?: Map<number, string[]>;
   /** Görsel linki tabanı, örn. https://site.com (yoksa görsel sütunları boş). */
   imageBaseUrl?: string;
 };
 
+export const EXPORT_HEADER = [
+  "ID",
+  "Tür",
+  "Üst Ürün Barkodu",
+  ...IO_FIELDS.map(f => f.header),
+  "Ana Görsel",
+  "Ambalaj Görseli",
+  "Kullanım Görseli",
+];
+
 /**
- * Ürünleri başlık + satır matrisine çevirir (ilk satır başlık).
+ * Ürünleri başlık + satır matrisine çevirir (ilk satır başlık). Hücreler CSV için
+ * string, XLSX için (numeric:true) sayısal alanlarda number döner.
  * ID/Tür/Üst Ürün/görsel sütunları bilgi amaçlıdır; içe aktarmada değiştirilmez.
  */
-export function buildExportMatrix(products: ProductIORecord[], opts: ExportOptions = {}): string[][] {
+export function buildExportMatrix(
+  products: ProductIORecord[],
+  opts: ExportOptions = {},
+): (string | number)[][] {
   const decimalSep = opts.decimalSep ?? ".";
+  const numeric = opts.numeric ?? false;
   const byId = new Map(products.map(p => [p.id, p]));
   const imgUrl = (id: number, kind: string) =>
     opts.imageBaseUrl && (opts.imageKinds?.get(id)?.includes(kind) ?? false)
       ? `${opts.imageBaseUrl}/api/img/${id}/${kind}`
       : "";
 
-  const header = [
-    "ID",
-    "Tür",
-    "Üst Ürün Barkodu",
-    ...IO_FIELDS.map(f => f.header),
-    "Ana Görsel",
-    "Ambalaj Görseli",
-    "Kullanım Görseli",
-  ];
-
-  const rows = products.map(p => {
+  const rows: (string | number)[][] = products.map(p => {
     const parent = p.parentId !== null ? byId.get(p.parentId) : null;
     return [
       String(p.id),
       p.parentId === null ? "Ana Ürün" : "Türev",
       parent?.barcode ?? parent?.sku ?? "",
-      ...IO_FIELDS.map(f => cellFor(p, f, decimalSep)),
+      ...IO_FIELDS.map(f => cellFor(p, f, decimalSep, numeric)),
       imgUrl(p.id, "main"),
       imgUrl(p.id, "packaging"),
       imgUrl(p.id, "usage"),
     ];
   });
 
-  return [header, ...rows];
+  return [EXPORT_HEADER, ...rows];
 }
 
 /** Matrisi CSV metnine çevirir (BOM + ; ayraç, Excel TR uyumlu). */
-export function matrixToCsv(matrix: string[][]): string {
-  const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
+export function matrixToCsv(matrix: (string | number)[][]): string {
+  const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
   const body = matrix.map(row => row.map(esc).join(";")).join("\r\n");
   return "﻿" + body;
+}
+
+/**
+ * XLSX'ten okunan hücre matrisini (array-of-arrays) planImport'un beklediği
+ * ParsedCsv yapısına çevirir. İlk satır başlık; tüm hücreler string'e indirgenir.
+ */
+export function matrixToParsed(matrix: (string | number | null | undefined)[][]): {
+  parsed: ParsedCsv | null;
+  error: string | null;
+} {
+  const rowsRaw = matrix.filter(r => r.some(c => c !== null && c !== undefined && String(c).trim() !== ""));
+  if (rowsRaw.length < 2) {
+    return { parsed: null, error: "Dosyada başlık + en az bir veri satırı olmalı." };
+  }
+  const toStr = (c: string | number | null | undefined) => (c === null || c === undefined ? "" : String(c));
+  const headers = rowsRaw[0].map(c => toStr(c).replace(/^﻿/, "").trim());
+  const rows: ParsedCsv["rows"] = [];
+  for (let i = 1; i < rowsRaw.length; i++) {
+    rows.push({ cells: rowsRaw[i].map(toStr), line: i + 1 });
+  }
+  return { parsed: { headers, rows, sep: "" }, error: null };
 }
 
 /* ------------------------- İçe aktarma: parse ------------------------- */
@@ -318,7 +360,7 @@ function parseCell(
 
 /** Mevcut değerin dışa aktarım gösterimi (diff karşılaştırması için). */
 function currentDisplay(p: ProductIORecord, f: FieldDef): string {
-  return cellFor(p, f, ".");
+  return String(cellFor(p, f, ".", false));
 }
 
 /**
