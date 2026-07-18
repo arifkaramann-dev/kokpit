@@ -73,6 +73,41 @@ export default function Analytics() {
   const { data } = trpc.report.data.useQuery();
   const [profitDays, setProfitDays] = useState(30);
   const { data: channelProfit } = trpc.report.channelProfit.useQuery({ days: profitDays });
+  // Ürün Kârlılığı (Faz F1): kalem bazlı satış + reçete maliyetiyle brüt kâr.
+  const { data: productSales } = trpc.report.productSales.useQuery({ days: profitDays });
+  const { data: productList } = trpc.products.list.useQuery();
+  const { data: costSummary } = trpc.products.costSummary.useQuery();
+
+  const productProfit = useMemo(() => {
+    if (!productSales) return null;
+    const nameById = new Map((productList ?? []).map(p => [p.id, p.name]));
+    const costById = new Map((costSummary ?? []).map(c => [c.productId, c.materialCost]));
+    const packById = new Map(
+      (productList ?? []).map(p => [p.id, (num(p.packagingCost) || 0) + (num(p.shippingCost) || 0)]),
+    );
+    let unmatchedRevenue = 0;
+    const rows = [];
+    for (const s of productSales) {
+      if (s.productId === null) {
+        unmatchedRevenue += s.revenue;
+        continue;
+      }
+      const unitCost = (costById.get(s.productId) ?? 0) + (packById.get(s.productId) ?? 0);
+      const cost = unitCost * s.qty;
+      rows.push({
+        productId: s.productId,
+        name: nameById.get(s.productId) ?? `#${s.productId}`,
+        qty: s.qty,
+        revenue: s.revenue,
+        cost,
+        gross: s.revenue - cost,
+        margin: s.revenue > 0 ? ((s.revenue - cost) / s.revenue) * 100 : 0,
+        hasCost: (costById.get(s.productId) ?? 0) > 0,
+      });
+    }
+    rows.sort((a, b) => b.gross - a.gross);
+    return { rows: rows.slice(0, 15), unmatchedRevenue };
+  }, [productSales, productList, costSummary]);
 
   const model = useMemo(() => {
     if (!data) return null;
@@ -394,6 +429,68 @@ export default function Analytics() {
                     </TableRow>
                   </TableBody>
                 </Table>
+              </div>
+            )}
+          </Card>
+
+          <Card className="p-5 space-y-3">
+            <div>
+              <h2 className="font-semibold">Ürün Kârlılığı — en çok kazandıranlar</h2>
+              <p className="text-xs text-muted-foreground">
+                Kalem bazlı satış (iptal hariç, seçili dönem) − reçete hammadde maliyeti − ambalaj/kargo.
+                Brüt kârdır; kanal kesintileri Kanal Kârlılığı tablosundadır.
+              </p>
+            </div>
+            {!productProfit || productProfit.rows.length === 0 ? (
+              <Empty />
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Ürün</TableHead>
+                      <TableHead className="text-right">Adet</TableHead>
+                      <TableHead className="text-right">Ciro</TableHead>
+                      <TableHead className="text-right">Maliyet</TableHead>
+                      <TableHead className="text-right">Brüt Kâr</TableHead>
+                      <TableHead className="text-right">Marj</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {productProfit.rows.map(r => (
+                      <TableRow key={r.productId}>
+                        <TableCell className="font-medium">
+                          {r.name}
+                          {!r.hasCost && (
+                            <span
+                              className="ml-1 text-[11px] text-amber-600"
+                              title="Reçete tanımlı değil — maliyet yalnızca ambalaj/kargodan oluşuyor, gerçek kâr daha düşük olabilir"
+                            >
+                              (reçete yok)
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">{r.qty}</TableCell>
+                        <TableCell className="text-right">{formatTL(r.revenue)}</TableCell>
+                        <TableCell className="text-right">{formatTL(r.cost)}</TableCell>
+                        <TableCell
+                          className={`text-right font-semibold ${r.gross < 0 ? "text-rose-600" : "text-emerald-600"}`}
+                        >
+                          {formatTL(r.gross)}
+                        </TableCell>
+                        <TableCell className={`text-right ${r.margin < 0 ? "text-rose-600" : ""}`}>
+                          %{r.margin.toFixed(1)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {productProfit.unmatchedRevenue > 0 && (
+                  <p className="mt-2 text-[11px] text-amber-600">
+                    {formatTL(productProfit.unmatchedRevenue)} tutarında satış katalogla eşleşmeyen
+                    serbest kalemlerde — sipariş girerken üründen seçerseniz rapora dahil olur.
+                  </p>
+                )}
               </div>
             )}
           </Card>

@@ -8,6 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -20,10 +21,11 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatQty, formatTL } from "@/lib/format";
+import { jsonListHasItems, productHealth, type ProductHealth } from "@shared/productHealth";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { trpc } from "@/lib/trpc";
-import { Beaker, Boxes, ChevronDown, ChevronRight, Download, Eraser, Layers, Package, Pencil, Percent, Plus, Printer, Search, Sparkles, Store, Trash2, Wand2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Beaker, Boxes, ChevronDown, ChevronRight, CopyCheck, Download, Eraser, Layers, Package, Pencil, Percent, Plus, Printer, Search, Sparkles, Store, Trash2, Wand2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import TemplatePicker from "@/components/TemplatePicker";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
@@ -66,6 +68,7 @@ export type ProductRow = {
   mockupUrl: string | null;
   labelWarnings: string | null;
   isActive: number;
+  status: "taslak" | "satista" | "arsiv";
 };
 
 const emptyForm = {
@@ -103,6 +106,7 @@ const emptyForm = {
   videoUrl: "",
   mockupUrl: "",
   labelWarnings: "",
+  status: "satista" as "taslak" | "satista" | "arsiv",
 };
 
 /** DB'de JSON dizi olarak duran alanı (features/imageUrls) form metnine çevirir. */
@@ -123,6 +127,43 @@ function textToJsonList(text: string): string | null {
     .map(s => s.trim())
     .filter(Boolean);
   return items.length ? JSON.stringify(items) : null;
+}
+
+/** "Türevlere Uygula" diyaloğundaki alan grupları (sunucudaki enum ile birebir). */
+const PROPAGATE_GROUPS = [
+  { key: "aciklamalar", label: "Açıklamalar", desc: "Açıklama, kısa/uzun açıklama, uygulama metni" },
+  { key: "etiket", label: "Etiket & Kılavuz", desc: "Etiket yazısı, kullanım kılavuzu, güvenlik, uyarılar, etiket boyutu, ek bilgiler" },
+  { key: "pazaryeri", label: "Pazaryeri Künyesi", desc: "Kategori, ürün türü, özellikler" },
+  { key: "medya", label: "Medya Linkleri", desc: "Görsel linkleri, video ve mockup linki" },
+  { key: "maliyet", label: "Maliyet Parametreleri", desc: "Kâr oranı, KDV, desi, indirim, kargo maliyeti" },
+] as const;
+type PropagateGroupKey = (typeof PROPAGATE_GROUPS)[number]["key"];
+
+const STATUS_META: Record<string, { label: string; cls: string }> = {
+  taslak: { label: "Taslak", cls: "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200" },
+  arsiv: { label: "Arşiv", cls: "bg-zinc-200 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-300" },
+};
+
+/** Sağlık skoru rozeti (Faz A5): kartın pazaryerine hazırlık yüzdesi. */
+function HealthBadge({ health }: { health: ProductHealth }) {
+  const cls =
+    health.score >= 90
+      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300"
+      : health.score >= 60
+        ? "bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300"
+        : "bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300";
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium ${cls}`}
+      title={
+        health.missing.length
+          ? `Eksik alanlar: ${health.missing.join(", ")}${health.missingRequired.length ? ` · Pazaryeri için zorunlu eksik: ${health.missingRequired.join(", ")}` : ""}`
+          : "Ürün kartı tam — pazaryerine hazır"
+      }
+    >
+      %{health.score}
+    </span>
+  );
 }
 
 /** Alan HTML etiketi veya entity içeriyor mu? (pazaryerinden yapıştırılan metinler) */
@@ -184,9 +225,13 @@ export default function Products() {
   const [customColor, setCustomColor] = useState("");
   const [deriveSets, setDeriveSets] = useState<Set<string>>(new Set());
   const [customSet, setCustomSet] = useState("");
+  const [propagateFor, setPropagateFor] = useState<ProductRow | null>(null);
+  const [propagateGroups, setPropagateGroups] = useState<Set<PropagateGroupKey>>(
+    new Set<PropagateGroupKey>(["aciklamalar", "etiket"]),
+  );
+  const [propagateOnlyEmpty, setPropagateOnlyEmpty] = useState(false);
   const { data: templateList } = trpc.templates.list.useQuery();
   const { data: seriesRecords } = trpc.series.list.useQuery();
-  const { data: imageRefs } = trpc.products.allImageRefs.useQuery();
   const packOptions = (templateList ?? []).filter(t => t.kind === "ambalaj").map(t => t.name);
   const colorOptions = (templateList ?? []).filter(t => t.kind === "renk").map(t => t.name);
   const setOptions = (templateList ?? []).filter(t => t.kind === "set_paket").map(t => t.name);
@@ -207,6 +252,12 @@ export default function Products() {
 
   const [search, setSearch] = useState("");
   const [lowStockOnly, setLowStockOnly] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<"all" | "satista" | "taslak" | "arsiv">("all");
+  const { data: imageIdList } = trpc.products.idsWithImages.useQuery();
+  const { data: identityDupes } = trpc.products.duplicateIdentity.useQuery();
+  const imageIds = useMemo(() => new Set(imageIdList ?? []), [imageIdList]);
+  const healthOf = (p: ProductRow) =>
+    productHealth({ ...p, hasImage: imageIds.has(p.id) || jsonListHasItems(p.imageUrls) });
 
   // Düşük stok: sıfır/eksi her zaman; kritik eşik tanımlıysa eşiğin altı da.
   const isLowStock = (p: ProductRow) =>
@@ -233,6 +284,11 @@ export default function Products() {
   // Arama: ana ürünün kendisi ya da türevlerinden biri eşleşirse göster.
   const mains = useMemo(() => {
     let all = ((products as ProductRow[]) ?? []).filter(p => p.parentId === null);
+    if (statusFilter !== "all") {
+      all = all.filter(
+        p => p.status === statusFilter || (childrenOf.get(p.id) ?? []).some(v => v.status === statusFilter),
+      );
+    }
     if (lowStockOnly) {
       all = all.filter(p => isLowStock(p) || (childrenOf.get(p.id) ?? []).some(isLowStock));
     }
@@ -246,7 +302,7 @@ export default function Products() {
       (p.colorCode ?? "").toLowerCase().includes(q);
     return all.filter(p => matches(p) || (childrenOf.get(p.id) ?? []).some(matches));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [products, search, childrenOf, lowStockOnly]);
+  }, [products, search, childrenOf, lowStockOnly, statusFilter]);
 
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkPercent, setBulkPercent] = useState("10");
@@ -310,45 +366,6 @@ export default function Products() {
   }
 
   // Satışa hazır katalog dosyası: Excel/pazaryeri şablonlarına yapıştırılabilir.
-  function exportCsv() {
-    const rows = (products as ProductRow[]) ?? [];
-    if (rows.length === 0) return toast.error("Dışa aktarılacak ürün yok");
-    // Görselleri herkese açık link olarak ekle (web sitesi/pazaryeri kullanabilsin).
-    const origin = window.location.origin;
-    const imgSet = new Set((imageRefs ?? []).map(r => `${r.productId}:${r.kind}`));
-    const imgUrl = (id: number, kind: "main" | "packaging" | "usage") =>
-      imgSet.has(`${id}:${kind}`) ? `${origin}/api/img/${id}/${kind}` : "";
-    const cols = [
-      "Ürün Adı", "Tür", "Barkod", "Seri", "Renk Kodu", "Kullanım/Yüzey", "Ambalaj",
-      "Stok", "Satış Fiyatı", "İndirim %", "Açıklama", "Etiket Boyutu", "Etiket Yazısı",
-      "Kullanım Kılavuzu", "Güvenlik", "Ek Bilgi",
-      "Ana Görsel", "Ambalaj Görseli", "Kullanım Görseli", "Tüm Görseller",
-    ];
-    const esc = (v: string | number | null | undefined) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const lines = rows.map(p => {
-      const main = imgUrl(p.id, "main");
-      const pack = imgUrl(p.id, "packaging");
-      const usage = imgUrl(p.id, "usage");
-      const all = [main, pack, usage].filter(Boolean).join(" | ");
-      return [
-        p.name, p.parentId === null ? "Ana Ürün" : "Türev", p.barcode, p.series, p.colorCode,
-        p.surfaceType, p.packaging, p.stockQty, p.salePrice, p.discountPercent, p.description,
-        p.labelSize, p.labelText, p.usageGuide, p.safetyNotes, p.extraInfo,
-        main, pack, usage, all,
-      ].map(esc).join(";");
-    });
-    // BOM: Türkçe karakterler Excel'de doğru açılsın.
-    const blob = new Blob(["﻿" + [cols.join(";"), ...lines].join("\r\n")], {
-      type: "text/csv;charset=utf-8",
-    });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `artofcolour-katalog-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-    toast.success(`${rows.length} ürün dışa aktarıldı`);
-  }
-
   const createProduct = trpc.products.create.useMutation({
     onSuccess: () => {
       utils.products.invalidate();
@@ -381,6 +398,15 @@ export default function Products() {
     onSuccess: () => {
       utils.products.invalidate();
       toast.success("Ürün silindi");
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  const propagateToVariants = trpc.products.propagateToVariants.useMutation({
+    onSuccess: r => {
+      utils.products.invalidate();
+      toast.success(`${r.count} türev ana üründen güncellendi`);
+      setPropagateFor(null);
     },
     onError: e => toast.error(e.message),
   });
@@ -545,6 +571,7 @@ export default function Products() {
       videoUrl: p.videoUrl ?? "",
       mockupUrl: p.mockupUrl ?? "",
       labelWarnings: p.labelWarnings ?? "",
+      status: p.status ?? "satista",
     });
     setDialogOpen(true);
   }
@@ -589,6 +616,7 @@ export default function Products() {
       videoUrl: form.videoUrl.trim() || null,
       mockupUrl: form.mockupUrl.trim() || null,
       labelWarnings: form.labelWarnings || null,
+      status: form.status,
     };
     if (editing) {
       updateProduct.mutate({ id: editing.id, data: payload });
@@ -598,6 +626,18 @@ export default function Products() {
   }
 
   const isVariantForm = !!parentForNew || (editing !== null && editing.parentId !== null);
+
+  // Detay sayfasındaki "Kartı Düzenle": /urunler?duzenle=ID ile gelinince diyalog açılır.
+  useEffect(() => {
+    const idStr = new URLSearchParams(window.location.search).get("duzenle");
+    if (!idStr || !products) return;
+    const target = (products as ProductRow[]).find(p => p.id === Number(idStr));
+    if (target) {
+      openEdit(target);
+      window.history.replaceState(null, "", "/urunler");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [products]);
 
   return (
     <div className="space-y-4">
@@ -628,8 +668,8 @@ export default function Products() {
           <Button variant="outline" onClick={() => setBulkOpen(true)}>
             <Percent className="h-4 w-4 mr-1" /> Toplu Fiyat
           </Button>
-          <Button variant="outline" onClick={exportCsv}>
-            <Download className="h-4 w-4 mr-1" /> Dışa Aktar
+          <Button variant="outline" onClick={() => setLocation("/urun-aktar")}>
+            <Download className="h-4 w-4 mr-1" /> İçe / Dışa Aktar
           </Button>
           <Button onClick={openCreateMain}>
             <Plus className="h-4 w-4 mr-1" /> Yeni Ana Ürün
@@ -655,7 +695,44 @@ export default function Products() {
         >
           Düşük Stok
         </Button>
+        <div className="flex items-center rounded-lg border p-0.5">
+          {(
+            [
+              ["all", "Tümü"],
+              ["satista", "Satışta"],
+              ["taslak", "Taslak"],
+              ["arsiv", "Arşiv"],
+            ] as const
+          ).map(([value, label]) => (
+            <Button
+              key={value}
+              variant={statusFilter === value ? "secondary" : "ghost"}
+              size="sm"
+              className="h-7 px-2.5 text-xs"
+              onClick={() => setStatusFilter(value)}
+            >
+              {label}
+            </Button>
+          ))}
+        </div>
       </div>
+
+      {(identityDupes?.length ?? 0) > 0 && (
+        <Card className="border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-700 dark:bg-amber-950/40">
+          <p className="font-medium text-amber-800 dark:text-amber-300">
+            ⚠ Çift barkod/SKU tespit edildi — pazaryeri eşleşmesi yanlış ürüne gidebilir:
+          </p>
+          <ul className="mt-1 list-disc pl-5 text-amber-700 dark:text-amber-400">
+            {identityDupes!.slice(0, 5).map(d => (
+              <li key={`${d.kind}-${d.value}`}>
+                {d.kind === "barkod" ? "Barkod" : "SKU"} <span className="font-mono">{d.value}</span>:{" "}
+                {d.names.join(" · ")}
+              </li>
+            ))}
+            {identityDupes!.length > 5 && <li>… ve {identityDupes!.length - 5} grup daha</li>}
+          </ul>
+        </Card>
+      )}
 
       {isLoading && <div className="h-40 rounded-xl bg-muted animate-pulse" />}
 
@@ -692,11 +769,23 @@ export default function Products() {
                 />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-semibold">{main.name}</span>
+                    <button
+                      className="font-semibold hover:underline text-left"
+                      title="Ürün detay sayfasını aç"
+                      onClick={() => setLocation(`/urun/${main.id}`)}
+                    >
+                      {main.name}
+                    </button>
                     {main.series && <Badge variant="secondary">{main.series}</Badge>}
                     {main.colorCode && (
                       <Badge variant="outline" className="font-mono text-[10px]">
                         {main.colorCode}
+                      </Badge>
+                    )}
+                    <HealthBadge health={healthOf(main)} />
+                    {STATUS_META[main.status] && (
+                      <Badge className={`border-0 text-[10px] ${STATUS_META[main.status].cls}`}>
+                        {STATUS_META[main.status].label}
                       </Badge>
                     )}
                   </div>
@@ -720,6 +809,17 @@ export default function Products() {
                   <Button size="sm" variant="outline" onClick={() => openCreateVariant(main)}>
                     <Layers className="h-3.5 w-3.5 mr-1" /> Türev Ekle
                   </Button>
+                  {variants.length > 0 && (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8"
+                      title="Türevlere uygula: ana üründeki seçili alanları tüm türevlere kopyala"
+                      onClick={() => setPropagateFor(main)}
+                    >
+                      <CopyCheck className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
                   <Button
                     size="icon"
                     variant="ghost"
@@ -790,10 +890,22 @@ export default function Products() {
                       />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-medium text-sm">{v.name}</span>
+                          <button
+                            className="font-medium text-sm hover:underline text-left"
+                            title="Ürün detay sayfasını aç"
+                            onClick={() => setLocation(`/urun/${v.id}`)}
+                          >
+                            {v.name}
+                          </button>
                           {v.surfaceType && (
                             <Badge className="bg-accent text-accent-foreground border-0 text-[10px]">
                               {v.surfaceType}
+                            </Badge>
+                          )}
+                          <HealthBadge health={healthOf(v)} />
+                          {STATUS_META[v.status] && (
+                            <Badge className={`border-0 text-[10px] ${STATUS_META[v.status].cls}`}>
+                              {STATUS_META[v.status].label}
                             </Badge>
                           )}
                         </div>
@@ -967,6 +1079,27 @@ export default function Products() {
               <TabsContent value="temel" className="space-y-3 mt-0">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
+                <Label>Durum</Label>
+                <Select
+                  value={form.status}
+                  onValueChange={v =>
+                    setForm(f => ({ ...f, status: v as "taslak" | "satista" | "arsiv" }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="taslak">Taslak — kart hazırlanıyor</SelectItem>
+                    <SelectItem value="satista">Satışta — pazaryerine gönderilir</SelectItem>
+                    <SelectItem value="arsiv">Arşiv — satıştan kalktı</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground">
+                  Stok/fiyat gönderimi yalnızca "Satışta" ürünler için yapılır.
+                </p>
+              </div>
+              <div className="space-y-1.5">
                 <Label>Renk Önizleme</Label>
                 <div className="flex items-center gap-2">
                   <input
@@ -982,6 +1115,9 @@ export default function Products() {
                   />
                 </div>
               </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Satış Fiyatı (₺)</Label>
                 <Input
@@ -993,9 +1129,6 @@ export default function Products() {
                   placeholder="0,00"
                 />
               </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Stok Adedi</Label>
                 <Input
@@ -1006,6 +1139,9 @@ export default function Products() {
                   placeholder="0"
                 />
               </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Kritik Stok Eşiği</Label>
                 <Input
@@ -1019,9 +1155,6 @@ export default function Products() {
                   Stok bu adede inince düşük stok uyarısı verilir (Stok Nöbetçisi bildirir).
                 </p>
               </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Barkod (pazaryeri eşleştirme)</Label>
                 <Input
@@ -1030,6 +1163,9 @@ export default function Products() {
                   placeholder="Trendyol/HB barkodu"
                 />
               </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <Label>Ambalaj</Label>
@@ -1041,9 +1177,6 @@ export default function Products() {
                   placeholder="Örn. 400 ml Sprey"
                 />
               </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <Label>Etiket Boyutu</Label>
@@ -1055,14 +1188,15 @@ export default function Products() {
                   placeholder="Örn. 6x9 cm"
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label>Ek Bilgiler</Label>
-                <Input
-                  value={form.extraInfo}
-                  onChange={e => setForm(f => ({ ...f, extraInfo: e.target.value }))}
-                  placeholder="Turnusol/pH testi, barkod vb."
-                />
-              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Ek Bilgiler</Label>
+              <Input
+                value={form.extraInfo}
+                onChange={e => setForm(f => ({ ...f, extraInfo: e.target.value }))}
+                placeholder="Turnusol/pH testi, barkod vb."
+              />
             </div>
 
             {isVariantForm && (
@@ -1471,6 +1605,80 @@ export default function Products() {
               }
             >
               Türevleri Oluştur
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={propagateFor !== null} onOpenChange={o => !o && setPropagateFor(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Türevlere Uygula — {propagateFor?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Ana üründeki seçili alan grupları{" "}
+              <span className="font-medium text-foreground">
+                {(products ?? []).filter(p => p.parentId === propagateFor?.id).length} türevin
+              </span>{" "}
+              tümüne kopyalanır. Türeve özgü alanlara (ad, fiyat, ambalaj, barkod, SKU, stok, renk)
+              dokunulmaz.
+            </p>
+            <label className="flex items-start gap-2.5 rounded-lg border border-dashed p-2.5 cursor-pointer hover:bg-muted/40">
+              <Checkbox
+                checked={propagateOnlyEmpty}
+                onCheckedChange={c => setPropagateOnlyEmpty(c === true)}
+                className="mt-0.5"
+              />
+              <span className="flex-1">
+                <span className="block text-sm font-medium">Dolu alanların üzerine yazma</span>
+                <span className="block text-[11px] text-muted-foreground">
+                  Yalnız türevde boş olan alanlar doldurulur; bilinçli farklılaştırılmış içerik korunur.
+                </span>
+              </span>
+            </label>
+            <div className="space-y-2">
+              {PROPAGATE_GROUPS.map(g => (
+                <label
+                  key={g.key}
+                  className="flex items-start gap-2.5 rounded-lg border p-2.5 cursor-pointer hover:bg-muted/40"
+                >
+                  <Checkbox
+                    checked={propagateGroups.has(g.key)}
+                    onCheckedChange={checked => {
+                      setPropagateGroups(prev => {
+                        const next = new Set(prev);
+                        if (checked) next.add(g.key);
+                        else next.delete(g.key);
+                        return next;
+                      });
+                    }}
+                    className="mt-0.5"
+                  />
+                  <span className="flex-1">
+                    <span className="block text-sm font-medium">{g.label}</span>
+                    <span className="block text-[11px] text-muted-foreground">{g.desc}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPropagateFor(null)}>
+              İptal
+            </Button>
+            <Button
+              disabled={propagateGroups.size === 0 || propagateToVariants.isPending}
+              onClick={() =>
+                propagateFor &&
+                propagateToVariants.mutate({
+                  parentId: propagateFor.id,
+                  groups: Array.from(propagateGroups),
+                  onlyEmpty: propagateOnlyEmpty,
+                })
+              }
+            >
+              {propagateToVariants.isPending ? "Uygulanıyor..." : "Türevlere Uygula"}
             </Button>
           </DialogFooter>
         </DialogContent>

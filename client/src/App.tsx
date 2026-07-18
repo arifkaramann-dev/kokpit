@@ -19,6 +19,8 @@ import NotFound from "@/pages/NotFound";
 import Orders from "@/pages/Orders";
 import Pricing from "@/pages/Pricing";
 import Production from "@/pages/Production";
+import ProductDetail from "@/pages/ProductDetail";
+import ProductImport from "@/pages/ProductImport";
 import Products from "@/pages/Products";
 import Purchases from "@/pages/Purchases";
 import Quotes from "@/pages/Quotes";
@@ -47,6 +49,8 @@ function Router() {
         <Route path={"/stok"} component={Stock} />
         <Route path={"/faturalar"} component={Purchases} />
         <Route path={"/urunler"} component={Products} />
+        <Route path={"/urun-aktar"} component={ProductImport} />
+        <Route path={"/urun/:id"} component={ProductDetail} />
         <Route path={"/gelistirme"} component={Development} />
         <Route path={"/formuller"} component={Formulas} />
         <Route path={"/uretim"} component={Production} />

@@ -353,6 +353,16 @@ export default function Quotes() {
                             list="quote-product-options"
                             value={row.productName}
                             placeholder="Ürün adı"
+                            title={
+                              row.productName.trim() && !products?.some(p => p.name === row.productName.trim())
+                                ? "Katalogla eşleşmedi — serbest kalem olarak kaydedilir (stok düşümü ve ürün raporu dışında kalır)"
+                                : undefined
+                            }
+                            className={
+                              row.productName.trim() && !products?.some(p => p.name === row.productName.trim())
+                                ? "border-amber-400 focus-visible:ring-amber-400"
+                                : undefined
+                            }
                             onChange={e => {
                               const name = e.target.value;
                               setForm(f => {

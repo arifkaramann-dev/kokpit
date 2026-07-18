@@ -13,6 +13,14 @@ import { buildSaleTitle, deriveCombos, parseSetCount } from "./productUtils";
 import { computePrice, extractJson, parseFeatures, pickReferenceProduct, scoreReference, suggestSku } from "./autofill";
 import { importUrunKayit } from "./importSeed";
 import { syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf } from "./trendyol";
+import {
+  fetchTrendyolCategoryAttributes,
+  getTrendyolProductBatchStatus,
+  mapProductsToTrendyolItems,
+  parseCardSettings,
+  pushTrendyolProductCards,
+  searchTrendyolBrands,
+} from "./trendyolProducts";
 import { pushHepsiburadaStockPrice } from "./hepsiburada";
 import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "./marketplace";
 import { channelProfitReport } from "./reportUtils";
@@ -69,7 +77,63 @@ const productInput = z.object({
   videoUrl: z.string().nullable().optional(),
   mockupUrl: z.string().nullable().optional(),
   labelWarnings: z.string().nullable().optional(),
+  // Yaşam döngüsü (Faz A3): taslak → satista → arsiv. Push yalnız "satista" gönderir.
+  status: z.enum(["taslak", "satista", "arsiv"]).optional(),
 });
+
+/** Barkod/SKU tekilliği (Faz A1): dolu değer katalogda başka üründe olamaz. */
+async function assertUniqueIdentity(
+  barcode: string | null | undefined,
+  sku: string | null | undefined,
+  excludeId?: number,
+) {
+  const wantedBarcode = barcode?.trim();
+  const wantedSku = sku?.trim();
+  if (!wantedBarcode && !wantedSku) return;
+  const all = await db.listProducts();
+  for (const p of all) {
+    if (excludeId !== undefined && p.id === excludeId) continue;
+    if (wantedBarcode && p.barcode?.trim() === wantedBarcode) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `Bu barkod zaten "${p.name}" ürününde kayıtlı — çift barkod pazaryeri eşleşmesini bozar.`,
+      });
+    }
+    if (wantedSku && p.sku?.trim() === wantedSku) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `Bu SKU zaten "${p.name}" ürününde kayıtlı.`,
+      });
+    }
+  }
+}
+
+/** Seri bağı (Faz A2): ürüne yazılan seri adı kayıtlı değilse varsayılanlarla açılır. */
+async function ensureSeriesRecord(series: string | null | undefined) {
+  const name = series?.trim();
+  if (!name) return;
+  const existing = await db.getProductSeriesByName(name);
+  if (!existing) await db.createProductSeries({ name } as never);
+}
+
+/** Hiyerarşi koruması (Faz A4): türevin altına türev eklenemez. */
+async function assertValidParent(parentId: number | null | undefined) {
+  if (!parentId) return;
+  const parent = await db.getProduct(parentId);
+  if (!parent) throw new TRPCError({ code: "NOT_FOUND", message: "Ana ürün bulunamadı" });
+  if (parent.parentId) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Türev ürünün altına türev eklenemez — ana ürünü seçin.",
+    });
+  }
+}
+
+/** Arşive alınan ürün eski isActive bayrağıyla da tutarlı kalsın (geriye uyum). */
+function withStatusFlags<T extends { status?: "taslak" | "satista" | "arsiv" }>(data: T) {
+  if (!data.status) return data;
+  return { ...data, isActive: data.status === "arsiv" ? 0 : 1 };
+}
 
 const productSeriesInput = z.object({
   name: z.string().min(1),
@@ -268,14 +332,168 @@ export const appRouter = router({
   products: router({
     list: protectedProcedure.query(() => db.listProducts()),
     get: protectedProcedure.input(z.object({ id: z.number() })).query(({ input }) => db.getProduct(input.id)),
-    create: protectedProcedure.input(productInput).mutation(({ input }) =>
-      db.createProduct(toDecimalFields(input, productDecimalFields) as never),
-    ),
+    create: protectedProcedure.input(productInput).mutation(async ({ input }) => {
+      await assertValidParent(input.parentId);
+      await assertUniqueIdentity(input.barcode, input.sku);
+      await ensureSeriesRecord(input.series);
+      return db.createProduct(toDecimalFields(withStatusFlags(input), productDecimalFields) as never);
+    }),
     update: protectedProcedure
       .input(z.object({ id: z.number(), data: productInput.partial() }))
-      .mutation(({ input }) =>
-        db.updateProduct(input.id, toDecimalFields(input.data, productDecimalFields) as never),
-      ),
+      .mutation(async ({ input }) => {
+        if (input.data.parentId !== undefined) await assertValidParent(input.data.parentId);
+        if (input.data.barcode !== undefined || input.data.sku !== undefined) {
+          await assertUniqueIdentity(input.data.barcode, input.data.sku, input.id);
+        }
+        if (input.data.series !== undefined) await ensureSeriesRecord(input.data.series);
+        return db.updateProduct(
+          input.id,
+          toDecimalFields(withStatusFlags(input.data), productDecimalFields) as never,
+        );
+      }),
+    // Faz A1: mevcut verideki çift barkod/SKU grupları (unique indeks öncesi temizlik raporu).
+    duplicateIdentity: protectedProcedure.query(async () => {
+      const all = await db.listProducts();
+      const byBarcode = new Map<string, string[]>();
+      const bySku = new Map<string, string[]>();
+      for (const p of all) {
+        const b = p.barcode?.trim();
+        const s = p.sku?.trim();
+        if (b) byBarcode.set(b, [...(byBarcode.get(b) ?? []), p.name]);
+        if (s) bySku.set(s, [...(bySku.get(s) ?? []), p.name]);
+      }
+      const dupes = (m: Map<string, string[]>, kind: "barkod" | "sku") =>
+        Array.from(m.entries())
+          .filter(([, names]) => names.length > 1)
+          .map(([value, names]) => ({ kind, value, names }));
+      return [...dupes(byBarcode, "barkod"), ...dupes(bySku, "sku")];
+    }),
+    // Faz A5: görseli olan ürün ID'leri (sağlık skoru görsel kontrolü).
+    idsWithImages: protectedProcedure.query(() => db.listProductIdsWithImages()),
+    // Excel/CSV toplu içe aktarma: oluştur-veya-güncelle (client planı sunucuda
+    // yeniden doğrulanır). Tek listProducts çekimiyle çift barkod/SKU ve üst ürün
+    // eşleşmesi bellekte kontrol edilir; başarısız satırlar rapor olarak döner.
+    bulkImport: protectedProcedure
+      .input(
+        z.object({
+          creates: z
+            .array(z.object({ data: productInput.partial(), parentRef: z.string().nullable().optional() }))
+            .max(2000),
+          updates: z
+            .array(z.object({ id: z.number(), data: productInput.partial() }))
+            .max(3000),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const all = await db.listProducts();
+        const byId = new Map(all.map(p => [p.id, p]));
+        const barcodeOwner = new Map<string, number>(); // barkod → ürün id
+        const skuOwner = new Map<string, number>();
+        const byBarcode = new Map<string, number>();
+        const bySku = new Map<string, number>();
+        for (const p of all) {
+          if (p.barcode?.trim()) {
+            barcodeOwner.set(p.barcode.trim(), p.id);
+            byBarcode.set(p.barcode.trim(), p.id);
+          }
+          if (p.sku?.trim()) {
+            skuOwner.set(p.sku.trim(), p.id);
+            bySku.set(p.sku.trim(), p.id);
+          }
+        }
+        const seriesSeen = new Set(
+          all.map(p => p.series?.trim().toLowerCase()).filter((s): s is string => !!s),
+        );
+        const ensureSeries = async (series: unknown) => {
+          const name = typeof series === "string" ? series.trim() : "";
+          if (!name || seriesSeen.has(name.toLowerCase())) return;
+          seriesSeen.add(name.toLowerCase());
+          const existing = await db.getProductSeriesByName(name);
+          if (!existing) await db.createProductSeries({ name } as never);
+        };
+
+        let created = 0;
+        let updated = 0;
+        const failed: Array<{ ref: string; reason: string }> = [];
+
+        // Güncellemeler.
+        for (const u of input.updates) {
+          const current = byId.get(u.id);
+          if (!current) {
+            failed.push({ ref: `ID ${u.id}`, reason: "Ürün bulunamadı" });
+            continue;
+          }
+          const nb = u.data.barcode?.trim();
+          const ns = u.data.sku?.trim();
+          if (nb && (barcodeOwner.get(nb) ?? u.id) !== u.id) {
+            failed.push({ ref: current.name, reason: `Barkod "${nb}" başka üründe` });
+            continue;
+          }
+          if (ns && (skuOwner.get(ns) ?? u.id) !== u.id) {
+            failed.push({ ref: current.name, reason: `SKU "${ns}" başka üründe` });
+            continue;
+          }
+          try {
+            await ensureSeries(u.data.series);
+            await db.updateProduct(u.id, toDecimalFields(withStatusFlags(u.data), productDecimalFields) as never);
+            // Kimlik değiştiyse sahiplik haritasını güncel tut.
+            if (nb) barcodeOwner.set(nb, u.id);
+            if (ns) skuOwner.set(ns, u.id);
+            updated++;
+          } catch (e) {
+            failed.push({ ref: current.name, reason: e instanceof Error ? e.message : "Güncelleme hatası" });
+          }
+        }
+
+        // Yeni ürünler.
+        for (const c of input.creates) {
+          const name = typeof c.data.name === "string" ? c.data.name.trim() : "";
+          if (!name) {
+            failed.push({ ref: "(adsız)", reason: "Ürün adı boş" });
+            continue;
+          }
+          const nb = c.data.barcode?.trim();
+          const ns = c.data.sku?.trim();
+          if (nb && barcodeOwner.has(nb)) {
+            failed.push({ ref: name, reason: `Barkod "${nb}" zaten kullanımda` });
+            continue;
+          }
+          if (ns && skuOwner.has(ns)) {
+            failed.push({ ref: name, reason: `SKU "${ns}" zaten kullanımda` });
+            continue;
+          }
+          // Üst ürün eşleşmesi (barkod ya da SKU); türev ancak ana ürüne bağlanır.
+          let parentId: number | null = null;
+          const ref = c.parentRef?.trim();
+          if (ref) {
+            const pid = byBarcode.get(ref) ?? bySku.get(ref) ?? null;
+            const parent = pid !== null ? byId.get(pid) : undefined;
+            if (parent && !parent.parentId) parentId = parent.id;
+          }
+          try {
+            await ensureSeries(c.data.series);
+            const payload = { ...c.data, name, parentId };
+            const newId = await db.createProduct(
+              toDecimalFields(withStatusFlags(payload), productDecimalFields) as never,
+            );
+            const idNum = Number(newId);
+            byId.set(idNum, { ...(payload as object), id: idNum } as never);
+            if (nb) {
+              barcodeOwner.set(nb, idNum);
+              byBarcode.set(nb, idNum);
+            }
+            if (ns) {
+              skuOwner.set(ns, idNum);
+              bySku.set(ns, idNum);
+            }
+            created++;
+          } catch (e) {
+            failed.push({ ref: name, reason: e instanceof Error ? e.message : "Oluşturma hatası" });
+          }
+        }
+
+        return { created, updated, failed };
+      }),
     delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteProduct(input.id)),
     // Mamul stok hareket geçmişi: üretim/satış/iade/elle düzeltme kayıtları.
     movements: protectedProcedure
@@ -306,6 +524,19 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         const parent = await db.getProduct(input.parentId);
         if (!parent) throw new TRPCError({ code: "NOT_FOUND", message: "Ana ürün bulunamadı" });
+        if (parent.parentId) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Türevden türetme yapılamaz — ana ürünü seçin." });
+        }
+        // SKU tekilliği (Faz A1): mevcut SKU'larla çakışan öneriye sayı eklenir.
+        const existingSkus = new Set(
+          (await db.listProducts()).map(p => p.sku?.trim()).filter((s): s is string => !!s),
+        );
+        const uniqueSku = (base: string) => {
+          let candidate = base;
+          for (let i = 2; existingSkus.has(candidate); i++) candidate = `${base}-${i}`;
+          existingSkus.add(candidate);
+          return candidate;
+        };
         const combos = deriveCombos(input.uses, input.packagings, input.colors, input.sets);
         const noSelection =
           input.uses.length === 0 &&
@@ -341,7 +572,7 @@ export const appRouter = router({
             safetyNotes: parent.safetyNotes,
             extraInfo: parent.extraInfo,
             // Pazaryeri alanları ana üründen devralınır; SKU türev başlığından üretilir.
-            sku: suggestSku(title, combo.packaging ?? parent.packaging),
+            sku: uniqueSku(suggestSku(title, combo.packaging ?? parent.packaging)),
             category: parent.category,
             profitMargin: parent.profitMargin,
             vatRate: parent.vatRate,
@@ -367,6 +598,53 @@ export const appRouter = router({
           }
         }
         return { count: combos.length };
+      }),
+    // Ana ürün kartındaki seçili alan gruplarını tüm türevlere kopyalar.
+    // Türeve özgü alanlara (ad, fiyat, ambalaj, barkod, SKU, stok, renk,
+    // yüzey, katkılar) bilinçli olarak dokunulmaz.
+    propagateToVariants: protectedProcedure
+      .input(
+        z.object({
+          parentId: z.number(),
+          groups: z
+            .array(z.enum(["aciklamalar", "etiket", "pazaryeri", "medya", "maliyet"]))
+            .min(1),
+          // true: türevde dolu olan alanın üzerine yazılmaz, yalnız boşlar doldurulur
+          // (bilinçli farklılaştırılmış türev içeriği korunur).
+          onlyEmpty: z.boolean().default(false),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const parent = await db.getProduct(input.parentId);
+        if (!parent) throw new TRPCError({ code: "NOT_FOUND", message: "Ana ürün bulunamadı" });
+        const variants = (await db.listProducts()).filter(p => p.parentId === parent.id);
+        if (variants.length === 0) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Bu ana ürünün türevi yok" });
+        }
+        const groupFields = {
+          aciklamalar: ["description", "shortDescription", "longDescription", "applicationText"],
+          etiket: ["labelText", "usageGuide", "safetyNotes", "labelWarnings", "labelSize", "extraInfo"],
+          pazaryeri: ["category", "paintType", "features"],
+          medya: ["imageUrls", "videoUrl", "mockupUrl"],
+          maliyet: ["profitMargin", "vatRate", "desi", "discountPercent", "shippingCost"],
+        } as const;
+        // Değerler DB'den okunduğu için decimal alanlar zaten string; dönüşüm gerekmez.
+        const isFilled = (v: unknown) => v !== null && v !== undefined && String(v).trim() !== "";
+        let updated = 0;
+        for (const variant of variants) {
+          const patch: Record<string, unknown> = {};
+          for (const group of input.groups) {
+            for (const field of groupFields[group]) {
+              if (input.onlyEmpty && isFilled((variant as Record<string, unknown>)[field])) continue;
+              patch[field] = (parent as Record<string, unknown>)[field];
+            }
+          }
+          if (Object.keys(patch).length > 0) {
+            await db.updateProduct(variant.id, patch as never);
+            updated++;
+          }
+        }
+        return { count: updated };
       }),
     // Toplu zam/indirim: tüm ürünlerin (veya bir serinin) fiyatı yüzdeyle güncellenir.
     bulkPrice: protectedProcedure
@@ -540,7 +818,8 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
         const all = await db.listProducts();
         const chosen = input.ids?.length ? all.filter(p => input.ids!.includes(p.id)) : all;
         const items = chosen
-          .filter(p => p.barcode && p.barcode.trim())
+          // Yalnız "satista" ürünler pazaryerine gider (Faz A3).
+          .filter(p => p.status === "satista" && p.barcode && p.barcode.trim())
           .map(p => {
             const list = parseFloat(String(p.salePrice)) || 0;
             const disc = parseFloat(String(p.discountPercent)) || 0;
@@ -573,7 +852,8 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
         const all = await db.listProducts();
         const chosen = input.ids?.length ? all.filter(p => input.ids!.includes(p.id)) : all;
         const items = chosen
-          .filter(p => p.barcode && p.barcode.trim())
+          // Yalnız "satista" ürünler pazaryerine gider (Faz A3).
+          .filter(p => p.status === "satista" && p.barcode && p.barcode.trim())
           .map(p => {
             const list = parseFloat(String(p.salePrice)) || 0;
             const disc = parseFloat(String(p.discountPercent)) || 0;
@@ -595,6 +875,86 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: error instanceof Error ? error.message : "Hepsiburada'ya gönderim başarısız",
+          });
+        }
+      }),
+    // Faz C: Trendyol'da SIFIRDAN ürün kartı açma — ana ürünün "satista" türevleri
+    // ortak productMainId ile TEK ilan (varyant seçicili) olarak gönderilir.
+    // Ayarlar: Ayarlar sayfası → Trendyol Ürün Açma. Sonuç asenkron: batchRequestId.
+    pushCardToTrendyol: protectedProcedure
+      .input(z.object({ parentId: z.number() }))
+      .mutation(async ({ input }) => {
+        const parent = await db.getProduct(input.parentId);
+        if (!parent) throw new TRPCError({ code: "NOT_FOUND", message: "Ürün bulunamadı" });
+        if (parent.parentId) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Türev seçildi — ürün kartı ana üründen açılır." });
+        }
+        const cfg = parseCardSettings(await db.getSettings());
+        if (!cfg.ok) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Trendyol ürün açma ayarları eksik: ${cfg.missing.join(" · ")} (Ayarlar sayfasından girin)`,
+          });
+        }
+        const all = await db.listProducts();
+        const variants = all.filter(p => p.parentId === parent.id);
+        const refs = await db.listAllProductImageRefs();
+        const imageKinds = new Map<number, string[]>();
+        for (const r of refs) {
+          imageKinds.set(r.productId, [...(imageKinds.get(r.productId) ?? []), r.kind]);
+        }
+        const { items, problems } = mapProductsToTrendyolItems(parent, variants, imageKinds, cfg.value);
+        if (items.length === 0) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Gönderilebilir ürün yok — ${problems.join(" · ")}`,
+          });
+        }
+        try {
+          const result = await pushTrendyolProductCards(items);
+          return { ...result, problems };
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Trendyol ürün gönderimi başarısız",
+          });
+        }
+      }),
+    // Batch sonucu sorgulama: kalem bazında başarı/hata mesajları.
+    trendyolCardBatchStatus: protectedProcedure
+      .input(z.object({ batchRequestId: z.string().min(1) }))
+      .mutation(async ({ input }) => {
+        try {
+          return await getTrendyolProductBatchStatus(input.batchRequestId);
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Batch sorgusu başarısız",
+          });
+        }
+      }),
+    // Keşif uçları (Ayarlar → eşleme kurarken): marka ID ve kategori özellikleri.
+    trendyolBrandSearch: protectedProcedure
+      .input(z.object({ name: z.string().min(2) }))
+      .mutation(async ({ input }) => {
+        try {
+          return await searchTrendyolBrands(input.name);
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Marka araması başarısız",
+          });
+        }
+      }),
+    trendyolCategoryAttributes: protectedProcedure
+      .input(z.object({ categoryId: z.number() }))
+      .mutation(async ({ input }) => {
+        try {
+          return await fetchTrendyolCategoryAttributes(input.categoryId);
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Kategori özellikleri alınamadı",
           });
         }
       }),
@@ -1185,6 +1545,10 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
     data: protectedProcedure.query(() => db.reportData()),
     vat: protectedProcedure.query(() => db.vatReport()),
     cashflow: protectedProcedure.query(() => db.cashflowReport()),
+    // Ürün bazlı satış (adet + ciro, iptal hariç): üretim önerisi + kârlılık raporu.
+    productSales: protectedProcedure
+      .input(z.object({ days: z.number().min(1).max(365).default(30) }).optional())
+      .query(({ input }) => db.productSalesSince(input?.days ?? 30)),
     // Kanal bazlı toplu net kâr: finans onaylı kâr modeli v2 ile, sipariş başına.
     channelProfit: protectedProcedure
       .input(z.object({ days: z.number().min(1).max(365).default(30) }).optional())

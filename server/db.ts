@@ -951,6 +951,31 @@ export async function listOrderItems(orderId: number) {
   return db.select().from(orderItems).where(eq(orderItems.orderId, orderId)).orderBy(orderItems.id);
 }
 
+/**
+ * Ürün bazlı satış özeti (son N gün): adet + ciro, iptal siparişler hariç.
+ * Üretim önerisi (satış hızı) ve Ürün Kârlılığı raporu kullanır.
+ * matched=false satırı, ürünle eşleşmeyen serbest kalemlerin toplamıdır.
+ */
+export async function productSalesSince(days: number) {
+  const db = await requireDb();
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const rows = await db
+    .select({
+      productId: orderItems.productId,
+      qty: sql<string>`SUM(${orderItems.quantity})`,
+      revenue: sql<string>`SUM(${orderItems.quantity} * ${orderItems.unitPrice})`,
+    })
+    .from(orderItems)
+    .innerJoin(orders, eq(orderItems.orderId, orders.id))
+    .where(sql`${orders.createdAt} >= ${since} AND ${orders.status} <> 'cancelled'`)
+    .groupBy(orderItems.productId);
+  return rows.map(r => ({
+    productId: r.productId,
+    qty: parseFloat(r.qty) || 0,
+    revenue: parseFloat(r.revenue) || 0,
+  }));
+}
+
 /** Kanal kâr raporu için tüm sipariş kalemlerinin hafif listesi. */
 export async function listAllOrderItemRefs() {
   const db = await requireDb();
@@ -1516,6 +1541,15 @@ export async function deleteProductImage(productId: number, kind: "main" | "pack
   await db
     .delete(productImages)
     .where(and(eq(productImages.productId, productId), eq(productImages.kind, kind)));
+}
+
+/** Görseli olan ürün ID'leri (sağlık skoru: görsel var/yok tek sorguda). */
+export async function listProductIdsWithImages(): Promise<number[]> {
+  const db = await requireDb();
+  const rows = await db
+    .selectDistinct({ productId: productImages.productId })
+    .from(productImages);
+  return rows.map(r => r.productId);
 }
 
 export async function copyProductImages(fromProductId: number, toProductId: number) {
