@@ -31,6 +31,7 @@ import { useConfirm } from "@/components/ConfirmDialog";
 import { trpc } from "@/lib/trpc";
 import { AlertTriangle, ArrowDownToLine, ArrowUpFromLine, History, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useLocation } from "wouter";
 import { toast } from "sonner";
 
 type MaterialRow = {
@@ -76,6 +77,9 @@ export default function Stock() {
   const [stockNote, setStockNote] = useState("");
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
+  const [reorderOpen, setReorderOpen] = useState(false);
+  const [, setLocation] = useLocation();
+  const { data: reorder } = trpc.materials.reorderSuggestions.useQuery();
   // Hareket geçmişi + "hangi ürünlerde kullanılıyor" dialogu.
   const [detailFor, setDetailFor] = useState<MaterialRow | null>(null);
   const { data: movementList } = trpc.materials.movements.useQuery(
@@ -223,9 +227,61 @@ export default function Stock() {
           <p className="text-sm text-amber-800 dark:text-amber-300">
             <strong>{criticalCount}</strong> malzeme kritik stok seviyesinin altında. Tedarik siparişi vermeyi düşünün.
           </p>
-          <Button size="sm" variant="outline" className="ml-auto" onClick={() => setFilter("critical")}>
-            Göster
+          <Button size="sm" variant="outline" className="ml-auto" onClick={() => setReorderOpen(v => !v)}>
+            {reorderOpen ? "Öneriyi Gizle" : "Sipariş Önerisi"}
           </Button>
+        </Card>
+      )}
+
+      {reorderOpen && reorder && reorder.suggestions.length > 0 && (
+        <Card className="p-0 overflow-hidden">
+          <div className="flex items-center justify-between gap-2 border-b bg-muted/40 px-4 py-2.5">
+            <div>
+              <p className="font-semibold text-sm">Yeniden Sipariş Önerisi</p>
+              <p className="text-xs text-muted-foreground">
+                {reorder.summary.count} kalem · tahmini toplam {formatTL(reorder.summary.totalCost)}
+                {reorder.summary.withoutSupplier > 0 && ` · ${reorder.summary.withoutSupplier} kalemde tedarikçi yok`}
+              </p>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b bg-muted/20 text-left text-xs text-muted-foreground">
+                  <th className="p-2 pl-4">Hammadde</th>
+                  <th className="p-2 text-right">Stok / Eşik</th>
+                  <th className="p-2 text-right">Önerilen Alım</th>
+                  <th className="p-2">Tedarikçi</th>
+                  <th className="p-2 text-right">Tahmini Maliyet</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reorder.suggestions.map(s => (
+                  <tr key={s.materialId} className="border-b last:border-0">
+                    <td className="p-2 pl-4 font-medium">{s.name}</td>
+                    <td className="p-2 text-right text-muted-foreground">
+                      <span className="text-rose-600 font-medium">{s.stock}</span> / {s.critical} {s.unit}
+                    </td>
+                    <td className="p-2 text-right font-semibold">
+                      {s.suggestedQty} {s.unit}
+                    </td>
+                    <td className="p-2">
+                      {s.supplierName ?? <span className="text-amber-600 text-xs">— tanımsız</span>}
+                    </td>
+                    <td className="p-2 text-right">{formatTL(s.estimatedCost)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="border-t px-4 py-2.5">
+            <Button size="sm" variant="outline" onClick={() => setLocation("/faturalar")}>
+              Alış Faturası Oluştur
+            </Button>
+            <span className="ml-2 text-xs text-muted-foreground">
+              Öneri = stoğu kritik eşiğin 2 katına tamamlar.
+            </span>
+          </div>
         </Card>
       )}
 

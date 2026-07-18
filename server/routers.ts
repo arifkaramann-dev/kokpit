@@ -12,6 +12,7 @@ import { extractInvoice } from "./_core/claude";
 import { executeAssistantCommand, generateOrderNo, generateQuoteNo } from "./assistant";
 import { buildSaleTitle, deriveCombos, parseSetCount } from "./productUtils";
 import { computePrice, extractJson, parseFeatures, pickReferenceProduct, scoreReference, suggestSku } from "./autofill";
+import { computeReorderSuggestions, summarizeReorder } from "./reorder";
 import { importUrunKayit } from "./importSeed";
 import { syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf } from "./trendyol";
 import {
@@ -315,6 +316,16 @@ export const appRouter = router({
   materials: router({
     list: protectedProcedure.query(() => db.listMaterials()),
     critical: protectedProcedure.query(() => db.listCriticalMaterials()),
+    // Yeniden sipariş önerisi: kritik eşik altı hammadde → önerilen alım miktarı +
+    // tedarikçi + tahmini maliyet (saf mantık reorder.ts, testli).
+    reorderSuggestions: protectedProcedure.query(async () => {
+      const [mats, suppliers] = await Promise.all([db.listMaterials(), db.listSuppliers()]);
+      const suggestions = computeReorderSuggestions(
+        mats as never,
+        (suppliers as { id: number; name: string }[]).map(s => ({ id: s.id, name: s.name })),
+      );
+      return { suggestions, summary: summarizeReorder(suggestions) };
+    }),
     create: protectedProcedure.input(materialInput).mutation(({ input }) =>
       db.createMaterial(toDecimalFields(input, ["stockQty", "criticalQty", "unitCost"]) as never),
     ),
