@@ -181,6 +181,20 @@ Hepsiburada push yok, web sitesi (Qukasoft) entegrasyonu yok.
 7. [ ] AI görsel üretimi: _core/imageGeneration.ts hazır ama hiçbir router'a bağlı
        değil — kullanıcı talebiyle modül olarak bağlanacak
 
+## RAKİP ANALİZİ — Bizimhesap + Qukasoft A-Z (18.07.2026, patron talebi)
+İki rakip iki cephe: Bizimhesap = ön muhasebe/e-belge; Qukasoft = pazaryeri+web
+mağaza. Tam analiz + parite + storefront kararı: **docs/RAKIP-ANALIZI-BIZIMHESAP-QUKASOFT.md**
+- Kokpit bugün: Bizimhesap'ın ~%75'i, Qukasoft'un ~%45'i (boya çekirdeği ikisinde de yok).
+- 🔴 Olmazsa olmaz: [ ] e-Fatura/e-Arşiv/e-İrsaliye, [ ] çoklu depo
+- 🟠 Öncelikli: [ ] Kokpit-güçlü storefront (kendi web mağaza — en yüksek marjlı
+  kanal, CMS değil ürün çekirdeğinden beslenir), [ ] kargo entegrasyonu,
+  [ ] N11 + Çiçeksepeti
+- 🟡 Gerekli: [ ] kampanya motoru, [ ] SEO/GA4/pixel, [ ] üretimde işçilik/sarf
+  maliyeti, [ ] banka ekstresi mutabakat
+- STOREFRONT KARARI: evet ama jenerik CMS değil — ürün çekirdeğinden beslenen sade
+  mağaza (Qukasoft/web mağaza kirasını ikame eder, pazaryeri komisyonu olmayan kanal).
+- Odoo planıyla birleşik tek yol haritası (RAKİP-FAZ 1-4).
+
 ## ODOO UYARLAMA — modül analizi + yol haritası (18.07.2026, patron talebi)
 Odoo'nun tüm modül evreni Art of Colour'a göre süzüldü. Tam analiz + sınıflandırma
 + fazlı plan: **docs/ODOO-UYARLAMA-PLANI.md**. Özet (kopyalama değil, uyarlama):
