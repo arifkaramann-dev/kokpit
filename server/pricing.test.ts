@@ -93,6 +93,23 @@ describe("suggestPrice", () => {
     const r = calcChannelProfit({ salePrice: price!, productCost: 88.75, profile: prof, shippingOverride: 94.2 });
     expect(r.margin).toBeCloseTo(25, 3);
   });
+  it("targetMargin: maliyet KDV dahil (productCostVatPercent) verilince calcChannelProfit ile tutarlı", () => {
+    const prof = profile({ commissionPercent: 20, paymentFeePercent: 0.96, fixedFee: 12.6, stopajPercent: 1, vatPercent: 20 });
+    const price = suggestPrice({
+      currentPrice: 0,
+      totalCost: 48,
+      mode: "targetMargin",
+      value: 25,
+      profile: prof,
+      productCost: 48, // KDV dahil
+      productCostVatPercent: 20,
+    });
+    expect(price).not.toBeNull();
+    // Aynı KDV dahil maliyetle kâr hesabı yapılınca hedef marj (KDV hariç bazda) tutmalı.
+    const r = calcChannelProfit({ salePrice: price!, productCost: 48, productCostVatPercent: 20, profile: prof });
+    // Öneri kuruşa yuvarlandığı için marjda ±0,005 puan sapma normaldir.
+    expect(r.margin).toBeCloseTo(25, 2);
+  });
   it("targetMargin: banka POS'unda (KDV indirimsiz ödeme bedeli) da marj hedefi tutar", () => {
     const prof = profile({ paymentFeePercent: 2, paymentFeeVatDeductible: false, vatPercent: 20 });
     const price = suggestPrice({ currentPrice: 0, totalCost: 40, mode: "targetMargin", value: 30, profile: prof, productCost: 40 });
@@ -170,6 +187,26 @@ describe("calcChannelProfit — kanal bazlı net kâr (finans onaylı model)", (
     const r = calcChannelProfit({ salePrice: 100, productCost: 40, profile: profile() });
     expect(r.net).toBe(60);
     expect(r.margin).toBe(60);
+  });
+
+  it("productCostVatPercent verilince maliyetin indirilecek KDV'si düşülür (Excel modeli)", () => {
+    // Satış 275, maliyet 140 (KDV dahil), komisyon %3,9, KDV %20 → net 101,78.
+    const r = calcChannelProfit({
+      salePrice: 275,
+      productCost: 140,
+      productCostVatPercent: 20,
+      profile: profile({ commissionPercent: 3.9, vatPercent: 20 }),
+    });
+    expect(r.productCostEx).toBeCloseTo(116.67, 1);
+    expect(r.inputVat).toBeCloseTo(23.33, 1);
+    expect(r.commission).toBeCloseTo(10.73, 1);
+    expect(r.net).toBeCloseTo(101.78, 1);
+  });
+
+  it("productCostVatPercent verilmezse maliyet KDV hariç sayılır (geriye dönük uyumlu)", () => {
+    const r = calcChannelProfit({ salePrice: 100, productCost: 40, profile: profile({ vatPercent: 20 }) });
+    expect(r.productCostEx).toBe(40);
+    expect(r.inputVat).toBe(0);
   });
 
   it("kargo: profil 0 ise ürün kargosu kullanılır, profil doluysa profil kazanır", () => {

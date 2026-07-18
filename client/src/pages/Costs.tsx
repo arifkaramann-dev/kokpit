@@ -13,7 +13,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { formatTL, num } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
-import { calcChannelProfit } from "@shared/pricing";
+import { calcChannelProfit, calcDevProfit } from "@shared/pricing";
 import { Calculator, Save, TrendingDown, TrendingUp } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -46,7 +46,13 @@ export function calcProfit(input: {
 export default function Costs() {
   const utils = trpc.useUtils();
   const { data: products } = trpc.products.list.useQuery();
+  const { data: settings } = trpc.settings.get.useQuery();
   const [selectedId, setSelectedId] = useState<string>("");
+  // KDV oranı: ayarlardaki vatRate'ten gelir, sayfada görülüp değiştirilebilir.
+  const [vat, setVat] = useState("");
+  useEffect(() => {
+    if (settings && !vat) setVat(settings.vatRate ?? "20");
+  }, [settings, vat]);
 
   const productId = selectedId ? Number(selectedId) : null;
   const { data: formulaItems } = trpc.formula.list.useQuery(
@@ -74,7 +80,6 @@ export default function Costs() {
     }
   }, [selectedProduct]);
 
-  const [mpVat, setMpVat] = useState("20");
   const [mpCom, setMpCom] = useState("20");
   const [mpFee, setMpFee] = useState("10");
   const [mpShip, setMpShip] = useState("");
@@ -90,16 +95,21 @@ export default function Costs() {
     [formulaItems],
   );
 
+  // İndirimli satış fiyatı (KDV dahil).
+  const netPrice = (parseFloat(salePrice) || 0) * (1 - (parseFloat(discountPercent) || 0) / 100);
+  // KDV dahil model: maliyet ve satış KDV'den arındırılır, indirilecek KDV düşülür
+  // (komisyon bu karttta 0 — kendi/komisyonsuz satış; pazaryeri kartı ayrı).
   const result = useMemo(
     () =>
-      calcProfit({
-        salePrice: parseFloat(salePrice) || 0,
-        discountPercent: parseFloat(discountPercent) || 0,
+      calcDevProfit({
+        salePrice: netPrice,
         materialCost,
         packagingCost: parseFloat(packagingCost) || 0,
         shippingCost: parseFloat(shippingCost) || 0,
+        commissionPercent: 0,
+        vatPercent: parseFloat(vat) || 0,
       }),
-    [salePrice, discountPercent, materialCost, packagingCost, shippingCost],
+    [netPrice, materialCost, packagingCost, shippingCost, vat],
   );
 
   const updateProduct = trpc.products.update.useMutation({
@@ -229,6 +239,21 @@ export default function Costs() {
                   />
                 </div>
               </div>
+              <div className="space-y-1.5">
+                <Label>KDV Oranı (%)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  value={vat}
+                  onChange={e => setVat(e.target.value)}
+                  placeholder="20"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Maliyet ve satış KDV dahil girilir; net kâr KDV'den arındırılıp hesaplanır. KDV 0 =
+                  elden/kayıtsız satış (KDV'siz).
+                </p>
+              </div>
               <Button onClick={save} disabled={updateProduct.isPending} className="w-full">
                 <Save className="h-4 w-4 mr-1" /> Ürüne Kaydet
               </Button>
@@ -236,47 +261,54 @@ export default function Costs() {
           </Card>
 
           <Card className="p-5 space-y-4">
-            <h2 className="font-semibold">Sonuç</h2>
+            <h2 className="font-semibold">Sonuç (kendi/komisyonsuz satış)</h2>
             <div className="space-y-2">
-              <ResultRow label="İndirimli Satış Fiyatı" value={formatTL(result.netPrice)} />
-              <ResultRow label="Toplam Maliyet" value={formatTL(result.totalCost)} muted />
+              <ResultRow label="İndirimli Satış Fiyatı (KDV dahil)" value={formatTL(netPrice)} />
+              <ResultRow label="Toplam Maliyet (KDV dahil)" value={formatTL(result.totalCostGross)} muted />
+              {(parseFloat(vat) || 0) > 0 && (
+                <>
+                  <ResultRow label="Satış (KDV hariç)" value={formatTL(result.saleEx)} muted />
+                  <ResultRow label="İndirilecek KDV" value={`− ${formatTL(result.inputVat)}`} muted />
+                  <ResultRow label="Ödenecek KDV" value={formatTL(result.vatPayable)} muted />
+                </>
+              )}
               <Separator />
               <div className="flex items-center justify-between py-1">
                 <span className="font-medium">Net Kar (adet başı)</span>
                 <span
-                  className={`text-xl font-bold ${result.profit >= 0 ? "text-emerald-600" : "text-rose-600"}`}
+                  className={`text-xl font-bold ${result.net >= 0 ? "text-emerald-600" : "text-rose-600"}`}
                 >
-                  {formatTL(result.profit)}
+                  {formatTL(result.net)}
                 </span>
               </div>
               <div
                 className={`rounded-xl p-4 flex items-center gap-3 ${
-                  result.margin >= 30
+                  result.marginOnSale >= 30
                     ? "bg-emerald-50 dark:bg-emerald-950/30"
-                    : result.margin >= 0
+                    : result.marginOnSale >= 0
                       ? "bg-amber-50 dark:bg-amber-950/30"
                       : "bg-rose-50 dark:bg-rose-950/30"
                 }`}
               >
-                {result.profit >= 0 ? (
+                {result.net >= 0 ? (
                   <TrendingUp className="h-8 w-8 text-emerald-600" />
                 ) : (
                   <TrendingDown className="h-8 w-8 text-rose-600" />
                 )}
                 <div>
                   <p className="text-xs text-muted-foreground">Kar Marjı</p>
-                  <p className="text-2xl font-bold">%{result.margin.toFixed(1)}</p>
+                  <p className="text-2xl font-bold">%{result.marginOnSale.toFixed(1)}</p>
                 </div>
                 <Badge
                   variant="secondary"
                   className="ml-auto"
                 >
-                  {result.margin >= 30 ? "Sağlıklı" : result.margin >= 0 ? "Düşük marj" : "Zarar!"}
+                  {result.marginOnSale >= 30 ? "Sağlıklı" : result.marginOnSale >= 0 ? "Düşük marj" : "Zarar!"}
                 </Badge>
               </div>
               <p className="text-xs text-muted-foreground">
-                İpucu: 1750 ₺ üzeri ücretsiz kargo verdiğiniz siparişlerde kargo maliyetini bu hesaba
-                eklemeyi unutmayın.
+                Bu kart komisyonsuz (kendi satış) net kârdır. Pazaryeri satışları için aşağıdaki
+                "Pazaryeri & KDV Analizi" kartını kullanın.
               </p>
             </div>
           </Card>
@@ -291,7 +323,7 @@ export default function Costs() {
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
               <div className="space-y-1.5">
                 <Label>KDV Oranı (%)</Label>
-                <Input type="number" min="0" value={mpVat} onChange={e => setMpVat(e.target.value)} />
+                <Input type="number" min="0" step="0.1" value={vat} onChange={e => setVat(e.target.value)} />
               </div>
               <div className="space-y-1.5">
                 <Label>Komisyon (%)</Label>
@@ -326,6 +358,8 @@ export default function Costs() {
               const mp = calcChannelProfit({
                 salePrice: price,
                 productCost,
+                // Maliyet KDV dahil girilir; kanal KDV'siyle indirilecek KDV düşülür.
+                productCostVatPercent: parseFloat(vat) || 0,
                 profile: {
                   name: "Pazaryeri",
                   kind: "pazaryeri",
@@ -334,7 +368,7 @@ export default function Costs() {
                   paymentFeeVatDeductible: true,
                   fixedFee: parseFloat(mpFee) || 0,
                   stopajPercent: parseFloat(mpStopaj) || 0,
-                  vatPercent: parseFloat(mpVat) || 0,
+                  vatPercent: parseFloat(vat) || 0,
                   shippingCost: parseFloat(mpShip || shippingCost) || 0,
                 },
               });
@@ -346,7 +380,8 @@ export default function Costs() {
                   <Row label={`Ödeme + işlem bedeli (net)`} value={`− ${formatTL(mp.paymentFee + mp.transactionFee)}`} />
                   <Row label="Kargo (KDV'si indirilmiş)" value={`− ${formatTL(mp.shipping)}`} />
                   <Row label={`Stopaj (%${mpStopaj})`} value={`− ${formatTL(mp.stopaj)}`} />
-                  <Row label="Ürün maliyeti (hammadde + ambalaj, KDV hariç)" value={`− ${formatTL(productCost)}`} />
+                  <Row label="Ürün maliyeti (KDV hariç)" value={`− ${formatTL(mp.productCostEx)}`} />
+                  <Row label="↳ İndirilecek KDV (maliyetten)" value={`− ${formatTL(mp.inputVat)}`} />
                   <div className="flex justify-between border-t pt-1.5 font-semibold">
                     <span>Net kâr</span>
                     <span className={mp.net >= 0 ? "text-emerald-600" : "text-rose-600"}>

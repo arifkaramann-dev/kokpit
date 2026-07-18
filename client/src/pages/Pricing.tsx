@@ -152,6 +152,8 @@ export default function Pricing() {
       const mp = calcChannelProfit({
         salePrice: netPrice,
         productCost: materialCost + packaging,
+        // Maliyet KDV dahil girilir; kanalın KDV oranıyla indirilecek KDV düşülür.
+        productCostVatPercent: profile.vatPercent,
         profile,
         shippingOverride: num(p.shippingCost),
       });
@@ -252,6 +254,7 @@ export default function Pricing() {
         value,
         profile,
         productCost: r.materialCost + num(r.p.packagingCost),
+        productCostVatPercent: profile.vatPercent,
         shippingOverride: num(r.p.shippingCost),
         rounding,
       });
