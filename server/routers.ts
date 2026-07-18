@@ -22,6 +22,8 @@ import {
   searchTrendyolBrands,
 } from "./trendyolProducts";
 import { pushHepsiburadaStockPrice } from "./hepsiburada";
+import { pushN11StockPrice } from "./n11";
+import { pushCiceksepetiStockPrice } from "./ciceksepeti";
 import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "./marketplace";
 import { channelProfitReport } from "./reportUtils";
 import { DEFAULT_CHANNEL_PROFILES, normalizeChannelProfile } from "@shared/pricing";
@@ -878,6 +880,70 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
           });
         }
       }),
+    // N11'e stok/fiyat gönderimi (SKU önce, yoksa barkod ile eşleşir).
+    pushToN11: protectedProcedure
+      .input(z.object({ ids: z.array(z.number()).optional() }))
+      .mutation(async ({ input }) => {
+        const all = await db.listProducts();
+        const chosen = input.ids?.length ? all.filter(p => input.ids!.includes(p.id)) : all;
+        const items = chosen
+          .filter(p => p.status === "satista" && ((p.sku && p.sku.trim()) || (p.barcode && p.barcode.trim())))
+          .map(p => {
+            const list = parseFloat(String(p.salePrice)) || 0;
+            const disc = parseFloat(String(p.discountPercent)) || 0;
+            return {
+              sellerStockCode: (p.sku?.trim() || p.barcode!.trim()),
+              quantity: p.stockQty ?? 0,
+              price: +(list * (1 - disc / 100)).toFixed(2),
+            };
+          });
+        if (items.length === 0) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "SKU/barkodu olan satıştaki ürün yok. Ürün kartında SKU veya barkod girin.",
+          });
+        }
+        try {
+          return await pushN11StockPrice(items);
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "N11'e gönderim başarısız",
+          });
+        }
+      }),
+    // Çiçeksepeti'ne stok/fiyat gönderimi.
+    pushToCiceksepeti: protectedProcedure
+      .input(z.object({ ids: z.array(z.number()).optional() }))
+      .mutation(async ({ input }) => {
+        const all = await db.listProducts();
+        const chosen = input.ids?.length ? all.filter(p => input.ids!.includes(p.id)) : all;
+        const items = chosen
+          .filter(p => p.status === "satista" && ((p.sku && p.sku.trim()) || (p.barcode && p.barcode.trim())))
+          .map(p => {
+            const list = parseFloat(String(p.salePrice)) || 0;
+            const disc = parseFloat(String(p.discountPercent)) || 0;
+            return {
+              stockCode: (p.sku?.trim() || p.barcode!.trim()),
+              quantity: p.stockQty ?? 0,
+              price: +(list * (1 - disc / 100)).toFixed(2),
+            };
+          });
+        if (items.length === 0) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "SKU/barkodu olan satıştaki ürün yok. Ürün kartında SKU veya barkod girin.",
+          });
+        }
+        try {
+          return await pushCiceksepetiStockPrice(items);
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Çiçeksepeti'ne gönderim başarısız",
+          });
+        }
+      }),
     // Faz C: Trendyol'da SIFIRDAN ürün kartı açma — ana ürünün "satista" türevleri
     // ortak productMainId ile TEK ilan (varyant seçicili) olarak gönderilir.
     // Ayarlar: Ayarlar sayfası → Trendyol Ürün Açma. Sonuç asenkron: batchRequestId.
@@ -1150,7 +1216,7 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
       }),
     // Pazaryerine gerçek istek atıp ham HTTP sonucunu döner (401 teşhisi için).
     testConnection: protectedProcedure
-      .input(z.object({ key: z.enum(["trendyol", "hepsiburada"]) }))
+      .input(z.object({ key: z.enum(["trendyol", "hepsiburada", "n11", "ciceksepeti"]) }))
       .mutation(({ input }) => testMarketplaceConnection(input.key)),
     create: protectedProcedure.input(orderInput).mutation(async ({ input }) => {
       const { items, ...order } = input;
