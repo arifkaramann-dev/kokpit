@@ -232,7 +232,6 @@ export default function Products() {
   const [propagateOnlyEmpty, setPropagateOnlyEmpty] = useState(false);
   const { data: templateList } = trpc.templates.list.useQuery();
   const { data: seriesRecords } = trpc.series.list.useQuery();
-  const { data: imageRefs } = trpc.products.allImageRefs.useQuery();
   const packOptions = (templateList ?? []).filter(t => t.kind === "ambalaj").map(t => t.name);
   const colorOptions = (templateList ?? []).filter(t => t.kind === "renk").map(t => t.name);
   const setOptions = (templateList ?? []).filter(t => t.kind === "set_paket").map(t => t.name);
@@ -367,45 +366,6 @@ export default function Products() {
   }
 
   // Satışa hazır katalog dosyası: Excel/pazaryeri şablonlarına yapıştırılabilir.
-  function exportCsv() {
-    const rows = (products as ProductRow[]) ?? [];
-    if (rows.length === 0) return toast.error("Dışa aktarılacak ürün yok");
-    // Görselleri herkese açık link olarak ekle (web sitesi/pazaryeri kullanabilsin).
-    const origin = window.location.origin;
-    const imgSet = new Set((imageRefs ?? []).map(r => `${r.productId}:${r.kind}`));
-    const imgUrl = (id: number, kind: "main" | "packaging" | "usage") =>
-      imgSet.has(`${id}:${kind}`) ? `${origin}/api/img/${id}/${kind}` : "";
-    const cols = [
-      "Ürün Adı", "Tür", "Barkod", "Seri", "Renk Kodu", "Kullanım/Yüzey", "Ambalaj",
-      "Stok", "Satış Fiyatı", "İndirim %", "Açıklama", "Etiket Boyutu", "Etiket Yazısı",
-      "Kullanım Kılavuzu", "Güvenlik", "Ek Bilgi",
-      "Ana Görsel", "Ambalaj Görseli", "Kullanım Görseli", "Tüm Görseller",
-    ];
-    const esc = (v: string | number | null | undefined) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const lines = rows.map(p => {
-      const main = imgUrl(p.id, "main");
-      const pack = imgUrl(p.id, "packaging");
-      const usage = imgUrl(p.id, "usage");
-      const all = [main, pack, usage].filter(Boolean).join(" | ");
-      return [
-        p.name, p.parentId === null ? "Ana Ürün" : "Türev", p.barcode, p.series, p.colorCode,
-        p.surfaceType, p.packaging, p.stockQty, p.salePrice, p.discountPercent, p.description,
-        p.labelSize, p.labelText, p.usageGuide, p.safetyNotes, p.extraInfo,
-        main, pack, usage, all,
-      ].map(esc).join(";");
-    });
-    // BOM: Türkçe karakterler Excel'de doğru açılsın.
-    const blob = new Blob(["﻿" + [cols.join(";"), ...lines].join("\r\n")], {
-      type: "text/csv;charset=utf-8",
-    });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `artofcolour-katalog-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-    toast.success(`${rows.length} ürün dışa aktarıldı`);
-  }
-
   const createProduct = trpc.products.create.useMutation({
     onSuccess: () => {
       utils.products.invalidate();
@@ -708,8 +668,8 @@ export default function Products() {
           <Button variant="outline" onClick={() => setBulkOpen(true)}>
             <Percent className="h-4 w-4 mr-1" /> Toplu Fiyat
           </Button>
-          <Button variant="outline" onClick={exportCsv}>
-            <Download className="h-4 w-4 mr-1" /> Dışa Aktar
+          <Button variant="outline" onClick={() => setLocation("/urun-aktar")}>
+            <Download className="h-4 w-4 mr-1" /> İçe / Dışa Aktar
           </Button>
           <Button onClick={openCreateMain}>
             <Plus className="h-4 w-4 mr-1" /> Yeni Ana Ürün

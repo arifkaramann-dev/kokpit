@@ -191,6 +191,27 @@ gerçek olur. Ürün kartı gerçekten tek doğruluk kaynağına dönüşür.
 - [ ] **E3. Pazaryeri soru-cevap kuyruğu:** soru çekme API'si canlı erişim
   gerektirir — C2'nin canlı doğrulamasıyla aynı sprintte ele alınacak.
 
+### FAZ G — Excel/CSV toplu içe-dışa aktarma ✅ (17.07.2026, patron talebi)
+
+Rakip panelindeki (Qukasoft) içe/dışa aktarma sisteminin muadili. Yüzlerce
+varyantı Excel'de toplu düzenlemek ürün çekirdeğinin temel operasyonu.
+
+- [x] **G1. Tam katalog dışa aktarma:** `shared/productIO.ts` alan kataloğu (35+
+  düzenlenebilir alan) tek kaynak; ID, üst ürün barkodu ve görsel linkleri bilgi
+  sütunu; ondalık nokta/virgül seçimi (Excel TR uyumu); BOM + `;` ayraç.
+- [x] **G2. Oluştur-veya-güncelle içe aktarma:** eşleştirme sütunu (ID/Barkod/SKU)
+  ile eşleşen satır güncellenir, eşleşmeyen (adı olan) satır yeni ürün olur;
+  "Üst Ürün Barkodu" ile türev bağlanır. Dosyada olmayan sütun değişmez; boş
+  hücre atla/temizle seçeneği (varsayılan atla — veri kazası önlenir).
+- [x] **G3. Diff önizleme + hata raporu:** uygulamadan önce yeni/güncelleme/
+  değişiklik-yok/hata kırılımı, alan bazlı eski→yeni gösterimi. Sunucu
+  `products.bulkImport` planı yeniden doğrular (çift barkod/SKU, üst ürün),
+  başarısız satırları rapor eder. TR/EN ondalık, durum alias'ları, batch içi
+  çift kimlik yakalama. 20 birim testi (`productIO.test.ts`).
+- [x] **G4. Menü + sayfa:** `/urun-aktar` (İçe / Dışa Aktar), sidebar'da Ürün &
+  Üretim altında; Ürünler sayfası "İçe / Dışa Aktar" butonu buraya yönlendirir
+  (eski tek-yönlü CSV dışa aktarımın yerini aldı).
+
 ### FAZ F — Ürün bazlı zekâ ve raporlama (F1 ✅)
 
 - [x] **F1. Ürün Kârlılığı raporu:** Analiz sayfasında yeni tablo — kalem bazlı

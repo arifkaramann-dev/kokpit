@@ -210,7 +210,7 @@ export function suggestPrice(input: SuggestInput): number | null {
 export type CsvPriceRow = { key: string; price: number; line: number };
 
 /** Basit CSV satır ayrıştırıcı: tırnaklı alanları ve ; veya , ayracını destekler. */
-function splitCsvLine(line: string, sep: string): string[] {
+export function splitCsvLine(line: string, sep: string): string[] {
   const out: string[] = [];
   let cur = "";
   let inQuotes = false;
@@ -242,7 +242,7 @@ const KEY_HEADERS = ["barkod", "barcode", "id", "urun no", "sku", "stok kodu"];
 const PRICE_HEADERS = ["yeni fiyat", "satis fiyati", "fiyat", "price", "saleprice"];
 
 /** Başlıkları Türkçe karakterlerden arındırıp küçük harfe indirger ("SATIŞ FİYATI" → "satis fiyati"). */
-function norm(s: string): string {
+export function norm(s: string): string {
   const map: Record<string, string> = { ş: "s", ı: "i", ğ: "g", ü: "u", ö: "o", ç: "c", İ: "i", I: "i", Ş: "s", Ğ: "g", Ü: "u", Ö: "o", Ç: "c" };
   return s
     .replace(/^﻿/, "")

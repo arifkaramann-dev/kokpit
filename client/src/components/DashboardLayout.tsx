@@ -41,6 +41,7 @@ import {
   ListChecks,
   LayoutDashboard,
   LibraryBig,
+  ArrowLeftRight,
   LogOut,
   Moon,
   Package,
@@ -97,6 +98,7 @@ const menuGroups = [
     label: "Ürün & Üretim",
     items: [
       { icon: Package, label: "Ürünler & Türevler", path: "/urunler" },
+      { icon: ArrowLeftRight, label: "İçe / Dışa Aktar", path: "/urun-aktar" },
       { icon: FlaskConical, label: "Ürün Geliştirme", path: "/gelistirme" },
       { icon: Beaker, label: "Formül Defteri", path: "/formuller" },
       { icon: Factory, label: "Üretim", path: "/uretim" },
