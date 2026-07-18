@@ -19,6 +19,7 @@ import {
   Boxes,
   CheckCircle2,
   ChevronRight,
+  Image as ImageIcon,
   Pencil,
   Sparkles,
   Store,
@@ -144,6 +145,15 @@ export default function ProductDetail() {
   const checkBatch = trpc.products.trendyolCardBatchStatus.useMutation({
     onSuccess: r => setBatchStatus(r),
     onError: e => toast.error(e.message, { duration: 8000 }),
+  });
+
+  // AI görsel üretimi (mockup): sonuç mockupUrl'e yazılır, storefront/pazaryeri linki olur.
+  const genImage = trpc.products.generateImage.useMutation({
+    onSuccess: () => {
+      utils.products.invalidate();
+      toast.success("AI görsel üretildi ve mockup alanına kaydedildi", { duration: 6000 });
+    },
+    onError: e => toast.error(e.message, { duration: 10000 }),
   });
 
   // E1: AI içerik üretimi — sonuç doğrudan ürün kartına yazılır (diyalogdaki
@@ -553,25 +563,47 @@ export default function ProductDetail() {
               Açıklamaları, etiket yazısını ve özellikleri Claude üretsin — sonuç doğrudan karta
               işlenir (mevcut metinlerin üzerine yazar).
             </p>
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={aiWrite.isPending || updateProduct.isPending}
-              onClick={() =>
-                aiWrite.mutate({
-                  name: product.name,
-                  series: product.series,
-                  packaging: product.packaging,
-                  color: product.colorCode ?? product.colorHex,
-                  surfaceType: product.surfaceType,
-                  paintType: product.paintType,
-                })
-              }
-            >
-              <Sparkles className="h-3.5 w-3.5 mr-1" />
-              {aiWrite.isPending ? "AI yazıyor..." : "AI ile Yaz"}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={genImage.isPending}
+                title="Ürün için stüdyo tarzı e-ticaret görseli üretir (mockup alanına kaydedilir)"
+                onClick={() => genImage.mutate({ productId: id, target: "mockup" })}
+              >
+                <ImageIcon className="h-3.5 w-3.5 mr-1" />
+                {genImage.isPending ? "Görsel üretiliyor..." : "AI Görsel Üret"}
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={aiWrite.isPending || updateProduct.isPending}
+                onClick={() =>
+                  aiWrite.mutate({
+                    name: product.name,
+                    series: product.series,
+                    packaging: product.packaging,
+                    color: product.colorCode ?? product.colorHex,
+                    surfaceType: product.surfaceType,
+                    paintType: product.paintType,
+                  })
+                }
+              >
+                <Sparkles className="h-3.5 w-3.5 mr-1" />
+                {aiWrite.isPending ? "AI yazıyor..." : "AI ile Yaz"}
+              </Button>
+            </div>
           </div>
+          {product.mockupUrl && (
+            <div className="space-y-1">
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Mockup / AI Görsel</p>
+              <img
+                src={product.mockupUrl}
+                alt="mockup"
+                className="max-h-48 rounded-lg border object-contain"
+              />
+            </div>
+          )}
           {features.length > 0 && (
             <div className="flex items-center gap-1.5 flex-wrap">
               {features.map(f => (

@@ -2,6 +2,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { z } from "zod";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { invokeLLM } from "./_core/llm";
+import { generateImage } from "./_core/imageGeneration";
 import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { TRPCError } from "@trpc/server";
@@ -372,6 +373,56 @@ export const appRouter = router({
     }),
     // Faz A5: görseli olan ürün ID'leri (sağlık skoru görsel kontrolü).
     idsWithImages: protectedProcedure.query(() => db.listProductIdsWithImages()),
+    // AI görsel üretimi: ürün kartından stüdyo/pazaryeri görseli üretir, S3 URL'ini
+    // mockup alanına ya da görsel link listesine yazar (base64 değil — dayanıklı URL,
+    // storefront/pazaryeri linklerini besler). Forge (BUILT_IN_FORGE_*) gerektirir.
+    generateImage: protectedProcedure
+      .input(
+        z.object({
+          productId: z.number(),
+          target: z.enum(["mockup", "imageList"]).default("mockup"),
+          instructions: z.string().max(500).optional(),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const p = await db.getProduct(input.productId);
+        if (!p) throw new TRPCError({ code: "NOT_FOUND", message: "Ürün bulunamadı" });
+        const bits = [
+          `Ürün fotoğrafı: ${p.name}`,
+          p.series ? `${p.series} serisi` : null,
+          p.colorCode ? `renk kodu ${p.colorCode}` : null,
+          p.packaging ? `${p.packaging} ambalajında` : null,
+          p.paintType ? `(${p.paintType})` : null,
+        ].filter(Boolean);
+        const prompt = `${bits.join(", ")}. Profesyonel e-ticaret ürün görseli, temiz beyaz stüdyo arka planı, yumuşak ışık, yüksek çözünürlük, gerçekçi. Türk oto rötuş/hobi boya markası Art of Colour ürünü.${
+          input.instructions ? ` Ek yönerge: ${input.instructions}` : ""
+        }`;
+        let url: string;
+        try {
+          const res = await generateImage({ prompt });
+          if (!res.url) throw new Error("Görsel üretildi ama URL dönmedi");
+          url = res.url;
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Görsel üretilemedi",
+          });
+        }
+        if (input.target === "mockup") {
+          await db.updateProduct(input.productId, { mockupUrl: url } as never);
+        } else {
+          let list: string[] = [];
+          try {
+            const arr = JSON.parse(p.imageUrls ?? "[]");
+            if (Array.isArray(arr)) list = arr.filter(x => typeof x === "string");
+          } catch {
+            // bozuk JSON — sıfırdan başla
+          }
+          list.push(url);
+          await db.updateProduct(input.productId, { imageUrls: JSON.stringify(list) } as never);
+        }
+        return { url };
+      }),
     // Excel/CSV toplu içe aktarma: oluştur-veya-güncelle (client planı sunucuda
     // yeniden doğrulanır). Tek listProducts çekimiyle çift barkod/SKU ve üst ürün
     // eşleşmesi bellekte kontrol edilir; başarısız satırlar rapor olarak döner.
