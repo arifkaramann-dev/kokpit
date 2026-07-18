@@ -133,6 +133,77 @@ export function calcChannelProfit(input: ChannelProfitInput): ChannelProfit {
   };
 }
 
+/* ------------------------- Ürün geliştirme sihirbazı kâr hesabı ------------------------- */
+
+export type DevProfitInput = {
+  /** KDV dahil satış fiyatı. */
+  salePrice: number;
+  /** KDV dahil hammadde maliyeti (seçili reçete). */
+  materialCost: number;
+  /** KDV dahil ambalaj maliyeti. */
+  packagingCost: number;
+  /** KDV dahil kargo maliyeti. */
+  shippingCost: number;
+  /** Komisyon/ödeme oranı (örn. PAYTR %3,9). KDV dahil satış üzerinden, tam düşülür. */
+  commissionPercent: number;
+  /** KDV oranı (örn. 20). */
+  vatPercent: number;
+};
+
+export type DevProfit = {
+  /** KDV dahil toplam maliyet (hammadde + ambalaj + kargo). */
+  totalCostGross: number;
+  /** KDV hariç satış (gerçek hasılat). */
+  saleEx: number;
+  /** KDV hariç toplam maliyet. */
+  costEx: number;
+  /** Satıştan tahsil edilen KDV (hesaplanan KDV). */
+  outputVat: number;
+  /** Alış/maliyet faturalarındaki indirilebilir KDV. */
+  inputVat: number;
+  /** Devlete ödenecek KDV = hesaplanan − indirilecek (vergi matrahı). */
+  vatPayable: number;
+  /** Komisyon/ödeme bedeli, TL. */
+  commission: number;
+  /** Net kâr. */
+  net: number;
+  /** Net kâr marjı: net / KDV hariç satış (muhasebe doğrusu). */
+  margin: number;
+  /** Net kâr / KDV dahil satış (kullanıcının gördüğü ciroya oran). */
+  marginOnSale: number;
+};
+
+/**
+ * Ürün geliştirme sihirbazının "Maliyet & Fiyat" adımı için gerçek net kâr.
+ * Excel'deki hesapla birebir aynı: maliyet ve satış KDV'den arındırılır, komisyon
+ * (KDV dahil satış üzerinden) düşülür. Böylece basit "satış − maliyet" yerine
+ * KDV ve komisyon dahil edilmiş doğru kâr çıkar (finans modeli, calcChannelProfit
+ * ile aynı mantık ailesinden).
+ */
+export function calcDevProfit(input: DevProfitInput): DevProfit {
+  const v = 1 + input.vatPercent / 100;
+  const totalCostGross = input.materialCost + input.packagingCost + input.shippingCost;
+  const saleEx = input.salePrice / v;
+  const costEx = totalCostGross / v;
+  const outputVat = input.salePrice - saleEx;
+  const inputVat = totalCostGross - costEx;
+  const vatPayable = outputVat - inputVat;
+  const commission = (input.salePrice * input.commissionPercent) / 100;
+  const net = saleEx - costEx - commission;
+  return {
+    totalCostGross,
+    saleEx,
+    costEx,
+    outputVat,
+    inputVat,
+    vatPayable,
+    commission,
+    net,
+    margin: saleEx > 0 ? (net / saleEx) * 100 : 0,
+    marginOnSale: input.salePrice > 0 ? (net / input.salePrice) * 100 : 0,
+  };
+}
+
 /** Psikolojik yuvarlama: en yakın x,90 / x,99 / tam sayı. */
 export function roundPrice(price: number, rounding: Rounding): number {
   if (!Number.isFinite(price) || price <= 0) return 0;

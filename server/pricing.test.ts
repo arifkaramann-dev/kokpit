@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   calcChannelProfit,
+  calcDevProfit,
   matchPriceRows,
   normalizeChannelProfile,
   parsePriceCsv,
@@ -191,6 +192,62 @@ describe("calcChannelProfit — kanal bazlı net kâr (finans onaylı model)", (
   it("satış fiyatı 0 iken marj 0 döner", () => {
     const r = calcChannelProfit({ salePrice: 0, productCost: 0, profile: profile({ vatPercent: 20 }) });
     expect(r.margin).toBe(0);
+  });
+});
+
+describe("calcDevProfit — ürün geliştirme sihirbazı net kâr (Excel modeli)", () => {
+  // Gerçek örnek (ARTOFCOLOUR Mat Siyah Sprey 400ml): satış 275, maliyet 140,
+  // komisyon %3,9 (PAYTR), KDV %20 → Excel net kâr 101,8.
+  it("Excel örneğiyle birebir uyuşur (naif 135 değil, 101,78)", () => {
+    const r = calcDevProfit({
+      salePrice: 275,
+      materialCost: 140,
+      packagingCost: 0,
+      shippingCost: 0,
+      commissionPercent: 3.9,
+      vatPercent: 20,
+    });
+    expect(r.saleEx).toBeCloseTo(229.17, 1);
+    expect(r.costEx).toBeCloseTo(116.67, 1);
+    expect(r.outputVat).toBeCloseTo(45.83, 1);
+    expect(r.inputVat).toBeCloseTo(23.33, 1);
+    expect(r.vatPayable).toBeCloseTo(22.5, 1);
+    expect(r.commission).toBeCloseTo(10.73, 1);
+    expect(r.net).toBeCloseTo(101.78, 1);
+    // Naif hesabın (275 − 140 = 135) verdiği yanlış değeri VERMEMELİ.
+    expect(r.net).not.toBeCloseTo(135, 1);
+  });
+
+  it("KDV 0 ve komisyon 0 iken net = satış − maliyet (elden satış)", () => {
+    const r = calcDevProfit({
+      salePrice: 100,
+      materialCost: 40,
+      packagingCost: 0,
+      shippingCost: 0,
+      commissionPercent: 0,
+      vatPercent: 0,
+    });
+    expect(r.net).toBe(60);
+    expect(r.margin).toBe(60);
+  });
+
+  it("ambalaj ve kargo maliyetlerini de toplam maliyete katar", () => {
+    const r = calcDevProfit({
+      salePrice: 275,
+      materialCost: 140,
+      packagingCost: 12,
+      shippingCost: 24,
+      commissionPercent: 3.9,
+      vatPercent: 20,
+    });
+    expect(r.totalCostGross).toBe(176);
+    expect(r.costEx).toBeCloseTo(146.67, 1);
+  });
+
+  it("satış 0 iken marjlar 0 döner", () => {
+    const r = calcDevProfit({ salePrice: 0, materialCost: 0, packagingCost: 0, shippingCost: 0, commissionPercent: 3.9, vatPercent: 20 });
+    expect(r.margin).toBe(0);
+    expect(r.marginOnSale).toBe(0);
   });
 });
 
