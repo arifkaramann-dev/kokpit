@@ -14,7 +14,7 @@ import { buildSaleTitle, deriveCombos, parseSetCount } from "./productUtils";
 import { computePrice, extractJson, parseFeatures, pickReferenceProduct, scoreReference, suggestSku } from "./autofill";
 import { computeReorderSuggestions, summarizeReorder } from "./reorder";
 import { importUrunKayit } from "./importSeed";
-import { syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf } from "./trendyol";
+import { answerTrendyolQuestion, syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf } from "./trendyol";
 import {
   fetchTrendyolCategoryAttributes,
   getTrendyolProductBatchStatus,
@@ -27,6 +27,12 @@ import { pushHepsiburadaStockPrice } from "./hepsiburada";
 import { pushN11StockPrice } from "./n11";
 import { pushCiceksepetiStockPrice } from "./ciceksepeti";
 import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "./marketplace";
+import {
+  generateQuestionAnswer,
+  getAutoAnswerEnabled,
+  setAutoAnswerEnabled,
+  syncMarketplaceQuestions,
+} from "./marketplaceQuestions";
 import { channelProfitReport } from "./reportUtils";
 import { DEFAULT_CHANNEL_PROFILES, normalizeChannelProfile } from "@shared/pricing";
 import { ENV } from "./_core/env";
@@ -1612,54 +1618,56 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
         }),
       )
       .mutation(({ input }) => db.createMarketplaceQuestion(input as never)),
+    // Oto-çekme + oto-cevap: pazaryerinden cevap bekleyen soruları çeker, kuyruğa
+    // ekler; oto-cevap açıksa AI güvenilir cevapları otomatik gönderir.
+    syncNow: protectedProcedure.mutation(() => syncMarketplaceQuestions()),
+    // Oto-cevap ayarı (aç/kapa) — açıkken güvenilir AI cevapları otomatik gönderilir.
+    autoAnswer: protectedProcedure.query(() => getAutoAnswerEnabled()),
+    setAutoAnswer: protectedProcedure
+      .input(z.object({ enabled: z.boolean() }))
+      .mutation(async ({ input }) => {
+        await setAutoAnswerEnabled(input.enabled);
+        return { enabled: input.enabled };
+      }),
     // AI cevap taslağı: ürün kılavuzu/açıklaması + soru → nazik, bilgilendirici yanıt.
     generateDraft: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input }) => {
         const q = await db.getMarketplaceQuestion(input.id);
         if (!q) throw new TRPCError({ code: "NOT_FOUND", message: "Soru bulunamadı" });
-        const product = q.productId ? await db.getProduct(q.productId) : null;
-        const context = product
-          ? [
-              `Ürün: ${product.name}`,
-              product.usageGuide ? `Kullanım kılavuzu: ${product.usageGuide}` : null,
-              product.applicationText ? `Uygulama: ${product.applicationText}` : null,
-              product.shortDescription ? `Açıklama: ${product.shortDescription}` : null,
-              product.safetyNotes ? `Güvenlik: ${product.safetyNotes}` : null,
-            ]
-              .filter(Boolean)
-              .join("\n")
-          : q.productName
-            ? `Ürün: ${q.productName}`
-            : "Ürün bilgisi yok.";
-        const response = await invokeLLM({
-          messages: [
-            {
-              role: "system",
-              content:
-                "Sen Art of Colour (Türk oto rötuş/hobi boya markası) müşteri hizmetleri temsilcisisin. Pazaryeri/müşteri sorularına Türkçe, nazik, kısa ve doğru cevap yaz. Emin olmadığın teknik detayda uydurma; ürün bilgisine dayan. Satışa teşvik et ama abartma.",
-            },
-            {
-              role: "user",
-              content: `Ürün bilgisi:\n${context}\n\nMüşteri sorusu:\n${q.questionText}\n\nBu soruya gönderilecek cevabı yaz (sadece cevap metni).`,
-            },
-          ],
+        const { answer } = await generateQuestionAnswer({
+          questionText: q.questionText,
+          productId: q.productId,
+          productName: q.productName,
         });
-        const raw = response.choices[0]?.message?.content;
-        const draft = (typeof raw === "string" ? raw : "").trim();
-        await db.updateMarketplaceQuestion(input.id, { answerDraft: draft });
-        return { draft };
+        await db.updateMarketplaceQuestion(input.id, { answerDraft: answer });
+        return { draft: answer };
       }),
     // Yanıtla: taslağı (veya düzenlenmiş metni) kalıcı cevap olarak işaretle.
+    // Soru bir pazaryerinden geldiyse (source+externalId), cevabı o pazaryerine
+    // de gönderir; böylece elle onaylanan cevap da müşteriye ulaşır.
     answer: protectedProcedure
       .input(z.object({ id: z.number(), answerText: z.string().min(1) }))
-      .mutation(({ input }) =>
-        db.updateMarketplaceQuestion(input.id, {
+      .mutation(async ({ input }) => {
+        const q = await db.getMarketplaceQuestion(input.id);
+        if (!q) throw new TRPCError({ code: "NOT_FOUND", message: "Soru bulunamadı" });
+        if (q.source === "trendyol" && q.externalId) {
+          try {
+            await answerTrendyolQuestion(q.externalId, input.answerText);
+          } catch (error) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `Trendyol'a gönderilemedi: ${error instanceof Error ? error.message : "bilinmeyen hata"}`,
+            });
+          }
+        }
+        await db.updateMarketplaceQuestion(input.id, {
           answerText: input.answerText,
           status: "answered",
           answeredAt: new Date(),
-        } as never),
-      ),
+        } as never);
+        return { ok: true };
+      }),
     dismiss: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(({ input }) => db.updateMarketplaceQuestion(input.id, { status: "dismissed" })),

@@ -17,10 +17,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
-import { CheckCircle2, MessageSquare, Plus, Sparkles, X } from "lucide-react";
+import { CheckCircle2, MessageSquare, Plus, RefreshCw, Sparkles, X, Zap } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -52,16 +53,44 @@ export default function Questions() {
   const [tab, setTab] = useState<"new" | "answered" | "dismissed">("new");
   const { data: questions, isLoading } = trpc.questions.list.useQuery({ status: tab });
   const { data: products } = trpc.products.list.useQuery();
-
-  const [addOpen, setAddOpen] = useState(false);
-  const [form, setForm] = useState({ source: "elle", customerName: "", questionText: "", productId: "" });
-  // Cevap düzenleme metni (soru id → metin).
-  const [answers, setAnswers] = useState<Record<number, string>>({});
+  const { data: autoAnswer } = trpc.questions.autoAnswer.useQuery();
 
   const invalidate = () => {
     utils.questions.list.invalidate();
     utils.questions.newCount.invalidate();
   };
+
+  const setAutoAnswer = trpc.questions.setAutoAnswer.useMutation({
+    onSuccess: r => {
+      utils.questions.autoAnswer.invalidate();
+      toast.success(r.enabled ? "Oto-cevap açıldı" : "Oto-cevap kapatıldı");
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  const syncNow = trpc.questions.syncNow.useMutation({
+    onSuccess: r => {
+      invalidate();
+      if (!r.ok && r.errors.length === 0) {
+        toast.info("Trendyol bağlı değil — çekme yalnızca canlı ortamda ve bağlantı sonrası çalışır");
+      } else if (r.errors.length > 0) {
+        toast.error(r.errors[0], { duration: 8000 });
+      } else if (r.imported === 0) {
+        toast.success("Cevap bekleyen yeni soru yok");
+      } else {
+        const parts = [`${r.imported} yeni soru`];
+        if (r.autoAnswered > 0) parts.push(`${r.autoAnswered} otomatik yanıtlandı`);
+        if (r.drafted > 0) parts.push(`${r.drafted} taslak onay bekliyor`);
+        toast.success(parts.join(" · "));
+      }
+    },
+    onError: e => toast.error(e.message, { duration: 8000 }),
+  });
+
+  const [addOpen, setAddOpen] = useState(false);
+  const [form, setForm] = useState({ source: "elle", customerName: "", questionText: "", productId: "" });
+  // Cevap düzenleme metni (soru id → metin).
+  const [answers, setAnswers] = useState<Record<number, string>>({});
 
   const create = trpc.questions.create.useMutation({
     onSuccess: () => {
@@ -106,14 +135,50 @@ export default function Questions() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Soru-Cevap Kuyruğu</h1>
           <p className="text-sm text-muted-foreground">
-            Pazaryeri ve müşteri soruları tek kuyrukta. AI, ürün kılavuzundan cevap taslağı üretir;
-            onaylayıp gönderirsiniz.
+            Pazaryeri müşteri soruları otomatik çekilir; oto-cevap açıkken AI güvenilir cevapları
+            kendisi gönderir, emin olmadıklarını taslak olarak onayınıza bırakır.
           </p>
         </div>
-        <Button onClick={() => setAddOpen(true)}>
-          <Plus className="h-4 w-4 mr-1" /> Soru Ekle
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            disabled={syncNow.isPending}
+            onClick={() => syncNow.mutate()}
+          >
+            <RefreshCw className={`h-4 w-4 mr-1 ${syncNow.isPending ? "animate-spin" : ""}`} />
+            {syncNow.isPending ? "Çekiliyor..." : "Soruları Çek"}
+          </Button>
+          <Button onClick={() => setAddOpen(true)}>
+            <Plus className="h-4 w-4 mr-1" /> Soru Ekle
+          </Button>
+        </div>
       </div>
+
+      <Card className="p-4 flex items-start justify-between gap-4 flex-wrap">
+        <div className="flex items-start gap-3">
+          <div className="rounded-lg bg-primary/10 p-2">
+            <Zap className="h-5 w-5 text-primary" />
+          </div>
+          <div className="space-y-0.5">
+            <p className="font-medium flex items-center gap-2">
+              Otomatik Cevap
+              <Badge variant={autoAnswer ? "default" : "secondary"} className="text-[10px]">
+                {autoAnswer ? "Açık" : "Kapalı"}
+              </Badge>
+            </p>
+            <p className="text-sm text-muted-foreground max-w-xl">
+              Açıkken, çekilen her yeni soruya AI cevap üretir; yalnızca <b>emin olduğu</b> cevapları
+              (genel ürün/kullanım bilgisi) pazaryerine otomatik gönderir. Fiyat, kargo, iade, stok
+              gibi kişiye özel sorular otomatik gönderilmez — taslakla onayınızı bekler.
+            </p>
+          </div>
+        </div>
+        <Switch
+          checked={!!autoAnswer}
+          disabled={setAutoAnswer.isPending}
+          onCheckedChange={v => setAutoAnswer.mutate({ enabled: v })}
+        />
+      </Card>
 
       <div className="flex items-center rounded-lg border p-0.5 w-fit">
         {(
@@ -204,7 +269,8 @@ export default function Questions() {
                   </Button>
                 </div>
                 <p className="text-[11px] text-muted-foreground">
-                  Cevap kopyalanıp pazaryeri panelinden gönderilir (otomatik gönderim canlı API onayı sonrası).
+                  Pazaryerinden gelen sorularda "Yanıtlandı İşaretle" cevabı doğrudan pazaryerine gönderir;
+                  elle eklenen sorularda yalnızca kuyrukta işaretlenir.
                 </p>
               </div>
             ) : (
