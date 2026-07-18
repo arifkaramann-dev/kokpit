@@ -48,11 +48,15 @@ export default function Costs() {
   const { data: products } = trpc.products.list.useQuery();
   const { data: settings } = trpc.settings.get.useQuery();
   const [selectedId, setSelectedId] = useState<string>("");
-  // KDV oranı: ayarlardaki vatRate'ten gelir, sayfada görülüp değiştirilebilir.
+  // KDV oranı ve adet başı işçilik+genel gider: ayarlardan gelir, sayfada değiştirilebilir.
   const [vat, setVat] = useState("");
+  const [labor, setLabor] = useState("");
   useEffect(() => {
     if (settings && !vat) setVat(settings.vatRate ?? "20");
   }, [settings, vat]);
+  useEffect(() => {
+    if (settings && !labor) setLabor(settings.unitLaborOverhead ?? "0");
+  }, [settings, labor]);
 
   const productId = selectedId ? Number(selectedId) : null;
   const { data: formulaItems } = trpc.formula.list.useQuery(
@@ -108,8 +112,9 @@ export default function Costs() {
         shippingCost: parseFloat(shippingCost) || 0,
         commissionPercent: 0,
         vatPercent: parseFloat(vat) || 0,
+        laborOverheadCost: parseFloat(labor) || 0,
       }),
-    [netPrice, materialCost, packagingCost, shippingCost, vat],
+    [netPrice, materialCost, packagingCost, shippingCost, vat, labor],
   );
 
   const updateProduct = trpc.products.update.useMutation({
@@ -119,6 +124,9 @@ export default function Costs() {
     },
     onError: e => toast.error(e.message),
   });
+
+  // KDV ve işçilik+genel gider global varsayılan olarak ayarlara yazılır.
+  const saveRates = trpc.settings.save.useMutation();
 
   const sortedProducts = useMemo(() => {
     const list = (products as ProductRow[]) ?? [];
@@ -135,6 +143,7 @@ export default function Costs() {
 
   function save() {
     if (!productId) return;
+    saveRates.mutate({ vatRate: vat || "20", unitLaborOverhead: labor || "0" });
     updateProduct.mutate({
       id: productId,
       data: {
@@ -239,21 +248,34 @@ export default function Costs() {
                   />
                 </div>
               </div>
-              <div className="space-y-1.5">
-                <Label>KDV Oranı (%)</Label>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.1"
-                  value={vat}
-                  onChange={e => setVat(e.target.value)}
-                  placeholder="20"
-                />
-                <p className="text-[11px] text-muted-foreground">
-                  Maliyet ve satış KDV dahil girilir; net kâr KDV'den arındırılıp hesaplanır. KDV 0 =
-                  elden/kayıtsız satış (KDV'siz).
-                </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>KDV Oranı (%)</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={vat}
+                    onChange={e => setVat(e.target.value)}
+                    placeholder="20"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>İşçilik + Genel Gider (₺/adet)</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={labor}
+                    onChange={e => setLabor(e.target.value)}
+                    placeholder="0"
+                  />
+                </div>
               </div>
+              <p className="text-[11px] text-muted-foreground">
+                Maliyet ve satış KDV dahil girilir; net kâr KDV'den arındırılıp hesaplanır (KDV 0 =
+                elden/kayıtsız). İşçilik + genel gider KDV hariç, adet başı düşülür.
+              </p>
               <Button onClick={save} disabled={updateProduct.isPending} className="w-full">
                 <Save className="h-4 w-4 mr-1" /> Ürüne Kaydet
               </Button>
@@ -265,6 +287,9 @@ export default function Costs() {
             <div className="space-y-2">
               <ResultRow label="İndirimli Satış Fiyatı (KDV dahil)" value={formatTL(netPrice)} />
               <ResultRow label="Toplam Maliyet (KDV dahil)" value={formatTL(result.totalCostGross)} muted />
+              {(parseFloat(labor) || 0) > 0 && (
+                <ResultRow label="İşçilik + genel gider" value={`− ${formatTL(result.laborOverheadCost)}`} muted />
+              )}
               {(parseFloat(vat) || 0) > 0 && (
                 <>
                   <ResultRow label="Satış (KDV hariç)" value={formatTL(result.saleEx)} muted />
@@ -360,6 +385,8 @@ export default function Costs() {
                 productCost,
                 // Maliyet KDV dahil girilir; kanal KDV'siyle indirilecek KDV düşülür.
                 productCostVatPercent: parseFloat(vat) || 0,
+                // İşçilik + genel gider (KDV hariç, adet başı) doğrudan düşülür.
+                extraCostEx: parseFloat(labor) || 0,
                 profile: {
                   name: "Pazaryeri",
                   kind: "pazaryeri",
@@ -382,6 +409,9 @@ export default function Costs() {
                   <Row label={`Stopaj (%${mpStopaj})`} value={`− ${formatTL(mp.stopaj)}`} />
                   <Row label="Ürün maliyeti (KDV hariç)" value={`− ${formatTL(mp.productCostEx)}`} />
                   <Row label="↳ İndirilecek KDV (maliyetten)" value={`− ${formatTL(mp.inputVat)}`} />
+                  {mp.extraCostEx > 0 && (
+                    <Row label="İşçilik + genel gider (KDV hariç)" value={`− ${formatTL(mp.extraCostEx)}`} />
+                  )}
                   <div className="flex justify-between border-t pt-1.5 font-semibold">
                     <span>Net kâr</span>
                     <span className={mp.net >= 0 ? "text-emerald-600" : "text-rose-600"}>

@@ -82,6 +82,8 @@ export type ChannelProfitInput = {
   productCost: number;
   /** Verilirse `productCost` KDV DAHİL sayılır ve bu oranla (örn. 20) arındırılır. */
   productCostVatPercent?: number;
+  /** Adet başı işçilik + genel gider (KDV hariç; doğrudan düşülür, KDV arındırması yok). */
+  extraCostEx?: number;
   profile: ChannelProfile;
   /** Profil kargosu 0 ise kullanılacak ürün bazlı kargo (KDV dahil). */
   shippingOverride?: number;
@@ -101,6 +103,8 @@ export type ChannelProfit = {
   productCostEx: number;
   /** Ürün maliyetinden düşülen indirilecek KDV (girdi KDV hariçse 0). */
   inputVat: number;
+  /** Adet başı işçilik + genel gider (KDV hariç), hesaba katılan. */
+  extraCostEx: number;
   net: number;
   /** Net kâr marjı: net / KDV hariç satış (muhasebe doğrusu — KDV hasılat değildir). */
   margin: number;
@@ -131,8 +135,9 @@ export function calcChannelProfit(input: ChannelProfitInput): ChannelProfit {
   const cv = 1 + (input.productCostVatPercent ?? 0) / 100;
   const productCostEx = input.productCost / cv;
   const inputVat = input.productCost - productCostEx;
-  const net = saleEx - totalFees - productCostEx;
-  const totalCostEx = productCostEx + totalFees;
+  const extraCostEx = input.extraCostEx ?? 0;
+  const net = saleEx - totalFees - productCostEx - extraCostEx;
+  const totalCostEx = productCostEx + extraCostEx + totalFees;
   return {
     saleEx,
     commission,
@@ -143,6 +148,7 @@ export function calcChannelProfit(input: ChannelProfitInput): ChannelProfit {
     totalFees,
     productCostEx,
     inputVat,
+    extraCostEx,
     net,
     margin: saleEx > 0 ? (net / saleEx) * 100 : 0,
     roi: totalCostEx > 0 ? (net / totalCostEx) * 100 : 0,
@@ -164,6 +170,8 @@ export type DevProfitInput = {
   commissionPercent: number;
   /** KDV oranı (örn. 20). */
   vatPercent: number;
+  /** Adet başı işçilik + genel gider (KDV hariç; kendi emeğinde indirilecek KDV yok). */
+  laborOverheadCost?: number;
 };
 
 export type DevProfit = {
@@ -181,6 +189,8 @@ export type DevProfit = {
   vatPayable: number;
   /** Komisyon/ödeme bedeli, TL. */
   commission: number;
+  /** Adet başı işçilik + genel gider (KDV hariç), hesaba katılan. */
+  laborOverheadCost: number;
   /** Net kâr. */
   net: number;
   /** Net kâr marjı: net / KDV hariç satış (muhasebe doğrusu). */
@@ -205,7 +215,8 @@ export function calcDevProfit(input: DevProfitInput): DevProfit {
   const inputVat = totalCostGross - costEx;
   const vatPayable = outputVat - inputVat;
   const commission = (input.salePrice * input.commissionPercent) / 100;
-  const net = saleEx - costEx - commission;
+  const laborOverheadCost = input.laborOverheadCost ?? 0;
+  const net = saleEx - costEx - commission - laborOverheadCost;
   return {
     totalCostGross,
     saleEx,
@@ -214,6 +225,7 @@ export function calcDevProfit(input: DevProfitInput): DevProfit {
     inputVat,
     vatPayable,
     commission,
+    laborOverheadCost,
     net,
     margin: saleEx > 0 ? (net / saleEx) * 100 : 0,
     marginOnSale: input.salePrice > 0 ? (net / input.salePrice) * 100 : 0,
@@ -251,6 +263,8 @@ export type SuggestInput = {
   productCost?: number;
   /** Verilirse `productCost` KDV DAHİL sayılır ve bu oranla arındırılır. */
   productCostVatPercent?: number;
+  /** targetMargin: adet başı işçilik + genel gider (KDV hariç), sabit maliyete eklenir. */
+  extraCostEx?: number;
   /** targetMargin: profil kargosu 0 ise ürün bazlı kargo (KDV dahil). */
   shippingOverride?: number;
   rounding?: Rounding;
@@ -284,7 +298,7 @@ export function suggestPrice(input: SuggestInput): number | null {
       const paymentShare = (p.paymentFeePercent / 100) * (p.paymentFeeVatDeductible ? 1 / v : 1);
       const a = (1 - p.stopajPercent / 100) / v - p.commissionPercent / 100 - paymentShare;
       const shippingGross = p.shippingCost > 0 ? p.shippingCost : (input.shippingOverride ?? 0);
-      const fixedCosts = (p.fixedFee + shippingGross) / v + cost;
+      const fixedCosts = (p.fixedFee + shippingGross) / v + cost + (input.extraCostEx ?? 0);
       const denom = a - input.value / 100 / v;
       if (denom <= 0.0001) return null;
       raw = fixedCosts / denom;

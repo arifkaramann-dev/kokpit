@@ -209,6 +209,13 @@ describe("calcChannelProfit — kanal bazlı net kâr (finans onaylı model)", (
     expect(r.inputVat).toBe(0);
   });
 
+  it("extraCostEx (işçilik+genel gider) net kârdan doğrudan (KDV arındırmasız) düşülür", () => {
+    const base = calcChannelProfit({ salePrice: 100, productCost: 40, profile: profile() });
+    const withExtra = calcChannelProfit({ salePrice: 100, productCost: 40, extraCostEx: 15, profile: profile() });
+    expect(withExtra.extraCostEx).toBe(15);
+    expect(withExtra.net).toBeCloseTo(base.net - 15, 6);
+  });
+
   it("kargo: profil 0 ise ürün kargosu kullanılır, profil doluysa profil kazanır", () => {
     const withOverride = calcChannelProfit({
       salePrice: 120,
@@ -285,6 +292,13 @@ describe("calcDevProfit — ürün geliştirme sihirbazı net kâr (Excel modeli
     const r = calcDevProfit({ salePrice: 0, materialCost: 0, packagingCost: 0, shippingCost: 0, commissionPercent: 3.9, vatPercent: 20 });
     expect(r.margin).toBe(0);
     expect(r.marginOnSale).toBe(0);
+  });
+
+  it("işçilik + genel gider (laborOverheadCost) net kârdan doğrudan düşülür", () => {
+    const withoutLabor = calcDevProfit({ salePrice: 275, materialCost: 140, packagingCost: 0, shippingCost: 0, commissionPercent: 3.9, vatPercent: 20 });
+    const withLabor = calcDevProfit({ salePrice: 275, materialCost: 140, packagingCost: 0, shippingCost: 0, commissionPercent: 3.9, vatPercent: 20, laborOverheadCost: 25 });
+    expect(withLabor.laborOverheadCost).toBe(25);
+    expect(withLabor.net).toBeCloseTo(withoutLabor.net - 25, 6);
   });
 });
 

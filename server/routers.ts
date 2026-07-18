@@ -1789,7 +1789,8 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
             },
           ]),
         );
-        return { days, ...channelProfitReport(orders, items, costs, profiles, since) };
+        const laborOverhead = parseFloat(cfg.unitLaborOverhead ?? "0") || 0;
+        return { days, ...channelProfitReport(orders, items, costs, profiles, since, laborOverhead) };
       }),
   }),
 

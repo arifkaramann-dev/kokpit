@@ -299,8 +299,8 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const [trialRows, setTrialRows] = useState<TrialItemRow[]>([]);
   // Düzenlenen deneme id'si (null → yeni deneme ekleniyor).
   const [editTrialId, setEditTrialId] = useState<number | null>(null);
-  // KDV ve komisyon oranları (ayarlardan gelir; sihirbazda düzenlenip global kaydedilir).
-  const [rates, setRates] = useState<{ vat: string; commission: string }>({ vat: "", commission: "" });
+  // KDV, komisyon ve adet başı işçilik+genel gider (ayarlardan gelir; düzenlenip global kaydedilir).
+  const [rates, setRates] = useState<{ vat: string; commission: string; labor: string }>({ vat: "", commission: "", labor: "" });
 
   const project = data?.project;
   const trials = data?.trials ?? [];
@@ -338,6 +338,7 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
       setRates(r => ({
         vat: r.vat || (settings.vatRate ?? "20"),
         commission: r.commission || (settings.devCommissionPercent ?? "3.9"),
+        labor: r.labor || (settings.unitLaborOverhead ?? "0"),
       }));
     }
   }, [settings]);
@@ -446,7 +447,8 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const sale = parseFloat(form.salePrice ?? "0") || 0;
   const vatPct = parseFloat(rates.vat) || 0;
   const commissionPct = parseFloat(rates.commission) || 0;
-  // Gerçek net kâr: KDV ve komisyon dahil (Excel modeli). Maliyet/satış KDV dahil girilir.
+  const laborOverhead = parseFloat(rates.labor) || 0;
+  // Gerçek net kâr: KDV, komisyon ve işçilik+genel gider dahil. Maliyet/satış KDV dahil girilir.
   const dev = calcDevProfit({
     salePrice: sale,
     materialCost: chosenCost,
@@ -454,6 +456,7 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
     shippingCost: shipping,
     commissionPercent: commissionPct,
     vatPercent: vatPct,
+    laborOverheadCost: laborOverhead,
   });
   const totalCost = dev.totalCostGross;
   const profit = dev.net;
@@ -753,6 +756,21 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
               </p>
             </div>
           </div>
+          <div className="space-y-1.5">
+            <Label>İşçilik + Genel Gider (₺/adet)</Label>
+            <Input
+              type="number"
+              min="0"
+              step="0.01"
+              value={rates.labor}
+              placeholder="0"
+              onChange={e => setRates(r => ({ ...r, labor: e.target.value }))}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Adet başı işçilik + genel gider (kira/elektrik payı). KDV hariç. Öneri: aylık genel
+              gider ÷ aylık üretilen adet + işçilik payı.
+            </p>
+          </div>
 
           {/* Excel'le aynı kâr dökümü: KDV ve komisyon dahil gerçek net kâr. */}
           <div className="rounded-lg border p-3 text-sm space-y-1.5">
@@ -772,6 +790,12 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
               <span>Komisyon ({commissionPct.toLocaleString("tr-TR")}%)</span>
               <span>−{formatTL(dev.commission)}</span>
             </div>
+            {laborOverhead > 0 && (
+              <div className="flex justify-between text-muted-foreground">
+                <span>İşçilik + genel gider</span>
+                <span>−{formatTL(dev.laborOverheadCost)}</span>
+              </div>
+            )}
             <div className="flex justify-between text-muted-foreground border-t pt-1.5">
               <span>Hesaplanan KDV</span>
               <span>{formatTL(dev.outputVat)}</span>
@@ -801,7 +825,11 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
             </Button>
             <Button
               onClick={() => {
-                saveRates.mutate({ vatRate: rates.vat || "20", devCommissionPercent: rates.commission || "0" });
+                saveRates.mutate({
+                  vatRate: rates.vat || "20",
+                  devCommissionPercent: rates.commission || "0",
+                  unitLaborOverhead: rates.labor || "0",
+                });
                 saveFields(["packagingCost", "shippingCost", "salePrice"], 5);
               }}
             >

@@ -242,8 +242,10 @@ sihirbazı reçete düzenleme + KDV-dahil maliyet modeli (/fiyat + Maliyet + sih
       /fiyat + Maliyet + sihirbaz hizalandı; sihirbazda reçete düzenleme (bu oturum)
 - [ ] A1. Gerçekleşen kâr raporu (reportUtils/channelProfitReport) aynı KDV-dahil maliyet
       modeline hizala (productCostVatPercent = kanal KDV'si) — beklenen ile tutarlı olsun
-- [ ] A2. Ürün tam maliyeti: işçilik + genel gider (overhead) payı → şema + hesap + UI
-      (net kâr sadece hammadde değil, tam maliyet üzerinden)
+- [x] A2. Ürün tam maliyeti v1: adet başı işçilik + genel gider (KDV hariç) → calcDevProfit
+      + calcChannelProfit + suggestPrice; sihirbaz, Maliyet, /fiyat ve gerçekleşen rapor
+      hepsi düşüyor; ayar unitLaborOverhead (Settings + sayfalarda düzenlenir). Sonraki
+      rafinasyon: ürün bazlı üretim süresi (dk) × saat ücreti (şema ister)
 - [ ] A3. Hammadde alış faturasından birim maliyet + indirilecek KDV otomatik güncelleme
 - [ ] A4. Stok lot/parti + rezervasyon (üretim partisi izlenebilirlik)
 - [ ] A5. Kalite kontrol (parti testi: pH/viskozite/örtücülük/ΔE) kayıt + geçti/kaldı

@@ -78,6 +78,8 @@ export function channelProfitReport(
   costs: Map<number, ProductCostInfo>,
   profiles: ChannelProfile[],
   since: Date,
+  /** Adet başı işçilik + genel gider (KDV hariç); kalem adediyle çarpılıp düşülür. */
+  laborOverheadPerUnit = 0,
 ): { rows: ChannelProfitRow[]; totals: Omit<ChannelProfitRow, "channel" | "profileName"> } {
   const itemsByOrder = new Map<number, ReportItem[]>();
   for (const it of items) {
@@ -97,6 +99,7 @@ export function channelProfitReport(
     let productCost = 0;
     let shippingOverride = 0;
     let missing = 0;
+    let qtyTotal = 0;
     for (const it of orderItems) {
       const info = it.productId != null ? costs.get(it.productId) : undefined;
       if (!info) {
@@ -104,16 +107,19 @@ export function channelProfitReport(
         continue;
       }
       productCost += (info.materialCost + info.packagingCost) * toNum(it.quantity);
+      qtyTotal += toNum(it.quantity);
       shippingOverride = Math.max(shippingOverride, info.shippingCost);
     }
     if (orderItems.length === 0) missing++; // kalemsiz sipariş: maliyeti bilinmiyor
 
     // Maliyet KDV dahil (formül birim maliyetleri brüt); kanalın KDV'siyle
-    // indirilecek KDV düşülür (fiyat/maliyet sayfalarıyla aynı model).
+    // indirilecek KDV düşülür (fiyat/maliyet sayfalarıyla aynı model). İşçilik +
+    // genel gider adet başı, KDV hariç doğrudan düşülür.
     const p = calcChannelProfit({
       salePrice: revenue,
       productCost,
       productCostVatPercent: profile.vatPercent,
+      extraCostEx: laborOverheadPerUnit * qtyTotal,
       profile,
       shippingOverride,
     });

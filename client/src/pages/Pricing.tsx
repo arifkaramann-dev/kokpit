@@ -114,6 +114,8 @@ export default function Pricing() {
 
   const [profileIdx, setProfileIdx] = useState(0);
   const profile = profiles[Math.min(profileIdx, profiles.length - 1)];
+  // Adet başı işçilik + genel gider (KDV hariç) — ayarlardan; net kâra doğrudan yansır.
+  const laborOverhead = num(settings?.unitLaborOverhead);
 
   const saveSettings = trpc.settings.save.useMutation({
     onSuccess: () => {
@@ -154,6 +156,7 @@ export default function Pricing() {
         productCost: materialCost + packaging,
         // Maliyet KDV dahil girilir; kanalın KDV oranıyla indirilecek KDV düşülür.
         productCostVatPercent: profile.vatPercent,
+        extraCostEx: laborOverhead,
         profile,
         shippingOverride: num(p.shippingCost),
       });
@@ -186,7 +189,7 @@ export default function Pricing() {
         filtered.sort((a, b) => a.p.name.localeCompare(b.p.name, "tr-TR"));
     }
     return filtered;
-  }, [products, costByProduct, profile, search, seriesFilter, onlyLoss, sort]);
+  }, [products, costByProduct, profile, laborOverhead, search, seriesFilter, onlyLoss, sort]);
 
   const lossCount = useMemo(
     () => rows.filter(r => r.netPrice > 0 && r.channelNet < 0).length,
@@ -255,6 +258,7 @@ export default function Pricing() {
         profile,
         productCost: r.materialCost + num(r.p.packagingCost),
         productCostVatPercent: profile.vatPercent,
+        extraCostEx: laborOverhead,
         shippingOverride: num(r.p.shippingCost),
         rounding,
       });
