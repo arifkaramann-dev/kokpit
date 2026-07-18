@@ -9,7 +9,8 @@ import {
  * calcChannelProfit modeliyle hesaplar (kâr modeli v2, 15.07.2026):
  *  - yüzdesel kesintiler (komisyon/ödeme/stopaj) sipariş toplamı üzerinden,
  *  - işlem bedeli ve kargo sipariş başına BİR KEZ (tek ürün hesabından farkı),
- *  - ürün maliyeti = hammadde + ambalaj (KDV hariç), kalem adediyle çarpılır.
+ *  - ürün maliyeti = hammadde + ambalaj (KDV dahil girilir; kanal KDV'siyle
+ *    arındırılıp indirilecek KDV düşülür), kalem adediyle çarpılır.
  * Maliyeti bilinmeyen kalemler (katalog eşleşmesi yok) maliyet 0 sayılır ve
  * missingCostItems ile raporlanır — marj o kanalda iyimser olabilir.
  */
@@ -107,7 +108,15 @@ export function channelProfitReport(
     }
     if (orderItems.length === 0) missing++; // kalemsiz sipariş: maliyeti bilinmiyor
 
-    const p = calcChannelProfit({ salePrice: revenue, productCost, profile, shippingOverride });
+    // Maliyet KDV dahil (formül birim maliyetleri brüt); kanalın KDV'siyle
+    // indirilecek KDV düşülür (fiyat/maliyet sayfalarıyla aynı model).
+    const p = calcChannelProfit({
+      salePrice: revenue,
+      productCost,
+      productCostVatPercent: profile.vatPercent,
+      profile,
+      shippingOverride,
+    });
 
     const key = trKey(o.channel ?? "") || "diğer";
     const row =

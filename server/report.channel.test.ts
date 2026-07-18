@@ -62,7 +62,7 @@ describe("channelProfitReport", () => {
       profiles,
       since,
     );
-    const expected = calcChannelProfit({ salePrice: 300, productCost: 60, profile: trendyol, shippingOverride: 30 });
+    const expected = calcChannelProfit({ salePrice: 300, productCost: 60, productCostVatPercent: trendyol.vatPercent, profile: trendyol, shippingOverride: 30 });
     expect(rows).toHaveLength(1);
     expect(rows[0].net).toBeCloseTo(expected.net, 6);
     expect(rows[0].margin).toBeCloseTo(expected.margin, 6);
@@ -81,7 +81,7 @@ describe("channelProfitReport", () => {
       since,
     );
     // productCost = 2×60 + 4×25 = 220; kargo = max(30,45) = 45 (bir kez)
-    const expected = calcChannelProfit({ salePrice: 600, productCost: 220, profile: trendyol, shippingOverride: 45 });
+    const expected = calcChannelProfit({ salePrice: 600, productCost: 220, productCostVatPercent: trendyol.vatPercent, profile: trendyol, shippingOverride: 45 });
     expect(rows[0].productCost).toBeCloseTo(220, 6);
     expect(rows[0].transactionFee).toBeCloseTo(expected.transactionFee, 6); // 12.6/1.2 bir kez
     expect(rows[0].shipping).toBeCloseTo(45 / 1.2, 6);
