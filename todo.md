@@ -181,6 +181,20 @@ Hepsiburada push yok, web sitesi (Qukasoft) entegrasyonu yok.
 7. [ ] AI görsel üretimi: _core/imageGeneration.ts hazır ama hiçbir router'a bağlı
        değil — kullanıcı talebiyle modül olarak bağlanacak
 
+## ODOO UYARLAMA — modül analizi + yol haritası (18.07.2026, patron talebi)
+Odoo'nun tüm modül evreni Art of Colour'a göre süzüldü. Tam analiz + sınıflandırma
++ fazlı plan: **docs/ODOO-UYARLAMA-PLANI.md**. Özet (kopyalama değil, uyarlama):
+- Kokpit boya-dikeyi olarak Odoo çekirdeğinin ~%60'ını zaten karşılıyor.
+- 🔴 Olmazsa olmazlar: [ ] e-Fatura/e-Arşiv, [ ] stok lot/parti+rezervasyon,
+  [ ] kalite kontrol (parti testi: pH/viskozite/örtücülük/ΔE)
+- 🟠 Öncelikli: [ ] CRM satış boru hattı, [ ] Helpdesk/pazaryeri Q&A kuyruğu,
+  [ ] Purchase yeniden sipariş önerisi, [ ] Barcode mobil depo
+- 🟡 Gerekli: [ ] çift taraflı muhasebe köprüsü, [ ] onay motoru, [ ] ürün bilgi
+  tabanı, [ ] e-posta/SMS kampanya + otomasyon
+- ⛔ Kapsam dışı (bilinçli): Payroll, Recruitment, Fleet, Website CMS, POS (şimdilik),
+  Subscriptions, Events, Sign, IoT, Studio vb.
+- Potansiyel yeni ajan: muhasebe-entegrasyon-uzmani (e-Fatura fazında kurulacak).
+
 ## KOKPİT V2 — Faz 0 (temel sağlamlaştırma; plan: docs/KOKPIT-V2-ANALIZ.md)
 - [x] 0.1a Cari/ürün ID göçü (migration 0016): orders.customerId, transactions.customerId/
       supplierId, purchases.supplierId, orderItems.productId + backfill + 21 indeks
