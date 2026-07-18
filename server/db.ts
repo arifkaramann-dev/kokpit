@@ -1770,6 +1770,17 @@ export async function getMarketplaceQuestion(id: number) {
   return rows[0];
 }
 
+/** Pazaryeri soru kimliğiyle mevcut kaydı bulur (oto-çekmede çift kayıt önleme). */
+export async function getMarketplaceQuestionByExternal(source: string, externalId: string) {
+  const db = await requireDb();
+  const rows = await db
+    .select()
+    .from(marketplaceQuestions)
+    .where(and(eq(marketplaceQuestions.source, source as never), eq(marketplaceQuestions.externalId, externalId)))
+    .limit(1);
+  return rows[0];
+}
+
 export async function createMarketplaceQuestion(data: InsertMarketplaceQuestion) {
   const db = await requireDb();
   const [r] = await db.insert(marketplaceQuestions).values(data);

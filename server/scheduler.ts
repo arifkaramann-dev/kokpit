@@ -3,6 +3,7 @@ import { overdueReceivables } from "./financeUtils";
 import { isHepsiburadaConfigured } from "./hepsiburada";
 import { isTrendyolConfigured } from "./trendyol";
 import { syncAllMarketplaces } from "./marketplace";
+import { runQuestionSyncAndNotify } from "./marketplaceQuestions";
 import { notifyOwner } from "./notify";
 
 /**
@@ -12,6 +13,8 @@ import { notifyOwner } from "./notify";
  *
  * İşler:
  *  - Pazaryeri oto-senkron (15 dk): yeni sipariş → bildirim + WhatsApp
+ *  - Soru-Cevap oto-çekme (15 dk): pazaryeri müşteri soruları → kuyruk; oto-cevap
+ *    açıksa AI güvenilir cevapları otomatik gönderir, gerisi taslakla bekler
  *  - Stok Nöbetçisi (60 dk): kritik hammadde + eksi/eşik altı mamul stoğu →
  *    bildirim, kritik hammaddeler eksik listesine otomatik eklenir
  *  - Sabah Brifingi (her gün 08:00 İstanbul): işletme özeti → bildirim + WhatsApp
@@ -24,12 +27,14 @@ import { notifyOwner } from "./notify";
  */
 
 const SYNC_INTERVAL_MS = 15 * 60 * 1000;
+const QUESTION_INTERVAL_MS = 15 * 60 * 1000;
 const STOCK_INTERVAL_MS = 60 * 60 * 1000;
 const BRIEFING_HOUR_TR = 8; // İstanbul saatiyle
 const COLLECTION_HOUR_TR = 9; // İstanbul saatiyle
 const COLLECTION_MIN_DAYS = 30; // bu kadar gündür ödenmemişse hatırlat
 
 const KEY_LAST_SYNC = "scheduler.lastSyncAt";
+const KEY_LAST_QUESTIONS = "scheduler.lastQuestionsSyncAt";
 const KEY_LAST_STOCK = "scheduler.lastStockCheckAt";
 const KEY_LAST_BRIEFING = "scheduler.lastBriefingDate";
 const KEY_LAST_COLLECTION = "scheduler.lastCollectionDate";
@@ -44,7 +49,7 @@ export function startScheduler() {
   setInterval(() => {
     void tick();
   }, 60 * 1000);
-  console.log("[scheduler] başladı (senkron 15dk, stok nöbeti 60dk, brifing 08:00 TR, tahsilat takibi 09:00 TR)");
+  console.log("[scheduler] başladı (sipariş+soru senkron 15dk, stok nöbeti 60dk, brifing 08:00 TR, tahsilat takibi 09:00 TR)");
 }
 
 async function tick() {
@@ -60,6 +65,11 @@ async function tick() {
     ) {
       await db.setSettings({ [KEY_LAST_SYNC]: String(now) });
       await runMarketplaceSync();
+    }
+
+    if (isTrendyolConfigured() && now - num(cfg[KEY_LAST_QUESTIONS]) >= QUESTION_INTERVAL_MS) {
+      await db.setSettings({ [KEY_LAST_QUESTIONS]: String(now) });
+      await runQuestionSyncAndNotify();
     }
 
     if (now - num(cfg[KEY_LAST_STOCK]) >= STOCK_INTERVAL_MS) {

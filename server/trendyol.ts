@@ -274,6 +274,131 @@ export function extractZpl(raw: string): string | null {
   return trimmed; // ham ZPL (^XA...) ya da bilinmeyen ama boş değil — ZPL varsay
 }
 
+/* ------------------------- Müşteri Soruları (Q&A) ------------------------- */
+
+/**
+ * Trendyol müşteri soru-cevap (QnA) entegrasyonu. Cevap bekleyen soruları
+ * çeker ve satıcı cevabını gönderir.
+ * Belgeler: developers.trendyol.com → Customer Question & Answer Integration.
+ */
+
+export type TrendyolQuestion = {
+  id: number;
+  text: string;
+  status?: string;
+  creationDate?: number;
+  productName?: string | null;
+  /** Soru sahibinin görünen adı (gizliyse boş gelebilir). */
+  userName?: string | null;
+  /** Müşteri adının gösterilip gösterilmeyeceği; false ise ad gizlenir. */
+  showUserName?: boolean;
+  answer?: { text?: string } | null;
+};
+
+type TrendyolQuestionsResponse = {
+  page?: number;
+  size?: number;
+  totalPages?: number;
+  totalElements?: number;
+  content?: TrendyolQuestion[];
+};
+
+/** Kuyruğa eklenmeye hazır, pazaryerinden bağımsız soru kaydı. */
+export type MappedQuestion = {
+  source: "trendyol";
+  externalId: string;
+  customerName: string | null;
+  questionText: string;
+  productName: string | null;
+};
+
+/** Bir Trendyol müşteri sorusunu kuyruk kaydına çevirir; metni boşsa null. */
+export function mapTrendyolQuestion(q: TrendyolQuestion): MappedQuestion | null {
+  const text = (q.text ?? "").trim();
+  if (!text) return null;
+  const customerName = q.showUserName === false ? null : q.userName?.trim() || null;
+  return {
+    source: "trendyol",
+    externalId: String(q.id),
+    customerName,
+    questionText: text,
+    productName: q.productName?.trim() || null,
+  };
+}
+
+async function fetchQuestionsPage(page: number, startDate: number, endDate: number) {
+  const url = new URL(
+    `${TRENDYOL_API_BASE}/integration/qna/sellers/${ENV.trendyolSellerId}/questions/filter`,
+  );
+  url.searchParams.set("status", "WAITING_FOR_ANSWER");
+  url.searchParams.set("startDate", String(startDate));
+  url.searchParams.set("endDate", String(endDate));
+  url.searchParams.set("page", String(page));
+  url.searchParams.set("size", String(PAGE_SIZE));
+  url.searchParams.set("orderByField", "LastModifiedDate");
+  url.searchParams.set("orderByDirection", "DESC");
+
+  const res = await fetch(url, { headers: { ...trendyolHeaders(), Accept: "application/json" } });
+  if (res.status === 401 || res.status === 403) {
+    throw new Error(
+      "Trendyol API bilgileri reddedildi (yetki hatası). API Key/Secret ve Satıcı ID'yi kontrol edin.",
+    );
+  }
+  if (!res.ok) {
+    const body = (await res.text()).slice(0, 200);
+    throw new Error(`Trendyol soru API hatası (${res.status}): ${body}`);
+  }
+  return (await res.json()) as TrendyolQuestionsResponse;
+}
+
+/** Cevap bekleyen (son `daysBack` gün) Trendyol müşteri sorularını çeker. */
+export async function fetchTrendyolQuestions(daysBack = 14): Promise<MappedQuestion[]> {
+  if (!isTrendyolConfigured()) {
+    throw new Error("Trendyol entegrasyonu yapılandırılmamış (Satıcı ID, API Key, API Secret gerekli).");
+  }
+  const endDate = Date.now();
+  const startDate = endDate - daysBack * 24 * 60 * 60 * 1000;
+
+  const out: MappedQuestion[] = [];
+  const seen = new Set<string>();
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const data = await fetchQuestionsPage(page, startDate, endDate);
+    const items = data.content ?? [];
+    for (const q of items) {
+      const mapped = mapTrendyolQuestion(q);
+      if (!mapped || seen.has(mapped.externalId)) continue;
+      seen.add(mapped.externalId);
+      out.push(mapped);
+    }
+    if (page >= (data.totalPages ?? 1) - 1) break;
+  }
+  return out;
+}
+
+/** Trendyol müşteri sorusuna satıcı cevabını gönderir. */
+export async function answerTrendyolQuestion(questionId: string | number, text: string): Promise<void> {
+  if (!isTrendyolConfigured()) {
+    throw new Error("Trendyol entegrasyonu yapılandırılmamış (Satıcı ID, API Key, API Secret gerekli).");
+  }
+  // Trendyol cevabı belirli uzunlukta olmalı (çok kısa/uzun reddedilir).
+  const body = text.trim().slice(0, 2000);
+  if (body.length < 10) throw new Error("Trendyol cevabı en az 10 karakter olmalı.");
+
+  const url = `${TRENDYOL_API_BASE}/integration/qna/sellers/${ENV.trendyolSellerId}/questions/${encodeURIComponent(String(questionId))}/answers`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { ...trendyolHeaders(), "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ text: body }),
+  });
+  if (res.status === 401 || res.status === 403) {
+    throw new Error("Trendyol API bilgileri reddedildi (yetki hatası).");
+  }
+  if (!res.ok) {
+    const errBody = (await res.text()).slice(0, 300);
+    throw new Error(`Trendyol cevap gönderimi başarısız (${res.status}): ${errBody}`);
+  }
+}
+
 /** Bağlantı testi: gerçek istek atıp Trendyol'un döndürdüğü HTTP durumunu döner. */
 export async function testTrendyolConnection(): Promise<{ ok: boolean; status: number; body: string }> {
   if (!isTrendyolConfigured()) {
