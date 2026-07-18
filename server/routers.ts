@@ -2,6 +2,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { z } from "zod";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { invokeLLM } from "./_core/llm";
+import { generateImage } from "./_core/imageGeneration";
 import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { TRPCError } from "@trpc/server";
@@ -11,6 +12,7 @@ import { extractInvoice } from "./_core/claude";
 import { executeAssistantCommand, generateOrderNo, generateQuoteNo } from "./assistant";
 import { buildSaleTitle, deriveCombos, parseSetCount } from "./productUtils";
 import { computePrice, extractJson, parseFeatures, pickReferenceProduct, scoreReference, suggestSku } from "./autofill";
+import { computeReorderSuggestions, summarizeReorder } from "./reorder";
 import { importUrunKayit } from "./importSeed";
 import { syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf } from "./trendyol";
 import {
@@ -22,6 +24,8 @@ import {
   searchTrendyolBrands,
 } from "./trendyolProducts";
 import { pushHepsiburadaStockPrice } from "./hepsiburada";
+import { pushN11StockPrice } from "./n11";
+import { pushCiceksepetiStockPrice } from "./ciceksepeti";
 import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "./marketplace";
 import { channelProfitReport } from "./reportUtils";
 import { DEFAULT_CHANNEL_PROFILES, normalizeChannelProfile } from "@shared/pricing";
@@ -312,6 +316,16 @@ export const appRouter = router({
   materials: router({
     list: protectedProcedure.query(() => db.listMaterials()),
     critical: protectedProcedure.query(() => db.listCriticalMaterials()),
+    // Yeniden sipariş önerisi: kritik eşik altı hammadde → önerilen alım miktarı +
+    // tedarikçi + tahmini maliyet (saf mantık reorder.ts, testli).
+    reorderSuggestions: protectedProcedure.query(async () => {
+      const [mats, suppliers] = await Promise.all([db.listMaterials(), db.listSuppliers()]);
+      const suggestions = computeReorderSuggestions(
+        mats as never,
+        (suppliers as { id: number; name: string }[]).map(s => ({ id: s.id, name: s.name })),
+      );
+      return { suggestions, summary: summarizeReorder(suggestions) };
+    }),
     create: protectedProcedure.input(materialInput).mutation(({ input }) =>
       db.createMaterial(toDecimalFields(input, ["stockQty", "criticalQty", "unitCost"]) as never),
     ),
@@ -370,6 +384,56 @@ export const appRouter = router({
     }),
     // Faz A5: görseli olan ürün ID'leri (sağlık skoru görsel kontrolü).
     idsWithImages: protectedProcedure.query(() => db.listProductIdsWithImages()),
+    // AI görsel üretimi: ürün kartından stüdyo/pazaryeri görseli üretir, S3 URL'ini
+    // mockup alanına ya da görsel link listesine yazar (base64 değil — dayanıklı URL,
+    // storefront/pazaryeri linklerini besler). Forge (BUILT_IN_FORGE_*) gerektirir.
+    generateImage: protectedProcedure
+      .input(
+        z.object({
+          productId: z.number(),
+          target: z.enum(["mockup", "imageList"]).default("mockup"),
+          instructions: z.string().max(500).optional(),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const p = await db.getProduct(input.productId);
+        if (!p) throw new TRPCError({ code: "NOT_FOUND", message: "Ürün bulunamadı" });
+        const bits = [
+          `Ürün fotoğrafı: ${p.name}`,
+          p.series ? `${p.series} serisi` : null,
+          p.colorCode ? `renk kodu ${p.colorCode}` : null,
+          p.packaging ? `${p.packaging} ambalajında` : null,
+          p.paintType ? `(${p.paintType})` : null,
+        ].filter(Boolean);
+        const prompt = `${bits.join(", ")}. Profesyonel e-ticaret ürün görseli, temiz beyaz stüdyo arka planı, yumuşak ışık, yüksek çözünürlük, gerçekçi. Türk oto rötuş/hobi boya markası Art of Colour ürünü.${
+          input.instructions ? ` Ek yönerge: ${input.instructions}` : ""
+        }`;
+        let url: string;
+        try {
+          const res = await generateImage({ prompt });
+          if (!res.url) throw new Error("Görsel üretildi ama URL dönmedi");
+          url = res.url;
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Görsel üretilemedi",
+          });
+        }
+        if (input.target === "mockup") {
+          await db.updateProduct(input.productId, { mockupUrl: url } as never);
+        } else {
+          let list: string[] = [];
+          try {
+            const arr = JSON.parse(p.imageUrls ?? "[]");
+            if (Array.isArray(arr)) list = arr.filter(x => typeof x === "string");
+          } catch {
+            // bozuk JSON — sıfırdan başla
+          }
+          list.push(url);
+          await db.updateProduct(input.productId, { imageUrls: JSON.stringify(list) } as never);
+        }
+        return { url };
+      }),
     // Excel/CSV toplu içe aktarma: oluştur-veya-güncelle (client planı sunucuda
     // yeniden doğrulanır). Tek listProducts çekimiyle çift barkod/SKU ve üst ürün
     // eşleşmesi bellekte kontrol edilir; başarısız satırlar rapor olarak döner.
@@ -878,6 +942,70 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
           });
         }
       }),
+    // N11'e stok/fiyat gönderimi (SKU önce, yoksa barkod ile eşleşir).
+    pushToN11: protectedProcedure
+      .input(z.object({ ids: z.array(z.number()).optional() }))
+      .mutation(async ({ input }) => {
+        const all = await db.listProducts();
+        const chosen = input.ids?.length ? all.filter(p => input.ids!.includes(p.id)) : all;
+        const items = chosen
+          .filter(p => p.status === "satista" && ((p.sku && p.sku.trim()) || (p.barcode && p.barcode.trim())))
+          .map(p => {
+            const list = parseFloat(String(p.salePrice)) || 0;
+            const disc = parseFloat(String(p.discountPercent)) || 0;
+            return {
+              sellerStockCode: (p.sku?.trim() || p.barcode!.trim()),
+              quantity: p.stockQty ?? 0,
+              price: +(list * (1 - disc / 100)).toFixed(2),
+            };
+          });
+        if (items.length === 0) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "SKU/barkodu olan satıştaki ürün yok. Ürün kartında SKU veya barkod girin.",
+          });
+        }
+        try {
+          return await pushN11StockPrice(items);
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "N11'e gönderim başarısız",
+          });
+        }
+      }),
+    // Çiçeksepeti'ne stok/fiyat gönderimi.
+    pushToCiceksepeti: protectedProcedure
+      .input(z.object({ ids: z.array(z.number()).optional() }))
+      .mutation(async ({ input }) => {
+        const all = await db.listProducts();
+        const chosen = input.ids?.length ? all.filter(p => input.ids!.includes(p.id)) : all;
+        const items = chosen
+          .filter(p => p.status === "satista" && ((p.sku && p.sku.trim()) || (p.barcode && p.barcode.trim())))
+          .map(p => {
+            const list = parseFloat(String(p.salePrice)) || 0;
+            const disc = parseFloat(String(p.discountPercent)) || 0;
+            return {
+              stockCode: (p.sku?.trim() || p.barcode!.trim()),
+              quantity: p.stockQty ?? 0,
+              price: +(list * (1 - disc / 100)).toFixed(2),
+            };
+          });
+        if (items.length === 0) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "SKU/barkodu olan satıştaki ürün yok. Ürün kartında SKU veya barkod girin.",
+          });
+        }
+        try {
+          return await pushCiceksepetiStockPrice(items);
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Çiçeksepeti'ne gönderim başarısız",
+          });
+        }
+      }),
     // Faz C: Trendyol'da SIFIRDAN ürün kartı açma — ana ürünün "satista" türevleri
     // ortak productMainId ile TEK ilan (varyant seçicili) olarak gönderilir.
     // Ayarlar: Ayarlar sayfası → Trendyol Ürün Açma. Sonuç asenkron: batchRequestId.
@@ -1150,7 +1278,7 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
       }),
     // Pazaryerine gerçek istek atıp ham HTTP sonucunu döner (401 teşhisi için).
     testConnection: protectedProcedure
-      .input(z.object({ key: z.enum(["trendyol", "hepsiburada"]) }))
+      .input(z.object({ key: z.enum(["trendyol", "hepsiburada", "n11", "ciceksepeti"]) }))
       .mutation(({ input }) => testMarketplaceConnection(input.key)),
     create: protectedProcedure.input(orderInput).mutation(async ({ input }) => {
       const { items, ...order } = input;
@@ -1463,6 +1591,78 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
       .input(z.object({ id: z.number() }))
       .mutation(({ input }) => db.markNotificationRead(input.id)),
     markAllRead: protectedProcedure.mutation(() => db.markAllNotificationsRead()),
+  }),
+
+  // Pazaryeri/müşteri soru-cevap kuyruğu (Helpdesk). Soru çekme canlıda pazaryeri
+  // API'siyle beslenir; burada kuyruk + AI cevap taslağı + yanıtlama akışı.
+  questions: router({
+    list: protectedProcedure
+      .input(z.object({ status: z.enum(["new", "answered", "dismissed"]).optional() }).optional())
+      .query(({ input }) => db.listMarketplaceQuestions(input?.status)),
+    newCount: protectedProcedure.query(() => db.countNewMarketplaceQuestions()),
+    // Elle soru ekleme (pazaryerinden kopyala-yapıştır ya da WhatsApp/e-posta).
+    create: protectedProcedure
+      .input(
+        z.object({
+          source: z.enum(["trendyol", "hepsiburada", "n11", "ciceksepeti", "whatsapp", "email", "elle"]).default("elle"),
+          customerName: z.string().nullable().optional(),
+          questionText: z.string().min(1),
+          productId: z.number().nullable().optional(),
+          productName: z.string().nullable().optional(),
+        }),
+      )
+      .mutation(({ input }) => db.createMarketplaceQuestion(input as never)),
+    // AI cevap taslağı: ürün kılavuzu/açıklaması + soru → nazik, bilgilendirici yanıt.
+    generateDraft: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        const q = await db.getMarketplaceQuestion(input.id);
+        if (!q) throw new TRPCError({ code: "NOT_FOUND", message: "Soru bulunamadı" });
+        const product = q.productId ? await db.getProduct(q.productId) : null;
+        const context = product
+          ? [
+              `Ürün: ${product.name}`,
+              product.usageGuide ? `Kullanım kılavuzu: ${product.usageGuide}` : null,
+              product.applicationText ? `Uygulama: ${product.applicationText}` : null,
+              product.shortDescription ? `Açıklama: ${product.shortDescription}` : null,
+              product.safetyNotes ? `Güvenlik: ${product.safetyNotes}` : null,
+            ]
+              .filter(Boolean)
+              .join("\n")
+          : q.productName
+            ? `Ürün: ${q.productName}`
+            : "Ürün bilgisi yok.";
+        const response = await invokeLLM({
+          messages: [
+            {
+              role: "system",
+              content:
+                "Sen Art of Colour (Türk oto rötuş/hobi boya markası) müşteri hizmetleri temsilcisisin. Pazaryeri/müşteri sorularına Türkçe, nazik, kısa ve doğru cevap yaz. Emin olmadığın teknik detayda uydurma; ürün bilgisine dayan. Satışa teşvik et ama abartma.",
+            },
+            {
+              role: "user",
+              content: `Ürün bilgisi:\n${context}\n\nMüşteri sorusu:\n${q.questionText}\n\nBu soruya gönderilecek cevabı yaz (sadece cevap metni).`,
+            },
+          ],
+        });
+        const raw = response.choices[0]?.message?.content;
+        const draft = (typeof raw === "string" ? raw : "").trim();
+        await db.updateMarketplaceQuestion(input.id, { answerDraft: draft });
+        return { draft };
+      }),
+    // Yanıtla: taslağı (veya düzenlenmiş metni) kalıcı cevap olarak işaretle.
+    answer: protectedProcedure
+      .input(z.object({ id: z.number(), answerText: z.string().min(1) }))
+      .mutation(({ input }) =>
+        db.updateMarketplaceQuestion(input.id, {
+          answerText: input.answerText,
+          status: "answered",
+          answeredAt: new Date(),
+        } as never),
+      ),
+    dismiss: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(({ input }) => db.updateMarketplaceQuestion(input.id, { status: "dismissed" })),
   }),
 
   tasks: router({

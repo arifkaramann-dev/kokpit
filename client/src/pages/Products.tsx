@@ -20,6 +20,12 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { formatDate, formatQty, formatTL } from "@/lib/format";
 import { jsonListHasItems, productHealth, type ProductHealth } from "@shared/productHealth";
 import { useConfirm } from "@/components/ConfirmDialog";
@@ -338,6 +344,16 @@ export default function Products() {
     onError: e => toast.error(e.message, { duration: 8000 }),
   });
 
+  const pushN11 = trpc.products.pushToN11.useMutation({
+    onSuccess: r => toast.success(`N11'e ${r.sent} ürünün stok/fiyatı gönderildi`, { duration: 8000 }),
+    onError: e => toast.error(e.message, { duration: 8000 }),
+  });
+
+  const pushCiceksepeti = trpc.products.pushToCiceksepeti.useMutation({
+    onSuccess: r => toast.success(`Çiçeksepeti'ne ${r.sent} ürünün stok/fiyatı gönderildi`, { duration: 8000 }),
+    onError: e => toast.error(e.message, { duration: 8000 }),
+  });
+
   // Mamul stok hareketi: giriş/çıkış + hareket geçmişi dialogu.
   const [stockFor, setStockFor] = useState<ProductRow | null>(null);
   const [stockType, setStockType] = useState<"in" | "out">("in");
@@ -649,22 +665,28 @@ export default function Products() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Button
-            variant="outline"
-            onClick={() => pushTrendyol.mutate({})}
-            disabled={pushTrendyol.isPending}
-            title="Barkodlu ürünlerin stok ve fiyatını Trendyol'a gönder"
-          >
-            <Store className="h-4 w-4 mr-1" /> Trendyol'a Gönder
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => pushHepsiburada.mutate({})}
-            disabled={pushHepsiburada.isPending}
-            title="Barkodlu ürünlerin stok ve fiyatını Hepsiburada'ya gönder"
-          >
-            <Store className="h-4 w-4 mr-1" /> HB'ye Gönder
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                disabled={
+                  pushTrendyol.isPending ||
+                  pushHepsiburada.isPending ||
+                  pushN11.isPending ||
+                  pushCiceksepeti.isPending
+                }
+                title="Satıştaki barkod/SKU'lu ürünlerin stok ve fiyatını seçili pazaryerine gönder"
+              >
+                <Store className="h-4 w-4 mr-1" /> Pazaryerine Gönder
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => pushTrendyol.mutate({})}>Trendyol</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => pushHepsiburada.mutate({})}>Hepsiburada</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => pushN11.mutate({})}>N11</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => pushCiceksepeti.mutate({})}>Çiçeksepeti</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button variant="outline" onClick={() => setBulkOpen(true)}>
             <Percent className="h-4 w-4 mr-1" /> Toplu Fiyat
           </Button>

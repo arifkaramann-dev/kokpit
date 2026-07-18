@@ -186,6 +186,14 @@ export default function Settings() {
             <b>Hepsiburada:</b> Merchant paneli → Entegrasyon/OMS bilgilerinden Merchant ID,
             kullanıcı adı ve şifre alınır.
           </p>
+          <p>
+            <b>N11:</b> Mağaza paneli → Entegrasyon/API'den appKey ve appSecret alınır
+            (<span className="font-mono">N11_APP_KEY</span>, <span className="font-mono">N11_APP_SECRET</span>).
+          </p>
+          <p>
+            <b>Çiçeksepeti:</b> Satıcı paneli → API Bilgileri'nden x-api-key alınır
+            (<span className="font-mono">CICEKSEPETI_API_KEY</span>).
+          </p>
         </div>
       </Card>
 

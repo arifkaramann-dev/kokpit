@@ -112,7 +112,9 @@
       şu an yalnızca bilgi/proforma faturası basılıyor (invoice.ts)
 Pazaryeri (Qukasoft):
 - [x] Hepsiburada stok/fiyat gönderme + "Servis Anahtarı" desteği (F4'te yapıldı; canlıda HEPSIBURADA_SERVICE_KEY ile test edilecek)
-- [ ] N11 + Çiçeksepeti entegratörleri (sipariş çekme + stok/fiyat) — iskelet yok
+- [x] N11 + Çiçeksepeti entegratörleri (sipariş çekme + stok/fiyat) — server/n11.ts +
+      server/ciceksepeti.ts, marketplace.ts 4 pazaryeri, push + testConnection, 9 test
+      (MEGA SPRINT 18.07); canlı test bekler
 - [x] Komisyon/kesinti bazlı net kâr raporu (pazaryeri/kanal bazında) — Analiz sayfasında
       "Kanal Kârlılığı" tablosu (report.channelProfit, kâr modeli v2; 16.07.2026 mega sprint)
 - [x] İade yönetimi: cancelled durumu + senkronda otomatik iptal + stok iadesi + rapor/cari hariç tutma (soru-cevap yönetimi hâlâ açık)
@@ -178,8 +180,56 @@ Hepsiburada push yok, web sitesi (Qukasoft) entegrasyonu yok.
        "Düşük Stok" filtresi + eşiğe göre renklendirme + Stok Nöbetçisi mamul eşiği bildirimi
 6. [x] Pazaryeri/kanal bazında toplu net kâr raporu (report.channelProfit + Analiz sayfası;
        11 birim testi, işlem bedeli/kargo sipariş başına bir kez)
-7. [ ] AI görsel üretimi: _core/imageGeneration.ts hazır ama hiçbir router'a bağlı
-       değil — kullanıcı talebiyle modül olarak bağlanacak
+7. [x] AI görsel üretimi: products.generateImage router'ına bağlandı + ürün detayında
+       'AI Görsel Üret' (mockup); S3 URL'i mockupUrl/imageUrls'e yazılır (MEGA SPRINT 18.07)
+
+## RAKİP ANALİZİ — Bizimhesap + Qukasoft A-Z (18.07.2026, patron talebi)
+İki rakip iki cephe: Bizimhesap = ön muhasebe/e-belge; Qukasoft = pazaryeri+web
+mağaza. Tam analiz + parite + storefront kararı: **docs/RAKIP-ANALIZI-BIZIMHESAP-QUKASOFT.md**
+- Kokpit bugün: Bizimhesap'ın ~%75'i, Qukasoft'un ~%45'i (boya çekirdeği ikisinde de yok).
+- 🔴 Olmazsa olmaz: [ ] e-Fatura/e-Arşiv/e-İrsaliye, [ ] çoklu depo
+- 🟠 Öncelikli: [ ] Kokpit-güçlü storefront (kendi web mağaza — en yüksek marjlı
+  kanal, CMS değil ürün çekirdeğinden beslenir), [ ] kargo entegrasyonu,
+  [ ] N11 + Çiçeksepeti
+- 🟡 Gerekli: [ ] kampanya motoru, [ ] SEO/GA4/pixel, [ ] üretimde işçilik/sarf
+  maliyeti, [ ] banka ekstresi mutabakat
+- STOREFRONT KARARI: evet ama jenerik CMS değil — ürün çekirdeğinden beslenen sade
+  mağaza (Qukasoft/web mağaza kirasını ikame eder, pazaryeri komisyonu olmayan kanal).
+- Odoo planıyla birleşik tek yol haritası (RAKİP-FAZ 1-4).
+
+## MEGA SPRINT — 18.07.2026 (tamamlandı): açık işlerin kod tarafı
+Rakip/Odoo analizinden çıkan + eski açık işlerden kod tarafı bitirilebilir olanlar:
+- [x] N11 + Çiçeksepeti pazaryeri entegrasyonu (sipariş senkron + stok/fiyat push +
+      testConnection; marketplace.ts 4 pazaryeri; 'Pazaryerine Gönder' menüsü; 9 test)
+- [x] AI görsel üretimi ürün detayına bağlandı (products.generateImage → mockupUrl)
+- [x] Pazaryeri/müşteri soru-cevap kuyruğu + AI cevap taslağı (/sorular, migration 0022)
+- [x] Satın alma yeniden sipariş önerisi (reorder.ts, Stok sayfası öneri paneli, 7 test)
+- Doğrulama: 196/196 test, 0 tip hatası, build ✓.
+
+DIŞ SERVİS/CANLI GEREKTİRDİĞİ İÇİN BU ORTAMDA BİTİRİLEMEYENLER (gerekçeli):
+- e-Fatura/e-Arşiv/e-İrsaliye: dış entegratör (İzibiz/Foriba/Uyumsoft) + ticari anlaşma
+  + gizli anahtar gerekir. Kod iskeleti sonraki adımda; canlı bağlantı Render'da.
+- Kendi storefront (web mağaza): büyük, tasarım kararı ister — ayrı sprint (RAKİP-FAZ 2).
+- Kargo entegrasyonu: kargo firması API anahtarları + canlı test gerekir.
+- N11/Çiçeksepeti/Trendyol/HB canlı bağlantı testleri: geliştirme ortamı pazaryerine
+  çıkamaz; Render'da API anahtarlarıyla doğrulanır.
+- S3 görsel göçü (0.3): depolama kimlik bilgisi gerekir.
+- Çoklu depo + lot/parti + kalite kontrol: büyük şema işi (RAKİP-FAZ 3) — ayrı sprint.
+- Uptime monitörü: kullanıcı cron-job.org kurulumu.
+
+## ODOO UYARLAMA — modül analizi + yol haritası (18.07.2026, patron talebi)
+Odoo'nun tüm modül evreni Art of Colour'a göre süzüldü. Tam analiz + sınıflandırma
++ fazlı plan: **docs/ODOO-UYARLAMA-PLANI.md**. Özet (kopyalama değil, uyarlama):
+- Kokpit boya-dikeyi olarak Odoo çekirdeğinin ~%60'ını zaten karşılıyor.
+- 🔴 Olmazsa olmazlar: [ ] e-Fatura/e-Arşiv, [ ] stok lot/parti+rezervasyon,
+  [ ] kalite kontrol (parti testi: pH/viskozite/örtücülük/ΔE)
+- 🟠 Öncelikli: [ ] CRM satış boru hattı, [x] Helpdesk/pazaryeri Q&A kuyruğu (18.07),
+  [x] Purchase yeniden sipariş önerisi (18.07), [ ] Barcode mobil depo
+- 🟡 Gerekli: [ ] çift taraflı muhasebe köprüsü, [ ] onay motoru, [ ] ürün bilgi
+  tabanı, [ ] e-posta/SMS kampanya + otomasyon
+- ⛔ Kapsam dışı (bilinçli): Payroll, Recruitment, Fleet, Website CMS, POS (şimdilik),
+  Subscriptions, Events, Sign, IoT, Studio vb.
+- Potansiyel yeni ajan: muhasebe-entegrasyon-uzmani (e-Fatura fazında kurulacak).
 
 ## KOKPİT V2 — Faz 0 (temel sağlamlaştırma; plan: docs/KOKPIT-V2-ANALIZ.md)
 - [x] 0.1a Cari/ürün ID göçü (migration 0016): orders.customerId, transactions.customerId/
@@ -203,7 +253,9 @@ Hepsiburada push yok, web sitesi (Qukasoft) entegrasyonu yok.
 - [x] Tahsilat Takipçisi: her gün 09:00 TR, 30+ gündür ödenmemiş siparişler müşteri
       bazında gruplanıp bildirim + WhatsApp hatırlatma taslağıyla iletilir
       (scheduler.runCollectionChaser, saf mantık financeUtils.overdueReceivables, testli)
-- [ ] Pazaryeri soru-cevap kuyruğu + AI cevap taslağı
+- [x] Pazaryeri soru-cevap kuyruğu + AI cevap taslağı — marketplaceQuestions (migration
+      0022) + /sorular sayfası + questions router (generateDraft/answer/dismiss)
+      (MEGA SPRINT 18.07); soru çekme canlı API ile beslenecek
 - [ ] Uptime monitörü kurulumu (kullanıcı: cron-job.org → /api/health)
 
 ## MEGA SPRINT — 16.07.2026: Satış Döngüsü & Kârlılık (tamamlandı)
