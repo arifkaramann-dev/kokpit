@@ -25,6 +25,7 @@ import Products from "@/pages/Products";
 import Purchases from "@/pages/Purchases";
 import Questions from "@/pages/Questions";
 import Quotes from "@/pages/Quotes";
+import Reconcile from "@/pages/Reconcile";
 import Settings from "@/pages/Settings";
 import Stock from "@/pages/Stock";
 import Storefront from "@/pages/Storefront";
@@ -48,6 +49,7 @@ function AdminApp() {
         <Route path={"/kasa"} component={Accounts} />
         <Route path={"/cari"} component={Ledgers} />
         <Route path={"/cek-senet"} component={Cheques} />
+        <Route path={"/mutabakat"} component={Reconcile} />
         <Route path={"/stok"} component={Stock} />
         <Route path={"/faturalar"} component={Purchases} />
         <Route path={"/urunler"} component={Products} />

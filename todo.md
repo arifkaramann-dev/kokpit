@@ -251,23 +251,27 @@ sihirbazı reçete düzenleme + KDV-dahil maliyet modeli (/fiyat + Maliyet + sih
 - [ ] A5. Kalite kontrol (parti testi: pH/viskozite/örtücülük/ΔE) kayıt + geçti/kaldı
 
 ### Tema B — Kendi Web Mağazası (Storefront) [PAYTR + domain patrondan]
-- [ ] B1. Storefront iskeleti: ürün çekirdeğinden beslenen vitrin + ürün sayfası (kod, dış yok)
-- [ ] B2. Sepet + sipariş oluşturma (mağaza siparişi panoya düşer)
-- [ ] B3. PAYTR ödeme entegrasyonu (anahtar gelince canlı) — kart ile tahsilat
-- [ ] B4. SEO temel (başlık/meta/sitemap) + GA4/Pixel bağlama (opsiyonel)
-- [ ] B5. Mağaza siparişine kargo etiketi (kargo sağlayıcı gelince)
+- [x] B1. Storefront: herkese açık vitrin + ürün sayfası (client/Storefront.tsx, /magaza
+      DashboardLayout dışında; storefront publicProcedure router; fiyat sunucuda doğrulanır)
+- [x] B2. Sepet + sipariş oluşturma (localStorage sepet; sipariş channel="magaza" + bildirim)
+- [x] B3. PAYTR ödeme kod tarafı (server/paytr.ts: token + callback imza; anahtar gelince canlı)
+- [~] B4. SEO temel — başlık var; sitemap/GA4 patron domain+GA4 ID verince eklenecek
+- [x] B5. Kargo kod tarafı: siparişe takip no yazma (kargo router; sağlayıcı gelince canlı)
 
 ### Tema C — e-Fatura/e-Arşiv + Ön Muhasebe [mali mühür + entegratör patrondan]
-- [ ] C1. e-Fatura entegratör kod iskeleti (soyut arayüz + 1 sağlayıcı adaptörü)
-- [ ] C2. Siparişten e-Fatura/e-Arşiv kesme akışı (taslak → gönder → durum)
-- [ ] C3. Banka ekstresi (MT940/CSV) yükleme + tahsilat/ödeme mutabakatı
-- [ ] C4. Yeni ajan: muhasebe-entegrasyon-uzmani (e-belge alanının sahibi)
+- [x] C1. e-Fatura entegratör iskeleti (server/efatura.ts: soyut payload + gated send)
+- [x] C2. Siparişten e-Fatura/e-Arşiv taslağı → gönder (invoices router + /mutabakat UI)
+- [x] C3. Banka ekstresi (CSV) yükleme + tahsilat/ödeme mutabakatı (shared/reconcile.ts +
+      reconcile router + /mutabakat sayfası)
+- [x] C4. Yeni ajan: muhasebe-entegrasyon-uzmani (.claude/agents/) — TAKIM'a eklendi
 
 ### Tema D — Çoklu Kanal Büyüme [API anahtarları patrondan]
-- [ ] D1. N11 + Çiçeksepeti soru-cevap oto-çekme (orkestratör hazır, adaptör eklenecek)
-- [ ] D2. Kargo toplayıcı (Navlungo/Basit Kargo) entegrasyonu — otomatik etiket/takip
-- [ ] D3. Kampanya motoru (indirim/kupon kuralları) — kanal bazlı
-- [ ] D4. Trendyol/HB/N11/Çiçeksepeti canlı bağlantı doğrulamaları (anahtar gelince)
+- [~] D1. N11 + Çiçeksepeti soru-cevap: orkestratör çok-sağlayıcı hazır; adaptör
+      endpoint'leri canlı panelden doğrulanınca eklenecek (Trendyol QnA çalışıyor)
+- [x] D2. Kargo toplayıcı iskeleti (server/kargo.ts: gönderi payload + gated createShipment)
+- [x] D3. Kampanya/kupon motoru (shared/campaigns.ts: %/₺/kargo bedava + min sepet + son
+      kullanma) — coupons router + Kampanyalar sayfası yönetimi + storefront checkout
+- [~] D4. Trendyol/HB/N11/ÇS canlı doğrulamaları — anahtar Render'a girince (PATRON-GOREVLERI)
 
 ## KOKPİT V2 — Faz 0 (temel sağlamlaştırma; plan: docs/KOKPIT-V2-ANALIZ.md)
 - [x] 0.1a Cari/ürün ID göçü (migration 0016): orders.customerId, transactions.customerId/
