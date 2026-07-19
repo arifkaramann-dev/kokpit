@@ -247,7 +247,10 @@ sihirbazı reçete düzenleme + KDV-dahil maliyet modeli (/fiyat + Maliyet + sih
       + calcChannelProfit + suggestPrice; sihirbaz, Maliyet, /fiyat ve gerçekleşen rapor
       hepsi düşüyor; ayar unitLaborOverhead (Settings + sayfalarda düzenlenir). Sonraki
       rafinasyon: ürün bazlı üretim süresi (dk) × saat ücreti (şema ister)
-- [ ] A3. Hammadde alış faturasından birim maliyet + indirilecek KDV otomatik güncelleme
+- [x] A3. Hammadde alış faturasından birim maliyet + indirilecek KDV (MEGA SPRINT 19.07 Tema 0):
+      purchaseItems.vatRate + purchases.netTotal/vatTotal (migration 0023), totalAmount brüt,
+      ağırlıklı ortalama maliyet + birim güvenliği (purchaseUtils.ts), çift-netleştirme kâr
+      hatası düzeltildi (~%17 şişme), vatReport gerçek KDV. +reconcile/efatura/purchase testleri.
 - [ ] A4. Stok lot/parti + rezervasyon (üretim partisi izlenebilirlik)
 - [ ] A5. Kalite kontrol (parti testi: pH/viskozite/örtücülük/ΔE) kayıt + geçti/kaldı
 

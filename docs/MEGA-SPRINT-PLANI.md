@@ -58,17 +58,18 @@
 
 ## Temalar (dış anahtar GEREKMEZ — bu ortamda bitirilebilir)
 
-### Tema 0 — Para Doğruluğu & Hata Avı  *(temel — her kapsamda önce)*
-Zorunlu duraklar: `finans-muhasebe-uzmani` (kural onayı) + `qa-test-uzmani` (test) +
-`veritabani-mimari` (A3 şema). `pnpm test` + `pnpm build` zorunlu (riskli sınıf).
-- [ ] #1 `deleteTransaction` → siparişin ödeme durumunu resync et; `updateTransaction` ekle
-- [ ] #2 İade (out) ödeme durumunu düşürsün (resync `in`+`out` her ikisinde)
-- [ ] #3 **A3:** `purchases`/`purchaseItems`'a `vatRate`/`vatAmount` + net maliyet; hammadde
-      maliyetinin net/brüt tanımını netleştir (finans kararı); ağırlıklı ortalama maliyet;
-      kg/gr birim dönüşümü güvenliği; KDV raporunun alış tarafını gerçeğe oturt
-- [ ] #4 e-Fatura `fromOrder` VKN geçir + satır bazlı KDV; `decideInvoiceType` çalışsın
-- [ ] A1'i resmen kapat + elden kanalında maliyet-KDV kuralını netleştir (tek cümle karar)
-- [ ] Test boşluklarını doldur: `reconcile.test.ts`, `efatura.test.ts` (payload/tip/tutar kilidi)
+### Tema 0 — Para Doğruluğu & Hata Avı  ✅ TAMAMLANDI (19.07)
+Zorunlu duraklar geçildi: finans kural onayı (net/brüt konvansiyonu), qa (testler),
+şema (migration 0023 + 0024). 269/269 test, build ✓.
+- [x] #1 `deleteTransaction` → siparişin ödeme durumu resync (orderPaymentFrom + resyncOrderPayment)
+- [x] #2 İade (out) ödeme durumunu düşürür (resync in+out; edit=sil+ekle de tutarlı)
+- [x] #3 **A3:** purchaseItems.vatRate + purchases.netTotal/vatTotal (0023); totalAmount brüt;
+      ağırlıklı ortalama maliyet + birim güvenliği (purchaseUtils.ts); çift-netleştirme kâr
+      hatası (~%17 şişme) düzeltildi; vatReport gerçek KDV
+- [x] #4 e-Fatura VKN: customers.taxNumber/taxOffice (0024) + form; fromOrder VKN çözer,
+      satır KDV üründen gelir; decideInvoiceType çalışıyor
+- [x] A1 zaten bitmiş (bayat işaret düzeltildi); elden kanalı KDV-0 (değişmedi)
+- [x] Test boşlukları dolduruldu: reconcile.test.ts (12) + efatura.test.ts (8) + purchase.test.ts (11)
 
 ### Tema A — Boya Üretim Çekirdeği  *(alan farklılaştırıcısı)*
 Zorunlu duraklar: `veritabani-mimari` (yeni tablolar) → `ux-tasarimci` (akış) →
