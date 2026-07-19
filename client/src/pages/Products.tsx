@@ -392,9 +392,13 @@ export default function Products() {
   });
 
   const updateProduct = trpc.products.update.useMutation({
-    onSuccess: () => {
+    onSuccess: r => {
       utils.products.invalidate();
-      toast.success("Ürün güncellendi");
+      toast.success(
+        r && r.renamedVariants > 0
+          ? `Ürün güncellendi — ${r.renamedVariants} türev başlığı da eşitlendi`
+          : "Ürün güncellendi",
+      );
       setDialogOpen(false);
     },
     onError: e => toast.error(e.message),

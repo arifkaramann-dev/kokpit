@@ -76,7 +76,7 @@ describe("sipariş durum akışı", () => {
 // calcMarketplace kaldırıldı — kanal kâr hesabı artık shared/pricing.ts
 // calcChannelProfit'te ve pricing.test.ts'te test ediliyor (Trendyol referans vakası dahil).
 
-import { buildSaleTitle, deriveCombos, parseSetCount } from "../server/productUtils";
+import { buildSaleTitle, deriveCombos, parseSetCount, renameVariantTitle } from "../server/productUtils";
 
 describe("buildSaleTitle — satış başlığı üretimi", () => {
   it("örnek başlığı doğru kurar", () => {
@@ -117,6 +117,43 @@ describe("parseSetCount — set adedi çıkarımı", () => {
   it("set adı başlığın sonuna eklenir", () => {
     expect(buildSaleTitle("Jant Astarı", null, "400 ml Sprey", "Antrasit Gri", "2'li Set")).toBe(
       "Artofcolour Jant Astarı 400 ml Sprey Antrasit Gri 2'li Set"
+    );
+  });
+});
+
+describe("renameVariantTitle — ana ürün adı değişince türev başlığı senkronu", () => {
+  it("ekran senaryosu: eski adı yenisiyle değiştirir, yüzey öneki ve ekler korunur", () => {
+    const variant = buildSaleTitle(
+      "ARTOFCOLOUR Mat Siyah Sprey Boya 400 ml",
+      "3D Baskı",
+      "SPREY 400ML",
+      "Mat Siyah",
+    );
+    expect(renameVariantTitle(variant, "ARTOFCOLOUR Mat Siyah Sprey Boya 400 ml", "Mat Siyah Sprey Boya 400 ml")).toBe(
+      "Artofcolour 3D Baskı Mat Siyah Sprey Boya 400 ml SPREY 400ML Mat Siyah",
+    );
+  });
+  it("sonucu buildSaleTitle'ın yeni adla ürettiğiyle birebir aynıdır (round-trip)", () => {
+    const parts = ["Jant", "400 ml Sprey", "Antrasit Gri", "2'li Set"] as const;
+    const before = buildSaleTitle("Eski Astar", ...parts);
+    expect(renameVariantTitle(before, "Eski Astar", "Yeni Astar")).toBe(
+      buildSaleTitle("Yeni Astar", ...parts),
+    );
+  });
+  it("ana ad 'Artofcolour' ile başlasa sabit öneki bozmaz", () => {
+    const variant = buildSaleTitle("Artofcolour Astar", "Jant", "1 L");
+    expect(renameVariantTitle(variant, "Artofcolour Astar", "Artofcolour Pro Astar")).toBe(
+      "Artofcolour Jant Artofcolour Pro Astar 1 L",
+    );
+  });
+  it("eski ad geçmiyorsa (elle farklılaştırılmış türev) başlığı bırakır", () => {
+    expect(renameVariantTitle("Özel El Yapımı Başlık", "Astar", "Yeni Astar")).toBe(
+      "Özel El Yapımı Başlık",
+    );
+  });
+  it("eski ve yeni ad aynıysa değişiklik yapmaz", () => {
+    expect(renameVariantTitle("Artofcolour Jant Astar 1 L", "Astar", "Astar")).toBe(
+      "Artofcolour Jant Astar 1 L",
     );
   });
 });

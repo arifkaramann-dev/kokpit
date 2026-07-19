@@ -10,7 +10,7 @@ import * as db from "./db";
 import { itemsTotal, summarizeItems, toItemRows } from "./orderUtils";
 import { extractInvoice } from "./_core/claude";
 import { executeAssistantCommand, generateOrderNo, generateQuoteNo } from "./assistant";
-import { buildSaleTitle, deriveCombos, parseSetCount } from "./productUtils";
+import { buildSaleTitle, deriveCombos, parseSetCount, renameVariantTitle } from "./productUtils";
 import { computePrice, extractJson, parseFeatures, pickReferenceProduct, scoreReference, suggestSku } from "./autofill";
 import { computeReorderSuggestions, summarizeReorder } from "./reorder";
 import { importUrunKayit } from "./importSeed";
@@ -366,10 +366,30 @@ export const appRouter = router({
           await assertUniqueIdentity(input.data.barcode, input.data.sku, input.id);
         }
         if (input.data.series !== undefined) await ensureSeriesRecord(input.data.series);
-        return db.updateProduct(
+
+        // Ana ürün adı değişiyorsa türev başlıklarındaki gömülü eski adı da güncelle.
+        // Türev başlığı buildSaleTitle ile üretilir ve ana ürün adını birebir taşır;
+        // ad değiştiğinde yeniden üretilmediği için türevlere yansımıyordu (bug).
+        let renamedVariants = 0;
+        if (input.data.name !== undefined) {
+          const current = await db.getProduct(input.id);
+          if (current && current.parentId == null && current.name !== input.data.name) {
+            const variants = (await db.listProducts()).filter(p => p.parentId === input.id);
+            for (const v of variants) {
+              const nextName = renameVariantTitle(v.name, current.name, input.data.name);
+              if (nextName !== v.name) {
+                await db.updateProduct(v.id, { name: nextName } as never);
+                renamedVariants++;
+              }
+            }
+          }
+        }
+
+        await db.updateProduct(
           input.id,
           toDecimalFields(withStatusFlags(input.data), productDecimalFields) as never,
         );
+        return { renamedVariants };
       }),
     // Faz A1: mevcut verideki çift barkod/SKU grupları (unique indeks öncesi temizlik raporu).
     duplicateIdentity: protectedProcedure.query(async () => {
