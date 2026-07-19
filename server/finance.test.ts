@@ -3,6 +3,7 @@ import {
   accountBalance,
   collectionTotal,
   customerBalancesFrom,
+  orderPaymentFrom,
   overdueReceivables,
   paymentStatusFor,
   supplierBalancesFrom,
@@ -109,6 +110,34 @@ describe("collectionTotal + paymentStatusFor (tahsilat → sipariş ödeme senkr
     expect(paymentStatusFor(100, 100)).toBe("paid");
     expect(paymentStatusFor(99.9995, 100)).toBe("paid"); // kuruş yuvarlama toleransı
     expect(paymentStatusFor(150, 100)).toBe("paid");
+  });
+});
+
+describe("orderPaymentFrom (ekle/iade/sil sonrası ödeme durumu resync)", () => {
+  const T = (direction: "in" | "out", amount: string, category = "tahsilat") => ({ direction, category, amount });
+
+  it("tam tahsilat → paid, paidAmount = toplam", () => {
+    expect(orderPaymentFrom([T("in", "100")], "100")).toEqual({ paidAmount: 100, status: "paid" });
+  });
+
+  it("kısmi tahsilat → partial", () => {
+    expect(orderPaymentFrom([T("in", "40")], "100")).toEqual({ paidAmount: 40, status: "partial" });
+  });
+
+  it("iade (out) net toplamı düşürür: 100 al − 40 iade = 60 → partial", () => {
+    expect(orderPaymentFrom([T("in", "100"), T("out", "40")], "100")).toEqual({ paidAmount: 60, status: "partial" });
+  });
+
+  it("tahsilat silinince (kalan hareket yok) → unpaid, paidAmount 0 (alacak geri döner)", () => {
+    expect(orderPaymentFrom([], "100")).toEqual({ paidAmount: 0, status: "unpaid" });
+  });
+
+  it("tümü iade edilince → unpaid; paidAmount negatife inmez", () => {
+    expect(orderPaymentFrom([T("in", "100"), T("out", "150")], "100")).toEqual({ paidAmount: 0, status: "unpaid" });
+  });
+
+  it("tahsilat dışı hareketler (gelir/gider) ödeme durumunu etkilemez", () => {
+    expect(orderPaymentFrom([T("in", "999", "gelir"), T("in", "100")], "100")).toEqual({ paidAmount: 100, status: "paid" });
   });
 });
 

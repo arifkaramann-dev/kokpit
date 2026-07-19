@@ -116,6 +116,21 @@ export function paymentStatusFor(collected: number, total: number): "unpaid" | "
   return collected <= 0 ? "unpaid" : collected + 0.001 >= total ? "paid" : "partial";
 }
 
+/**
+ * Bir siparişin bağlı tahsilat hareketlerinden ödenen tutar + ödeme durumunu
+ * yeniden hesaplar. Tek doğru kaynak: kalan hareketler baştan toplanır — bu yüzden
+ * tahsilat EKLE, İADE (out) ve SİL yollarının hepsinde aynı fonksiyon çağrılmalı
+ * (aksi halde silinen tahsilat sonrası sipariş "ödendi" kalır, alacak kaybolur).
+ * İade (out) net toplamı düşürür; `paidAmount` negatife inmez.
+ */
+export function orderPaymentFrom(
+  txns: { direction: "in" | "out"; category: string; amount: unknown }[],
+  orderTotal: unknown,
+): { paidAmount: number; status: "unpaid" | "partial" | "paid" } {
+  const collected = collectionTotal(txns);
+  return { paidAmount: Math.max(0, collected), status: paymentStatusFor(collected, toNum(orderTotal)) };
+}
+
 /* ------------------- KDV özeti ------------------- */
 
 export type VatOrderRow = { total: unknown; date: Date | string; status: string };

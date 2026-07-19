@@ -51,9 +51,8 @@ import {
 import { resolveProductIdForItem } from "./orderUtils";
 import {
   accountBalance,
-  collectionTotal,
   customerBalancesFrom,
-  paymentStatusFor,
+  orderPaymentFrom,
   supplierBalancesFrom,
   vatSummarySince,
 } from "./financeUtils";
@@ -548,7 +547,25 @@ export async function listTransactions(filter?: { customerName?: string; account
 }
 
 /**
- * Hareket ekler. Tahsilat/ödeme bir siparişe bağlıysa (orderId) o siparişin
+ * Bir siparişin ödenen tutarı + ödeme durumunu, ona bağlı TÜM tahsilat
+ * hareketlerinden (giren − iade) yeniden hesaplar. Tahsilat ekleme, iade (out)
+ * ve silme yollarının hepsi bunu çağırır — tek doğru kaynak. Aksi halde silinen
+ * tahsilat sonrası sipariş "ödendi" kalır ve alacak kaybolur.
+ */
+export async function resyncOrderPayment(orderId: number) {
+  const db = await requireDb();
+  const [ord] = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
+  if (!ord) return;
+  const txns = await db
+    .select({ amount: transactions.amount, direction: transactions.direction, category: transactions.category })
+    .from(transactions)
+    .where(eq(transactions.orderId, orderId));
+  const { paidAmount, status } = orderPaymentFrom(txns, ord.totalAmount);
+  await db.update(orders).set({ paidAmount: String(paidAmount), paymentStatus: status }).where(eq(orders.id, orderId));
+}
+
+/**
+ * Hareket ekler. Tahsilat/iade bir siparişe bağlıysa (orderId) o siparişin
  * ödenen tutarı ve ödeme durumu otomatik güncellenir (mevcut model korunur).
  */
 export async function createTransaction(data: InsertTransaction) {
@@ -561,25 +578,22 @@ export async function createTransaction(data: InsertTransaction) {
     data = { ...data, supplierId: await resolveSupplierIdByName(data.supplierName) };
   }
   const [res] = await db.insert(transactions).values(data);
-  if (data.orderId && data.category === "tahsilat" && data.direction === "in") {
-    const [ord] = await db.select().from(orders).where(eq(orders.id, data.orderId)).limit(1);
-    if (ord) {
-      const collected = collectionTotal(
-        await db
-          .select({ amount: transactions.amount, direction: transactions.direction, category: transactions.category })
-          .from(transactions)
-          .where(eq(transactions.orderId, data.orderId)),
-      );
-      const status = paymentStatusFor(collected, toNum(ord.totalAmount));
-      await db.update(orders).set({ paidAmount: String(Math.max(0, collected)), paymentStatus: status }).where(eq(orders.id, data.orderId));
-    }
-  }
+  // Tahsilat/iade bir siparişe bağlıysa ödeme durumunu yeniden hesapla (giren + iade).
+  if (data.orderId && data.category === "tahsilat") await resyncOrderPayment(data.orderId);
   return Number(res.insertId);
 }
 
 export async function deleteTransaction(id: number) {
   const db = await requireDb();
+  // Silmeden önce bağlı siparişi öğren; sildikten sonra o siparişin ödeme
+  // durumunu yeniden hesapla (yoksa alacak "ödendi" görünüp kaybolur).
+  const [txn] = await db
+    .select({ orderId: transactions.orderId, category: transactions.category })
+    .from(transactions)
+    .where(eq(transactions.id, id))
+    .limit(1);
   await db.delete(transactions).where(eq(transactions.id, id));
+  if (txn?.orderId && txn.category === "tahsilat") await resyncOrderPayment(txn.orderId);
 }
 
 /** İki hesap arasında transfer: kaynaktan çıkış + hedefe giriş (iki hareket). */
