@@ -118,9 +118,13 @@ export default function ProductDetail() {
   const imageIds = useMemo(() => new Set(imageIdList ?? []), [imageIdList]);
 
   const updateProduct = trpc.products.update.useMutation({
-    onSuccess: () => {
+    onSuccess: r => {
       utils.products.invalidate();
-      toast.success("Kaydedildi");
+      toast.success(
+        r && r.renamedVariants > 0
+          ? `Kaydedildi — ${r.renamedVariants} türev başlığı da eşitlendi`
+          : "Kaydedildi",
+      );
     },
     onError: e => toast.error(e.message),
   });
