@@ -33,6 +33,12 @@ import {
   setAutoAnswerEnabled,
   syncMarketplaceQuestions,
 } from "./marketplaceQuestions";
+import { notifyOwner } from "./notify";
+import { getPaytrIframeToken, isPaytrConfigured } from "./paytr";
+import { buildInvoicePayload, isEfaturaConfigured, sendInvoice } from "./efatura";
+import { createShipment, isKargoConfigured } from "./kargo";
+import { applyCoupon, findCoupon, parseCoupons } from "@shared/campaigns";
+import { parseBankStatement, reconcile } from "@shared/reconcile";
 import { channelProfitReport } from "./reportUtils";
 import { DEFAULT_CHANNEL_PROFILES, normalizeChannelProfile } from "@shared/pricing";
 import { ENV } from "./_core/env";
@@ -1994,6 +2000,248 @@ Türkçe yaz. Sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, o
       ]);
       return { today, statusCounts, critical, upcoming, openTasks, finance, unpaid };
     }),
+  }),
+
+  // Kendi web mağazası (Tema B) — HERKESE AÇIK uçlar (giriş gerektirmez).
+  storefront: router({
+    // Vitrin: satışta ve fiyatı olan ürünler (yalnızca gerekli alanlar dışa açılır).
+    products: publicProcedure.query(async () => {
+      const products = await db.listProducts();
+      return products
+        .filter(p => p.status !== "arsiv" && parseFloat(String(p.salePrice)) > 0)
+        .map(p => ({
+          id: p.id,
+          name: p.name,
+          series: p.series,
+          salePrice: parseFloat(String(p.salePrice)) || 0,
+          discountPercent: parseFloat(String(p.discountPercent)) || 0,
+          shortDescription: p.shortDescription,
+          imageUrls: p.imageUrls,
+          mockupUrl: p.mockupUrl,
+          inStock: (p.stockQty ?? 0) > 0,
+        }));
+    }),
+    product: publicProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
+      const p = await db.getProduct(input.id);
+      if (!p || p.status === "arsiv") throw new TRPCError({ code: "NOT_FOUND", message: "Ürün bulunamadı" });
+      return {
+        id: p.id,
+        name: p.name,
+        series: p.series,
+        salePrice: parseFloat(String(p.salePrice)) || 0,
+        discountPercent: parseFloat(String(p.discountPercent)) || 0,
+        shortDescription: p.shortDescription,
+        description: p.description,
+        usageGuide: p.usageGuide,
+        imageUrls: p.imageUrls,
+        mockupUrl: p.mockupUrl,
+        inStock: (p.stockQty ?? 0) > 0,
+      };
+    }),
+    // Kupon doğrulama (sepet ekranında anında geri bildirim).
+    checkCoupon: publicProcedure
+      .input(z.object({ code: z.string(), subtotal: z.number(), shipping: z.number().default(0) }))
+      .query(async ({ input }) => {
+        const cfg = await db.getSettings();
+        const coupon = findCoupon(parseCoupons(cfg.storeCoupons), input.code);
+        return applyCoupon(input.subtotal, input.shipping, coupon);
+      }),
+    // Sipariş oluşturma: fiyatlar SUNUCUDA doğrulanır (client fiyatına güvenilmez).
+    createOrder: publicProcedure
+      .input(
+        z.object({
+          customerName: z.string().min(2),
+          phone: z.string().min(7),
+          address: z.string().min(5),
+          email: z.string().email().optional(),
+          couponCode: z.string().optional(),
+          items: z.array(z.object({ productId: z.number(), quantity: z.number().int().positive() })).min(1),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const products = await db.listProducts();
+        const byId = new Map(products.map(p => [p.id, p]));
+        const lines: { productName: string; quantity: number; unitPrice: number }[] = [];
+        let subtotal = 0;
+        for (const it of input.items) {
+          const p = byId.get(it.productId);
+          if (!p || p.status === "arsiv") continue;
+          const base = parseFloat(String(p.salePrice)) || 0;
+          const disc = parseFloat(String(p.discountPercent)) || 0;
+          const unit = +(base * (1 - disc / 100)).toFixed(2);
+          if (unit <= 0) continue;
+          lines.push({ productName: p.name, quantity: it.quantity, unitPrice: unit });
+          subtotal += unit * it.quantity;
+        }
+        if (lines.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Sepette geçerli ürün yok" });
+
+        // Kupon (varsa) sunucuda tekrar doğrulanır.
+        let discount = 0;
+        if (input.couponCode) {
+          const cfg = await db.getSettings();
+          const res = applyCoupon(subtotal, 0, findCoupon(parseCoupons(cfg.storeCoupons), input.couponCode));
+          if (res.ok) discount = res.discount;
+        }
+        const total = Math.max(0, +(subtotal - discount).toFixed(2));
+
+        const summary = lines.map(l => `${l.quantity}× ${l.productName}`).join(", ");
+        const orderId = Number(
+          await db.createOrder({
+            orderNo: generateOrderNo(),
+            customerName: input.customerName.trim(),
+            channel: "magaza",
+            status: "new",
+            totalAmount: String(total),
+            itemsSummary: summary,
+            notes: discount > 0 ? `Kupon indirimi: ${discount.toFixed(2)} ₺ (${input.couponCode})` : null,
+            customerPhone: input.phone.trim(),
+            customerAddress: input.address.trim(),
+            paymentStatus: "unpaid",
+          } as never),
+        );
+        await db.replaceOrderItems(
+          orderId,
+          lines.map(l => ({ productName: l.productName, quantity: l.quantity, unitPrice: String(l.unitPrice) })) as never,
+        );
+        await notifyOwner({
+          kind: "magaza-siparis",
+          title: `🛒 Web mağazadan yeni sipariş — ${total.toFixed(0)} ₺`,
+          body: `${input.customerName}\n${summary}`,
+          link: "/siparisler",
+        });
+        return { orderId, total, paymentConfigured: isPaytrConfigured() };
+      }),
+    // PAYTR iframe token'ı (yalnızca yapılandırılmışsa). Client bunu iframe'de gösterir.
+    paytrToken: publicProcedure
+      .input(z.object({ orderId: z.number(), email: z.string().email() }))
+      .mutation(async ({ input, ctx }) => {
+        if (!isPaytrConfigured()) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "PAYTR yapılandırılmamış" });
+        const order = await db.getOrder(input.orderId);
+        if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "Sipariş bulunamadı" });
+        const items = await db.listOrderItems(input.orderId);
+        const total = parseFloat(String(order.totalAmount)) || 0;
+        const base = ENV.publicStoreUrl || "";
+        const ip = (ctx.req?.headers["x-forwarded-for"]?.toString().split(",")[0] || ctx.req?.ip || "127.0.0.1").trim();
+        const token = await getPaytrIframeToken({
+          merchantOid: order.orderNo.replace(/[^a-zA-Z0-9]/g, ""),
+          email: input.email,
+          paymentAmountKurus: Math.round(total * 100),
+          userName: order.customerName,
+          userAddress: order.customerAddress ?? "-",
+          userPhone: order.customerPhone ?? "-",
+          userIp: ip,
+          basket: items.map(i => ({ name: i.productName, price: parseFloat(String(i.unitPrice)) || 0, quantity: Number(i.quantity) || 1 })),
+          okUrl: `${base}/magaza/tamam`,
+          failUrl: `${base}/magaza/hata`,
+          testMode: !ENV.isProduction,
+        });
+        return { token };
+      }),
+  }),
+
+  // Kupon yönetimi (admin) — ayarlar JSON'unda saklanır (şema gerektirmez).
+  coupons: router({
+    list: protectedProcedure.query(async () => parseCoupons((await db.getSettings()).storeCoupons)),
+    save: protectedProcedure
+      .input(
+        z.array(
+          z.object({
+            code: z.string().min(1),
+            type: z.enum(["percent", "fixed", "freeShipping"]),
+            value: z.number().min(0),
+            minSubtotal: z.number().min(0).optional(),
+            expiresAt: z.string().nullable().optional(),
+            active: z.boolean().optional(),
+          }),
+        ),
+      )
+      .mutation(({ input }) => db.setSettings({ storeCoupons: JSON.stringify(input) })),
+  }),
+
+  // e-Fatura / e-Arşiv (Tema C) — payload üretimi + (yapılandırılmışsa) gönderim.
+  invoices: router({
+    configured: protectedProcedure.query(() => ({ efatura: isEfaturaConfigured() })),
+    // Siparişten fatura taslağı üretir; entegratör bağlıysa gönderir.
+    fromOrder: protectedProcedure
+      .input(z.object({ orderId: z.number(), send: z.boolean().default(false) }))
+      .mutation(async ({ input }) => {
+        const order = await db.getOrder(input.orderId);
+        if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "Sipariş bulunamadı" });
+        const items = await db.listOrderItems(input.orderId);
+        const cfg = await db.getSettings();
+        const vat = parseFloat(cfg.vatRate ?? "20") || 20;
+        const payload = buildInvoicePayload({
+          company: {
+            name: cfg.companyName ?? "",
+            taxNumber: cfg.taxNumber ?? "",
+            taxOffice: cfg.taxOffice ?? "",
+            address: cfg.companyAddress ?? "",
+          },
+          customer: {
+            name: order.customerName,
+            address: order.customerAddress,
+            phone: order.customerPhone,
+          },
+          lines: items.map(i => ({
+            name: i.productName,
+            quantity: Number(i.quantity) || 1,
+            unitPrice: parseFloat(String(i.unitPrice)) || 0,
+            vatPercent: vat,
+          })),
+          note: cfg.invoiceNote ?? null,
+        });
+        const result = input.send ? await sendInvoice(payload) : { sent: false, provider: null, externalId: null, reason: "Taslak" };
+        return { payload, result };
+      }),
+  }),
+
+  // Kargo (Tema D) — gönderi oluşturma (yapılandırılmışsa canlı, yoksa manuel).
+  kargo: router({
+    configured: protectedProcedure.query(() => ({ kargo: isKargoConfigured() })),
+    createShipment: protectedProcedure
+      .input(z.object({ orderId: z.number(), desi: z.number().optional() }))
+      .mutation(async ({ input }) => {
+        const order = await db.getOrder(input.orderId);
+        if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "Sipariş bulunamadı" });
+        const res = await createShipment({
+          orderNo: order.orderNo,
+          recipientName: order.customerName,
+          phone: order.customerPhone ?? "",
+          address: order.customerAddress ?? "",
+          desi: input.desi,
+        });
+        if (res.created && res.trackingNumber) {
+          await db.updateOrder(input.orderId, {
+            cargoTrackingNumber: res.trackingNumber,
+            cargoProviderName: res.provider,
+            cargoTrackingLink: res.trackingUrl,
+          } as never);
+        }
+        return res;
+      }),
+  }),
+
+  // Banka ekstresi mutabakatı (Tema C) — CSV yükle, tahsilat/ödemelerle eşleştir.
+  reconcile: router({
+    match: protectedProcedure
+      .input(z.object({ csv: z.string().min(1), dayTolerance: z.number().default(3) }))
+      .mutation(async ({ input }) => {
+        const parsed = parseBankStatement(input.csv);
+        if (parsed.lines.length === 0) return { matches: [], errors: parsed.errors };
+        const txns = await db.listTransactions({ limit: 1000 });
+        const ledger = txns.map(t => {
+          const amt = parseFloat(String(t.amount)) || 0;
+          // Giriş (in) = para girişi (+), çıkış (out) = ödeme (−).
+          const sign = t.direction === "in" ? 1 : -1;
+          return {
+            id: t.id,
+            date: new Date(t.txnDate ?? t.createdAt).toISOString().slice(0, 10),
+            amount: sign * Math.abs(amt),
+            label: `${t.category} · ${t.description ?? t.customerName ?? ""}`.trim(),
+          };
+        });
+        return { matches: reconcile(parsed.lines, ledger, input.dayTolerance), errors: parsed.errors };
+      }),
   }),
 });
 

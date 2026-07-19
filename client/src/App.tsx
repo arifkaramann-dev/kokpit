@@ -27,6 +27,7 @@ import Questions from "@/pages/Questions";
 import Quotes from "@/pages/Quotes";
 import Settings from "@/pages/Settings";
 import Stock from "@/pages/Stock";
+import Storefront from "@/pages/Storefront";
 import Strategy from "@/pages/Strategy";
 import Suppliers from "@/pages/Suppliers";
 import Tasks from "@/pages/Tasks";
@@ -35,7 +36,7 @@ import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 
-function Router() {
+function AdminApp() {
   return (
     <DashboardLayout>
       <Switch>
@@ -71,6 +72,17 @@ function Router() {
         <Route component={NotFound} />
       </Switch>
     </DashboardLayout>
+  );
+}
+
+/** Herkese açık mağaza (giriş gerektirmez) ile giriş korumalı yönetim ayrışır. */
+function Router() {
+  return (
+    <Switch>
+      <Route path="/magaza" component={Storefront} />
+      <Route path="/magaza/:rest*" component={Storefront} />
+      <Route component={AdminApp} />
+    </Switch>
   );
 }
 

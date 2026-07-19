@@ -26,6 +26,21 @@ export const ENV = {
   picovoiceKeywordPath: process.env.PICOVOICE_KEYWORD_PATH ?? "",
   picovoiceKeywordLabel: process.env.PICOVOICE_KEYWORD_LABEL ?? "",
   picovoiceModelPath: process.env.PICOVOICE_MODEL_PATH ?? "",
+  // PAYTR sanal POS (kendi web mağaza ödemesi). Anahtarlar yalnızca Render'da.
+  paytrMerchantId: process.env.PAYTR_MERCHANT_ID ?? "",
+  paytrMerchantKey: process.env.PAYTR_MERCHANT_KEY ?? "",
+  paytrMerchantSalt: process.env.PAYTR_MERCHANT_SALT ?? "",
+  // e-Fatura/e-Arşiv entegratörü (soyut). Sağlayıcı: izibiz/uyumsoft/parasut vb.
+  efaturaProvider: process.env.EFATURA_PROVIDER ?? "",
+  efaturaUsername: process.env.EFATURA_USERNAME ?? "",
+  efaturaPassword: process.env.EFATURA_PASSWORD ?? "",
+  efaturaApiUrl: process.env.EFATURA_API_URL ?? "",
+  // Kargo toplayıcı (Navlungo/Basit Kargo vb.) — otomatik etiket/takip.
+  kargoProvider: process.env.KARGO_PROVIDER ?? "",
+  kargoApiKey: process.env.KARGO_API_KEY ?? "",
+  kargoApiUrl: process.env.KARGO_API_URL ?? "",
+  // Mağazanın herkese açık adresi (SEO/sitemap ve PAYTR dönüş adresleri için).
+  publicStoreUrl: process.env.PUBLIC_STORE_URL ?? "",
   isProduction: process.env.NODE_ENV === "production",
   forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
   forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
