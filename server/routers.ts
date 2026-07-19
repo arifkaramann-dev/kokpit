@@ -212,6 +212,8 @@ const customerInput = z.object({
   email: z.string().nullable().optional(),
   address: z.string().nullable().optional(),
   city: z.string().nullable().optional(),
+  taxNumber: z.string().nullable().optional(),
+  taxOffice: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
 });
 
@@ -2193,6 +2195,18 @@ Türkçe yaz. Sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, o
         const items = await db.listOrderItems(input.orderId);
         const cfg = await db.getSettings();
         const vat = parseFloat(cfg.vatRate ?? "20") || 20;
+        // Müşteri VKN/vergi dairesi: sipariş cari kaydına bağlıysa oradan çözülür
+        // (decideInvoiceType 10 hane VKN → e-fatura, aksi → e-arşiv). Yoksa e-arşiv.
+        const customer = order.customerId ? await db.getCustomer(order.customerId) : undefined;
+        // Satır KDV'si ürünün kendi oranından (products.vatRate); yoksa global orana düşer.
+        const prodVat = new Map<number, number>();
+        for (const it of items) {
+          if (it.productId != null && !prodVat.has(it.productId)) {
+            const p = await db.getProduct(it.productId);
+            const r = p?.vatRate != null ? parseFloat(String(p.vatRate)) : NaN;
+            prodVat.set(it.productId, Number.isFinite(r) ? r : vat);
+          }
+        }
         const payload = buildInvoicePayload({
           company: {
             name: cfg.companyName ?? "",
@@ -2202,14 +2216,16 @@ Türkçe yaz. Sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, o
           },
           customer: {
             name: order.customerName,
-            address: order.customerAddress,
-            phone: order.customerPhone,
+            taxNumber: customer?.taxNumber ?? null,
+            address: order.customerAddress ?? customer?.address ?? null,
+            phone: order.customerPhone ?? customer?.phone ?? null,
+            email: customer?.email ?? null,
           },
           lines: items.map(i => ({
             name: i.productName,
             quantity: Number(i.quantity) || 1,
             unitPrice: parseFloat(String(i.unitPrice)) || 0,
-            vatPercent: vat,
+            vatPercent: i.productId != null ? (prodVat.get(i.productId) ?? vat) : vat,
           })),
           note: cfg.invoiceNote ?? null,
         });

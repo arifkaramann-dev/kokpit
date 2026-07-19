@@ -267,6 +267,10 @@ export const customers = mysqlTable(
     email: varchar("email", { length: 320 }),
     address: varchar("address", { length: 512 }),
     city: varchar("city", { length: 128 }),
+    // e-Fatura/e-Arşiv için: 10 hane VKN (kurumsal → e-fatura) / 11 hane TCKN
+    // (bireysel → e-arşiv). Boşsa e-arşiv varsayılır.
+    taxNumber: varchar("taxNumber", { length: 32 }),
+    taxOffice: varchar("taxOffice", { length: 128 }),
     notes: text("notes"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),

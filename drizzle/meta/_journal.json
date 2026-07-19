@@ -169,6 +169,13 @@
       "when": 1784495095360,
       "tag": "0023_money_core_purchase_vat",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "5",
+      "when": 1784496006328,
+      "tag": "0024_normal_kate_bishop",
+      "breakpoints": true
     }
   ]
 }

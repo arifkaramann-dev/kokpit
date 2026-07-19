@@ -24,10 +24,12 @@ type CustomerRow = {
   email: string | null;
   address: string | null;
   city: string | null;
+  taxNumber: string | null;
+  taxOffice: string | null;
   notes: string | null;
 };
 
-const emptyForm = { name: "", phone: "", email: "", address: "", city: "", notes: "" };
+const emptyForm = { name: "", phone: "", email: "", address: "", city: "", taxNumber: "", taxOffice: "", notes: "" };
 
 export default function Customers() {
   const utils = trpc.useUtils();
@@ -121,6 +123,8 @@ export default function Customers() {
       email: c.email ?? "",
       address: c.address ?? "",
       city: c.city ?? "",
+      taxNumber: c.taxNumber ?? "",
+      taxOffice: c.taxOffice ?? "",
       notes: c.notes ?? "",
     });
     setDialogOpen(true);
@@ -137,6 +141,8 @@ export default function Customers() {
       email: form.email || null,
       address: form.address || null,
       city: form.city || null,
+      taxNumber: form.taxNumber || null,
+      taxOffice: form.taxOffice || null,
       notes: form.notes || null,
     };
     if (editing) updateCustomer.mutate({ id: editing.id, data: payload });
@@ -384,6 +390,20 @@ export default function Customers() {
                 rows={2}
                 placeholder="Kargo/teslimat adresi"
               />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>VKN / TCKN</Label>
+                <Input
+                  value={form.taxNumber}
+                  onChange={e => setForm(f => ({ ...f, taxNumber: e.target.value }))}
+                  placeholder="10 hane VKN → e-Fatura"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Vergi Dairesi</Label>
+                <Input value={form.taxOffice} onChange={e => setForm(f => ({ ...f, taxOffice: e.target.value }))} />
+              </div>
             </div>
             <div className="space-y-1.5">
               <Label>Not</Label>

@@ -407,6 +407,13 @@ export async function getOrder(id: number) {
   return result[0];
 }
 
+/** Müşteri kaydını ID ile getirir (e-Fatura VKN/vergi dairesi çözümü için). */
+export async function getCustomer(id: number) {
+  const db = await requireDb();
+  const result = await db.select().from(customers).where(eq(customers.id, id)).limit(1);
+  return result[0];
+}
+
 export async function getOrderByOrderNo(orderNo: string) {
   const db = await requireDb();
   const result = await db.select().from(orders).where(eq(orders.orderNo, orderNo)).limit(1);
