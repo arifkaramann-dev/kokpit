@@ -56,6 +56,7 @@ import {
   supplierBalancesFrom,
   vatSummarySince,
 } from "./financeUtils";
+import { applyPurchaseToMaterial, DEFAULT_VAT_RATE, purchaseTotals } from "./purchaseUtils";
 import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -682,7 +683,8 @@ export async function vatReport() {
   const [vatRow, ords, purs] = await Promise.all([
     db.select().from(settings).where(eq(settings.key, "vatRate")).limit(1),
     db.select({ total: orders.totalAmount, date: orders.createdAt, status: orders.status }).from(orders),
-    db.select({ total: purchases.totalAmount, date: purchases.invoiceDate, created: purchases.createdAt }).from(purchases),
+    // Alış tarafı: gerçek indirilecek KDV (vatTotal) — global %20 tahmini artık yok.
+    db.select({ total: purchases.totalAmount, vatTotal: purchases.vatTotal, date: purchases.invoiceDate, created: purchases.createdAt }).from(purchases),
   ]);
   const rate = parseFloat(vatRow[0]?.value ?? "") || 20;
   const now = new Date();
@@ -1417,8 +1419,18 @@ export async function reportData() {
 
 /**
  * Faturayı kaydeder ve kalemleri hammaddelere uygular:
- * isimden eşleşen hammaddenin stoğu artar + birim maliyeti güncellenir,
- * eşleşmeyen için yeni hammadde oluşturulur. Hepsi stok hareketine işlenir.
+ * isimden eşleşen hammaddenin stoğu AĞIRLIKLI ORTALAMA maliyetle güncellenir
+ * (son fiyatla ez YOK), eşleşmeyen için yeni hammadde oluşturulur. Hepsi stok
+ * hareketine işlenir.
+ *
+ * Net/brüt (Tema 0 #3): `unitCost` KDV HARİÇ (net) saklanır. Fatura başlığında
+ * netTotal (matrah), vatTotal (indirilecek KDV, satır bazlı gerçek oranlardan) ve
+ * totalAmount BRÜT (net+KDV, tedarikçiye ödenen) tutulur. Böylece tedarikçi carisi
+ * brütü, KDV raporu gerçek KDV'yi görür (global %20 tahmini biter).
+ *
+ * Birim güvenliği: fatura birimi hammadde biriminden farklı ama aynı boyuttaysa
+ * (kg↔gr, lt↔ml) stok/maliyet dönüştürülerek eklenir; farklı boyutsa (adet↔kg)
+ * dönüştürülemez → ham eklenir ve uyarı üretilir (sessiz bozma yok).
  */
 export async function createPurchase(
   header: {
@@ -1427,10 +1439,10 @@ export async function createPurchase(
     invoiceDate: Date | null;
     note: string | null;
   },
-  items: { name: string; qty: number; unit: string; unitCost: number }[]
+  items: { name: string; qty: number; unit: string; unitCost: number; vatRate?: number }[]
 ) {
   const db = await requireDb();
-  const total = items.reduce((s, i) => s + i.qty * i.unitCost, 0);
+  const { netTotal, vatTotal, grossTotal } = purchaseTotals(items);
   const [res] = await db.insert(purchases).values({
     supplierName: header.supplierName,
     // Cari bağ: tedarikçi kayıtlıysa ID ile bağla (ekstre ada değil ID'ye dayanır).
@@ -1438,7 +1450,9 @@ export async function createPurchase(
     invoiceNo: header.invoiceNo,
     invoiceDate: header.invoiceDate,
     note: header.note,
-    totalAmount: String(total),
+    netTotal: String(netTotal),
+    vatTotal: String(vatTotal),
+    totalAmount: String(grossTotal),
   });
   const purchaseId = Number(res.insertId);
 
@@ -1446,49 +1460,63 @@ export async function createPurchase(
   const byName = new Map(existing.map(m => [m.name.trim().toLowerCase(), m]));
   let createdCount = 0;
   let updatedCount = 0;
+  const unitWarnings: string[] = [];
+  const round4 = (n: number) => Math.round((n + Number.EPSILON) * 10000) / 10000;
+  const round3 = (n: number) => Math.round((n + Number.EPSILON) * 1000) / 1000;
 
   for (const item of items) {
     const name = item.name.trim();
     const found = byName.get(name.toLowerCase());
+    const unit = item.unit || "adet";
     let materialId: number;
+    let stockMoveQty = item.qty;
+    let stockMoveUnit = unit;
     if (!found) {
       const [r] = await db.insert(materials).values({
         name,
         category: "diğer",
-        unit: item.unit || "adet",
+        unit,
         stockQty: String(item.qty),
         criticalQty: "0",
-        unitCost: String(item.unitCost),
+        unitCost: String(round4(item.unitCost)),
       });
       materialId = Number(r.insertId);
       createdCount++;
     } else {
       materialId = found.id;
+      const applied = applyPurchaseToMaterial(found, { ...item, unit });
+      if (!applied.compatible) {
+        unitWarnings.push(`${name}: fatura birimi "${unit}" ≠ stok birimi "${found.unit}" — miktar ham eklendi, kontrol edin`);
+      }
+      stockMoveQty = applied.addedQty; // stok hareketi materyal birimi cinsinden
+      stockMoveUnit = found.unit;
       await db
         .update(materials)
         .set({
-          stockQty: sql`${materials.stockQty} + ${item.qty}`,
-          unitCost: String(item.unitCost),
+          stockQty: String(round3(applied.newStockQty)),
+          unitCost: String(round4(applied.newUnitCost)),
         })
         .where(eq(materials.id, found.id));
       updatedCount++;
     }
+    const convNote = stockMoveUnit !== unit ? ` [${item.qty} ${unit} → ${round3(stockMoveQty)} ${stockMoveUnit}]` : "";
     await db.insert(stockMovements).values({
       materialId,
       type: "in",
-      qty: String(item.qty),
-      note: `Fatura girişi${header.invoiceNo ? ` (${header.invoiceNo})` : ""}${header.supplierName ? ` — ${header.supplierName}` : ""}`,
+      qty: String(round3(stockMoveQty)),
+      note: `Fatura girişi${header.invoiceNo ? ` (${header.invoiceNo})` : ""}${header.supplierName ? ` — ${header.supplierName}` : ""}${convNote}`,
     });
     await db.insert(purchaseItems).values({
       purchaseId,
       materialId,
       name,
       qty: String(item.qty),
-      unit: item.unit || "adet",
-      unitCost: String(item.unitCost),
+      unit,
+      unitCost: String(round4(item.unitCost)),
+      vatRate: String(item.vatRate ?? DEFAULT_VAT_RATE),
     });
   }
-  return { purchaseId, createdCount, updatedCount };
+  return { purchaseId, createdCount, updatedCount, netTotal, vatTotal, grossTotal, unitWarnings };
 }
 
 export async function listPurchases() {

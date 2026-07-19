@@ -448,10 +448,12 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const vatPct = parseFloat(rates.vat) || 0;
   const commissionPct = parseFloat(rates.commission) || 0;
   const laborOverhead = parseFloat(rates.labor) || 0;
-  // Gerçek net kâr: KDV, komisyon ve işçilik+genel gider dahil. Maliyet/satış KDV dahil girilir.
+  // Gerçek net kâr: KDV, komisyon ve işçilik+genel gider dahil. Maliyet/satış KDV dahil.
+  // Reçete hammadde maliyeti KDV HARİÇ (net) gelir; motor KDV dahil beklediği için
+  // KDV'yle brütleştirilir (çift-netleştirme YOK, Tema 0 #3). Ambalaj/kargo zaten KDV dahil.
   const dev = calcDevProfit({
     salePrice: sale,
-    materialCost: chosenCost,
+    materialCost: chosenCost * (1 + vatPct / 100),
     packagingCost: packaging,
     shippingCost: shipping,
     commissionPercent: commissionPct,

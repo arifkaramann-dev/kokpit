@@ -181,6 +181,19 @@ describe("vatSummarySince (KDV raporu)", () => {
     );
     expect(r.buyGross).toBe(100);
   });
+
+  it("gerçek vatTotal verilince global %20 tahmini yerine o kullanılır (Tema 0 #3)", () => {
+    // Brüt 100 ama fatura KDV'si gerçekte 5 (ör. %1'lik kalemler) → global tahmin (16,67) DEĞİL 5.
+    const r = vatSummarySince(
+      [{ total: "240", date: d(1), status: "done" }], // satış KDV = 40
+      [{ total: "100", vatTotal: "5", date: d(2), created: d(2) }],
+      20,
+      now - 10 * 86400000,
+    );
+    expect(r.buyGross).toBe(100);
+    expect(r.buyVat).toBeCloseTo(5, 6); // gerçek KDV, tahmin değil
+    expect(r.payable).toBeCloseTo(40 - 5, 6);
+  });
 });
 
 describe("overdueReceivables (Tahsilat Takipçisi)", () => {

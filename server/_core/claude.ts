@@ -111,8 +111,9 @@ const INVOICE_SCHEMA = {
           quantity: { type: "number" },
           unit: { type: "string" },
           unitPrice: { type: "number" },
+          vatRate: { anyOf: [{ type: "number" }, { type: "null" }] },
         },
-        required: ["name", "quantity", "unit", "unitPrice"],
+        required: ["name", "quantity", "unit", "unitPrice", "vatRate"],
         additionalProperties: false,
       },
     },
@@ -124,7 +125,7 @@ const INVOICE_SCHEMA = {
 export type ParsedInvoice = {
   supplierName: string | null;
   invoiceNo: string | null;
-  items: { name: string; quantity: number; unit: string; unitPrice: number }[];
+  items: { name: string; quantity: number; unit: string; unitPrice: number; vatRate: number | null }[];
 };
 
 /** Fatura fotoğrafı/PDF'inden kalemleri çıkarır (Claude vision + yapılandırılmış çıktı). */
@@ -154,7 +155,7 @@ export async function extractInvoice(mediaType: string, base64: string): Promise
             block,
             {
               type: "text",
-              text: "Bu bir satın alma faturası/irsaliye. Tedarikçi adını, fatura numarasını ve tüm kalemleri çıkar. Her kalem için: malzeme adı (Türkçe, sade), miktar (sayı), birim (kg/gr/lt/ml/adet gibi), KDV hariç birim fiyat (sayı). Kargo/iskonto satırlarını kaleme dahil etme.",
+              text: "Bu bir satın alma faturası/irsaliye. Tedarikçi adını, fatura numarasını ve tüm kalemleri çıkar. Her kalem için: malzeme adı (Türkçe, sade), miktar (sayı), birim (kg/gr/lt/ml/adet gibi), KDV HARİÇ birim fiyat (sayı) ve KDV oranı (yüzde sayı olarak, ör. 1, 10, 20; satırda/faturada görünmüyorsa null). Kargo/iskonto satırlarını kaleme dahil etme.",
             },
           ],
         },

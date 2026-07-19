@@ -1744,7 +1744,10 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
                 name: z.string().min(1),
                 qty: z.number().positive(),
                 unit: z.string().min(1),
+                // KDV HARİÇ (net) birim fiyat.
                 unitCost: z.number().min(0),
+                // Satır KDV oranı (%); verilmezse createPurchase 20 varsayar.
+                vatRate: z.number().min(0).max(100).optional(),
               }),
             )
             .min(1),

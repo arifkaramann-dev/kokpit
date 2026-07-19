@@ -511,6 +511,11 @@ export const purchases = mysqlTable(
     supplierId: int("supplierId"),
     invoiceNo: varchar("invoiceNo", { length: 64 }),
     invoiceDate: timestamp("invoiceDate"),
+    // KDV matrahı (net, Σ qty×unitCost). Kâr/maliyet tabanı bu net tutardır.
+    netTotal: decimal("netTotal", { precision: 12, scale: 2 }).notNull().default("0"),
+    // İndirilecek KDV toplamı (satır bazlı gerçek oranlardan). KDV raporu bunu kullanır.
+    vatTotal: decimal("vatTotal", { precision: 12, scale: 2 }).notNull().default("0"),
+    // BRÜT toplam = net + KDV. Tedarikçiye fiilen ödenen; tedarikçi carisi bunu görür.
     totalAmount: decimal("totalAmount", { precision: 12, scale: 2 }).notNull().default("0"),
     note: text("note"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -530,7 +535,10 @@ export const purchaseItems = mysqlTable(
     name: varchar("name", { length: 255 }).notNull(),
     qty: decimal("qty", { precision: 12, scale: 3 }).notNull(),
     unit: varchar("unit", { length: 32 }).notNull().default("adet"),
+    // Birim maliyet KDV HARİÇ (net) saklanır — kâr/maliyet tabanı.
     unitCost: decimal("unitCost", { precision: 12, scale: 4 }).notNull().default("0"),
+    // Satır KDV oranı (%). Fatura okumadan gelir; yoksa 20 varsayılır. İndirilecek KDV bundan.
+    vatRate: decimal("vatRate", { precision: 5, scale: 2 }).notNull().default("20"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
   t => [

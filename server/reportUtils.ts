@@ -96,7 +96,13 @@ export function channelProfitReport(
     const profile = matchChannelProfile(o.channel, profiles);
     const orderItems = itemsByOrder.get(o.id) ?? [];
 
-    let productCost = 0;
+    // Hammadde maliyeti KDV HARİÇ (net) saklanır (materials.unitCost). Kâr motoru
+    // maliyeti KDV DAHİL bekleyip indirilecek KDV'yi düştüğü için net hammaddeyi
+    // kanalın KDV'siyle brütleştirip veririz — motor bir kez netler, ÇİFT
+    // NETLEŞTİRME olmaz (eski hata: net değer bir daha netleniyor, maliyet ~%17
+    // eksik, kâr şişik). Ambalaj zaten KDV dahil girilir. İşçilik+genel gider adet
+    // başı, KDV hariç doğrudan düşülür.
+    let productCostForCalc = 0;
     let shippingOverride = 0;
     let missing = 0;
     let qtyTotal = 0;
@@ -106,18 +112,16 @@ export function channelProfitReport(
         missing++;
         continue;
       }
-      productCost += (info.materialCost + info.packagingCost) * toNum(it.quantity);
+      const grossMaterial = info.materialCost * (1 + profile.vatPercent / 100);
+      productCostForCalc += (grossMaterial + info.packagingCost) * toNum(it.quantity);
       qtyTotal += toNum(it.quantity);
       shippingOverride = Math.max(shippingOverride, info.shippingCost);
     }
     if (orderItems.length === 0) missing++; // kalemsiz sipariş: maliyeti bilinmiyor
 
-    // Maliyet KDV dahil (formül birim maliyetleri brüt); kanalın KDV'siyle
-    // indirilecek KDV düşülür (fiyat/maliyet sayfalarıyla aynı model). İşçilik +
-    // genel gider adet başı, KDV hariç doğrudan düşülür.
     const p = calcChannelProfit({
       salePrice: revenue,
-      productCost,
+      productCost: productCostForCalc,
       productCostVatPercent: profile.vatPercent,
       extraCostEx: laborOverheadPerUnit * qtyTotal,
       profile,
@@ -146,7 +150,9 @@ export function channelProfitReport(
     row.orders += 1;
     row.revenue += revenue;
     row.saleEx += p.saleEx;
-    row.productCost += productCost;
+    // Raporlanan maliyet = motorun kullandığı KDV HARİÇ net maliyet (satırın diğer
+    // net kalemleriyle tutarlı; muhasebe doğrusu — indirilecek KDV maliyet değildir).
+    row.productCost += p.productCostEx;
     row.commission += p.commission;
     row.paymentFee += p.paymentFee;
     row.transactionFee += p.transactionFee;

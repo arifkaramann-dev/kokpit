@@ -62,27 +62,31 @@ describe("channelProfitReport", () => {
       profiles,
       since,
     );
-    const expected = calcChannelProfit({ salePrice: 300, productCost: 60, productCostVatPercent: trendyol.vatPercent, profile: trendyol, shippingOverride: 30 });
+    // Net hammadde (50) kanalın KDV'siyle brütleştirilip (50×1,2=60) ambalajla (10)
+    // motora verilir → productCost 70 (çift-netleştirme düzeltmesi, Tema 0 #3).
+    const expected = calcChannelProfit({ salePrice: 300, productCost: 70, productCostVatPercent: trendyol.vatPercent, profile: trendyol, shippingOverride: 30 });
     expect(rows).toHaveLength(1);
     expect(rows[0].net).toBeCloseTo(expected.net, 6);
     expect(rows[0].margin).toBeCloseTo(expected.margin, 6);
     expect(rows[0].commission).toBeCloseTo(expected.commission, 6);
+    // Raporlanan maliyet artık motorun kullandığı net maliyet (KDV hariç).
+    expect(rows[0].productCost).toBeCloseTo(expected.productCostEx, 6);
   });
 
   it("işlem bedeli ve kargo sipariş başına BİR kez sayılır (kalem başına değil)", () => {
     const { rows } = channelProfitReport(
       [{ id: 1, channel: "trendyol", status: "done", createdAt: inWindow, totalAmount: "600" }],
       [
-        { orderId: 1, productId: 1, quantity: "2" }, // maliyet 120, kargo 30
-        { orderId: 1, productId: 2, quantity: "4" }, // maliyet 100, kargo 45
+        { orderId: 1, productId: 1, quantity: "2" }, // net mal 50 → brüt 60, +ambalaj 10 = 70; kargo 30
+        { orderId: 1, productId: 2, quantity: "4" }, // net mal 20 → brüt 24, +ambalaj 5 = 29; kargo 45
       ],
       costs,
       profiles,
       since,
     );
-    // productCost = 2×60 + 4×25 = 220; kargo = max(30,45) = 45 (bir kez)
-    const expected = calcChannelProfit({ salePrice: 600, productCost: 220, productCostVatPercent: trendyol.vatPercent, profile: trendyol, shippingOverride: 45 });
-    expect(rows[0].productCost).toBeCloseTo(220, 6);
+    // productCost (motora, KDV dahil) = 2×70 + 4×29 = 256; kargo = max(30,45) = 45 (bir kez)
+    const expected = calcChannelProfit({ salePrice: 600, productCost: 256, productCostVatPercent: trendyol.vatPercent, profile: trendyol, shippingOverride: 45 });
+    expect(rows[0].productCost).toBeCloseTo(expected.productCostEx, 6); // raporlanan = net maliyet
     expect(rows[0].transactionFee).toBeCloseTo(expected.transactionFee, 6); // 12.6/1.2 bir kez
     expect(rows[0].shipping).toBeCloseTo(45 / 1.2, 6);
     expect(rows[0].net).toBeCloseTo(expected.net, 6);

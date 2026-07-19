@@ -103,11 +103,13 @@ export default function Costs() {
   const netPrice = (parseFloat(salePrice) || 0) * (1 - (parseFloat(discountPercent) || 0) / 100);
   // KDV dahil model: maliyet ve satış KDV'den arındırılır, indirilecek KDV düşülür
   // (komisyon bu karttta 0 — kendi/komisyonsuz satış; pazaryeri kartı ayrı).
+  // Formül hammadde maliyeti KDV HARİÇ (net) gelir; motor KDV dahil beklediği için
+  // kanalın KDV'siyle brütleştirilir (çift-netleştirme YOK, Tema 0 #3).
   const result = useMemo(
     () =>
       calcDevProfit({
         salePrice: netPrice,
-        materialCost,
+        materialCost: materialCost * (1 + (parseFloat(vat) || 0) / 100),
         packagingCost: parseFloat(packagingCost) || 0,
         shippingCost: parseFloat(shippingCost) || 0,
         commissionPercent: 0,
@@ -379,12 +381,16 @@ export default function Costs() {
             </div>
             {(() => {
               const price = parseFloat(salePrice) || 0;
-              const productCost = materialCost + (parseFloat(packagingCost) || 0);
+              const vatPct = parseFloat(vat) || 0;
+              // Formül hammadde maliyeti KDV HARİÇ (net); motor KDV dahil beklediği
+              // için kanalın KDV'siyle brütleştirilir (çift-netleştirme YOK, Tema 0 #3).
+              // Ambalaj zaten KDV dahil girilir.
+              const productCost = materialCost * (1 + vatPct / 100) + (parseFloat(packagingCost) || 0);
               const mp = calcChannelProfit({
                 salePrice: price,
                 productCost,
-                // Maliyet KDV dahil girilir; kanal KDV'siyle indirilecek KDV düşülür.
-                productCostVatPercent: parseFloat(vat) || 0,
+                // Maliyet KDV dahil; kanal KDV'siyle indirilecek KDV düşülür.
+                productCostVatPercent: vatPct,
                 // İşçilik + genel gider (KDV hariç, adet başı) doğrudan düşülür.
                 extraCostEx: parseFloat(labor) || 0,
                 profile: {

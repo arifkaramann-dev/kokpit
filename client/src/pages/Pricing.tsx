@@ -153,8 +153,9 @@ export default function Pricing() {
       const netPrice = num(p.salePrice) * (1 - num(p.discountPercent) / 100);
       const mp = calcChannelProfit({
         salePrice: netPrice,
-        productCost: materialCost + packaging,
-        // Maliyet KDV dahil girilir; kanalın KDV oranıyla indirilecek KDV düşülür.
+        // Net hammadde (formül) kanalın KDV'siyle brütleştirilir (çift-netleştirme
+        // YOK, Tema 0 #3); ambalaj zaten KDV dahil. Motor bir kez netler.
+        productCost: materialCost * (1 + profile.vatPercent / 100) + packaging,
         productCostVatPercent: profile.vatPercent,
         extraCostEx: laborOverhead,
         profile,
@@ -256,7 +257,8 @@ export default function Pricing() {
         mode,
         value,
         profile,
-        productCost: r.materialCost + num(r.p.packagingCost),
+        // Net hammadde kanalın KDV'siyle brütleştirilir (çift-netleştirme YOK, Tema 0 #3).
+        productCost: r.materialCost * (1 + profile.vatPercent / 100) + num(r.p.packagingCost),
         productCostVatPercent: profile.vatPercent,
         extraCostEx: laborOverhead,
         shippingOverride: num(r.p.shippingCost),

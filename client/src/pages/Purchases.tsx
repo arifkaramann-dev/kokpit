@@ -9,8 +9,8 @@ import { Loader2, Plus, ReceiptText, ScanLine, Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 
-type Row = { name: string; qty: string; unit: string; unitCost: string };
-const emptyRow = (): Row => ({ name: "", qty: "", unit: "adet", unitCost: "" });
+type Row = { name: string; qty: string; unit: string; unitCost: string; vatRate: string };
+const emptyRow = (): Row => ({ name: "", qty: "", unit: "adet", unitCost: "", vatRate: "20" });
 
 export default function Purchases() {
   const utils = trpc.useUtils();
@@ -30,6 +30,7 @@ export default function Purchases() {
       toast.success(
         `Fatura işlendi: ${r.updatedCount} hammadde güncellendi${r.createdCount ? `, ${r.createdCount} yeni hammadde oluşturuldu` : ""}`,
       );
+      for (const w of r.unitWarnings ?? []) toast.warning(w, { duration: 8000 });
       setSupplierName("");
       setInvoiceNo("");
       setNote("");
@@ -49,6 +50,7 @@ export default function Purchases() {
             qty: String(i.quantity),
             unit: i.unit || "adet",
             unitCost: String(i.unitPrice),
+            vatRate: i.vatRate != null ? String(i.vatRate) : "20",
           })),
         );
         toast.success(`${p.items.length} kalem okundu — kontrol edip kaydedin`);
@@ -77,7 +79,9 @@ export default function Purchases() {
         name: r.name.trim(),
         qty: parseFloat(r.qty),
         unit: r.unit.trim() || "adet",
+        // KDV HARİÇ (net) birim fiyat.
         unitCost: parseFloat(r.unitCost) || 0,
+        vatRate: parseFloat(r.vatRate) || 20,
       }));
     if (items.length === 0) return toast.error("En az bir kalem girin");
     create.mutate({
@@ -89,10 +93,13 @@ export default function Purchases() {
   }
 
   const knownNames = new Set((materials ?? []).map(m => m.name.trim().toLowerCase()));
-  const total = rows.reduce(
-    (s, r) => s + (parseFloat(r.qty) || 0) * (parseFloat(r.unitCost) || 0),
+  // Net matrah (Σ qty×net birim), indirilecek KDV (satır oranıyla) ve brüt (net+KDV).
+  const netTotal = rows.reduce((s, r) => s + (parseFloat(r.qty) || 0) * (parseFloat(r.unitCost) || 0), 0);
+  const vatTotal = rows.reduce(
+    (s, r) => s + (parseFloat(r.qty) || 0) * (parseFloat(r.unitCost) || 0) * ((parseFloat(r.vatRate) || 0) / 100),
     0,
   );
+  const grossTotal = netTotal + vatTotal;
 
   return (
     <div className="space-y-4">
@@ -165,18 +172,19 @@ export default function Purchases() {
               <Plus className="h-3.5 w-3.5 mr-1" /> Satır
             </Button>
           </div>
-          <div className="grid grid-cols-[1fr_70px_70px_90px_28px] gap-1.5 text-[11px] text-muted-foreground px-0.5">
+          <div className="grid grid-cols-[1fr_58px_56px_78px_50px_28px] gap-1.5 text-[11px] text-muted-foreground px-0.5">
             <span>Malzeme</span>
             <span>Miktar</span>
             <span>Birim</span>
-            <span>Birim ₺</span>
+            <span>Birim ₺ (net)</span>
+            <span>KDV %</span>
             <span />
           </div>
           {rows.map((row, idx) => {
             const isNew = row.name.trim() && !knownNames.has(row.name.trim().toLowerCase());
             return (
               <div key={idx} className="space-y-0.5">
-                <div className="grid grid-cols-[1fr_70px_70px_90px_28px] gap-1.5 items-center">
+                <div className="grid grid-cols-[1fr_58px_56px_78px_50px_28px] gap-1.5 items-center">
                   <Input
                     list="purchase-material-options"
                     value={row.name}
@@ -212,6 +220,17 @@ export default function Purchases() {
                       )
                     }
                   />
+                  <Input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="1"
+                    placeholder="20"
+                    value={row.vatRate}
+                    onChange={e =>
+                      setRows(rs => rs.map((r, i) => (i === idx ? { ...r, vatRate: e.target.value } : r)))
+                    }
+                  />
                   <Button
                     type="button"
                     variant="ghost"
@@ -243,15 +262,21 @@ export default function Purchases() {
         </div>
 
         <div className="flex items-center justify-between">
-          <p className="text-sm font-medium">Toplam: {formatTL(total)}</p>
+          <div className="text-sm">
+            <span className="text-muted-foreground">Net {formatTL(netTotal)}</span>
+            <span className="text-muted-foreground"> + KDV {formatTL(vatTotal)} = </span>
+            <span className="font-semibold">{formatTL(grossTotal)}</span>
+          </div>
           <Button onClick={submit} disabled={create.isPending}>
             {create.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
             Faturayı İşle
           </Button>
         </div>
         <p className="text-[11px] text-muted-foreground">
-          Kayıtta: eşleşen hammaddelerin stoğu artar ve birim maliyeti fatura fiyatıyla güncellenir;
-          eşleşmeyenler yeni hammadde olarak açılır. Tüm girişler stok hareketlerine işlenir.
+          Birim fiyat KDV HARİÇ (net) girilir; tedarikçi borcu brüt (net + KDV) yazılır. Kayıtta:
+          eşleşen hammaddelerin stoğu artar ve birim maliyeti AĞIRLIKLI ORTALAMA ile güncellenir
+          (son fiyatla ezilmez); farklı birimler (kg↔gr, lt↔ml) dönüştürülür, dönüşemeyen birim
+          uyarı verir. Eşleşmeyenler yeni hammadde olarak açılır; tüm girişler stok hareketine işlenir.
         </p>
       </Card>
 

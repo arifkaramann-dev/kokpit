@@ -134,11 +134,22 @@ export function orderPaymentFrom(
 /* ------------------- KDV özeti ------------------- */
 
 export type VatOrderRow = { total: unknown; date: Date | string; status: string };
-export type VatPurchaseRow = { total: unknown; date: Date | string | null; created: Date | string };
+export type VatPurchaseRow = {
+  /** BRÜT alış tutarı (KDV dahil, tedarikçiye ödenen). */
+  total: unknown;
+  /** Gerçek indirilecek KDV (satır bazlı oranlardan). Verilirse global tahmin yerine bu kullanılır. */
+  vatTotal?: unknown;
+  date: Date | string | null;
+  created: Date | string;
+};
 
 /**
  * Belirli bir tarihten bugüne KDV özeti: satış KDV'si (iptal hariç, KDV dahil
  * kabul) − alış KDV'si = ödenecek KDV.
+ *
+ * Alış KDV'si: kayıtta gerçek `vatTotal` varsa o kullanılır (satır bazlı gerçek
+ * oranlar); yoksa (0023 öncesi eski kayıt) brütten `rate` ile tahmin edilir.
+ * Satış tarafı hâlâ brütten `rate` ile ayrıştırılır (siparişte satır KDV'si yok).
  */
 export function vatSummarySince(
   ords: VatOrderRow[],
@@ -153,12 +164,15 @@ export function vatSummarySince(
     if (new Date(o.date).getTime() >= since) salesGross += toNum(o.total);
   }
   let buyGross = 0;
+  let buyVat = 0;
   for (const p of purs) {
     const t = new Date((p.date ?? p.created) as never).getTime();
-    if (t >= since) buyGross += toNum(p.total);
+    if (t < since) continue;
+    const gross = toNum(p.total);
+    buyGross += gross;
+    buyVat += p.vatTotal != null ? toNum(p.vatTotal) : vatOf(gross);
   }
   const salesVat = vatOf(salesGross);
-  const buyVat = vatOf(buyGross);
   return { salesGross, salesVat, buyGross, buyVat, payable: salesVat - buyVat };
 }
 
