@@ -20,6 +20,8 @@ const FIELDS: { key: string; label: string; placeholder?: string; textarea?: boo
   { key: "iban", label: "IBAN", placeholder: "TR.." },
   { key: "bankName", label: "Banka", placeholder: "Örn. Ziraat Bankası" },
   { key: "vatRate", label: "KDV Oranı (%)", placeholder: "20" },
+  { key: "unitLaborOverhead", label: "İşçilik + Genel Gider (₺/adet)", placeholder: "Örn. 25 (aylık gider ÷ aylık adet + işçilik payı)" },
+  { key: "devCommissionPercent", label: "Varsayılan Komisyon/Ödeme (%)", placeholder: "Örn. 3.9 (PAYTR)" },
   { key: "invoiceNote", label: "Fatura Alt Notu", placeholder: "Teşekkür / iade koşulları vb.", textarea: true },
 ];
 

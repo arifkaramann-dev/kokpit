@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   calcChannelProfit,
+  calcDevProfit,
   matchPriceRows,
   normalizeChannelProfile,
   parsePriceCsv,
@@ -92,6 +93,23 @@ describe("suggestPrice", () => {
     const r = calcChannelProfit({ salePrice: price!, productCost: 88.75, profile: prof, shippingOverride: 94.2 });
     expect(r.margin).toBeCloseTo(25, 3);
   });
+  it("targetMargin: maliyet KDV dahil (productCostVatPercent) verilince calcChannelProfit ile tutarlı", () => {
+    const prof = profile({ commissionPercent: 20, paymentFeePercent: 0.96, fixedFee: 12.6, stopajPercent: 1, vatPercent: 20 });
+    const price = suggestPrice({
+      currentPrice: 0,
+      totalCost: 48,
+      mode: "targetMargin",
+      value: 25,
+      profile: prof,
+      productCost: 48, // KDV dahil
+      productCostVatPercent: 20,
+    });
+    expect(price).not.toBeNull();
+    // Aynı KDV dahil maliyetle kâr hesabı yapılınca hedef marj (KDV hariç bazda) tutmalı.
+    const r = calcChannelProfit({ salePrice: price!, productCost: 48, productCostVatPercent: 20, profile: prof });
+    // Öneri kuruşa yuvarlandığı için marjda ±0,005 puan sapma normaldir.
+    expect(r.margin).toBeCloseTo(25, 2);
+  });
   it("targetMargin: banka POS'unda (KDV indirimsiz ödeme bedeli) da marj hedefi tutar", () => {
     const prof = profile({ paymentFeePercent: 2, paymentFeeVatDeductible: false, vatPercent: 20 });
     const price = suggestPrice({ currentPrice: 0, totalCost: 40, mode: "targetMargin", value: 30, profile: prof, productCost: 40 });
@@ -171,6 +189,33 @@ describe("calcChannelProfit — kanal bazlı net kâr (finans onaylı model)", (
     expect(r.margin).toBe(60);
   });
 
+  it("productCostVatPercent verilince maliyetin indirilecek KDV'si düşülür (Excel modeli)", () => {
+    // Satış 275, maliyet 140 (KDV dahil), komisyon %3,9, KDV %20 → net 101,78.
+    const r = calcChannelProfit({
+      salePrice: 275,
+      productCost: 140,
+      productCostVatPercent: 20,
+      profile: profile({ commissionPercent: 3.9, vatPercent: 20 }),
+    });
+    expect(r.productCostEx).toBeCloseTo(116.67, 1);
+    expect(r.inputVat).toBeCloseTo(23.33, 1);
+    expect(r.commission).toBeCloseTo(10.73, 1);
+    expect(r.net).toBeCloseTo(101.78, 1);
+  });
+
+  it("productCostVatPercent verilmezse maliyet KDV hariç sayılır (geriye dönük uyumlu)", () => {
+    const r = calcChannelProfit({ salePrice: 100, productCost: 40, profile: profile({ vatPercent: 20 }) });
+    expect(r.productCostEx).toBe(40);
+    expect(r.inputVat).toBe(0);
+  });
+
+  it("extraCostEx (işçilik+genel gider) net kârdan doğrudan (KDV arındırmasız) düşülür", () => {
+    const base = calcChannelProfit({ salePrice: 100, productCost: 40, profile: profile() });
+    const withExtra = calcChannelProfit({ salePrice: 100, productCost: 40, extraCostEx: 15, profile: profile() });
+    expect(withExtra.extraCostEx).toBe(15);
+    expect(withExtra.net).toBeCloseTo(base.net - 15, 6);
+  });
+
   it("kargo: profil 0 ise ürün kargosu kullanılır, profil doluysa profil kazanır", () => {
     const withOverride = calcChannelProfit({
       salePrice: 120,
@@ -191,6 +236,69 @@ describe("calcChannelProfit — kanal bazlı net kâr (finans onaylı model)", (
   it("satış fiyatı 0 iken marj 0 döner", () => {
     const r = calcChannelProfit({ salePrice: 0, productCost: 0, profile: profile({ vatPercent: 20 }) });
     expect(r.margin).toBe(0);
+  });
+});
+
+describe("calcDevProfit — ürün geliştirme sihirbazı net kâr (Excel modeli)", () => {
+  // Gerçek örnek (ARTOFCOLOUR Mat Siyah Sprey 400ml): satış 275, maliyet 140,
+  // komisyon %3,9 (PAYTR), KDV %20 → Excel net kâr 101,8.
+  it("Excel örneğiyle birebir uyuşur (naif 135 değil, 101,78)", () => {
+    const r = calcDevProfit({
+      salePrice: 275,
+      materialCost: 140,
+      packagingCost: 0,
+      shippingCost: 0,
+      commissionPercent: 3.9,
+      vatPercent: 20,
+    });
+    expect(r.saleEx).toBeCloseTo(229.17, 1);
+    expect(r.costEx).toBeCloseTo(116.67, 1);
+    expect(r.outputVat).toBeCloseTo(45.83, 1);
+    expect(r.inputVat).toBeCloseTo(23.33, 1);
+    expect(r.vatPayable).toBeCloseTo(22.5, 1);
+    expect(r.commission).toBeCloseTo(10.73, 1);
+    expect(r.net).toBeCloseTo(101.78, 1);
+    // Naif hesabın (275 − 140 = 135) verdiği yanlış değeri VERMEMELİ.
+    expect(r.net).not.toBeCloseTo(135, 1);
+  });
+
+  it("KDV 0 ve komisyon 0 iken net = satış − maliyet (elden satış)", () => {
+    const r = calcDevProfit({
+      salePrice: 100,
+      materialCost: 40,
+      packagingCost: 0,
+      shippingCost: 0,
+      commissionPercent: 0,
+      vatPercent: 0,
+    });
+    expect(r.net).toBe(60);
+    expect(r.margin).toBe(60);
+  });
+
+  it("ambalaj ve kargo maliyetlerini de toplam maliyete katar", () => {
+    const r = calcDevProfit({
+      salePrice: 275,
+      materialCost: 140,
+      packagingCost: 12,
+      shippingCost: 24,
+      commissionPercent: 3.9,
+      vatPercent: 20,
+    });
+    expect(r.totalCostGross).toBe(176);
+    expect(r.costEx).toBeCloseTo(146.67, 1);
+  });
+
+  it("satış 0 iken marjlar 0 döner", () => {
+    const r = calcDevProfit({ salePrice: 0, materialCost: 0, packagingCost: 0, shippingCost: 0, commissionPercent: 3.9, vatPercent: 20 });
+    expect(r.margin).toBe(0);
+    expect(r.marginOnSale).toBe(0);
+  });
+
+  it("işçilik + genel gider (laborOverheadCost) net kârdan doğrudan düşülür", () => {
+    const withoutLabor = calcDevProfit({ salePrice: 275, materialCost: 140, packagingCost: 0, shippingCost: 0, commissionPercent: 3.9, vatPercent: 20 });
+    const withLabor = calcDevProfit({ salePrice: 275, materialCost: 140, packagingCost: 0, shippingCost: 0, commissionPercent: 3.9, vatPercent: 20, laborOverheadCost: 25 });
+    expect(withLabor.laborOverheadCost).toBe(25);
+    expect(withLabor.net).toBeCloseTo(withoutLabor.net - 25, 6);
   });
 });
 

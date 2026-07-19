@@ -74,8 +74,16 @@ export function normalizeChannelProfile(p: Partial<ChannelProfile> & { name?: st
 export type ChannelProfitInput = {
   /** KDV dahil, indirim sonrası nihai satış fiyatı. */
   salePrice: number;
-  /** KDV HARİÇ ürün maliyeti (hammadde + ambalaj — alışlar KDV hariç tutulur). */
+  /**
+   * Ürün maliyeti (hammadde + ambalaj). `productCostVatPercent` verilmezse KDV
+   * HARİÇ kabul edilir (geriye dönük uyumluluk). Verilirse KDV DAHİL kabul edilip
+   * o oranla arındırılır — maliyet faturalarındaki indirilecek KDV düşülür.
+   */
   productCost: number;
+  /** Verilirse `productCost` KDV DAHİL sayılır ve bu oranla (örn. 20) arındırılır. */
+  productCostVatPercent?: number;
+  /** Adet başı işçilik + genel gider (KDV hariç; doğrudan düşülür, KDV arındırması yok). */
+  extraCostEx?: number;
   profile: ChannelProfile;
   /** Profil kargosu 0 ise kullanılacak ürün bazlı kargo (KDV dahil). */
   shippingOverride?: number;
@@ -91,6 +99,12 @@ export type ChannelProfit = {
   shipping: number;
   stopaj: number;
   totalFees: number;
+  /** Hesapta kullanılan KDV hariç ürün maliyeti (girdi zaten hariçse aynısı). */
+  productCostEx: number;
+  /** Ürün maliyetinden düşülen indirilecek KDV (girdi KDV hariçse 0). */
+  inputVat: number;
+  /** Adet başı işçilik + genel gider (KDV hariç), hesaba katılan. */
+  extraCostEx: number;
   net: number;
   /** Net kâr marjı: net / KDV hariç satış (muhasebe doğrusu — KDV hasılat değildir). */
   margin: number;
@@ -117,8 +131,13 @@ export function calcChannelProfit(input: ChannelProfitInput): ChannelProfit {
   const shipping = shippingGross / v;
   const stopaj = (saleEx * p.stopajPercent) / 100;
   const totalFees = commission + paymentFee + transactionFee + shipping + stopaj;
-  const net = saleEx - totalFees - input.productCost;
-  const totalCostEx = input.productCost + totalFees;
+  // Maliyet KDV dahil verildiyse (productCostVatPercent) indirilecek KDV'yi düş.
+  const cv = 1 + (input.productCostVatPercent ?? 0) / 100;
+  const productCostEx = input.productCost / cv;
+  const inputVat = input.productCost - productCostEx;
+  const extraCostEx = input.extraCostEx ?? 0;
+  const net = saleEx - totalFees - productCostEx - extraCostEx;
+  const totalCostEx = productCostEx + extraCostEx + totalFees;
   return {
     saleEx,
     commission,
@@ -127,9 +146,89 @@ export function calcChannelProfit(input: ChannelProfitInput): ChannelProfit {
     shipping,
     stopaj,
     totalFees,
+    productCostEx,
+    inputVat,
+    extraCostEx,
     net,
     margin: saleEx > 0 ? (net / saleEx) * 100 : 0,
     roi: totalCostEx > 0 ? (net / totalCostEx) * 100 : 0,
+  };
+}
+
+/* ------------------------- Ürün geliştirme sihirbazı kâr hesabı ------------------------- */
+
+export type DevProfitInput = {
+  /** KDV dahil satış fiyatı. */
+  salePrice: number;
+  /** KDV dahil hammadde maliyeti (seçili reçete). */
+  materialCost: number;
+  /** KDV dahil ambalaj maliyeti. */
+  packagingCost: number;
+  /** KDV dahil kargo maliyeti. */
+  shippingCost: number;
+  /** Komisyon/ödeme oranı (örn. PAYTR %3,9). KDV dahil satış üzerinden, tam düşülür. */
+  commissionPercent: number;
+  /** KDV oranı (örn. 20). */
+  vatPercent: number;
+  /** Adet başı işçilik + genel gider (KDV hariç; kendi emeğinde indirilecek KDV yok). */
+  laborOverheadCost?: number;
+};
+
+export type DevProfit = {
+  /** KDV dahil toplam maliyet (hammadde + ambalaj + kargo). */
+  totalCostGross: number;
+  /** KDV hariç satış (gerçek hasılat). */
+  saleEx: number;
+  /** KDV hariç toplam maliyet. */
+  costEx: number;
+  /** Satıştan tahsil edilen KDV (hesaplanan KDV). */
+  outputVat: number;
+  /** Alış/maliyet faturalarındaki indirilebilir KDV. */
+  inputVat: number;
+  /** Devlete ödenecek KDV = hesaplanan − indirilecek (vergi matrahı). */
+  vatPayable: number;
+  /** Komisyon/ödeme bedeli, TL. */
+  commission: number;
+  /** Adet başı işçilik + genel gider (KDV hariç), hesaba katılan. */
+  laborOverheadCost: number;
+  /** Net kâr. */
+  net: number;
+  /** Net kâr marjı: net / KDV hariç satış (muhasebe doğrusu). */
+  margin: number;
+  /** Net kâr / KDV dahil satış (kullanıcının gördüğü ciroya oran). */
+  marginOnSale: number;
+};
+
+/**
+ * Ürün geliştirme sihirbazının "Maliyet & Fiyat" adımı için gerçek net kâr.
+ * Excel'deki hesapla birebir aynı: maliyet ve satış KDV'den arındırılır, komisyon
+ * (KDV dahil satış üzerinden) düşülür. Böylece basit "satış − maliyet" yerine
+ * KDV ve komisyon dahil edilmiş doğru kâr çıkar (finans modeli, calcChannelProfit
+ * ile aynı mantık ailesinden).
+ */
+export function calcDevProfit(input: DevProfitInput): DevProfit {
+  const v = 1 + input.vatPercent / 100;
+  const totalCostGross = input.materialCost + input.packagingCost + input.shippingCost;
+  const saleEx = input.salePrice / v;
+  const costEx = totalCostGross / v;
+  const outputVat = input.salePrice - saleEx;
+  const inputVat = totalCostGross - costEx;
+  const vatPayable = outputVat - inputVat;
+  const commission = (input.salePrice * input.commissionPercent) / 100;
+  const laborOverheadCost = input.laborOverheadCost ?? 0;
+  const net = saleEx - costEx - commission - laborOverheadCost;
+  return {
+    totalCostGross,
+    saleEx,
+    costEx,
+    outputVat,
+    inputVat,
+    vatPayable,
+    commission,
+    laborOverheadCost,
+    net,
+    margin: saleEx > 0 ? (net / saleEx) * 100 : 0,
+    marginOnSale: input.salePrice > 0 ? (net / input.salePrice) * 100 : 0,
   };
 }
 
@@ -160,8 +259,12 @@ export type SuggestInput = {
   value: number;
   /** targetMargin modunda kesintileri belirleyen kanal profili (zorunlu). */
   profile?: ChannelProfile;
-  /** targetMargin: KDV hariç ürün maliyeti (hammadde + ambalaj, kargo HARİÇ). */
+  /** targetMargin: ürün maliyeti (hammadde + ambalaj, kargo HARİÇ). Varsayılan KDV hariç. */
   productCost?: number;
+  /** Verilirse `productCost` KDV DAHİL sayılır ve bu oranla arındırılır. */
+  productCostVatPercent?: number;
+  /** targetMargin: adet başı işçilik + genel gider (KDV hariç), sabit maliyete eklenir. */
+  extraCostEx?: number;
   /** targetMargin: profil kargosu 0 ise ürün bazlı kargo (KDV dahil). */
   shippingOverride?: number;
   rounding?: Rounding;
@@ -188,13 +291,14 @@ export function suggestPrice(input: SuggestInput): number | null {
       // calcChannelProfit ile aynı model: net(P) = P·a − C.
       // Hedef marj KDV hariç satış bazında: net = (m/100)·P/(1+v) → P = C / (a − (m/100)/(1+v)).
       const p = input.profile;
-      const cost = input.productCost ?? 0;
+      // Maliyet KDV dahil verildiyse arındır (calcChannelProfit ile aynı model).
+      const cost = (input.productCost ?? 0) / (1 + (input.productCostVatPercent ?? 0) / 100);
       if (!p || cost <= 0) return null;
       const v = 1 + p.vatPercent / 100;
       const paymentShare = (p.paymentFeePercent / 100) * (p.paymentFeeVatDeductible ? 1 / v : 1);
       const a = (1 - p.stopajPercent / 100) / v - p.commissionPercent / 100 - paymentShare;
       const shippingGross = p.shippingCost > 0 ? p.shippingCost : (input.shippingOverride ?? 0);
-      const fixedCosts = (p.fixedFee + shippingGross) / v + cost;
+      const fixedCosts = (p.fixedFee + shippingGross) / v + cost + (input.extraCostEx ?? 0);
       const denom = a - input.value / 100 / v;
       if (denom <= 0.0001) return null;
       raw = fixedCosts / denom;

@@ -22,6 +22,7 @@ import TemplatePicker from "@/components/TemplatePicker";
 import { formatTL } from "@/lib/format";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { trpc } from "@/lib/trpc";
+import { calcDevProfit } from "@shared/pricing";
 import {
   ArrowLeft,
   ArrowRight,
@@ -32,6 +33,7 @@ import {
   LayoutGrid,
   List,
   Package,
+  Pencil,
   Plus,
   Star,
   Trash2,
@@ -289,11 +291,16 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const [, setLocation] = useLocation();
   const { data, isLoading } = trpc.dev.get.useQuery({ id });
   const { data: materials } = trpc.materials.list.useQuery();
+  const { data: settings } = trpc.settings.get.useQuery();
   const [step, setStep] = useState<number | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
   const [trialDialogOpen, setTrialDialogOpen] = useState(false);
   const [trialNotes, setTrialNotes] = useState("");
   const [trialRows, setTrialRows] = useState<TrialItemRow[]>([]);
+  // Düzenlenen deneme id'si (null → yeni deneme ekleniyor).
+  const [editTrialId, setEditTrialId] = useState<number | null>(null);
+  // KDV, komisyon ve adet başı işçilik+genel gider (ayarlardan gelir; düzenlenip global kaydedilir).
+  const [rates, setRates] = useState<{ vat: string; commission: string; labor: string }>({ vat: "", commission: "", labor: "" });
 
   const project = data?.project;
   const trials = data?.trials ?? [];
@@ -325,26 +332,63 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
     }
   }, [project]);
 
+  // Oranların varsayılanı: KDV → ayarlardaki vatRate (yoksa 20), komisyon → PAYTR %3,9.
+  useEffect(() => {
+    if (settings) {
+      setRates(r => ({
+        vat: r.vat || (settings.vatRate ?? "20"),
+        commission: r.commission || (settings.devCommissionPercent ?? "3.9"),
+        labor: r.labor || (settings.unitLaborOverhead ?? "0"),
+      }));
+    }
+  }, [settings]);
+
+  const saveRates = trpc.settings.save.useMutation();
+
   const updateProject = trpc.dev.update.useMutation({
     onSuccess: () => utils.dev.get.invalidate({ id }),
     onError: e => toast.error(e.message),
   });
 
+  function closeTrialDialog() {
+    setTrialDialogOpen(false);
+    setEditTrialId(null);
+    setTrialRows([]);
+    setTrialNotes("");
+  }
+
   const addTrial = trpc.dev.addTrial.useMutation({
     onSuccess: () => {
       utils.dev.get.invalidate({ id });
-      setTrialDialogOpen(false);
-      setTrialRows([]);
-      setTrialNotes("");
+      closeTrialDialog();
       toast.success("Deneme kaydedildi");
     },
     onError: e => toast.error(e.message),
   });
 
   const updateTrial = trpc.dev.updateTrial.useMutation({
-    onSuccess: () => utils.dev.get.invalidate({ id }),
+    onSuccess: (_r, vars) => {
+      utils.dev.get.invalidate({ id });
+      // Reçete (hammadde) düzenlemesi kaydedildiyse pencereyi kapat.
+      if (vars.items) {
+        closeTrialDialog();
+        toast.success("Reçete güncellendi");
+      }
+    },
     onError: e => toast.error(e.message),
   });
+
+  // Var olan denemeyi düzenlemek için pencereyi mevcut hammadde/notla açar.
+  function openEditTrial(trial: { id: number; notes: string | null; items: { materialId: number; qty: string }[] }) {
+    setEditTrialId(trial.id);
+    setTrialNotes(trial.notes ?? "");
+    setTrialRows(
+      trial.items.length > 0
+        ? trial.items.map(i => ({ materialId: String(i.materialId), qty: String(parseFloat(i.qty)), note: "" }))
+        : [{ materialId: "", qty: "", note: "" }],
+    );
+    setTrialDialogOpen(true);
+  }
 
   const deleteTrial = trpc.dev.deleteTrial.useMutation({
     onSuccess: () => utils.dev.get.invalidate({ id }),
@@ -401,9 +445,22 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const packaging = parseFloat(form.packagingCost ?? "0") || 0;
   const shipping = parseFloat(form.shippingCost ?? "0") || 0;
   const sale = parseFloat(form.salePrice ?? "0") || 0;
-  const totalCost = chosenCost + packaging + shipping;
-  const profit = sale - totalCost;
-  const margin = sale > 0 ? (profit / sale) * 100 : 0;
+  const vatPct = parseFloat(rates.vat) || 0;
+  const commissionPct = parseFloat(rates.commission) || 0;
+  const laborOverhead = parseFloat(rates.labor) || 0;
+  // Gerçek net kâr: KDV, komisyon ve işçilik+genel gider dahil. Maliyet/satış KDV dahil girilir.
+  const dev = calcDevProfit({
+    salePrice: sale,
+    materialCost: chosenCost,
+    packagingCost: packaging,
+    shippingCost: shipping,
+    commissionPercent: commissionPct,
+    vatPercent: vatPct,
+    laborOverheadCost: laborOverhead,
+  });
+  const totalCost = dev.totalCostGross;
+  const profit = dev.net;
+  const margin = dev.marginOnSale;
 
   const field = (key: string, label: string, placeholder = "", textarea = false, pickerKind?: string) => (
     <div className="space-y-1.5">
@@ -504,6 +561,8 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
               <Button
                 size="sm"
                 onClick={() => {
+                  setEditTrialId(null);
+                  setTrialNotes("");
                   setTrialRows([{ materialId: "", qty: "", note: "" }]);
                   setTrialDialogOpen(true);
                 }}
@@ -548,6 +607,14 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
                     <Star className="h-3.5 w-3.5 mr-1" /> Seç
                   </Button>
                 )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  onClick={() => openEditTrial(t)}
+                >
+                  <Pencil className="h-3.5 w-3.5 mr-1" /> Düzenle
+                </Button>
                 <Button
                   variant="ghost"
                   size="icon"
@@ -654,31 +721,118 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
       {currentStep === 4 && (
         <Card className="p-5 space-y-3">
           <div className="rounded-lg bg-muted/50 p-3 text-sm flex justify-between">
-            <span>Seçili reçetenin hammadde maliyeti</span>
+            <span>Seçili reçetenin hammadde maliyeti (KDV dahil)</span>
             <span className="font-semibold">{chosen ? formatTL(chosenCost) : "Reçete seçilmedi"}</span>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            {field("packagingCost", "Ambalaj Maliyeti (₺)", "0")}
-            {field("shippingCost", "Kargo Maliyeti (₺)", "0")}
+            {field("packagingCost", "Ambalaj Maliyeti (₺, KDV dahil)", "0")}
+            {field("shippingCost", "Kargo Maliyeti (₺, KDV dahil)", "0")}
           </div>
-          {field("salePrice", "Satış Fiyatı (₺)", "0")}
-          <div className="rounded-lg border p-3 text-sm space-y-1">
+          {field("salePrice", "Satış Fiyatı (₺, KDV dahil)", "0")}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>KDV Oranı (%)</Label>
+              <Input
+                type="number"
+                min="0"
+                step="0.1"
+                value={rates.vat}
+                placeholder="20"
+                onChange={e => setRates(r => ({ ...r, vat: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Komisyon / Ödeme (%)</Label>
+              <Input
+                type="number"
+                min="0"
+                step="0.1"
+                value={rates.commission}
+                placeholder="3.9"
+                onChange={e => setRates(r => ({ ...r, commission: e.target.value }))}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Pazaryeri/POS komisyonu. Örn. PAYTR %3,9, Trendyol ~%20.
+              </p>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>İşçilik + Genel Gider (₺/adet)</Label>
+            <Input
+              type="number"
+              min="0"
+              step="0.01"
+              value={rates.labor}
+              placeholder="0"
+              onChange={e => setRates(r => ({ ...r, labor: e.target.value }))}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Adet başı işçilik + genel gider (kira/elektrik payı). KDV hariç. Öneri: aylık genel
+              gider ÷ aylık üretilen adet + işçilik payı.
+            </p>
+          </div>
+
+          {/* Excel'le aynı kâr dökümü: KDV ve komisyon dahil gerçek net kâr. */}
+          <div className="rounded-lg border p-3 text-sm space-y-1.5">
             <div className="flex justify-between">
-              <span>Toplam maliyet</span>
+              <span>Toplam maliyet (KDV dahil)</span>
               <span className="font-medium">{formatTL(totalCost)}</span>
             </div>
-            <div className="flex justify-between">
-              <span>Net kâr</span>
+            <div className="flex justify-between text-muted-foreground">
+              <span>Satış (KDV hariç)</span>
+              <span>{formatTL(dev.saleEx)}</span>
+            </div>
+            <div className="flex justify-between text-muted-foreground">
+              <span>Maliyet (KDV hariç)</span>
+              <span>−{formatTL(dev.costEx)}</span>
+            </div>
+            <div className="flex justify-between text-muted-foreground">
+              <span>Komisyon ({commissionPct.toLocaleString("tr-TR")}%)</span>
+              <span>−{formatTL(dev.commission)}</span>
+            </div>
+            {laborOverhead > 0 && (
+              <div className="flex justify-between text-muted-foreground">
+                <span>İşçilik + genel gider</span>
+                <span>−{formatTL(dev.laborOverheadCost)}</span>
+              </div>
+            )}
+            <div className="flex justify-between text-muted-foreground border-t pt-1.5">
+              <span>Hesaplanan KDV</span>
+              <span>{formatTL(dev.outputVat)}</span>
+            </div>
+            <div className="flex justify-between text-muted-foreground">
+              <span>İndirilecek KDV</span>
+              <span>−{formatTL(dev.inputVat)}</span>
+            </div>
+            <div className="flex justify-between text-muted-foreground">
+              <span>Ödenecek KDV (vergi matrahı)</span>
+              <span>{formatTL(dev.vatPayable)}</span>
+            </div>
+            <div className="flex justify-between border-t pt-1.5 text-base">
+              <span className="font-medium">Net kâr</span>
               <span className={`font-semibold ${profit >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
                 {formatTL(profit)} ({margin.toFixed(1)}%)
               </span>
             </div>
+            <p className="text-[11px] text-muted-foreground pt-1">
+              Net kâr = (satış − komisyon) KDV'den arındırılıp maliyet düşülerek bulunur; KDV ve
+              komisyon hesaba katılır (basit "satış − maliyet" değil).
+            </p>
           </div>
           <div className="flex justify-between">
             <Button variant="outline" onClick={() => setStep(3)}>
               <ArrowLeft className="h-4 w-4 mr-1" /> Geri
             </Button>
-            <Button onClick={() => saveFields(["packagingCost", "shippingCost", "salePrice"], 5)}>
+            <Button
+              onClick={() => {
+                saveRates.mutate({
+                  vatRate: rates.vat || "20",
+                  devCommissionPercent: rates.commission || "0",
+                  unitLaborOverhead: rates.labor || "0",
+                });
+                saveFields(["packagingCost", "shippingCost", "salePrice"], 5);
+              }}
+            >
               Kaydet ve Devam <ArrowRight className="h-4 w-4 ml-1" />
             </Button>
           </div>
@@ -732,11 +886,11 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
         </Card>
       )}
 
-      {/* Deneme ekleme penceresi */}
-      <Dialog open={trialDialogOpen} onOpenChange={setTrialDialogOpen}>
+      {/* Deneme ekleme / düzenleme penceresi */}
+      <Dialog open={trialDialogOpen} onOpenChange={o => (o ? setTrialDialogOpen(true) : closeTrialDialog())}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Yeni Reçete Denemesi</DialogTitle>
+            <DialogTitle>{editTrialId ? "Reçeteyi Düzenle" : "Yeni Reçete Denemesi"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-2">
@@ -814,17 +968,22 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setTrialDialogOpen(false)}>
+            <Button variant="outline" onClick={closeTrialDialog}>
               İptal
             </Button>
             <Button
-              disabled={addTrial.isPending}
+              disabled={addTrial.isPending || updateTrial.isPending}
               onClick={() => {
                 const items = trialRows
                   .filter(r => r.materialId && parseFloat(r.qty) > 0)
                   .map(r => ({ materialId: Number(r.materialId), qty: parseFloat(r.qty) }));
                 if (items.length === 0) return toast.error("En az bir hammadde satırı girin");
-                addTrial.mutate({ projectId: id, notes: trialNotes.trim() || null, items });
+                const notes = trialNotes.trim() || null;
+                if (editTrialId) {
+                  updateTrial.mutate({ id: editTrialId, notes, items });
+                } else {
+                  addTrial.mutate({ projectId: id, notes, items });
+                }
               }}
             >
               Kaydet

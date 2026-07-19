@@ -193,6 +193,8 @@ export default function Campaigns() {
         </Button>
       </div>
 
+      <CouponManager />
+
       <Card className="p-4 space-y-3">
         <div className="flex items-center justify-between">
           <Button
@@ -399,5 +401,136 @@ export default function Campaigns() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+/* ------------------------- Kupon Kodları (web mağaza) ------------------------- */
+
+type StoreCoupon = {
+  code: string;
+  type: "percent" | "fixed" | "freeShipping";
+  value: number;
+  minSubtotal?: number;
+  expiresAt?: string | null;
+  active?: boolean;
+};
+
+const COUPON_TYPE_LABEL: Record<StoreCoupon["type"], string> = {
+  percent: "% İndirim",
+  fixed: "₺ İndirim",
+  freeShipping: "Kargo Bedava",
+};
+
+function CouponManager() {
+  const utils = trpc.useUtils();
+  const { data } = trpc.coupons.list.useQuery();
+  const coupons = (data as StoreCoupon[] | undefined) ?? [];
+  const [draft, setDraft] = useState<StoreCoupon>({ code: "", type: "percent", value: 10, active: true });
+
+  const save = trpc.coupons.save.useMutation({
+    onSuccess: () => {
+      utils.coupons.list.invalidate();
+      toast.success("Kuponlar kaydedildi");
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  const persist = (next: StoreCoupon[]) => save.mutate(next as never);
+
+  const add = () => {
+    const code = draft.code.trim().toLocaleUpperCase("tr-TR");
+    if (!code) return toast.error("Kupon kodu gerekli");
+    if (coupons.some(c => c.code.toLocaleUpperCase("tr-TR") === code)) return toast.error("Bu kod zaten var");
+    persist([...coupons, { ...draft, code, active: true }]);
+    setDraft({ code: "", type: "percent", value: 10, active: true });
+  };
+
+  return (
+    <Card className="p-4 space-y-3">
+      <div>
+        <h2 className="font-semibold flex items-center gap-2">
+          <CalendarDays className="h-4 w-4 text-primary" /> Web Mağaza Kupon Kodları
+        </h2>
+        <p className="text-xs text-muted-foreground">
+          Mağaza sepetinde geçerli indirim kuponları. Yüzde, sabit tutar veya kargo bedava.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 items-end">
+        <div className="space-y-1">
+          <Label className="text-xs">Kod</Label>
+          <Input value={draft.code} onChange={e => setDraft(d => ({ ...d, code: e.target.value }))} placeholder="YUZDE10" />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Tür</Label>
+          <Select value={draft.type} onValueChange={v => setDraft(d => ({ ...d, type: v as StoreCoupon["type"] }))}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="percent">% İndirim</SelectItem>
+              <SelectItem value="fixed">₺ İndirim</SelectItem>
+              <SelectItem value="freeShipping">Kargo Bedava</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Değer</Label>
+          <Input
+            type="number"
+            min="0"
+            value={draft.value}
+            disabled={draft.type === "freeShipping"}
+            onChange={e => setDraft(d => ({ ...d, value: parseFloat(e.target.value) || 0 }))}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Min. Sepet (₺)</Label>
+          <Input
+            type="number"
+            min="0"
+            value={draft.minSubtotal ?? ""}
+            onChange={e => setDraft(d => ({ ...d, minSubtotal: parseFloat(e.target.value) || undefined }))}
+          />
+        </div>
+        <Button onClick={add} disabled={save.isPending}>
+          <Plus className="h-4 w-4 mr-1" /> Ekle
+        </Button>
+      </div>
+
+      {coupons.length > 0 && (
+        <div className="space-y-1.5">
+          {coupons.map((c, i) => (
+            <div key={c.code} className="flex items-center gap-2 rounded-lg border p-2 text-sm">
+              <Badge variant="secondary" className="font-mono">{c.code}</Badge>
+              <span className="text-muted-foreground">
+                {COUPON_TYPE_LABEL[c.type]}
+                {c.type !== "freeShipping" && ` · ${c.value}${c.type === "percent" ? "%" : "₺"}`}
+                {c.minSubtotal ? ` · min ${c.minSubtotal}₺` : ""}
+              </span>
+              <Badge variant={c.active === false ? "outline" : "default"} className="ml-auto text-[10px]">
+                {c.active === false ? "Pasif" : "Aktif"}
+              </Badge>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7"
+                onClick={() => persist(coupons.map((x, idx) => (idx === i ? { ...x, active: !(x.active !== false) } : x)))}
+              >
+                {c.active === false ? "Aktifleştir" : "Durdur"}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                onClick={() => persist(coupons.filter((_, idx) => idx !== i))}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
   );
 }
