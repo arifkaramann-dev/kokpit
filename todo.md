@@ -240,8 +240,9 @@ sihirbazı reçete düzenleme + KDV-dahil maliyet modeli (/fiyat + Maliyet + sih
 ### Tema A — Üretim & Maliyet Gerçeği (dış bağımlılık YOK, önce yapılır)
 - [x] A0. KDV-dahil kâr modeli: calcChannelProfit+suggestPrice productCostVatPercent;
       /fiyat + Maliyet + sihirbaz hizalandı; sihirbazda reçete düzenleme (bu oturum)
-- [ ] A1. Gerçekleşen kâr raporu (reportUtils/channelProfitReport) aynı KDV-dahil maliyet
-      modeline hizala (productCostVatPercent = kanal KDV'si) — beklenen ile tutarlı olsun
+- [x] A1. Gerçekleşen kâr raporu (reportUtils/channelProfitReport) aynı KDV-dahil maliyet
+      modeline hizalı (productCostVatPercent = profile.vatPercent, reportUtils.ts:118-125;
+      report.channel.test.ts kilitli) — 19.07 ekip denetiminde zaten bitmiş olduğu doğrulandı
 - [x] A2. Ürün tam maliyeti v1: adet başı işçilik + genel gider (KDV hariç) → calcDevProfit
       + calcChannelProfit + suggestPrice; sihirbaz, Maliyet, /fiyat ve gerçekleşen rapor
       hepsi düşüyor; ayar unitLaborOverhead (Settings + sayfalarda düzenlenir). Sonraki
