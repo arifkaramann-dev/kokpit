@@ -288,6 +288,38 @@ export type Customer = typeof customers.$inferSelect;
 export type InsertCustomer = typeof customers.$inferInsert;
 
 /**
+ * CRM satış boru hattı (lead → fırsat): potansiyel müşteri, kaynak ve aşama.
+ * Kazanılınca müşteri kaydına (customerId) ve/veya teklife bağlanır. Teklif/
+ * sipariş modülü zaten var; buradaki tek eksik "lead" öncesi aşama.
+ */
+export const leads = mysqlTable(
+  "leads",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    name: varchar("name", { length: 255 }).notNull(),
+    phone: varchar("phone", { length: 64 }),
+    email: varchar("email", { length: 320 }),
+    // Kaynak: instagram / whatsapp / pazaryeri / referans / web / diğer (serbest).
+    source: varchar("source", { length: 64 }).notNull().default("diğer"),
+    // Boru hattı aşaması: yeni → iletişim → teklif → kazanıldı / kaybedildi.
+    stage: mysqlEnum("stage", ["yeni", "iletisim", "teklif", "kazanildi", "kaybedildi"]).notNull().default("yeni"),
+    // Tahmini fırsat değeri (KDV dahil, TL) — boru hattı toplamı için.
+    estimatedValue: decimal("estimatedValue", { precision: 12, scale: 2 }).notNull().default("0"),
+    note: text("note"),
+    // Kazanılınca bağlanan müşteri/teklif (izlenebilirlik).
+    customerId: int("customerId"),
+    quoteId: int("quoteId"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  t => [index("leads_stage_idx").on(t.stage)],
+);
+
+export type Lead = typeof leads.$inferSelect;
+export type InsertLead = typeof leads.$inferInsert;
+
+/**
  * Giderler: hammadde/alış dışındaki işletme masrafları (kira, kargo, reklam,
  * komisyon vb.). Kâr/zarar raporu bunları cirodan düşer.
  */

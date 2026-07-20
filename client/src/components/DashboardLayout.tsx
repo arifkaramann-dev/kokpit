@@ -84,6 +84,7 @@ const menuGroups = [
       { icon: MessageSquare, label: "Soru-Cevap", path: "/sorular" },
       { icon: Store, label: "Web Mağaza", path: "/magaza" },
       { icon: Contact, label: "Müşteriler", path: "/musteriler" },
+      { icon: Target, label: "Satış Fırsatları", path: "/firsatlar" },
       { icon: ListChecks, label: "Görevler & Eksikler", path: "/gorevler" },
       { icon: CalendarDays, label: "Kampanya Takvimi", path: "/kampanyalar" },
       { icon: Sparkles, label: "AI Pazarlama", path: "/pazarlama" },

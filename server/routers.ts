@@ -224,6 +224,8 @@ const customerInput = z.object({
   notes: z.string().nullable().optional(),
 });
 
+const leadStageEnum = z.enum(["yeni", "iletisim", "teklif", "kazanildi", "kaybedildi"]);
+
 const expenseInput = z.object({
   category: z.string().min(1).default("diğer"),
   description: z.string().nullable().optional(),
@@ -1940,6 +1942,47 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
     ledger: protectedProcedure.input(z.object({ name: z.string() })).query(({ input }) => db.customerLedger(input.name)),
     // Tüm müşterilerin cari bakiyesi (küçük harf ada göre).
     balances: protectedProcedure.query(() => db.customerBalances()),
+  }),
+
+  // CRM satış boru hattı (lead → fırsat → müşteri). Teklif/sipariş zaten müşteri üzerinden.
+  leads: router({
+    list: protectedProcedure.query(() => db.listLeads()),
+    create: protectedProcedure
+      .input(
+        z.object({
+          name: z.string().min(1),
+          phone: z.string().nullable().optional(),
+          email: z.string().nullable().optional(),
+          source: z.string().default("diğer"),
+          stage: leadStageEnum.default("yeni"),
+          estimatedValue: z.number().min(0).default(0),
+          note: z.string().nullable().optional(),
+        }),
+      )
+      .mutation(({ input }) => db.createLead(toDecimalFields(input, ["estimatedValue"]) as never)),
+    update: protectedProcedure
+      .input(
+        z.object({
+          id: z.number(),
+          data: z.object({
+            name: z.string().min(1).optional(),
+            phone: z.string().nullable().optional(),
+            email: z.string().nullable().optional(),
+            source: z.string().optional(),
+            stage: leadStageEnum.optional(),
+            estimatedValue: z.number().min(0).optional(),
+            note: z.string().nullable().optional(),
+          }),
+        }),
+      )
+      .mutation(({ input }) => db.updateLead(input.id, toDecimalFields(input.data, ["estimatedValue"]) as never)),
+    // Boru hattında aşama taşıma (kart sürükle/çip).
+    setStage: protectedProcedure
+      .input(z.object({ id: z.number(), stage: leadStageEnum }))
+      .mutation(({ input }) => db.updateLead(input.id, { stage: input.stage } as never)),
+    // Kazanıldı → müşteriye dönüştür (varsa bağla, yoksa aç).
+    convert: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.convertLeadToCustomer(input.id)),
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteLead(input.id)),
   }),
 
   // Çek & Senet portföyü.

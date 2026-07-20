@@ -190,6 +190,13 @@
       "when": 1784516545211,
       "tag": "0026_friendly_mentor",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "5",
+      "when": 1784518905570,
+      "tag": "0027_melodic_hemingway",
+      "breakpoints": true
     }
   ]
 }

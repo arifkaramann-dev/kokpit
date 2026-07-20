@@ -12,10 +12,12 @@ import {
   devTrials,
   expenses,
   formulaItems,
+  leads,
   transactions,
   InsertAccount,
   InsertCheque,
   InsertCustomer,
+  InsertLead,
   InsertDevProject,
   InsertExpense,
   InsertMaterial,
@@ -485,6 +487,52 @@ export async function updateCustomer(id: number, data: Partial<InsertCustomer>) 
 export async function deleteCustomer(id: number) {
   const db = await requireDb();
   await db.delete(customers).where(eq(customers.id, id));
+}
+
+/* ------------------------- CRM Lead (satış boru hattı) ------------------------- */
+
+export async function listLeads() {
+  const db = await requireDb();
+  return db.select().from(leads).orderBy(desc(leads.updatedAt));
+}
+
+export async function createLead(data: InsertLead) {
+  const db = await requireDb();
+  const [res] = await db.insert(leads).values(data);
+  return Number(res.insertId);
+}
+
+export async function updateLead(id: number, data: Partial<InsertLead>) {
+  const db = await requireDb();
+  await db.update(leads).set(data).where(eq(leads.id, id));
+}
+
+export async function deleteLead(id: number) {
+  const db = await requireDb();
+  await db.delete(leads).where(eq(leads.id, id));
+}
+
+/**
+ * Lead'i müşteriye dönüştürür: aynı isimde müşteri varsa ona bağlar, yoksa
+ * ad/telefon/e-posta ile yeni müşteri açar; lead'i o müşteriye bağlar ve aşamayı
+ * "kazanildi" yapar. Teklif/sipariş oluşturma zaten müşteri üzerinden yapılır.
+ * Dönen: bağlanan müşteri ID'si.
+ */
+export async function convertLeadToCustomer(id: number) {
+  const db = await requireDb();
+  const [lead] = await db.select().from(leads).where(eq(leads.id, id)).limit(1);
+  if (!lead) throw new Error("Lead bulunamadı");
+  let customerId = lead.customerId ?? (await resolveCustomerIdByName(lead.name));
+  if (!customerId) {
+    const [res] = await db.insert(customers).values({
+      name: lead.name,
+      phone: lead.phone,
+      email: lead.email,
+    } as InsertCustomer);
+    customerId = Number(res.insertId);
+  }
+  await db.update(leads).set({ customerId, stage: "kazanildi" }).where(eq(leads.id, id));
+  return customerId;
 }
 
 /* ------------------------- Giderler ------------------------- */

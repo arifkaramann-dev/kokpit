@@ -18,6 +18,7 @@ import Marketing from "@/pages/Marketing";
 import NotFound from "@/pages/NotFound";
 import Orders from "@/pages/Orders";
 import Pricing from "@/pages/Pricing";
+import Leads from "@/pages/Leads";
 import Production from "@/pages/Production";
 import Traceability from "@/pages/Traceability";
 import ProductDetail from "@/pages/ProductDetail";
@@ -46,6 +47,7 @@ function AdminApp() {
         <Route path={"/siparisler"} component={Orders} />
         <Route path={"/teklifler"} component={Quotes} />
         <Route path={"/musteriler"} component={Customers} />
+        <Route path={"/firsatlar"} component={Leads} />
         <Route path={"/giderler"} component={Expenses} />
         <Route path={"/kasa"} component={Accounts} />
         <Route path={"/cari"} component={Ledgers} />
