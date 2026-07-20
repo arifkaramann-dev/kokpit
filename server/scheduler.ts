@@ -1,5 +1,6 @@
 import * as db from "./db";
 import { overdueReceivables } from "./financeUtils";
+import { daysUntilExpiry, filterExpiringLots } from "./lotUtils";
 import { isHepsiburadaConfigured } from "./hepsiburada";
 import { isTrendyolConfigured } from "./trendyol";
 import { syncAllMarketplaces } from "./marketplace";
@@ -20,6 +21,8 @@ import { notifyOwner } from "./notify";
  *  - Sabah Brifingi (her gün 08:00 İstanbul): işletme özeti → bildirim + WhatsApp
  *  - Tahsilat Takipçisi (her gün 09:00 İstanbul): 30+ gündür ödenmemiş
  *    siparişleri müşteri bazında toplar → bildirim + WhatsApp
+ *  - SKT Nöbetçisi (her gün 09:00 İstanbul): SKT'si geçmiş/yaklaşan (30 gün)
+ *    hammadde ve mamul partileri → bildirim + WhatsApp
  *
  * Not: Render ücretsiz planda süreç uykuya dalarsa zamanlayıcı da durur;
  * /api/health'e bağlı bir uptime monitörü süreci ayakta tutar.
@@ -32,12 +35,15 @@ const STOCK_INTERVAL_MS = 60 * 60 * 1000;
 const BRIEFING_HOUR_TR = 8; // İstanbul saatiyle
 const COLLECTION_HOUR_TR = 9; // İstanbul saatiyle
 const COLLECTION_MIN_DAYS = 30; // bu kadar gündür ödenmemişse hatırlat
+const EXPIRY_HOUR_TR = 9; // İstanbul saatiyle — günde bir SKT taraması
+const EXPIRY_SOON_DAYS = 30; // bu kadar gün içinde dolacak SKT "yaklaşan" sayılır
 
 const KEY_LAST_SYNC = "scheduler.lastSyncAt";
 const KEY_LAST_QUESTIONS = "scheduler.lastQuestionsSyncAt";
 const KEY_LAST_STOCK = "scheduler.lastStockCheckAt";
 const KEY_LAST_BRIEFING = "scheduler.lastBriefingDate";
 const KEY_LAST_COLLECTION = "scheduler.lastCollectionDate";
+const KEY_LAST_EXPIRY = "scheduler.lastExpiryDate";
 
 let ticking = false;
 
@@ -49,7 +55,7 @@ export function startScheduler() {
   setInterval(() => {
     void tick();
   }, 60 * 1000);
-  console.log("[scheduler] başladı (sipariş+soru senkron 15dk, stok nöbeti 60dk, brifing 08:00 TR, tahsilat takibi 09:00 TR)");
+  console.log("[scheduler] başladı (sipariş+soru senkron 15dk, stok nöbeti 60dk, brifing 08:00 TR, tahsilat+SKT nöbeti 09:00 TR)");
 }
 
 async function tick() {
@@ -86,6 +92,11 @@ async function tick() {
     if (istanbulHour(new Date()) >= COLLECTION_HOUR_TR && cfg[KEY_LAST_COLLECTION] !== todayTR) {
       await db.setSettings({ [KEY_LAST_COLLECTION]: todayTR });
       await runCollectionChaser();
+    }
+
+    if (istanbulHour(new Date()) >= EXPIRY_HOUR_TR && cfg[KEY_LAST_EXPIRY] !== todayTR) {
+      await db.setSettings({ [KEY_LAST_EXPIRY]: todayTR });
+      await runExpirySentry();
     }
   } catch (error) {
     // DB yoksa (yerel araç çalıştırma) sessizce geç; diğer hataları logla.
@@ -185,6 +196,64 @@ async function runStockSentry() {
       link: "/uretim",
     });
   }
+}
+
+/**
+ * SKT Nöbetçisi (günde bir): SKT'si geçmiş ve yaklaşan (30 gün) hammadde
+ * partileri + mamul partilerini toplar, tek bildirimde özetler. SKT'li parti
+ * yoksa sessiz kalır. materialLots/productBatches izlenebilirlik katmanından
+ * beslenir — stockQty otoritesine dokunmaz.
+ */
+async function runExpirySentry() {
+  const [lots, batches] = await Promise.all([
+    db.listMaterialLots({ onlyOpen: true, limit: 1000 }),
+    db.listProductBatches({ limit: 1000 }),
+  ]);
+  const now = new Date();
+  const lotB = filterExpiringLots(lots, EXPIRY_SOON_DAYS, now);
+  // Mamul partide "kalan" ayrı tutulmaz; üretilen qty'yi eldeki gibi değerlendir.
+  const batchB = filterExpiringLots(
+    batches.map(b => ({ ...b, remainingQty: b.qty })),
+    EXPIRY_SOON_DAYS,
+    now,
+  );
+  const totalExpired = lotB.expired.length + batchB.expired.length;
+  const totalSoon = lotB.soon.length + batchB.soon.length;
+  if (totalExpired + totalSoon === 0) return; // SKT'li parti yok → sessiz
+
+  const lines: string[] = [];
+  const lotLine = (l: (typeof lotB.expired)[number], past: boolean) => {
+    const d = daysUntilExpiry(l.expiryDate, now) ?? 0;
+    const when = past ? `${Math.abs(d)} gün önce doldu` : `${d} gün kaldı`;
+    return `• ${l.materialName ?? "?"} — ${l.lotNo} (${when}, kalan ${l.remainingQty} ${l.materialUnit ?? ""})`;
+  };
+  const batchLine = (b: (typeof batchB.expired)[number], past: boolean) => {
+    const d = daysUntilExpiry(b.expiryDate, now) ?? 0;
+    const when = past ? `${Math.abs(d)} gün önce doldu` : `${d} gün kaldı`;
+    return `• ${b.productName ?? "?"} — ${b.batchNo} (${when}, ${b.qty} adet)`;
+  };
+
+  if (lotB.expired.length || batchB.expired.length) {
+    lines.push("⛔ SKT geçmiş:");
+    lotB.expired.slice(0, 8).forEach(l => lines.push(lotLine(l, true)));
+    batchB.expired.slice(0, 8).forEach(b => lines.push(batchLine(b, true)));
+  }
+  if (lotB.soon.length || batchB.soon.length) {
+    if (lines.length) lines.push("");
+    lines.push(`⏳ ${EXPIRY_SOON_DAYS} gün içinde dolacak:`);
+    lotB.soon.slice(0, 8).forEach(l => lines.push(lotLine(l, false)));
+    batchB.soon.slice(0, 8).forEach(b => lines.push(batchLine(b, false)));
+  }
+
+  await notifyOwner({
+    kind: "skt-uyari",
+    title:
+      totalExpired > 0
+        ? `🧪 ${totalExpired} parti SKT geçmiş${totalSoon ? ` · ${totalSoon} yaklaşan` : ""}`
+        : `🧪 ${totalSoon} parti SKT'si yaklaşıyor`,
+    body: lines.join("\n"),
+    link: "/izlenebilirlik",
+  });
 }
 
 /**

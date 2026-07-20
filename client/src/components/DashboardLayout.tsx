@@ -59,6 +59,7 @@ import {
   Target,
   TrendingDown,
   Truck,
+  Layers,
   Wallet,
   Warehouse,
 } from "lucide-react";
@@ -108,6 +109,7 @@ const menuGroups = [
       { icon: FlaskConical, label: "Ürün Geliştirme", path: "/gelistirme" },
       { icon: Beaker, label: "Formül Defteri", path: "/formuller" },
       { icon: Factory, label: "Üretim", path: "/uretim" },
+      { icon: Layers, label: "Parti & İzlenebilirlik", path: "/izlenebilirlik" },
       { icon: Warehouse, label: "Stok & Hammadde", path: "/stok" },
       { icon: Calculator, label: "Maliyet & Kar", path: "/maliyet" },
       { icon: BadgePercent, label: "Fiyat & Kâr Motoru", path: "/fiyat" },

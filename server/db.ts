@@ -26,6 +26,12 @@ import {
   marketplaceQuestions,
   InsertMarketplaceQuestion,
   materials,
+  materialLots,
+  InsertMaterialLot,
+  productBatches,
+  InsertProductBatch,
+  qcTests,
+  InsertQcTest,
   notifications,
   orderItems,
   orders,
@@ -57,6 +63,7 @@ import {
   vatSummarySince,
 } from "./financeUtils";
 import { applyPurchaseToMaterial, DEFAULT_VAT_RATE, purchaseTotals } from "./purchaseUtils";
+import { selectLotsFifo } from "./lotUtils";
 import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -1066,11 +1073,33 @@ export async function listProductMovements(productId: number, limit = 50) {
     .limit(limit);
 }
 
-/** Üretim emri kaydı + mamul stok girişi (hammadde düşümü çağıran tarafta). */
-export async function recordProductionRun(productId: number, qty: number, note?: string | null) {
+/**
+ * Üretim emri kaydı + mamul stok girişi (hammadde düşümü çağıran tarafta).
+ * Ayrıca izlenebilirlik için bir üretim PARTİSİ (productBatch) oluşturur:
+ * batchNo + SKT (üretim tarihi + ürünün raf ömrü). Batch, stockQty otoritesine
+ * dokunmaz — yalnız izlenebilirlik/QC hedefidir. Üretilen run ID'sini döner.
+ */
+export async function recordProductionRun(
+  productId: number,
+  qty: number,
+  note?: string | null,
+  opts?: { batchNo?: string | null; expiryDate?: Date | null },
+): Promise<number> {
   const db = await requireDb();
-  await db.insert(productionRuns).values({ productId, qty, note: note ?? null });
+  const [res] = await db.insert(productionRuns).values({ productId, qty, note: note ?? null });
+  const runId = Number(res.insertId);
   await recordProductMovement(productId, "in", qty, "Üretim girişi");
+  const product = await getProduct(productId);
+  await createProductBatch({
+    productId,
+    qty,
+    productionRunId: runId,
+    batchNo: opts?.batchNo ?? null,
+    expiryDate: opts?.expiryDate ?? null,
+    shelfLifeDays: product?.shelfLifeDays ?? null,
+    note: note ?? null,
+  });
+  return runId;
 }
 
 export async function getProductionRun(id: number) {
@@ -1100,6 +1129,263 @@ export async function listProductionRuns(limit = 50) {
     .orderBy(desc(productionRuns.id))
     .limit(limit);
   return rows;
+}
+
+/* --------------- Parti (lot) izlenebilirlik + SKT + kalite kontrol --------------- */
+// ÖNEMLİ: Bu katman EK/izlenebilirlik amaçlıdır. materials.stockQty ve
+// products.stockQty OTORİTER kalır (pazaryeri stok gönderiminin tek kaynağı).
+// Lot/parti kayıtları stok toplamını değiştirmez; yalnız hangi partiden ne
+// tüketildiğini + SKT'yi izler.
+
+const _lotRound3 = (n: number) => Math.round((n + Number.EPSILON) * 1000) / 1000;
+const _lotRound4 = (n: number) => Math.round((n + Number.EPSILON) * 10000) / 10000;
+const _lotAddDays = (base: Date, days: number) => new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
+const _lotYmd = (d: Date) => d.toLocaleDateString("en-CA").replace(/-/g, "").slice(2); // YYMMDD
+
+/**
+ * Hammadde partisi (lot) oluşturur. SKT verilmezse raf ömründen hesaplanır
+ * (giriş + shelfLifeDays). Parti no verilmezse otomatik üretilir. stockQty'ye
+ * DOKUNMAZ — çağıran taraf zaten stoğu güncellemiştir.
+ */
+export async function createMaterialLot(input: {
+  materialId: number;
+  qty: number;
+  unitCost?: number | null;
+  lotNo?: string | null;
+  receivedDate?: Date | null;
+  expiryDate?: Date | null;
+  shelfLifeDays?: number | null;
+  supplierId?: number | null;
+  purchaseId?: number | null;
+  note?: string | null;
+}): Promise<number> {
+  const db = await requireDb();
+  const received = input.receivedDate ?? new Date();
+  let expiry = input.expiryDate ?? null;
+  if (!expiry && input.shelfLifeDays && input.shelfLifeDays > 0) {
+    expiry = _lotAddDays(received, input.shelfLifeDays);
+  }
+  let lotNo = input.lotNo?.trim() || "";
+  if (!lotNo) {
+    const [row] = await db
+      .select({ c: sql<number>`COUNT(*)` })
+      .from(materialLots)
+      .where(eq(materialLots.materialId, input.materialId));
+    lotNo = `LOT-${_lotYmd(received)}-${input.materialId}-${(Number(row?.c) || 0) + 1}`;
+  }
+  const qty = _lotRound3(input.qty);
+  const [res] = await db.insert(materialLots).values({
+    materialId: input.materialId,
+    lotNo,
+    receivedDate: received,
+    expiryDate: expiry,
+    qty: String(qty),
+    remainingQty: String(qty),
+    unitCost: String(_lotRound4(input.unitCost ?? 0)),
+    supplierId: input.supplierId ?? null,
+    purchaseId: input.purchaseId ?? null,
+    note: input.note ?? null,
+  } satisfies InsertMaterialLot);
+  return Number(res.insertId);
+}
+
+/**
+ * Hammadde tüketimini açık partilerden FIFO-SKT ile düşer (remainingQty). Partiler
+ * yetmezse eldekini düşer, kalanı `shortage` döner — asla eksiye gitmez ve
+ * stockQty'ye dokunmaz (stok otoritesi ayrı, çağıran adjustStock ile yürütür).
+ */
+export async function consumeMaterialLots(
+  materialId: number,
+  qty: number,
+  note?: string | null,
+): Promise<{ consumed: number; shortage: number; lots: number }> {
+  if (!(qty > 0)) return { consumed: 0, shortage: 0, lots: 0 };
+  const db = await requireDb();
+  const open = await db
+    .select()
+    .from(materialLots)
+    .where(and(eq(materialLots.materialId, materialId), sql`${materialLots.remainingQty} > 0`));
+  const sel = selectLotsFifo(
+    open.map(l => ({ id: l.id, remainingQty: l.remainingQty, expiryDate: l.expiryDate, receivedDate: l.receivedDate })),
+    qty,
+  );
+  // Tüketim izi zaten stockMovements'ta; burada yalnız partinin kalanını düşeriz.
+  void note;
+  for (const pick of sel.picks) {
+    await db
+      .update(materialLots)
+      .set({ remainingQty: sql`GREATEST(${materialLots.remainingQty} - ${pick.qty}, 0)` })
+      .where(eq(materialLots.id, pick.lotId));
+  }
+  return { consumed: sel.consumed, shortage: sel.shortage, lots: sel.picks.length };
+}
+
+/** Mamul üretim partisi (batch) oluşturur. SKT raf ömründen hesaplanabilir. */
+export async function createProductBatch(input: {
+  productId: number;
+  qty: number;
+  batchNo?: string | null;
+  producedDate?: Date | null;
+  expiryDate?: Date | null;
+  shelfLifeDays?: number | null;
+  productionRunId?: number | null;
+  note?: string | null;
+}): Promise<number> {
+  const db = await requireDb();
+  const produced = input.producedDate ?? new Date();
+  let expiry = input.expiryDate ?? null;
+  if (!expiry && input.shelfLifeDays && input.shelfLifeDays > 0) {
+    expiry = _lotAddDays(produced, input.shelfLifeDays);
+  }
+  let batchNo = input.batchNo?.trim() || "";
+  if (!batchNo) {
+    const [row] = await db
+      .select({ c: sql<number>`COUNT(*)` })
+      .from(productBatches)
+      .where(eq(productBatches.productId, input.productId));
+    batchNo = `PARTI-${_lotYmd(produced)}-${input.productId}-${(Number(row?.c) || 0) + 1}`;
+  }
+  const [res] = await db.insert(productBatches).values({
+    productId: input.productId,
+    batchNo,
+    producedDate: produced,
+    expiryDate: expiry,
+    qty: String(_lotRound3(input.qty)),
+    productionRunId: input.productionRunId ?? null,
+    note: input.note ?? null,
+  } satisfies InsertProductBatch);
+  return Number(res.insertId);
+}
+
+/** Bir üretim emrine bağlı partileri (ve onların QC testlerini) siler — geri alma için. */
+export async function voidProductionBatches(productionRunId: number): Promise<void> {
+  const db = await requireDb();
+  const batches = await db
+    .select({ id: productBatches.id })
+    .from(productBatches)
+    .where(eq(productBatches.productionRunId, productionRunId));
+  for (const b of batches) {
+    await db.delete(qcTests).where(eq(qcTests.productBatchId, b.id));
+  }
+  await db.delete(productBatches).where(eq(productBatches.productionRunId, productionRunId));
+}
+
+/** Hammadde partileri (ürün/hammadde adıyla). onlyOpen → yalnız remainingQty>0. */
+export async function listMaterialLots(opts?: { materialId?: number; onlyOpen?: boolean; limit?: number }) {
+  const db = await requireDb();
+  const conds = [
+    opts?.materialId != null ? eq(materialLots.materialId, opts.materialId) : undefined,
+    opts?.onlyOpen ? sql`${materialLots.remainingQty} > 0` : undefined,
+  ].filter(Boolean);
+  const rows = await db
+    .select({
+      id: materialLots.id,
+      materialId: materialLots.materialId,
+      lotNo: materialLots.lotNo,
+      receivedDate: materialLots.receivedDate,
+      expiryDate: materialLots.expiryDate,
+      qty: materialLots.qty,
+      remainingQty: materialLots.remainingQty,
+      unitCost: materialLots.unitCost,
+      supplierId: materialLots.supplierId,
+      purchaseId: materialLots.purchaseId,
+      note: materialLots.note,
+      createdAt: materialLots.createdAt,
+      materialName: materials.name,
+      materialUnit: materials.unit,
+      materialCategory: materials.category,
+    })
+    .from(materialLots)
+    .leftJoin(materials, eq(materialLots.materialId, materials.id))
+    .where(conds.length ? and(...conds) : undefined)
+    .orderBy(desc(materialLots.id))
+    .limit(opts?.limit ?? 200);
+  return rows;
+}
+
+/** Mamul üretim partileri (ürün adı/serisi/rengiyle). */
+export async function listProductBatches(opts?: { productId?: number; limit?: number }) {
+  const db = await requireDb();
+  const rows = await db
+    .select({
+      id: productBatches.id,
+      productId: productBatches.productId,
+      batchNo: productBatches.batchNo,
+      producedDate: productBatches.producedDate,
+      expiryDate: productBatches.expiryDate,
+      qty: productBatches.qty,
+      productionRunId: productBatches.productionRunId,
+      note: productBatches.note,
+      createdAt: productBatches.createdAt,
+      productName: products.name,
+      series: products.series,
+      colorHex: products.colorHex,
+    })
+    .from(productBatches)
+    .leftJoin(products, eq(productBatches.productId, products.id))
+    .where(opts?.productId != null ? eq(productBatches.productId, opts.productId) : undefined)
+    .orderBy(desc(productBatches.id))
+    .limit(opts?.limit ?? 200);
+  return rows;
+}
+
+/** Kalite kontrol testi kaydı (hedef parti/lot/run bilgisi çağıran tarafta doğrulanır). */
+export async function createQcTest(input: {
+  productBatchId?: number | null;
+  materialLotId?: number | null;
+  productionRunId?: number | null;
+  ph?: number | null;
+  viscosity?: number | null;
+  opacity?: number | null;
+  deltaE?: number | null;
+  result: "gecti" | "kaldi" | "beklemede";
+  note?: string | null;
+  testedBy?: string | null;
+}): Promise<number> {
+  const db = await requireDb();
+  const dec = (v: number | null | undefined) => (v == null ? null : String(v));
+  const [res] = await db.insert(qcTests).values({
+    productBatchId: input.productBatchId ?? null,
+    materialLotId: input.materialLotId ?? null,
+    productionRunId: input.productionRunId ?? null,
+    ph: dec(input.ph),
+    viscosity: dec(input.viscosity),
+    opacity: dec(input.opacity),
+    deltaE: dec(input.deltaE),
+    result: input.result,
+    note: input.note ?? null,
+    testedBy: input.testedBy ?? null,
+  } satisfies InsertQcTest);
+  return Number(res.insertId);
+}
+
+/** Son kalite kontrol testleri — hedef parti/lot etiketleriyle. */
+export async function listQcTests(limit = 100) {
+  const db = await requireDb();
+  return db
+    .select({
+      id: qcTests.id,
+      productBatchId: qcTests.productBatchId,
+      materialLotId: qcTests.materialLotId,
+      productionRunId: qcTests.productionRunId,
+      ph: qcTests.ph,
+      viscosity: qcTests.viscosity,
+      opacity: qcTests.opacity,
+      deltaE: qcTests.deltaE,
+      result: qcTests.result,
+      note: qcTests.note,
+      testedBy: qcTests.testedBy,
+      testedAt: qcTests.testedAt,
+      batchNo: productBatches.batchNo,
+      batchProductName: products.name,
+      lotNo: materialLots.lotNo,
+    })
+    .from(qcTests)
+    .leftJoin(productBatches, eq(qcTests.productBatchId, productBatches.id))
+    .leftJoin(products, eq(productBatches.productId, products.id))
+    .leftJoin(materialLots, eq(qcTests.materialLotId, materialLots.id))
+    .orderBy(desc(qcTests.id))
+    .limit(limit);
 }
 
 /**
@@ -1446,14 +1732,26 @@ export async function createPurchase(
     invoiceDate: Date | null;
     note: string | null;
   },
-  items: { name: string; qty: number; unit: string; unitCost: number; vatRate?: number }[]
+  items: {
+    name: string;
+    qty: number;
+    unit: string;
+    unitCost: number;
+    vatRate?: number;
+    // İzlenebilirlik (opsiyonel): verilirse partiye yazılır, verilmezse otomatik.
+    lotNo?: string | null;
+    expiryDate?: Date | null;
+    shelfLifeDays?: number | null;
+  }[]
 ) {
   const db = await requireDb();
   const { netTotal, vatTotal, grossTotal } = purchaseTotals(items);
+  // Tedarikçiyi bir kez çöz: hem fatura başlığına hem partilere aynı ID gider.
+  const supplierId = await resolveSupplierIdByName(header.supplierName);
   const [res] = await db.insert(purchases).values({
     supplierName: header.supplierName,
     // Cari bağ: tedarikçi kayıtlıysa ID ile bağla (ekstre ada değil ID'ye dayanır).
-    supplierId: await resolveSupplierIdByName(header.supplierName),
+    supplierId,
     invoiceNo: header.invoiceNo,
     invoiceDate: header.invoiceDate,
     note: header.note,
@@ -1521,6 +1819,21 @@ export async function createPurchase(
       unit,
       unitCost: String(round4(item.unitCost)),
       vatRate: String(item.vatRate ?? DEFAULT_VAT_RATE),
+    });
+    // İzlenebilirlik: her alış bir PARTİ (lot) oluşturur. Miktar materyal birimi
+    // cinsinden (stockMoveQty) — stockQty ile birebir aynı ölçekte kalsın. SKT
+    // verilmezse hammaddenin raf ömründen hesaplanır. stockQty OTORİTER kalır.
+    await createMaterialLot({
+      materialId,
+      qty: stockMoveQty,
+      unitCost: item.unitCost,
+      lotNo: item.lotNo ?? null,
+      receivedDate: header.invoiceDate ?? new Date(),
+      expiryDate: item.expiryDate ?? null,
+      shelfLifeDays: item.shelfLifeDays ?? found?.shelfLifeDays ?? null,
+      supplierId,
+      purchaseId,
+      note: header.invoiceNo ? `Fatura ${header.invoiceNo}` : null,
     });
   }
   return { purchaseId, createdCount, updatedCount, netTotal, vatTotal, grossTotal, unitWarnings };

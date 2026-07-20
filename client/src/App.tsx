@@ -19,6 +19,7 @@ import NotFound from "@/pages/NotFound";
 import Orders from "@/pages/Orders";
 import Pricing from "@/pages/Pricing";
 import Production from "@/pages/Production";
+import Traceability from "@/pages/Traceability";
 import ProductDetail from "@/pages/ProductDetail";
 import ProductImport from "@/pages/ProductImport";
 import Products from "@/pages/Products";
@@ -59,6 +60,7 @@ function AdminApp() {
         <Route path={"/gelistirme"} component={Development} />
         <Route path={"/formuller"} component={Formulas} />
         <Route path={"/uretim"} component={Production} />
+        <Route path={"/izlenebilirlik"} component={Traceability} />
         <Route path={"/maliyet"} component={Costs} />
         <Route path={"/fiyat"} component={Pricing} />
         <Route path={"/analiz"} component={Analytics} />

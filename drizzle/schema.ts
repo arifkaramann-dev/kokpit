@@ -42,6 +42,9 @@ export const materials = mysqlTable("materials", {
   stockQty: decimal("stockQty", { precision: 12, scale: 3 }).notNull().default("0"),
   criticalQty: decimal("criticalQty", { precision: 12, scale: 3 }).notNull().default("0"),
   unitCost: decimal("unitCost", { precision: 12, scale: 4 }).notNull().default("0"),
+  // Raf ömrü (gün): parti (lot) oluşurken SKT bundan otomatik hesaplanır
+  // (SKT = giriş tarihi + shelfLifeDays). NULL = sınırsız ömür (SKT takibi yok).
+  shelfLifeDays: int("shelfLifeDays"),
   supplierId: int("supplierId"),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -146,6 +149,9 @@ export const products = mysqlTable(
   videoUrl: varchar("videoUrl", { length: 512 }),
   mockupUrl: varchar("mockupUrl", { length: 512 }),
   labelWarnings: text("labelWarnings"),
+  // Mamul raf ömrü (gün): üretim partisi oluşurken SKT bundan hesaplanır
+  // (SKT = üretim tarihi + shelfLifeDays). NULL = SKT takibi yok.
+  shelfLifeDays: int("shelfLifeDays"),
   isActive: int("isActive").notNull().default(1),
   // Yaşam döngüsü: taslak = kart eksik/yayına hazır değil; satista = aktif satış;
   // arsiv = satıştan kalktı (isActive=0 ile eş anlamlı, geriye uyum için ikisi de yazılır).
@@ -785,3 +791,106 @@ export const marketplaceQuestions = mysqlTable(
 
 export type MarketplaceQuestion = typeof marketplaceQuestions.$inferSelect;
 export type InsertMarketplaceQuestion = typeof marketplaceQuestions.$inferInsert;
+
+/**
+ * Hammadde partileri (lot) — boya dikeyinin izlenebilirlik katmanı.
+ * Her alış (createPurchase) ya da elle stok girişi bir parti oluşturur; SKT
+ * (raf ömrü) ve parti maliyeti burada tutulur. ÖNEMLİ: materials.stockQty
+ * OTORİTER kalır (pazaryeri stok gönderiminin tek kaynağı); bu tablo yalnızca
+ * izlenebilirlik/SKT amaçlıdır. Üretim tüketimi remainingQty'den FIFO-SKT ile
+ * düşer ama tek-havuz toplamı bozulmaz.
+ */
+export const materialLots = mysqlTable(
+  "materialLots",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    materialId: int("materialId").notNull(),
+    // Parti numarası: verilmezse LOT-YYMMDD-<materialId>-<n> ile otomatik üretilir.
+    lotNo: varchar("lotNo", { length: 64 }).notNull(),
+    receivedDate: timestamp("receivedDate").defaultNow().notNull(),
+    // SKT — nullable: raf ömrü tanımsız hammaddede boş kalır.
+    expiryDate: timestamp("expiryDate"),
+    qty: decimal("qty", { precision: 12, scale: 3 }).notNull(),
+    // Kalan miktar: FIFO-SKT tüketiminde düşer; 0 = parti tükendi.
+    remainingQty: decimal("remainingQty", { precision: 12, scale: 3 }).notNull(),
+    // Birim maliyet KDV HARİÇ (net) — Tema 0 konvansiyonu.
+    unitCost: decimal("unitCost", { precision: 12, scale: 4 }).notNull().default("0"),
+    supplierId: int("supplierId"),
+    purchaseId: int("purchaseId"),
+    note: text("note"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  t => [
+    index("materialLots_materialId_idx").on(t.materialId),
+    index("materialLots_expiryDate_idx").on(t.expiryDate),
+    index("materialLots_purchaseId_idx").on(t.purchaseId),
+  ],
+);
+
+export type MaterialLot = typeof materialLots.$inferSelect;
+export type InsertMaterialLot = typeof materialLots.$inferInsert;
+
+/**
+ * Mamul üretim partileri — her üretim emri bir parti oluşturur. batchNo + SKT
+ * izlenebilirlik ve kalite kontrol hedefidir. products.stockQty OTORİTER kalır;
+ * bu tablo ek/izlenebilirlik katmanıdır.
+ */
+export const productBatches = mysqlTable(
+  "productBatches",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    productId: int("productId").notNull(),
+    // Parti numarası: verilmezse PARTI-YYMMDD-<productId>-<n> ile otomatik üretilir.
+    batchNo: varchar("batchNo", { length: 64 }).notNull(),
+    producedDate: timestamp("producedDate").defaultNow().notNull(),
+    expiryDate: timestamp("expiryDate"),
+    qty: decimal("qty", { precision: 12, scale: 2 }).notNull(),
+    productionRunId: int("productionRunId"),
+    note: text("note"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  t => [
+    index("productBatches_productId_idx").on(t.productId),
+    index("productBatches_expiryDate_idx").on(t.expiryDate),
+    index("productBatches_runId_idx").on(t.productionRunId),
+  ],
+);
+
+export type ProductBatch = typeof productBatches.$inferSelect;
+export type InsertProductBatch = typeof productBatches.$inferInsert;
+
+/**
+ * Kalite kontrol testleri — bir mamul partisi / hammadde partisi / üretim emri
+ * için ölçümler (pH, viskozite, örtücülük, ΔE) + geçti/kaldı sonucu. Hedef
+ * alanlardan tam biri dolu olur (productBatchId ya da materialLotId ya da
+ * productionRunId).
+ */
+export const qcTests = mysqlTable(
+  "qcTests",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    productBatchId: int("productBatchId"),
+    materialLotId: int("materialLotId"),
+    productionRunId: int("productionRunId"),
+    ph: decimal("ph", { precision: 5, scale: 2 }),
+    viscosity: decimal("viscosity", { precision: 10, scale: 2 }),
+    opacity: decimal("opacity", { precision: 6, scale: 2 }),
+    deltaE: decimal("deltaE", { precision: 6, scale: 2 }),
+    result: mysqlEnum("result", ["gecti", "kaldi", "beklemede"]).notNull().default("beklemede"),
+    note: text("note"),
+    testedBy: varchar("testedBy", { length: 128 }),
+    testedAt: timestamp("testedAt").defaultNow().notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  t => [
+    index("qcTests_productBatchId_idx").on(t.productBatchId),
+    index("qcTests_materialLotId_idx").on(t.materialLotId),
+    index("qcTests_result_idx").on(t.result),
+  ],
+);
+
+export type QcTest = typeof qcTests.$inferSelect;
+export type InsertQcTest = typeof qcTests.$inferInsert;

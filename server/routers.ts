@@ -13,6 +13,7 @@ import { executeAssistantCommand, generateOrderNo, generateQuoteNo } from "./ass
 import { buildSaleTitle, deriveCombos, parseSetCount, renameVariantTitle } from "./productUtils";
 import { computePrice, extractJson, parseFeatures, pickReferenceProduct, scoreReference, suggestSku } from "./autofill";
 import { computeReorderSuggestions, summarizeReorder } from "./reorder";
+import { filterExpiringLots } from "./lotUtils";
 import { importUrunKayit } from "./importSeed";
 import { answerTrendyolQuestion, syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf } from "./trendyol";
 import {
@@ -52,6 +53,8 @@ const materialInput = z.object({
   stockQty: z.number().min(0).default(0),
   criticalQty: z.number().min(0).default(0),
   unitCost: z.number().min(0).default(0),
+  // Raf ömrü (gün): parti SKT'si bundan hesaplanır. NULL = SKT takibi yok.
+  shelfLifeDays: z.number().int().min(0).nullable().optional(),
   supplierId: z.number().nullable().optional(),
   notes: z.string().nullable().optional(),
 });
@@ -93,6 +96,8 @@ const productInput = z.object({
   videoUrl: z.string().nullable().optional(),
   mockupUrl: z.string().nullable().optional(),
   labelWarnings: z.string().nullable().optional(),
+  // Mamul raf ömrü (gün): üretim partisi SKT'si bundan hesaplanır.
+  shelfLifeDays: z.number().int().min(0).nullable().optional(),
   // Yaşam döngüsü (Faz A3): taslak → satista → arsiv. Push yalnız "satista" gönderir.
   status: z.enum(["taslak", "satista", "arsiv"]).optional(),
 });
@@ -1168,11 +1173,16 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
         for (const f of formula) {
           const need = input.qty * (parseFloat(String(f.qty)) || 0);
           if (need > 0) {
+            // stockQty otoriter düşüş (pazaryeri stok kaynağı) — değişmedi.
             await db.adjustStock(f.materialId, "out", need, `Üretim: ${input.qty}× ${product.name}`);
+            // İzlenebilirlik: aynı miktar açık partilerden FIFO-SKT ile düşülür.
+            // Partiler yetmezse sessizce eldekini düşer (stockQty zaten otoriter).
+            await db.consumeMaterialLots(f.materialId, need, `Üretim: ${input.qty}× ${product.name}`);
           }
         }
         // Üretim emri kaydı + mamul stok girişi (Faz 0.2): üretilen adet
         // ürünün stoğuna eklenir, üretim geçmişi productionRuns'ta izlenir.
+        // recordProductionRun ayrıca üretim PARTİSİ (batch + SKT) oluşturur.
         const noteParts = [
           input.note?.trim() || null,
           missing.length > 0 ? `Eksik stokla zorlandı: ${missing.join(", ")}` : null,
@@ -1204,10 +1214,76 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
           }
         }
         await db.recordProductMovement(run.productId, "out", run.qty, "Üretim geri alındı");
+        // Bu emre bağlı üretim partisi(leri) + QC testleri silinir (yanlış emir).
+        await db.voidProductionBatches(run.id);
         const stamp = new Date().toLocaleDateString("tr-TR");
         await db.setProductionRunNote(input.id, `⛔ Geri alındı (${stamp})${run.note ? ` — ${run.note}` : ""}`);
         return { restoredMaterials: formula.length };
       }),
+  }),
+
+  // Parti izlenebilirlik + SKT + kalite kontrol (Tema A). Stok otoritesi
+  // materials/products.stockQty'de; bu router yalnız lot/parti/SKT/QC katmanını
+  // okur-yazar. SKT eşiği (gün) UI'dan gelir, varsayılan 30.
+  traceability: router({
+    lots: protectedProcedure
+      .input(z.object({ materialId: z.number().optional(), onlyOpen: z.boolean().optional() }).optional())
+      .query(({ input }) => db.listMaterialLots({ materialId: input?.materialId, onlyOpen: input?.onlyOpen })),
+    batches: protectedProcedure
+      .input(z.object({ productId: z.number().optional() }).optional())
+      .query(({ input }) => db.listProductBatches({ productId: input?.productId })),
+    // Yaklaşan/geçmiş SKT kovaları (nöbetçiyle aynı saf mantık — filterExpiringLots).
+    expiring: protectedProcedure
+      .input(z.object({ soonDays: z.number().int().min(1).max(365).default(30) }).optional())
+      .query(async ({ input }) => {
+        const soonDays = input?.soonDays ?? 30;
+        const [lots, batches] = await Promise.all([
+          db.listMaterialLots({ onlyOpen: true, limit: 1000 }),
+          db.listProductBatches({ limit: 1000 }),
+        ]);
+        const now = new Date();
+        const lotB = filterExpiringLots(lots, soonDays, now);
+        // Partide "kalan" ayrı tutulmaz — üretilen qty'yi eldeki gibi değerlendir.
+        const batchB = filterExpiringLots(
+          batches.map(b => ({ ...b, remainingQty: b.qty })),
+          soonDays,
+          now,
+        );
+        return { soonDays, lots: lotB, batches: batchB };
+      }),
+    qc: router({
+      list: protectedProcedure
+        .input(z.object({ limit: z.number().int().min(1).max(500).default(100) }).optional())
+        .query(({ input }) => db.listQcTests(input?.limit ?? 100)),
+      create: protectedProcedure
+        .input(
+          z.object({
+            productBatchId: z.number().nullable().optional(),
+            materialLotId: z.number().nullable().optional(),
+            productionRunId: z.number().nullable().optional(),
+            ph: z.number().nullable().optional(),
+            viscosity: z.number().nullable().optional(),
+            opacity: z.number().nullable().optional(),
+            deltaE: z.number().nullable().optional(),
+            result: z.enum(["gecti", "kaldi", "beklemede"]).default("beklemede"),
+            note: z.string().max(1000).nullable().optional(),
+            testedBy: z.string().max(128).nullable().optional(),
+          }),
+        )
+        .mutation(async ({ input }) => {
+          const targets = [input.productBatchId, input.materialLotId, input.productionRunId].filter(
+            (v): v is number => v != null,
+          );
+          if (targets.length === 0) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "Test için bir hedef seçin (mamul partisi ya da hammadde partisi).",
+            });
+          }
+          const id = await db.createQcTest(input);
+          return { id };
+        }),
+    }),
   }),
 
   formula: router({
