@@ -183,6 +183,13 @@
       "when": 1784496624732,
       "tag": "0025_dusty_goblin_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "5",
+      "when": 1784516545211,
+      "tag": "0026_friendly_mentor",
+      "breakpoints": true
     }
   ]
 }

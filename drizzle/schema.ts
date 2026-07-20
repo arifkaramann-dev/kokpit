@@ -894,3 +894,31 @@ export const qcTests = mysqlTable(
 
 export type QcTest = typeof qcTests.$inferSelect;
 export type InsertQcTest = typeof qcTests.$inferInsert;
+
+/**
+ * Asistan onay katmanı — bekleyen (onay bekleyen) yazma komutları. Kritik/onaylı
+ * bir komut HEMEN uygulanmaz; ayrıştırılmış komut burada saklanır, kullanıcı
+ * "evet" deyince uygulanır. sessionKey oturumu ayırır ("wa:<numara>" WhatsApp,
+ * "app:<userId>" uygulama içi) ve TEKİLDİR — oturum başına tek bekleyen eylem
+ * (yeni komut eskisini ezer). expiresAt'ten sonra geçersiz sayılır (kısa TTL).
+ * In-memory YERİNE kalıcı: Render ücretsiz plan uyku/yeniden başlatmada uçmasın.
+ */
+export const assistantPendingActions = mysqlTable(
+  "assistantPendingActions",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    sessionKey: varchar("sessionKey", { length: 128 }).notNull().unique(),
+    transcript: text("transcript").notNull(),
+    /** Ayrıştırılmış VoiceCommand (JSON serileştirilmiş). */
+    payload: text("payload").notNull(),
+    intentClass: varchar("intentClass", { length: 16 }).notNull(),
+    summary: text("summary"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    expiresAt: timestamp("expiresAt").notNull(),
+  },
+  t => [index("assistantPendingActions_expiresAt_idx").on(t.expiresAt)],
+);
+
+export type AssistantPendingAction = typeof assistantPendingActions.$inferSelect;
+export type InsertAssistantPendingAction = typeof assistantPendingActions.$inferInsert;

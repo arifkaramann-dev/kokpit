@@ -2,6 +2,8 @@ import { and, desc, eq, gte, isNull, lte, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   accounts,
+  assistantPendingActions,
+  InsertAssistantPendingAction,
   campaigns,
   cheques,
   customers,
@@ -2181,6 +2183,69 @@ export async function setSettings(entries: Record<string, string>) {
       .onDuplicateKeyUpdate({ set: { value } });
   }
   return { saved: Object.keys(entries).length };
+}
+
+/* ------------------------- Asistan bekleyen (onaylı) komutlar ------------------------- */
+
+/**
+ * Onay bekleyen bir yazma komutunu saklar. Oturum başına TEK bekleyen eylem
+ * (sessionKey tekil → yenisi eskisini ezer). TTL kadar geçerli. In-memory değil,
+ * kalıcı: Render ücretsiz plan uyku/yeniden başlatmada bekleyen onay kaybolmasın.
+ */
+export async function savePendingAction(input: {
+  sessionKey: string;
+  transcript: string;
+  payload: string;
+  intentClass: string;
+  summary?: string | null;
+  ttlMs?: number;
+}) {
+  const db = await requireDb();
+  const expiresAt = new Date(Date.now() + (input.ttlMs ?? 15 * 60 * 1000));
+  const row: InsertAssistantPendingAction = {
+    sessionKey: input.sessionKey,
+    transcript: input.transcript,
+    payload: input.payload,
+    intentClass: input.intentClass,
+    summary: input.summary ?? null,
+    expiresAt,
+  };
+  await db
+    .insert(assistantPendingActions)
+    .values(row)
+    .onDuplicateKeyUpdate({
+      set: {
+        transcript: row.transcript,
+        payload: row.payload,
+        intentClass: row.intentClass,
+        summary: row.summary,
+        expiresAt: row.expiresAt,
+        createdAt: new Date(),
+      },
+    });
+}
+
+/** Oturumun bekleyen komutunu döner; süresi dolmuşsa siler ve null döner. */
+export async function getPendingAction(sessionKey: string) {
+  const db = await requireDb();
+  const rows = await db
+    .select()
+    .from(assistantPendingActions)
+    .where(eq(assistantPendingActions.sessionKey, sessionKey))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  if (new Date(row.expiresAt).getTime() < Date.now()) {
+    await db.delete(assistantPendingActions).where(eq(assistantPendingActions.id, row.id));
+    return null;
+  }
+  return row;
+}
+
+/** Oturumun bekleyen komutunu siler (onay veya iptal sonrası). */
+export async function deletePendingAction(sessionKey: string) {
+  const db = await requireDb();
+  await db.delete(assistantPendingActions).where(eq(assistantPendingActions.sessionKey, sessionKey));
 }
 
 /** Fatura numarası sayacını 1 artırır ve yeni değeri döner (atomik değil; tek kullanıcı içindir). */

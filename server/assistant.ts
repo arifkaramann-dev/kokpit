@@ -1,6 +1,14 @@
-import { answerBusinessQuestion, parseVoiceCommand } from "./_core/claude";
+import { answerBusinessQuestion, parseVoiceCommand, type VoiceCommand } from "./_core/claude";
 import * as db from "./db";
 import { findOpenOrderForCollection, itemsTotal, summarizeItems, toItemRows } from "./orderUtils";
+import {
+  buildConfirmPreview,
+  classifyIntent,
+  isAffirmation,
+  isNegation,
+  preflightCheck,
+  STATUS_LABELS,
+} from "./assistantApproval";
 
 /**
  * Sesli komut / WhatsApp asistanının ortak beyni: serbest Türkçe metni
@@ -27,14 +35,6 @@ export function generateQuoteNo() {
 function formatCmdItems(items: { productName: string; quantity: number }[]) {
   return items.map(i => `${i.quantity}× ${i.productName}`).join(", ") || "kalemsiz";
 }
-
-const STATUS_LABELS: Record<string, string> = {
-  new: "Yeni",
-  production: "Üretimde",
-  ready: "Kargoya Hazır",
-  done: "Tamamlandı",
-  cancelled: "İptal/İade",
-};
 
 const HELP_TEXT = [
   "Yapabildiklerim 👇",
@@ -129,10 +129,91 @@ export async function buildBusinessSnapshot(): Promise<string> {
   return lines.join("\n");
 }
 
-/** Komutu çözer ve uygular; kullanıcıya dönecek Türkçe mesajı döndürür. */
-export async function executeAssistantCommand(transcript: string): Promise<{ message: string }> {
-  const cmd = await parseVoiceCommand(transcript);
+export type AssistantResult = { message: string; pending?: boolean };
 
+/** Onay bekleyen komutların yaşam süresi (kısa TTL). */
+const PENDING_TTL_MS = 15 * 60 * 1000;
+
+/**
+ * Asistanın giriş noktası + ONAY KATMANI. Serbest metni çözer:
+ *  - Bekleyen bir onay varsa ve metin "evet/hayır" ise onu uygular/iptal eder.
+ *  - Güvenli komut (soru-cevap, liste, yardım, not) hemen uygulanır.
+ *  - Onaylı/kritik komut (stok, görev, sipariş durumu, satış, gider, tahsilat)
+ *    HEMEN yazılmaz: önizleme gösterilir, ayrıştırılmış komut kalıcı saklanır,
+ *    kullanıcı "evet" deyince uygulanır. Onay tespiti kalıp tabanlı (LLM'siz).
+ *
+ * sessionKey oturumu ayırır (WhatsApp numarası / uygulama kullanıcısı) ki bir
+ * kişinin bekleyen onayı başka kişininkiyle karışmasın.
+ */
+export async function executeAssistantCommand(
+  transcript: string,
+  opts?: { sessionKey?: string },
+): Promise<AssistantResult> {
+  const sessionKey = opts?.sessionKey ?? "anon";
+
+  // 1) Bekleyen onay var mı? DB erişilemezse yok say (komutu normal işle).
+  let pending: Awaited<ReturnType<typeof db.getPendingAction>> = null;
+  try {
+    pending = await db.getPendingAction(sessionKey);
+  } catch {
+    pending = null;
+  }
+
+  if (pending) {
+    if (isAffirmation(transcript)) {
+      await safeDeletePending(sessionKey);
+      const stored = JSON.parse(pending.payload) as VoiceCommand;
+      const res = await applyCommand(stored, pending.transcript);
+      return { message: res.message };
+    }
+    if (isNegation(transcript)) {
+      await safeDeletePending(sessionKey);
+      return { message: "İptal ettim, hiçbir şey yapmadım. 👍" };
+    }
+    // Ne onay ne iptal → eski bekleyeni bırak, metni yeni komut olarak işle.
+    await safeDeletePending(sessionKey);
+  }
+
+  // 2) Yeni komutu LLM ile çöz, riske göre sınıflandır.
+  const cmd = await parseVoiceCommand(transcript);
+  const klass = classifyIntent(cmd.intent);
+
+  if (klass === "safe") {
+    return applyCommand(cmd, transcript);
+  }
+
+  // 3) Onaylı/kritik: önce saf alan kontrolü (eksikse hiç bekleyen açma).
+  const pf = preflightCheck(cmd);
+  if (!pf.ok) throw new Error(pf.message);
+
+  const preview = buildConfirmPreview(cmd, klass);
+  try {
+    await db.savePendingAction({
+      sessionKey,
+      transcript,
+      payload: JSON.stringify(cmd),
+      intentClass: klass,
+      summary: preview,
+      ttlMs: PENDING_TTL_MS,
+    });
+  } catch {
+    // Bekleyen saklanamadıysa güvenli tarafta kal: komutu UYGULAMA. Yanlış
+    // otomatik yazma yerine kullanıcıdan tekrar iste.
+    throw new Error("Onay adımını şu an kaydedemedim, komutu bir daha gönderir misin?");
+  }
+  return { message: preview, pending: true };
+}
+
+async function safeDeletePending(sessionKey: string): Promise<void> {
+  try {
+    await db.deletePendingAction(sessionKey);
+  } catch {
+    /* bekleyen silinemedi — TTL zaten süresini dolduracak */
+  }
+}
+
+/** Ayrıştırılmış komutu UYGULAR (yazma dahil). Onay katmanının arkasındadır. */
+async function applyCommand(cmd: VoiceCommand, transcript: string): Promise<{ message: string }> {
   if (cmd.intent === "sale" || cmd.intent === "order") {
     const items = (cmd.items ?? []).map(i => ({
       productName: i.name,

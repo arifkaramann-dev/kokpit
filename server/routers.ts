@@ -1660,9 +1660,11 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
     // WhatsApp webhook'u da aynı beyni kullanır (server/assistant.ts).
     command: protectedProcedure
       .input(z.object({ transcript: z.string().min(2) }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         try {
-          return await executeAssistantCommand(input.transcript);
+          return await executeAssistantCommand(input.transcript, {
+            sessionKey: `app:${ctx.user.id}`,
+          });
         } catch (error) {
           throw new TRPCError({
             code: "BAD_REQUEST",
