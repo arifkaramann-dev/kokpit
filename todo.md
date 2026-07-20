@@ -251,8 +251,12 @@ sihirbazı reçete düzenleme + KDV-dahil maliyet modeli (/fiyat + Maliyet + sih
       purchaseItems.vatRate + purchases.netTotal/vatTotal (migration 0023), totalAmount brüt,
       ağırlıklı ortalama maliyet + birim güvenliği (purchaseUtils.ts), çift-netleştirme kâr
       hatası düzeltildi (~%17 şişme), vatReport gerçek KDV. +reconcile/efatura/purchase testleri.
-- [ ] A4. Stok lot/parti + rezervasyon (üretim partisi izlenebilirlik)
-- [ ] A5. Kalite kontrol (parti testi: pH/viskozite/örtücülük/ΔE) kayıt + geçti/kaldı
+- [x] A4. Stok lot/parti izlenebilirlik (MEGA SPRINT 19.07 Tema A): materialLots +
+      productBatches + SKT/raf ömrü (migration 0025); alışta lot, üretimde parti otomatik;
+      FIFO-SKT tüketim (lotUtils); stockQty otoriter kaldı; SKT Nöbetçisi (09:00 TR).
+      REZERVASYON kapsam dışı (mimari gereği gereksiz — URUN-CEKIRDEGI D2).
+- [x] A5. Kalite kontrol (MEGA SPRINT 19.07 Tema A): qcTests (pH/viskozite/örtücülük/ΔE +
+      geçti/kaldı/beklemede, ΔE≤2 toleransı); /izlenebilirlik sayfasında parti QC kayıt/geçmiş.
 
 ### Tema B — Kendi Web Mağazası (Storefront) [PAYTR + domain patrondan]
 - [x] B1. Storefront: herkese açık vitrin + ürün sayfası (client/Storefront.tsx, /magaza

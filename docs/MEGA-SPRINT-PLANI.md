@@ -71,13 +71,12 @@ Zorunlu duraklar geçildi: finans kural onayı (net/brüt konvansiyonu), qa (tes
 - [x] A1 zaten bitmiş (bayat işaret düzeltildi); elden kanalı KDV-0 (değişmedi)
 - [x] Test boşlukları dolduruldu: reconcile.test.ts (12) + efatura.test.ts (8) + purchase.test.ts (11)
 
-### Tema A — Boya Üretim Çekirdeği  *(alan farklılaştırıcısı)*
-Zorunlu duraklar: `veritabani-mimari` (yeni tablolar) → `ux-tasarimci` (akış) →
-`frontend-gelistirici`. `pazaryeri-entegratoru` haberdar (stok = lot toplamı olmalı).
-- [ ] A4 lot/parti izlenebilirlik (**rezervasyonsuz** — karar `URUN-CEKIRDEGI...` D2'de var):
-      `materialLots`/`productionBatches`, üretim tüketimini lota bağla
-- [ ] SKT / raf ömrü + üretim tarihi (lot'a neredeyse bedava; "vadesi geçen stok" nöbetçisini besler)
-- [ ] A5 kalite kontrol: `qcTests` (parti + pH/viskozite/örtücülük/ΔE + geçti/kaldı)
+### Tema A — Boya Üretim Çekirdeği  ✅ TAMAMLANDI (19.07)
+Migration 0025. stockQty otoriter korundu (pazaryeri push bozulmadı). 287/287 test.
+- [x] A4 lot/parti izlenebilirlik (rezervasyonsuz): materialLots/productBatches,
+      alışta lot + üretimde parti otomatik, FIFO-SKT tüketim (lotUtils)
+- [x] SKT / raf ömrü + üretim tarihi (materials/products.shelfLifeDays) + SKT Nöbetçisi (09:00 TR)
+- [x] A5 kalite kontrol: qcTests (pH/viskozite/örtücülük/ΔE + geçti/kaldı, ΔE≤2 tol.) + /izlenebilirlik UI
 
 ### Tema B — Asistan Onay Katmanı + Proaktif Nöbetçiler
 Zorunlu duraklar: `finans-muhasebe-uzmani` (kritik intent'ler) + `qa-test-uzmani`.
