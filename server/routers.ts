@@ -39,6 +39,8 @@ import { getPaytrIframeToken, isPaytrConfigured } from "./paytr";
 import { buildInvoicePayload, isEfaturaConfigured, sendInvoice } from "./efatura";
 import { createShipment, isKargoConfigured } from "./kargo";
 import { applyCoupon, findCoupon, parseCoupons } from "@shared/campaigns";
+import { calcShipping, parseShippingConfig, type ShippingConfig } from "@shared/shipping";
+import { activeCampaignPercent, resolveStorePrice, type StoreCampaign } from "@shared/storePricing";
 import { parseBankStatement, reconcile } from "@shared/reconcile";
 import { channelProfitReport } from "./reportUtils";
 import { DEFAULT_CHANNEL_PROFILES, normalizeChannelProfile } from "@shared/pricing";
@@ -315,6 +317,24 @@ function toDecimalFields<T extends Record<string, unknown>>(
     if (typeof out[f] === "number") out[f] = String(out[f]);
   }
   return out;
+}
+
+/** Kampanya satırlarını mağaza fiyat çözümleyicinin (storePricing) beklediği biçime indirger. */
+function toStoreCampaigns(
+  rows: { productGroup: string | null; discountPercent: string | null; startDate: Date; endDate: Date; status: "planned" | "active" | "done" }[],
+): StoreCampaign[] {
+  return rows.map(r => ({
+    productGroup: r.productGroup,
+    discountPercent: parseFloat(String(r.discountPercent ?? 0)) || 0,
+    startDate: r.startDate,
+    endDate: r.endDate,
+    status: r.status,
+  }));
+}
+
+/** Ürünün net maliyeti (KDV hariç taban): reçete malzeme + ambalaj + kargo. Maliyet-taban guard için. */
+function productNetCost(p: { packagingCost: unknown; shippingCost: unknown }, materialCost: number): number {
+  return materialCost + (parseFloat(String(p.packagingCost)) || 0) + (parseFloat(String(p.shippingCost)) || 0);
 }
 
 /* ------------------------- App router ------------------------- */
@@ -854,14 +874,18 @@ export const appRouter = router({
           surfaceType: z.string().nullable().optional(),
           paintType: z.string().nullable().optional(),
           extraInstructions: z.string().nullable().optional(),
+          // Virgülle ayrılmış arama terimleri (SEO başlık + açıklama için öne alınır).
+          searchTerms: z.string().nullable().optional(),
         }),
       )
       .mutation(async ({ input }) => {
         const systemPrompt = `Sen Art of Colour markasının ürün içerik yazarısın. Art of Colour; oto rötuş boyaları, renk değiştiren efekt boyalar (METEOR), sedefli boyalar (VİVİD), transparan boyalar (CANDY), vernik (GLOSS), astarlar (PRİMER/PRIME X), RAL kodlu spreyler ve airbrush boyaları üreten butik bir Türk boya markasıdır.
 Görevin: verilen ürün için pazaryeri ürün kartı içeriği üretmek. Türkçe yaz, sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, örtücülük). Abartılı/yanıltıcı iddia yazma.
+SEO BAŞLIK KURALLARI (seoTitle): En çok aranan terimi BAŞA al (ör. "rötuş boyası", "airbrush boya", renk/RAL kodu); ürün türü + renk/kod + ambalaj + marka sırası. 60-100 karakter arası, doldurma/tekrar yok, BÜYÜK HARF bloğu yok, emoji yok. Arama terimleri verildiyse en az birini başlıkta ve kısa açıklamada doğal biçimde kullan.
 YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şey yazma:
 {
-  "shortDescription": "1-2 cümlelik vurucu özet (düz metin)",
+  "seoTitle": "Pazaryeri/mağaza için arama-öncelikli ürün başlığı (60-100 karakter, arama terimi başta)",
+  "shortDescription": "1-2 cümlelik vurucu özet (düz metin, arama terimini doğal kullan)",
   "longDescription": "Başlık + madde işaretli özellikler + kullanım alanları içeren HTML (<p>, <ul>, <li>, <strong> kullan)",
   "applicationText": "Adım adım uygulama talimatı (yüzey hazırlığı, çalkalama, kat sayısı, kuruma süreleri) HTML formatında",
   "labelText": "Etiket üzerine basılacak 2-3 cümlelik kısa tanıtım (düz metin)",
@@ -875,6 +899,7 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
           input.color ? `Renk: ${input.color}` : null,
           input.surfaceType ? `Yüzey/kullanım alanı: ${input.surfaceType}` : null,
           input.paintType ? `Ürün türü: ${input.paintType}` : null,
+          input.searchTerms ? `Öncelikli arama terimleri (SEO): ${input.searchTerms}` : null,
           input.extraInstructions ? `Ek yönergeler: ${input.extraInstructions}` : null,
         ]
           .filter(Boolean)
@@ -895,6 +920,7 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
           ? (parsed.features as unknown[]).filter((f): f is string => typeof f === "string").slice(0, 5)
           : [];
         return {
+          seoTitle: str("seoTitle"),
           shortDescription: str("shortDescription"),
           longDescription: str("longDescription"),
           applicationText: str("applicationText"),
@@ -2051,11 +2077,14 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
           productDetails: z.string().optional(),
           tone: z.enum(["profesyonel", "samimi", "enerjik"]).default("profesyonel"),
           extraInstructions: z.string().optional(),
+          // Virgülle ayrılmış hedef arama terimleri (SEO). Ürün açıklamasında öne alınır.
+          searchTerms: z.string().optional(),
         }),
       )
       .mutation(async ({ input }) => {
         const typeLabels: Record<string, string> = {
-          urun_aciklamasi: "SEO uyumlu e-ticaret ürün açıklaması (başlık + paragraflar + özellik listesi)",
+          urun_aciklamasi:
+            "SEO uyumlu e-ticaret ürün açıklaması (arama-öncelikli başlık + paragraflar + özellik listesi). Başlığa en çok aranan terimi BAŞA al (60-100 karakter); açıklamada arama terimlerini doğal biçimde geçir.",
           instagram_post: "Instagram gönderi metni (dikkat çekici açılış, emoji kullanımı serbest, hashtag önerileriyle)",
           reklam_metni: "kısa ve dönüşüm odaklı reklam metni (Google/Meta reklamları için 2-3 varyasyon)",
         };
@@ -2064,9 +2093,13 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
 
 Görevin: ${typeLabels[input.contentType]} yazmak.
 Ton: ${input.tone}.
-Türkçe yaz. Sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, opaklık, örtücülük vb.). Abartılı ve yanıltıcı iddialardan kaçın. Asla sahte müşteri yorumu veya uydurma istatistik ekleme.`;
+Türkçe yaz. Sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, opaklık, örtücülük vb.). Abartılı ve yanıltıcı iddialardan kaçın. Asla sahte müşteri yorumu veya uydurma istatistik ekleme.${
+          input.searchTerms
+            ? `\nSEO: Şu arama terimlerini metinde doğal biçimde kullan, doldurma/tekrar yapma: ${input.searchTerms}.`
+            : ""
+        }`;
 
-        const userPrompt = `Ürün: ${input.productName}${input.productDetails ? `\nÜrün detayları: ${input.productDetails}` : ""}${input.extraInstructions ? `\nEk yönergeler: ${input.extraInstructions}` : ""}`;
+        const userPrompt = `Ürün: ${input.productName}${input.productDetails ? `\nÜrün detayları: ${input.productDetails}` : ""}${input.searchTerms ? `\nHedef arama terimleri: ${input.searchTerms}` : ""}${input.extraInstructions ? `\nEk yönergeler: ${input.extraInstructions}` : ""}`;
 
         const response = await invokeLLM({
           messages: [
@@ -2107,32 +2140,72 @@ Türkçe yaz. Sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, o
 
   // Kendi web mağazası (Tema B) — HERKESE AÇIK uçlar (giriş gerektirmez).
   storefront: router({
-    // Vitrin: satışta ve fiyatı olan ürünler (yalnızca gerekli alanlar dışa açılır).
+    // Herkese açık mağaza ayarı: kargo modeli + ödeme durumu (client vitrinde gösterir).
+    config: publicProcedure.query(async () => {
+      const cfg = await db.getSettings();
+      return {
+        shipping: parseShippingConfig(cfg.storeShipping),
+        paymentConfigured: isPaytrConfigured(),
+        storeUrl: ENV.publicStoreUrl || "",
+      };
+    }),
+    // Vitrin: satışta ve fiyatı olan ürünler. Fiyat SUNUCUDA çözülür (ürün indirimi +
+    // aktif kampanya + maliyet-taban guard); net fiyat gösterilir, maliyet asla dışa açılmaz.
     products: publicProcedure.query(async () => {
-      const products = await db.listProducts();
+      const [products, campaignRows, costRows] = await Promise.all([
+        db.listProducts(),
+        db.listCampaigns(),
+        db.listProductMaterialCosts(),
+      ]);
+      const campaigns = toStoreCampaigns(campaignRows);
+      const costByProduct = new Map(costRows.map(r => [r.productId, parseFloat(String(r.materialCost)) || 0]));
+      const now = new Date();
       return products
         .filter(p => p.status !== "arsiv" && parseFloat(String(p.salePrice)) > 0)
-        .map(p => ({
-          id: p.id,
-          name: p.name,
-          series: p.series,
-          salePrice: parseFloat(String(p.salePrice)) || 0,
-          discountPercent: parseFloat(String(p.discountPercent)) || 0,
-          shortDescription: p.shortDescription,
-          imageUrls: p.imageUrls,
-          mockupUrl: p.mockupUrl,
-          inStock: (p.stockQty ?? 0) > 0,
-        }));
+        .map(p => {
+          const netCost = productNetCost(p, costByProduct.get(p.id) ?? 0);
+          const campaignPercent = activeCampaignPercent(campaigns, p.series, now);
+          const resolved = resolveStorePrice({
+            listPrice: parseFloat(String(p.salePrice)) || 0,
+            productDiscountPercent: parseFloat(String(p.discountPercent)) || 0,
+            campaignPercent,
+            netCost,
+          });
+          return {
+            id: p.id,
+            name: p.name,
+            series: p.series,
+            price: resolved.price,
+            listPrice: resolved.listPrice,
+            discounted: resolved.discounted,
+            discountPercent: resolved.effectiveDiscountPercent,
+            shortDescription: p.shortDescription,
+            imageUrls: p.imageUrls,
+            mockupUrl: p.mockupUrl,
+            inStock: (p.stockQty ?? 0) > 0,
+          };
+        });
     }),
     product: publicProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
-      const p = await db.getProduct(input.id);
+      const [p, campaignRows] = await Promise.all([db.getProduct(input.id), db.listCampaigns()]);
       if (!p || p.status === "arsiv") throw new TRPCError({ code: "NOT_FOUND", message: "Ürün bulunamadı" });
+      const materialCost = await db.getProductMaterialCost(p.id);
+      const netCost = productNetCost(p, materialCost);
+      const campaignPercent = activeCampaignPercent(toStoreCampaigns(campaignRows), p.series);
+      const resolved = resolveStorePrice({
+        listPrice: parseFloat(String(p.salePrice)) || 0,
+        productDiscountPercent: parseFloat(String(p.discountPercent)) || 0,
+        campaignPercent,
+        netCost,
+      });
       return {
         id: p.id,
         name: p.name,
         series: p.series,
-        salePrice: parseFloat(String(p.salePrice)) || 0,
-        discountPercent: parseFloat(String(p.discountPercent)) || 0,
+        price: resolved.price,
+        listPrice: resolved.listPrice,
+        discounted: resolved.discounted,
+        discountPercent: resolved.effectiveDiscountPercent,
         shortDescription: p.shortDescription,
         description: p.description,
         usageGuide: p.usageGuide,
@@ -2141,15 +2214,18 @@ Türkçe yaz. Sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, o
         inStock: (p.stockQty ?? 0) > 0,
       };
     }),
-    // Kupon doğrulama (sepet ekranında anında geri bildirim).
+    // Kupon doğrulama (sepet ekranında anında geri bildirim). Kargo SUNUCUDA hesaplanır
+    // (kargo bedava kuponunun anlamlı olması için input.shipping'e güvenilmez).
     checkCoupon: publicProcedure
-      .input(z.object({ code: z.string(), subtotal: z.number(), shipping: z.number().default(0) }))
+      .input(z.object({ code: z.string(), subtotal: z.number() }))
       .query(async ({ input }) => {
         const cfg = await db.getSettings();
+        const shipping = calcShipping(input.subtotal, parseShippingConfig(cfg.storeShipping));
         const coupon = findCoupon(parseCoupons(cfg.storeCoupons), input.code);
-        return applyCoupon(input.subtotal, input.shipping, coupon);
+        const res = applyCoupon(input.subtotal, shipping, coupon);
+        return { ...res, shipping };
       }),
-    // Sipariş oluşturma: fiyatlar SUNUCUDA doğrulanır (client fiyatına güvenilmez).
+    // Sipariş oluşturma: fiyat + kampanya + kargo HEP SUNUCUDA doğrulanır (client'a güvenilmez).
     createOrder: publicProcedure
       .input(
         z.object({
@@ -2162,32 +2238,54 @@ Türkçe yaz. Sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, o
         }),
       )
       .mutation(async ({ input }) => {
-        const products = await db.listProducts();
+        const [products, campaignRows, costRows, cfg] = await Promise.all([
+          db.listProducts(),
+          db.listCampaigns(),
+          db.listProductMaterialCosts(),
+          db.getSettings(),
+        ]);
+        const campaigns = toStoreCampaigns(campaignRows);
+        const costByProduct = new Map(costRows.map(r => [r.productId, parseFloat(String(r.materialCost)) || 0]));
         const byId = new Map(products.map(p => [p.id, p]));
+        const now = new Date();
         const lines: { productName: string; quantity: number; unitPrice: number }[] = [];
         let subtotal = 0;
         for (const it of input.items) {
           const p = byId.get(it.productId);
           if (!p || p.status === "arsiv") continue;
-          const base = parseFloat(String(p.salePrice)) || 0;
-          const disc = parseFloat(String(p.discountPercent)) || 0;
-          const unit = +(base * (1 - disc / 100)).toFixed(2);
+          // Nihai birim fiyat = ürün indirimi + aktif kampanya + maliyet-taban guard (storePricing).
+          const netCost = productNetCost(p, costByProduct.get(p.id) ?? 0);
+          const campaignPercent = activeCampaignPercent(campaigns, p.series, now);
+          const { price: unit } = resolveStorePrice({
+            listPrice: parseFloat(String(p.salePrice)) || 0,
+            productDiscountPercent: parseFloat(String(p.discountPercent)) || 0,
+            campaignPercent,
+            netCost,
+          });
           if (unit <= 0) continue;
           lines.push({ productName: p.name, quantity: it.quantity, unitPrice: unit });
           subtotal += unit * it.quantity;
         }
         if (lines.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Sepette geçerli ürün yok" });
+        subtotal = +subtotal.toFixed(2);
 
-        // Kupon (varsa) sunucuda tekrar doğrulanır.
+        // Kargo (sunucuda) + kupon (sunucuda tekrar doğrulanır). Kargo bedava kuponu kargoyu sıfırlar.
+        let shipping = calcShipping(subtotal, parseShippingConfig(cfg.storeShipping));
         let discount = 0;
         if (input.couponCode) {
-          const cfg = await db.getSettings();
-          const res = applyCoupon(subtotal, 0, findCoupon(parseCoupons(cfg.storeCoupons), input.couponCode));
-          if (res.ok) discount = res.discount;
+          const res = applyCoupon(subtotal, shipping, findCoupon(parseCoupons(cfg.storeCoupons), input.couponCode));
+          if (res.ok) {
+            discount = res.discount;
+            if (res.freeShipping) shipping = 0;
+          }
         }
-        const total = Math.max(0, +(subtotal - discount).toFixed(2));
+        const total = +(Math.max(0, subtotal - discount) + shipping).toFixed(2);
 
         const summary = lines.map(l => `${l.quantity}× ${l.productName}`).join(", ");
+        const noteParts = [
+          discount > 0 ? `Kupon indirimi: ${discount.toFixed(2)} ₺ (${input.couponCode})` : null,
+          shipping > 0 ? `Kargo: ${shipping.toFixed(2)} ₺` : null,
+        ].filter(Boolean);
         const orderId = Number(
           await db.createOrder({
             orderNo: generateOrderNo(),
@@ -2196,7 +2294,7 @@ Türkçe yaz. Sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, o
             status: "new",
             totalAmount: String(total),
             itemsSummary: summary,
-            notes: discount > 0 ? `Kupon indirimi: ${discount.toFixed(2)} ₺ (${input.couponCode})` : null,
+            notes: noteParts.length ? noteParts.join(" · ") : null,
             customerPhone: input.phone.trim(),
             customerAddress: input.address.trim(),
             paymentStatus: "unpaid",
@@ -2212,7 +2310,7 @@ Türkçe yaz. Sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, o
           body: `${input.customerName}\n${summary}`,
           link: "/siparisler",
         });
-        return { orderId, total, paymentConfigured: isPaytrConfigured() };
+        return { orderId, total, shipping, paymentConfigured: isPaytrConfigured() };
       }),
     // PAYTR iframe token'ı (yalnızca yapılandırılmışsa). Client bunu iframe'de gösterir.
     paytrToken: publicProcedure
@@ -2225,6 +2323,13 @@ Türkçe yaz. Sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, o
         const total = parseFloat(String(order.totalAmount)) || 0;
         const base = ENV.publicStoreUrl || "";
         const ip = (ctx.req?.headers["x-forwarded-for"]?.toString().split(",")[0] || ctx.req?.ip || "127.0.0.1").trim();
+        // Sepet kalemleri; kargo/kupon farkı (total − kalem toplamı) tek satırda dengelenir
+        // ki PAYTR sepet toplamı tahsil edilen tutarla tutarlı olsun.
+        const basket = items.map(i => ({ name: i.productName, price: parseFloat(String(i.unitPrice)) || 0, quantity: Number(i.quantity) || 1 }));
+        const itemsSum = +basket.reduce((s, b) => s + b.price * b.quantity, 0).toFixed(2);
+        const diff = +(total - itemsSum).toFixed(2);
+        if (diff > 0) basket.push({ name: "Kargo", price: diff, quantity: 1 });
+        else if (diff < 0) basket.push({ name: "İndirim", price: diff, quantity: 1 });
         const token = await getPaytrIframeToken({
           merchantOid: order.orderNo.replace(/[^a-zA-Z0-9]/g, ""),
           email: input.email,
@@ -2233,7 +2338,7 @@ Türkçe yaz. Sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, o
           userAddress: order.customerAddress ?? "-",
           userPhone: order.customerPhone ?? "-",
           userIp: ip,
-          basket: items.map(i => ({ name: i.productName, price: parseFloat(String(i.unitPrice)) || 0, quantity: Number(i.quantity) || 1 })),
+          basket,
           okUrl: `${base}/magaza/tamam`,
           failUrl: `${base}/magaza/hata`,
           testMode: !ENV.isProduction,
@@ -2259,6 +2364,23 @@ Türkçe yaz. Sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, o
         ),
       )
       .mutation(({ input }) => db.setSettings({ storeCoupons: JSON.stringify(input) })),
+  }),
+
+  // Web mağaza kargo ücreti ayarı (admin) — ayarlar JSON'unda saklanır (şema gerektirmez).
+  storeShipping: router({
+    get: protectedProcedure.query(async () => parseShippingConfig((await db.getSettings()).storeShipping)),
+    save: protectedProcedure
+      .input(
+        z.object({
+          enabled: z.boolean(),
+          fee: z.number().min(0),
+          freeOver: z.number().min(0).nullable(),
+        }),
+      )
+      .mutation(({ input }) => {
+        const cfg: ShippingConfig = { enabled: input.enabled, fee: input.fee, freeOver: input.freeOver ?? null };
+        return db.setSettings({ storeShipping: JSON.stringify(cfg) });
+      }),
   }),
 
   // e-Fatura / e-Arşiv (Tema C) — payload üretimi + (yapılandırılmışsa) gönderim.

@@ -9,6 +9,7 @@ import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { registerWhatsAppRoutes } from "../whatsapp";
 import { registerImageRoutes } from "../images";
+import { registerStorefrontSeo } from "../storefrontSeo";
 import { startScheduler } from "../scheduler";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -72,6 +73,9 @@ async function startServer() {
       createContext,
     })
   );
+  // Web mağaza SEO uçları (robots.txt, sitemap.xml, ürün meta enjeksiyonu) —
+  // SPA catch-all'ından (Vite/serveStatic) ÖNCE kaydedilir.
+  registerStorefrontSeo(app);
   // development mode uses Vite, production mode uses static files
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);

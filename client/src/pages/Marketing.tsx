@@ -38,6 +38,7 @@ export default function Marketing() {
   const [productName, setProductName] = useState("");
   const [productDetails, setProductDetails] = useState("");
   const [tone, setTone] = useState<string>("profesyonel");
+  const [searchTerms, setSearchTerms] = useState("");
   const [extra, setExtra] = useState("");
   const [result, setResult] = useState("");
   const [mode, setMode] = useState<"ai" | "manual">("ai");
@@ -80,6 +81,7 @@ export default function Marketing() {
       productName: productName.trim(),
       productDetails: productDetails || undefined,
       tone: tone as "profesyonel" | "samimi" | "enerjik",
+      searchTerms: searchTerms.trim() || undefined,
       extraInstructions: extra || undefined,
     });
   }
@@ -191,6 +193,14 @@ export default function Marketing() {
                   onChange={e => setProductDetails(e.target.value)}
                   rows={2}
                   placeholder="Örn. açıdan açıya renk değiştiren bukalemun efekt, 1K bazkat, airbrush uyumlu"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Hedef Arama Terimleri (SEO, opsiyonel)</Label>
+                <Input
+                  value={searchTerms}
+                  onChange={e => setSearchTerms(e.target.value)}
+                  placeholder="Örn. rötuş boyası, airbrush boya, bukalemun boya, RAL 9005"
                 />
               </div>
               <div className="space-y-1.5">

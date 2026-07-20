@@ -21,7 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { formatDate } from "@/lib/format";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { trpc } from "@/lib/trpc";
-import { CalendarDays, ChevronLeft, ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Pencil, Plus, Trash2, Truck } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -194,6 +194,8 @@ export default function Campaigns() {
       </div>
 
       <CouponManager />
+
+      <ShippingManager />
 
       <Card className="p-4 space-y-3">
         <div className="flex items-center justify-between">
@@ -530,6 +532,92 @@ function CouponManager() {
             </div>
           ))}
         </div>
+      )}
+    </Card>
+  );
+}
+
+/* ------------------------- Kargo Ücreti (web mağaza) ------------------------- */
+
+function ShippingManager() {
+  const utils = trpc.useUtils();
+  const { data } = trpc.storeShipping.get.useQuery();
+  const [enabled, setEnabled] = useState(false);
+  const [fee, setFee] = useState("0");
+  const [freeOver, setFreeOver] = useState("");
+
+  // Sunucudan gelen ayarı forma yükle (yalnızca ilk gelişte).
+  const [hydrated, setHydrated] = useState(false);
+  if (data && !hydrated) {
+    setEnabled(data.enabled);
+    setFee(String(data.fee));
+    setFreeOver(data.freeOver != null ? String(data.freeOver) : "");
+    setHydrated(true);
+  }
+
+  const save = trpc.storeShipping.save.useMutation({
+    onSuccess: () => {
+      utils.storeShipping.get.invalidate();
+      toast.success("Kargo ayarı kaydedildi");
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  return (
+    <Card className="p-4 space-y-3">
+      <div>
+        <h2 className="font-semibold flex items-center gap-2">
+          <Truck className="h-4 w-4 text-primary" /> Web Mağaza Kargo Ücreti
+        </h2>
+        <p className="text-xs text-muted-foreground">
+          Sepette kargo ücreti sunucuda hesaplanır. Kapalıysa kargo her zaman ücretsiz.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end">
+        <div className="space-y-1">
+          <Label className="text-xs">Durum</Label>
+          <Button
+            type="button"
+            variant={enabled ? "default" : "outline"}
+            className="w-full"
+            onClick={() => setEnabled(v => !v)}
+          >
+            {enabled ? "Açık" : "Kapalı"}
+          </Button>
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Kargo Ücreti (₺)</Label>
+          <Input type="number" min="0" value={fee} disabled={!enabled} onChange={e => setFee(e.target.value)} />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Bedava Eşiği (₺)</Label>
+          <Input
+            type="number"
+            min="0"
+            value={freeOver}
+            disabled={!enabled}
+            placeholder="opsiyonel"
+            onChange={e => setFreeOver(e.target.value)}
+          />
+        </div>
+        <Button
+          onClick={() =>
+            save.mutate({
+              enabled,
+              fee: parseFloat(fee) || 0,
+              freeOver: freeOver.trim() ? parseFloat(freeOver) || 0 : null,
+            })
+          }
+          disabled={save.isPending}
+        >
+          Kaydet
+        </Button>
+      </div>
+      {enabled && freeOver.trim() && (parseFloat(freeOver) || 0) > 0 && (
+        <p className="text-xs text-muted-foreground">
+          {parseFloat(freeOver)} ₺ ve üzeri siparişlerde kargo bedava; altında {parseFloat(fee) || 0} ₺ kargo ücreti.
+        </p>
       )}
     </Card>
   );
