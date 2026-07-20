@@ -299,7 +299,9 @@ sihirbazı reçete düzenleme + KDV-dahil maliyet modeli (/fiyat + Maliyet + sih
 - [x] notifyOwner: bildirim + WhatsApp çıkışı (24 saat tekrar-önleme)
 - [x] Zamanlayıcı: 15dk pazaryeri oto-senkron + saatlik Stok Nöbetçisi + 08:00 Sabah Brifingi
 - [x] PWA service worker + kayıt (manifest/ikonlar mevcuttu)
-- [ ] Asistanın tool-use ajanına dönüşümü + onay katmanı (guvenli/onayli/kritik)
+- [x] Asistan ONAY KATMANI (guvenli/onayli/kritik) (MEGA SPRINT 19.07 Tema B):
+      önizleme + onay, bekleyen eylem kalıcı (assistantPendingActions, migration 0026),
+      deterministik/ekstra LLM yok. Tam tool-use agentik döngü Faz 2'ye ertelendi (bilinçli).
 - [x] Tahsilat Takipçisi: her gün 09:00 TR, 30+ gündür ödenmemiş siparişler müşteri
       bazında gruplanıp bildirim + WhatsApp hatırlatma taslağıyla iletilir
       (scheduler.runCollectionChaser, saf mantık financeUtils.overdueReceivables, testli)

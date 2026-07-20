@@ -78,16 +78,14 @@ Migration 0025. stockQty otoriter korundu (pazaryeri push bozulmadı). 287/287 t
 - [x] SKT / raf ömrü + üretim tarihi (materials/products.shelfLifeDays) + SKT Nöbetçisi (09:00 TR)
 - [x] A5 kalite kontrol: qcTests (pH/viskozite/örtücülük/ΔE + geçti/kaldı, ΔE≤2 tol.) + /izlenebilirlik UI
 
-### Tema B — Asistan Onay Katmanı + Proaktif Nöbetçiler
-Zorunlu duraklar: `finans-muhasebe-uzmani` (kritik intent'ler) + `qa-test-uzmani`.
-Yeni dış bağımlılık yok (`ANTHROPIC_API_KEY` var).
-- [ ] Onay katmanı: **güvenli** (query/task_list/help/note = oto) · **onaylı**
-      (stock/task/order_status = önizleme+onay) · **kritik** (sale/order/expense/collection =
-      güçlü onay). Bekleyen-eylem **kalıcı** saklama (küçük tablo/settings — in-memory OLMAZ,
-      Render free uyku/restart'ta uçar)
-- [ ] Proaktif nöbetçiler: çek/senet vade · zararına satış/marj · cevapsız soru SLA
-- [ ] Sabah brifingi zenginleştirme (dün vs bugün satış, cevapsız soru, yaklaşan çek/senet)
-- Faz 2 (ertelenir): tam tool-use agentik döngü (çok-adımlı komut) — token disiplini için gate'li
+### Tema B — Asistan Onay Katmanı + Proaktif Nöbetçiler  ✅ TAMAMLANDI (19.07)
+Migration 0026 (assistantPendingActions). 317/317 test. Para matematiği korundu.
+- [x] Onay katmanı: güvenli (oto) · onaylı · kritik (önizleme + "evet" bekle); deterministik,
+      ekstra LLM yok; bekleyen eylem KALICI (0026, 15 dk TTL); kaydedilemezse uygulanmaz
+- [x] Proaktif nöbetçiler: çek/senet vade + zararına satış/marj + cevapsız soru SLA (sentryUtils)
+- [x] Sabah brifingi: dün vs bugün satış + yaklaşan çek/senet + cevapsız soru sayısı
+- Faz 2 (ertelendi bilinçli): tam tool-use agentik döngü (çok-adımlı) — token disiplini için gate'li
+- Canlıda: iki-turlu onay smoke testi ("Ahmet 500 ödedi" → önizleme → "evet")
 
 ### Tema C — Storefront'u Canlıya Hazırlama  *(en yüksek marjlı kanal)*
 Zorunlu duraklar: `finans-muhasebe-uzmani` (kampanya→fiyat marjı) + `qa-test-uzmani`
