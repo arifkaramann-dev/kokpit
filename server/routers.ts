@@ -14,7 +14,10 @@ import { buildSaleTitle, deriveCombos, parseSetCount, renameVariantTitle } from 
 import { computePrice, extractJson, parseFeatures, pickReferenceProduct, scoreReference, suggestSku } from "./autofill";
 import { computeReorderSuggestions, summarizeReorder } from "./reorder";
 import { importUrunKayit } from "./importSeed";
-import { answerTrendyolQuestion, syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf, TrendyolLabelNotAllowedError } from "./trendyol";
+import { answerTrendyolQuestion, syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf, TrendyolLabelNotAllowedError, isTrendyolConfigured } from "./trendyol";
+import { isHepsiburadaConfigured } from "./hepsiburada";
+import { isN11Configured } from "./n11";
+import { isCiceksepetiConfigured } from "./ciceksepeti";
 import {
   fetchTrendyolCategoryAttributes,
   getTrendyolProductBatchStatus,
@@ -1649,6 +1652,34 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
         return db.setSettings(rest);
       }),
     nextInvoiceNo: protectedProcedure.mutation(() => db.nextInvoiceNo()),
+    // Bağlantı Durumu kartı: hangi entegrasyon yapılandırılmış, zamanlayıcı canlı mı?
+    // Gizli değer sızdırmaz — yalnızca "tanımlı mı" bilgisi döner.
+    integrationStatus: protectedProcedure.query(async () => {
+      const cfg = await db.getSettings();
+      const lastTick = parseInt(cfg["scheduler.lastTickAt"] ?? "0", 10) || 0;
+      return {
+        integrations: [
+          { key: "trendyol", label: "Trendyol", ok: isTrendyolConfigured(), hint: "TRENDYOL_SELLER_ID / API_KEY / API_SECRET" },
+          { key: "hepsiburada", label: "Hepsiburada", ok: isHepsiburadaConfigured(), hint: "HEPSIBURADA_MERCHANT_ID / USERNAME / PASSWORD" },
+          { key: "n11", label: "N11", ok: isN11Configured(), hint: "N11 API anahtarları" },
+          { key: "ciceksepeti", label: "Çiçeksepeti", ok: isCiceksepetiConfigured(), hint: "Çiçeksepeti API anahtarı" },
+          {
+            key: "whatsapp",
+            label: "WhatsApp",
+            ok: Boolean(process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID),
+            hint: "WHATSAPP_ACCESS_TOKEN / PHONE_NUMBER_ID (tanı: aşağıdaki WhatsApp Tanı kartı)",
+          },
+          { key: "ai", label: "AI (Claude)", ok: Boolean(process.env.ANTHROPIC_API_KEY), hint: "ANTHROPIC_API_KEY" },
+          { key: "efatura", label: "e-Fatura (Bizimhesap)", ok: isEfaturaConfigured(), hint: "EFATURA_PROVIDER + BIZIMHESAP_FIRM_ID" },
+          { key: "kargo", label: "Kargo (Geliver)", ok: isKargoConfigured(), hint: "GELIVER_API_TOKEN (KARGO.md)" },
+          { key: "paytr", label: "PayTR (mağaza ödemesi)", ok: isPaytrConfigured(), hint: "PAYTR_MERCHANT_ID / KEY / SALT" },
+        ],
+        scheduler: {
+          disabled: process.env.SCHEDULER_DISABLED === "1",
+          lastTickAt: lastTick,
+        },
+      };
+    }),
     // ÜRÜN KAYIT Excel verilerini tek tuşla aktarır (Render ücretsiz planda
     // Shell yok). Idempotent: tekrar basmak var olan kayıtları ezmez.
     importUrunKayit: protectedProcedure.mutation(async () => {
@@ -2057,16 +2088,41 @@ Türkçe yaz. Sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, o
 
   dashboard: router({
     summary: protectedProcedure.query(async () => {
-      const [today, statusCounts, critical, upcoming, openTasks, finance, unpaid] = await Promise.all([
-        db.countOrdersToday(),
-        db.orderStatusCounts(),
-        db.listCriticalMaterials(),
-        db.upcomingCampaigns(30),
-        db.listTasks(undefined, "open"),
-        db.financeSummary(),
-        db.listUnpaidOrders(6),
-      ]);
-      return { today, statusCounts, critical, upcoming, openTasks, finance, unpaid };
+      const [today, statusCounts, critical, upcoming, openTasks, finance, unpaid, newQuestions, products, cfg] =
+        await Promise.all([
+          db.countOrdersToday(),
+          db.orderStatusCounts(),
+          db.listCriticalMaterials(),
+          db.upcomingCampaigns(30),
+          db.listTasks(undefined, "open"),
+          db.financeSummary(),
+          db.listUnpaidOrders(6),
+          db.countNewMarketplaceQuestions(),
+          db.listProducts(),
+          db.getSettings(),
+        ]);
+      // Üretim kuyruğu sayısı: Stok Nöbetçisi / Üretim sayfası kuralıyla aynı
+      // (eksi stok veya kritik eşiğin altı, pasifler hariç).
+      const productionQueue = products.filter(
+        p =>
+          p.status !== "arsiv" &&
+          ((p.stockQty ?? 0) < 0 || ((p.criticalQty ?? 0) > 0 && (p.stockQty ?? 0) <= (p.criticalQty ?? 0))),
+      ).length;
+      const schedulerLastTickAt = parseInt(cfg["scheduler.lastTickAt"] ?? "0", 10) || 0;
+      const schedulerDisabled = process.env.SCHEDULER_DISABLED === "1";
+      return {
+        today,
+        statusCounts,
+        critical,
+        upcoming,
+        openTasks,
+        finance,
+        unpaid,
+        newQuestions,
+        productionQueue,
+        schedulerLastTickAt,
+        schedulerDisabled,
+      };
     }),
   }),
 

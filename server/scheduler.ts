@@ -33,6 +33,8 @@ const BRIEFING_HOUR_TR = 8; // İstanbul saatiyle
 const COLLECTION_HOUR_TR = 9; // İstanbul saatiyle
 const COLLECTION_MIN_DAYS = 30; // bu kadar gündür ödenmemişse hatırlat
 
+const KEY_LAST_TICK = "scheduler.lastTickAt";
+const TICK_TRACE_INTERVAL_MS = 5 * 60 * 1000; // iz her turda değil, 5 dk'da bir yazılır (DB yükü)
 const KEY_LAST_SYNC = "scheduler.lastSyncAt";
 const KEY_LAST_QUESTIONS = "scheduler.lastQuestionsSyncAt";
 const KEY_LAST_STOCK = "scheduler.lastStockCheckAt";
@@ -58,6 +60,12 @@ async function tick() {
   try {
     const cfg = await db.getSettings();
     const now = Date.now();
+
+    // Canlılık izi: Kokpit'te "zamanlayıcı çalışıyor mu?" rozeti bunu okur.
+    // Render free uykuya dalınca iz eskir ve kullanıcı durumu görür.
+    if (now - num(cfg[KEY_LAST_TICK]) >= TICK_TRACE_INTERVAL_MS) {
+      await db.setSettings({ [KEY_LAST_TICK]: String(now) });
+    }
 
     if (
       (isTrendyolConfigured() || isHepsiburadaConfigured()) &&

@@ -7,7 +7,6 @@ import Analytics from "@/pages/Analytics";
 import Assistant from "@/pages/Assistant";
 import Campaigns from "@/pages/Campaigns";
 import Cheques from "@/pages/Cheques";
-import Costs from "@/pages/Costs";
 import Customers from "@/pages/Customers";
 import Expenses from "@/pages/Expenses";
 import Development from "@/pages/Development";
@@ -33,7 +32,7 @@ import Strategy from "@/pages/Strategy";
 import Suppliers from "@/pages/Suppliers";
 import Tasks from "@/pages/Tasks";
 import Templates from "@/pages/Templates";
-import { Route, Switch } from "wouter";
+import { Redirect, Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 
@@ -59,7 +58,10 @@ function AdminApp() {
         <Route path={"/gelistirme"} component={Development} />
         <Route path={"/formuller"} component={Formulas} />
         <Route path={"/uretim"} component={Production} />
-        <Route path={"/maliyet"} component={Costs} />
+        {/* Maliyet & Kâr hesaplayıcısı Fiyat Motoru'na sekme olarak taşındı; eski bağlantılar kırılmasın. */}
+        <Route path={"/maliyet"}>
+          <Redirect to="/fiyat?arac=hesaplayici" replace />
+        </Route>
         <Route path={"/fiyat"} component={Pricing} />
         <Route path={"/analiz"} component={Analytics} />
         <Route path={"/asistan"} component={Assistant} />

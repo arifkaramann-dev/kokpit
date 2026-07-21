@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import { deriveUnitLaborOverhead } from "@shared/pricing";
-import { AlertCircle, Building2, Calculator, CheckCircle2, DatabaseZap, Store } from "lucide-react";
+import { Activity, AlertCircle, Building2, Calculator, CheckCircle2, DatabaseZap, Store } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -40,6 +40,7 @@ export default function Settings() {
   const utils = trpc.useUtils();
   const { data: settings } = trpc.settings.get.useQuery();
   const { data: mpStatus } = trpc.orders.marketplaceStatus.useQuery();
+  const { data: intStatus } = trpc.settings.integrationStatus.useQuery();
   const [form, setForm] = useState<Record<string, string>>({});
   const [testResult, setTestResult] = useState<Record<string, { ok: boolean; status: number; body: string }>>({});
 
@@ -98,6 +99,54 @@ export default function Settings() {
           Fatura başlığında görünecek şirket bilgileri ve pazaryeri bağlantı durumu.
         </p>
       </div>
+
+      {/* Bağlantı Durumu: tüm entegrasyonlar + zamanlayıcı tek bakışta. */}
+      <Card className="p-5 space-y-3">
+        <h2 className="font-semibold flex items-center gap-2">
+          <Activity className="h-4 w-4 text-primary" /> Bağlantı Durumu
+        </h2>
+        {(() => {
+          const s = intStatus?.scheduler;
+          const ageMin = s && s.lastTickAt > 0 ? Math.round((Date.now() - s.lastTickAt) / 60000) : null;
+          const stale = s && !s.disabled && (ageMin === null || ageMin > 30);
+          return (
+            <p
+              className={`text-sm rounded-md border p-2.5 ${
+                s?.disabled
+                  ? "text-muted-foreground"
+                  : stale
+                    ? "border-rose-500/40 text-rose-700 dark:text-rose-400"
+                    : "border-emerald-500/40 text-emerald-700 dark:text-emerald-400"
+              }`}
+            >
+              {s?.disabled
+                ? "Zamanlayıcı bilinçli kapalı (SCHEDULER_DISABLED=1)."
+                : stale
+                  ? `Zamanlayıcı ${ageMin === null ? "hiç iz bırakmamış" : `${ageMin} dk'dır sessiz`} — Render uyumuş olabilir. cron-job.org'dan /api/health adresine 10 dakikada bir istek atan ücretsiz bir monitör kurun.`
+                  : `Zamanlayıcı çalışıyor (son iz ${ageMin} dk önce). Oto-senkron, nöbetçiler ve brifing aktif.`}
+            </p>
+          );
+        })()}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {(intStatus?.integrations ?? []).map(i => (
+            <div key={i.key} className="flex items-center gap-2 rounded-lg border p-2.5 text-sm">
+              {i.ok ? (
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+              ) : (
+                <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" />
+              )}
+              <span className="font-medium">{i.label}</span>
+              <span className={`ml-auto text-xs ${i.ok ? "text-emerald-600" : "text-amber-600"}`} title={i.hint}>
+                {i.ok ? "Bağlı" : "Eksik"}
+              </span>
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          "Eksik" olanların üzerine gelince gereken ortam değişkeni görünür; değerler Render →
+          Environment'a girilir, uygulamada saklanmaz.
+        </p>
+      </Card>
 
       <Card className="p-5 space-y-4">
         <h2 className="font-semibold flex items-center gap-2">

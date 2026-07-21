@@ -73,6 +73,7 @@ const menuGroups = [
     items: [
       { icon: LayoutDashboard, label: "Kokpit", path: "/" },
       { icon: Bot, label: "Asistan", path: "/asistan" },
+      { icon: ListChecks, label: "Görevler & Eksikler", path: "/gorevler" },
     ],
   },
   {
@@ -80,13 +81,11 @@ const menuGroups = [
     items: [
       { icon: ClipboardList, label: "Sipariş Panosu", path: "/siparisler" },
       { icon: FileText, label: "Teklifler", path: "/teklifler" },
+      { icon: Contact, label: "Müşteriler", path: "/musteriler" },
       { icon: MessageSquare, label: "Soru-Cevap", path: "/sorular" },
       { icon: Store, label: "Web Mağaza", path: "/magaza" },
-      { icon: Contact, label: "Müşteriler", path: "/musteriler" },
-      { icon: ListChecks, label: "Görevler & Eksikler", path: "/gorevler" },
       { icon: CalendarDays, label: "Kampanya Takvimi", path: "/kampanyalar" },
       { icon: Sparkles, label: "AI Pazarlama", path: "/pazarlama" },
-      { icon: LibraryBig, label: "Şablonlar", path: "/sablonlar" },
     ],
   },
   {
@@ -104,14 +103,14 @@ const menuGroups = [
     label: "Ürün & Üretim",
     items: [
       { icon: Package, label: "Ürünler & Türevler", path: "/urunler" },
-      { icon: ArrowLeftRight, label: "İçe / Dışa Aktar", path: "/urun-aktar" },
       { icon: FlaskConical, label: "Ürün Geliştirme", path: "/gelistirme" },
       { icon: Beaker, label: "Formül Defteri", path: "/formuller" },
       { icon: Factory, label: "Üretim", path: "/uretim" },
       { icon: Warehouse, label: "Stok & Hammadde", path: "/stok" },
-      { icon: Calculator, label: "Maliyet & Kar", path: "/maliyet" },
       { icon: BadgePercent, label: "Fiyat & Kâr Motoru", path: "/fiyat" },
       { icon: Truck, label: "Tedarikçiler", path: "/tedarikciler" },
+      { icon: LibraryBig, label: "Şablonlar & Seriler", path: "/sablonlar" },
+      { icon: ArrowLeftRight, label: "İçe / Dışa Aktar", path: "/urun-aktar" },
     ],
   },
   {

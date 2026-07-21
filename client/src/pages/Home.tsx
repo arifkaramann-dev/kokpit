@@ -33,14 +33,85 @@ export default function Home() {
   const finance = data?.finance;
   const netPositive = (finance?.monthNet ?? 0) >= 0;
 
+  // "Bugün ne yapmalı" şeridi: yalnızca aksiyon gerektiren (sıfır olmayan) maddeler.
+  const actions: { label: string; count: string; path: string; tone: "rose" | "amber" | "blue" }[] = [];
+  const newOrders = statusMap.get("new") ?? 0;
+  if (newOrders > 0) actions.push({ label: "yeni sipariş bekliyor", count: String(newOrders), path: "/siparisler", tone: "blue" });
+  if ((data?.newQuestions ?? 0) > 0)
+    actions.push({ label: "soru cevap bekliyor", count: String(data?.newQuestions), path: "/sorular", tone: "amber" });
+  if ((data?.productionQueue ?? 0) > 0)
+    actions.push({ label: "ürün üretim bekliyor", count: String(data?.productionQueue), path: "/uretim", tone: "amber" });
+  if ((data?.critical?.length ?? 0) > 0)
+    actions.push({ label: "hammadde kritik seviyede", count: String(data?.critical?.length), path: "/stok", tone: "rose" });
+  if ((finance?.receivables ?? 0) > 0)
+    actions.push({ label: "tahsil edilecek", count: formatTL(finance?.receivables ?? 0), path: "/cari", tone: "rose" });
+
+  // Zamanlayıcı sağlığı: iz 30 dk'dan eskiyse otomasyon durmuş demektir (Render uykusu).
+  const lastTick = data?.schedulerLastTickAt ?? 0;
+  const tickAgeMin = lastTick > 0 ? Math.round((Date.now() - lastTick) / 60000) : null;
+  const schedulerStale = !data?.schedulerDisabled && (tickAgeMin === null || tickAgeMin > 30);
+
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Kokpit</h1>
-        <p className="text-sm text-muted-foreground">
-          İşletmenizin günlük durumu tek bakışta.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Kokpit</h1>
+          <p className="text-sm text-muted-foreground">
+            İşletmenizin günlük durumu tek bakışta.
+          </p>
+        </div>
+        {!isLoading && (
+          <div
+            className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium ${
+              data?.schedulerDisabled
+                ? "text-muted-foreground"
+                : schedulerStale
+                  ? "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-400"
+                  : "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-400"
+            }`}
+            title={
+              data?.schedulerDisabled
+                ? "SCHEDULER_DISABLED=1 — otomasyon bilinçli kapalı"
+                : schedulerStale
+                  ? "Otomatik senkron/brifing/nöbetçiler çalışmıyor. Render uykuda olabilir — /api/health'e uptime monitörü kurun (cron-job.org, 10 dk)."
+                  : `Son çalışma: ${tickAgeMin} dk önce`
+            }
+          >
+            <span
+              className={`h-2 w-2 rounded-full ${
+                data?.schedulerDisabled ? "bg-muted-foreground/50" : schedulerStale ? "bg-rose-500" : "bg-emerald-500"
+              }`}
+            />
+            {data?.schedulerDisabled
+              ? "Otomasyon kapalı"
+              : schedulerStale
+                ? "Otomasyon durmuş — monitör kurun"
+                : "Otomasyon çalışıyor"}
+          </div>
+        )}
       </div>
+
+      {/* Bugün ne yapmalı — aksiyon şeridi */}
+      {!isLoading && actions.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {actions.map(a => (
+            <button
+              key={a.label}
+              onClick={() => setLocation(a.path)}
+              className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors ${
+                a.tone === "rose"
+                  ? "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-400"
+                  : a.tone === "amber"
+                    ? "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-400"
+                    : "border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-400"
+              }`}
+            >
+              <span className="font-bold">{a.count}</span> {a.label}
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Özet kartları */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -300,8 +371,8 @@ export default function Home() {
             />
             <QuickAction
               icon={<TrendingUp className="h-4 w-4" />}
-              label="Maliyet & Kâr"
-              onClick={() => setLocation("/maliyet")}
+              label="Fiyat & Kâr"
+              onClick={() => setLocation("/fiyat")}
             />
           </div>
         </Card>

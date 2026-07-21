@@ -26,8 +26,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatTL, num } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
+import Costs from "./Costs";
 import {
   calcChannelProfit,
   DEFAULT_CHANNEL_PROFILES,
@@ -94,7 +96,34 @@ function marginBadge(margin: number, hasPrice: boolean) {
   );
 }
 
+/**
+ * /fiyat artık tek "fiyat gerçeği" sayfası: toplu tablo (Fiyat Motoru) +
+ * tekil hesaplayıcı (eski Maliyet & Kâr sayfası) sekmeleri. /maliyet rotası
+ * buraya yönlenir; derin bağlantı için ?arac=hesaplayici desteklenir.
+ */
 export default function Pricing() {
+  const [tab, setTab] = useState(() =>
+    typeof window !== "undefined" && new URLSearchParams(window.location.search).get("arac") === "hesaplayici"
+      ? "hesaplayici"
+      : "tablo",
+  );
+  return (
+    <Tabs value={tab} onValueChange={setTab} className="space-y-4">
+      <TabsList>
+        <TabsTrigger value="tablo">Fiyat Tablosu</TabsTrigger>
+        <TabsTrigger value="hesaplayici">Tekil Hesaplayıcı</TabsTrigger>
+      </TabsList>
+      <TabsContent value="tablo">
+        <PricingTable />
+      </TabsContent>
+      <TabsContent value="hesaplayici">
+        <Costs />
+      </TabsContent>
+    </Tabs>
+  );
+}
+
+function PricingTable() {
   const utils = trpc.useUtils();
   const { data: products } = trpc.products.list.useQuery();
   const { data: costSummary } = trpc.products.costSummary.useQuery();
