@@ -1,4 +1,4 @@
-import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+import { COOKIE_NAME } from "@shared/const";
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import * as db from "../db";
@@ -14,6 +14,10 @@ import { sdk } from "./sdk";
  */
 
 export const LOCAL_OWNER_OPEN_ID = "local-owner";
+
+// Oturum ömrü: 1 yıl → 30 gün (Sprint 2 güvenlik sertleştirmesi). Günlük kullanan
+// tek sahip için yeterince uzun; çalınan token'ın ömrünü ciddi kısaltır.
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest();
 const safeEqual = (a: string, b: string) => timingSafeEqual(sha256(a), sha256(b));
@@ -83,11 +87,11 @@ export function registerLocalAuthRoutes(app: Express) {
 
     const sessionToken = await sdk.signSession(
       { openId: LOCAL_OWNER_OPEN_ID, appId: ENV.appId || "local", name },
-      { expiresInMs: ONE_YEAR_MS }
+      { expiresInMs: SESSION_TTL_MS }
     );
 
     const cookieOptions = getSessionCookieOptions(req);
-    res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+    res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: SESSION_TTL_MS });
     res.json({ success: true });
   });
 }

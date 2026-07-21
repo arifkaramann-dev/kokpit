@@ -68,6 +68,15 @@ export const authRouter = router({
       success: true,
     } as const;
   }),
+  // Tüm cihazlardaki oturumları geçersiz kılar (telefon çalındı, şifre sızdı vb.).
+  // Bu andan önce imzalanmış her token sunucuda reddedilir.
+  logoutAll: protectedProcedure.mutation(async ({ ctx }) => {
+    await db.setSettings({ "auth.sessionsRevokedAt": String(Date.now()) });
+    db.clearSessionRevocationCache();
+    const cookieOptions = getSessionCookieOptions(ctx.req);
+    ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
+    return { success: true } as const;
+  }),
 });
 
 

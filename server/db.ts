@@ -49,6 +49,7 @@ import {
   users,
 } from "../drizzle/schema";
 import { resolveProductIdForItem } from "./orderUtils";
+import { isTokenRevoked } from "./authUtils";
 import {
   accountBalance,
   collectionTotal,
@@ -1814,6 +1815,29 @@ export async function countNewMarketplaceQuestions(): Promise<number> {
     .from(marketplaceQuestions)
     .where(eq(marketplaceQuestions.status, "new"));
   return Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * "Tüm oturumları kapat" (auth.logoutAll) sonrası eski token'ları reddetmek için.
+ * Ayar tabanlı (migration istemez); her istekte DB'ye gitmemek için 60 sn önbellek.
+ */
+let revokedCache: { value: number; fetchedAt: number } | null = null;
+export async function isSessionRevoked(issuedAtSeconds?: number): Promise<boolean> {
+  const now = Date.now();
+  if (!revokedCache || now - revokedCache.fetchedAt > 60_000) {
+    try {
+      const cfg = await getSettings();
+      revokedCache = { value: parseInt(cfg["auth.sessionsRevokedAt"] ?? "0", 10) || 0, fetchedAt: now };
+    } catch {
+      return false; // DB yoksa (yerel araç/ilk kurulum) iptal kontrolü atlanır
+    }
+  }
+  return isTokenRevoked(revokedCache.value, issuedAtSeconds);
+}
+
+/** logoutAll yazdıktan sonra önbelleği anında düşürür (60 sn beklenmesin). */
+export function clearSessionRevocationCache() {
+  revokedCache = null;
 }
 
 export async function getSettings() {

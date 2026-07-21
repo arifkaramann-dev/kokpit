@@ -82,6 +82,14 @@ export default function Settings() {
     templates: number;
     products: number;
   } | null>(null);
+  const logoutAll = trpc.auth.logoutAll.useMutation({
+    onSuccess: () => {
+      toast.success("Tüm oturumlar kapatıldı");
+      setTimeout(() => window.location.reload(), 600);
+    },
+    onError: e => toast.error(e.message),
+  });
+
   const importSeed = trpc.settings.importUrunKayit.useMutation({
     onSuccess: r => {
       setImportResult(r);
@@ -434,6 +442,24 @@ export default function Settings() {
       <WhatsappDiagPanel />
 
       <HbTestPanel />
+
+      <Card className="p-5 space-y-3">
+        <h2 className="font-semibold flex items-center gap-2">
+          <AlertCircle className="h-4 w-4 text-primary" /> Güvenlik
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Oturumlar 30 gün geçerlidir. Telefon/bilgisayar kaybolduysa veya şifrenin sızdığından
+          şüpheleniyorsan aşağıdaki buton TÜM cihazlardaki oturumları anında geçersiz kılar
+          (bu cihaz dahil — yeniden giriş yaparsın).
+        </p>
+        <Button
+          variant="destructive"
+          disabled={logoutAll.isPending}
+          onClick={() => logoutAll.mutate()}
+        >
+          {logoutAll.isPending ? "Kapatılıyor..." : "Tüm Oturumları Kapat"}
+        </Button>
+      </Card>
     </div>
   );
 }

@@ -63,35 +63,35 @@ async function tick() {
 
     // Canlılık izi: Kokpit'te "zamanlayıcı çalışıyor mu?" rozeti bunu okur.
     // Render free uykuya dalınca iz eskir ve kullanıcı durumu görür.
-    if (now - num(cfg[KEY_LAST_TICK]) >= TICK_TRACE_INTERVAL_MS) {
+    if (isIntervalDue(num(cfg[KEY_LAST_TICK]), now, TICK_TRACE_INTERVAL_MS)) {
       await db.setSettings({ [KEY_LAST_TICK]: String(now) });
     }
 
     if (
       (isTrendyolConfigured() || isHepsiburadaConfigured()) &&
-      now - num(cfg[KEY_LAST_SYNC]) >= SYNC_INTERVAL_MS
+      isIntervalDue(num(cfg[KEY_LAST_SYNC]), now, SYNC_INTERVAL_MS)
     ) {
       await db.setSettings({ [KEY_LAST_SYNC]: String(now) });
       await runMarketplaceSync();
     }
 
-    if (isTrendyolConfigured() && now - num(cfg[KEY_LAST_QUESTIONS]) >= QUESTION_INTERVAL_MS) {
+    if (isTrendyolConfigured() && isIntervalDue(num(cfg[KEY_LAST_QUESTIONS]), now, QUESTION_INTERVAL_MS)) {
       await db.setSettings({ [KEY_LAST_QUESTIONS]: String(now) });
       await runQuestionSyncAndNotify();
     }
 
-    if (now - num(cfg[KEY_LAST_STOCK]) >= STOCK_INTERVAL_MS) {
+    if (isIntervalDue(num(cfg[KEY_LAST_STOCK]), now, STOCK_INTERVAL_MS)) {
       await db.setSettings({ [KEY_LAST_STOCK]: String(now) });
       await runStockSentry();
     }
 
     const todayTR = istanbulDateString(new Date());
-    if (istanbulHour(new Date()) >= BRIEFING_HOUR_TR && cfg[KEY_LAST_BRIEFING] !== todayTR) {
+    if (isDailyDue(cfg[KEY_LAST_BRIEFING], todayTR, istanbulHour(new Date()), BRIEFING_HOUR_TR)) {
       await db.setSettings({ [KEY_LAST_BRIEFING]: todayTR });
       await runMorningBriefing();
     }
 
-    if (istanbulHour(new Date()) >= COLLECTION_HOUR_TR && cfg[KEY_LAST_COLLECTION] !== todayTR) {
+    if (isDailyDue(cfg[KEY_LAST_COLLECTION], todayTR, istanbulHour(new Date()), COLLECTION_HOUR_TR)) {
       await db.setSettings({ [KEY_LAST_COLLECTION]: todayTR });
       await runCollectionChaser();
     }
@@ -107,14 +107,24 @@ async function tick() {
 
 const num = (v: string | undefined) => parseInt(v ?? "0", 10) || 0;
 
-function istanbulDateString(d: Date): string {
+export function istanbulDateString(d: Date): string {
   return d.toLocaleDateString("en-CA", { timeZone: "Europe/Istanbul" }); // YYYY-MM-DD
 }
 
-function istanbulHour(d: Date): number {
+export function istanbulHour(d: Date): number {
   // hourCycle "h23": hour12:false bazı ortamlarda gece yarısını "24" döndürür
   // (h24 çevrimi) — bu da 24 >= 8 sayılıp brifingi gece 00:00'da tetiklerdi.
   return parseInt(d.toLocaleString("en-GB", { timeZone: "Europe/Istanbul", hour: "2-digit", hourCycle: "h23" }), 10);
+}
+
+/** Aralıklı iş vadesi: son çalışmadan bu yana aralık dolmuş mu? (saf, testli) */
+export function isIntervalDue(lastRunMs: number, nowMs: number, intervalMs: number): boolean {
+  return nowMs - lastRunMs >= intervalMs;
+}
+
+/** Günlük iş vadesi: bugün henüz koşmadıysa ve saat geldiyse. (saf, testli) */
+export function isDailyDue(lastRunDate: string | undefined, todayStr: string, hourNow: number, dueHour: number): boolean {
+  return hourNow >= dueHour && lastRunDate !== todayStr;
 }
 
 /** Pazaryeri oto-senkronu: içe alınan sipariş varsa haber verir, hata varsa uyarır. */

@@ -192,13 +192,14 @@ class SDKServer {
       name: payload.name,
     })
       .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+      .setIssuedAt(Math.floor(issuedAt / 1000))
       .setExpirationTime(expirationSeconds)
       .sign(secretKey);
   }
 
   async verifySession(
     cookieValue: string | undefined | null
-  ): Promise<{ openId: string; appId: string; name: string } | null> {
+  ): Promise<{ openId: string; appId: string; name: string; issuedAt?: number } | null> {
     if (!cookieValue) {
       console.warn("[Auth] Missing session cookie");
       return null;
@@ -224,6 +225,7 @@ class SDKServer {
         openId,
         appId,
         name,
+        issuedAt: typeof payload.iat === "number" ? payload.iat : undefined,
       };
     } catch (error) {
       console.warn("[Auth] Session verification failed", String(error));
@@ -283,6 +285,13 @@ class SDKServer {
         throw ForbiddenError("Cron session missing task_uid");
       }
       return buildCronUser(userInfo);
+    }
+
+    // Sunucu tarafı oturum iptali: "Tüm oturumları kapat" sonrası eski token'lar
+    // (iat'i iptal anından önce olan veya hiç iat taşımayanlar) reddedilir.
+    // Cron oturumları platform imzalıdır ve bu kontrolün dışındadır (yukarıda döner).
+    if (await db.isSessionRevoked(session.issuedAt)) {
+      throw ForbiddenError("Session revoked");
     }
 
     const sessionUserId = session.openId;

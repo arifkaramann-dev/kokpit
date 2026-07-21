@@ -3,6 +3,7 @@ import { isCiceksepetiConfigured, syncCiceksepetiOrders, testCiceksepetiConnecti
 import { isHbTestEnv, isHepsiburadaConfigured, syncHepsiburadaOrders, testHepsiburadaConnection } from "./hepsiburada";
 import { isN11Configured, syncN11Orders, testN11Connection } from "./n11";
 import { isTrendyolConfigured, syncTrendyolOrders, testTrendyolConnection } from "./trendyol";
+import { createInflightGate } from "./syncLock";
 
 /**
  * Pazaryeri entegrasyonlarının ortak yönetimi: durum teşhisi ve toplu çekme.
@@ -92,17 +93,9 @@ export type SyncResult = {
 
 // Aynı anda birden fazla çekme çalışırsa (otomatik + elle) aynı sipariş iki kez
 // eklenebilir (yarış durumu). Kilit: çekme sürüyorken gelen çağrılar aynı
-// sonucu paylaşır, ikinci bir çekme başlatmaz.
-let inFlight: Promise<SyncResult[]> | null = null;
-
+// sonucu paylaşır, ikinci bir çekme başlatmaz. (Saf mantık: server/syncLock.ts)
 /** Yapılandırılmış tüm pazaryerlerinden sipariş çeker; her biri için sonuç döner. */
-export function syncAllMarketplaces(): Promise<SyncResult[]> {
-  if (inFlight) return inFlight;
-  inFlight = runSyncAll().finally(() => {
-    inFlight = null;
-  });
-  return inFlight;
-}
+export const syncAllMarketplaces: () => Promise<SyncResult[]> = createInflightGate(() => runSyncAll());
 
 async function runSyncAll(): Promise<SyncResult[]> {
   const results: SyncResult[] = [];
