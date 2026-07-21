@@ -14,6 +14,27 @@ Proje artık ajan takımıyla yönetiliyor: `CLAUDE.md` (CTO protokolü),
 `.claude/knowledge/art-of-colour.md` (şirket bilgi tabanı). Büyük işlerde
 orkestratör `proje-yoneticisi`dir.
 
+## MEGA SPRINT — Tam Mega (19.07.2026) ✅ kod tarafı bitti
+Ekip denetimi + 5 tema. Plan/kanıt: **docs/MEGA-SPRINT-PLANI.md**. 0 tip hatası,
+**340/340 test**, build ✓. 7 migration (0023–0027). Özet:
+- **Tema 0 — Para doğruluğu:** (1) tahsilat silme/iade sonrası sipariş ödeme durumu
+  resync (alacak kaybı hatası kapandı); (2) **alış KDV yakalama + net/brüt tutarlılığı**
+  — hammadde maliyeti çift-netleşip kârı ~%17 şişiriyordu, düzeltildi (0023); ağırlıklı
+  ortalama maliyet + birim güvenliği; (3) e-Fatura müşteri VKN + satır KDV (0024).
+  **ETKİ: hammadde-yoğun ürünlerde gösterilen net kâr düştü — bu düzeltme, şişik rakam gerçeğe oturdu.**
+- **Tema A — Boya üretim çekirdeği (0025):** lot/parti izlenebilirlik + SKT/raf ömrü +
+  kalite kontrol (pH/viskozite/örtücülük/ΔE); SKT Nöbetçisi; /izlenebilirlik. stockQty otoriter kaldı.
+- **Tema B — Asistan onay katmanı (0026):** para/stok yazan komutlar önizleme+onay ister
+  (güvenli/onaylı/kritik); bekleyen eylem kalıcı. Nöbetçiler: çek/senet vade, zararına
+  satış, cevapsız soru SLA. Sabah brifingi zenginleşti.
+- **Tema C — Storefront canlıya:** on-page SEO (sitemap/robots/JSON-LD), PAYTR ödeme UI,
+  kargo modeli, kampanya→fiyat motoru (maliyet-taban guard). Migration yok (settings).
+- **Tema D — CRM boru hattı (0027):** leads → /firsatlar pipeline + müşteriye dönüştürme.
+
+**Canlıda bekleyen (patron dış görev — PATRON-GOREVLERI.md):** PAYTR/domain/GA4, e-Fatura
+mühür+entegratör, pazaryeri canlı anahtarları, iki-turlu onay smoke testi, migration'lar
+Render deploy'da `pnpm db:migrate` ile koşar. **Sıradaki kod adayı:** 0.4 routers/db modül bölünmesi.
+
 ## Çalışma kuralları (önemli)
 - **Doğrudan `main`'e gönder** (PR yok). Değişiklikten sonra commit + `main`'e push.
 - **Az kredi, çok iş:** doğrulamayı riske göre yap — küçük/güvenli değişiklikte sadece

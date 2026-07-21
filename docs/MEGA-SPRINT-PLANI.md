@@ -87,26 +87,33 @@ Migration 0026 (assistantPendingActions). 317/317 test. Para matematiği korundu
 - Faz 2 (ertelendi bilinçli): tam tool-use agentik döngü (çok-adımlı) — token disiplini için gate'li
 - Canlıda: iki-turlu onay smoke testi ("Ahmet 500 ödedi" → önizleme → "evet")
 
-### Tema C — Storefront'u Canlıya Hazırlama  *(en yüksek marjlı kanal)*
-Zorunlu duraklar: `finans-muhasebe-uzmani` (kampanya→fiyat marjı) + `qa-test-uzmani`
-(PAYTR para akışı, canlı test anahtar gelince). Domain/GA4/PAYTR anahtarı patrondan
-(yalnız **canlı test** için; kod ~%85 anahtarsız).
-- [ ] On-page SEO: `sitemap.xml`, `robots.txt`, per-ürün `<title>`/meta, Open Graph,
-      **JSON-LD Product** (fiyat/stok — gösterilen net fiyatla birebir aynı olmalı)
-- [ ] PAYTR iframe frontend akışı: ödeme adımı UI + `/magaza/tamam` + `/magaza/hata`
-      (endpoint router'da hazır: `routers.ts:2135-2159`)
-- [ ] Kargo ücreti modeli (bugün `shipping:0` sabit — "kargo bedava" kuponu bu yüzden ölü)
-- [ ] Storefront kategori/arama/seri filtresi
-- [ ] **Kampanya→fiyat motoru:** `discountPercent`'i gerçek indirime bağla (kupon+kampanya
-      üst üste binerse negatif marj riski — finans doğrulaması şart)
-- [ ] SEO-bilinçli ürün başlık/açıklama (arama-terimi öncelikli; `ai-otomasyon` ile prompt katmanı)
+### Tema C — Storefront'u Canlıya Hazırlama  ✅ TAMAMLANDI (19.07)
+Migration YOK (settings-tabanlı). 336/336 test. Maliyet public yanıta sızmaz.
+- [x] On-page SEO: sunucu sitemap.xml + robots.txt (her ortam); production'da ürün
+      HTML'ine title/desc/OG/JSON-LD enjeksiyonu; JSON-LD fiyatı = gösterilen net fiyat
+- [x] PAYTR iframe frontend akışı + /magaza/tamam + /magaza/hata
+- [x] Kargo ücreti modeli (sabit + X üzeri bedava; sunucuda hesap) — "kargo bedava" kuponu artık gerçek
+- [x] Storefront seri filtresi + arama + indirim/üstü-çizili
+- [x] Kampanya→fiyat motoru: maliyet-taban guard + %60 indirim tavanı (negatif marj imkânsız)
+- [x] SEO-bilinçli ürün başlığı (marketing/aiFill arama-terimi + başlık kuralları)
+- Canlıda: PAYTR anahtarı (kartlı ödeme), PUBLIC_STORE_URL + GA4 ID, marj sağlaması (finans)
 
-### Tema D — CRM Satış Boru Hattı  *(küçük)*
-- [ ] Tek eksik "lead" aşaması (kodda/şemada `lead` yok). Hafif şema (kaynak/aşama) +
-      pipeline görünümü ile lead → teklif → sipariş tamamlanır. Dış bağımlılık yok.
+### Tema D — CRM Satış Boru Hattı  ✅ TAMAMLANDI (19.07)
+Migration 0027. 340/340 test.
+- [x] leads tablosu (kaynak/aşama/tahmini değer) + /firsatlar pipeline görünümü + özet şerit
+- [x] Aşama taşıma + tek tık müşteriye dönüştürme (convertLeadToCustomer); shared/leads.ts + test
 
-### Teknik Borç (fırsat)
+### Teknik Borç (fırsat — bu sprint kapsamı dışı, sıradaki aday)
 - [ ] `0.4` `routers.ts`/`db.ts` modül dizinlerine bölünme + servis katmanı (davranış birebir)
+
+---
+
+## SONUÇ — Tam Mega tamamlandı (19.07.2026)
+Beş temanın hepsi (0+A+B+C+D) kod tarafı bitti; **0 tip hatası, 340/340 test, build ✓**.
+7 yeni migration (0023–0027 arası + 0024). 5 kanıtlı para/mantık hatası kapatıldı,
+boya üretim çekirdeği (lot/SKT/QC), asistan onay katmanı + nöbetçiler, storefront
+canlıya (SEO+PAYTR+kargo+kampanya), CRM boru hattı eklendi. Patron dış görevleri
+(anahtar/mühür/domain) **PATRON-GOREVLERI.md**'de; kod hazır, "bağla + canlı test" bekliyor.
 
 ---
 

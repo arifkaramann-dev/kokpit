@@ -223,7 +223,8 @@ Odoo'nun tüm modül evreni Art of Colour'a göre süzüldü. Tam analiz + sın�
 - Kokpit boya-dikeyi olarak Odoo çekirdeğinin ~%60'ını zaten karşılıyor.
 - 🔴 Olmazsa olmazlar: [ ] e-Fatura/e-Arşiv, [ ] stok lot/parti+rezervasyon,
   [ ] kalite kontrol (parti testi: pH/viskozite/örtücülük/ΔE)
-- 🟠 Öncelikli: [ ] CRM satış boru hattı, [x] Helpdesk/pazaryeri Q&A kuyruğu (18.07),
+- 🟠 Öncelikli: [x] CRM satış boru hattı (MEGA SPRINT 19.07 Tema D: leads + /firsatlar),
+  [x] Helpdesk/pazaryeri Q&A kuyruğu (18.07),
   [x] Purchase yeniden sipariş önerisi (18.07), [ ] Barcode mobil depo
 - 🟡 Gerekli: [ ] çift taraflı muhasebe köprüsü, [ ] onay motoru, [ ] ürün bilgi
   tabanı, [ ] e-posta/SMS kampanya + otomasyon
@@ -263,7 +264,10 @@ sihirbazı reçete düzenleme + KDV-dahil maliyet modeli (/fiyat + Maliyet + sih
       DashboardLayout dışında; storefront publicProcedure router; fiyat sunucuda doğrulanır)
 - [x] B2. Sepet + sipariş oluşturma (localStorage sepet; sipariş channel="magaza" + bildirim)
 - [x] B3. PAYTR ödeme kod tarafı (server/paytr.ts: token + callback imza; anahtar gelince canlı)
-- [~] B4. SEO temel — başlık var; sitemap/GA4 patron domain+GA4 ID verince eklenecek
+- [x] B4. On-page SEO (MEGA SPRINT 19.07 Tema C): sunucu sitemap.xml + robots.txt +
+      ürün JSON-LD/OG/meta enjeksiyonu (shared/seo.ts + storefrontSeo.ts); PAYTR ödeme UI
+      + /magaza sonuç sayfaları; kargo ücret modeli; kampanya→fiyat motoru (maliyet-taban
+      guard + %60 tavan). GA4/canonical patron domain+GA4 ID verince (PUBLIC_STORE_URL).
 - [x] B5. Kargo kod tarafı: siparişe takip no yazma (kargo router; sağlayıcı gelince canlı)
 
 ### Tema C — e-Fatura/e-Arşiv + Ön Muhasebe [mali mühür + entegratör patrondan]
