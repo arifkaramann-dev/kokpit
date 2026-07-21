@@ -16,7 +16,7 @@ orkestratör `proje-yoneticisi`dir.
 
 ## MEGA SPRINT — Tam Mega (19.07.2026) ✅ kod tarafı bitti
 Ekip denetimi + 5 tema. Plan/kanıt: **docs/MEGA-SPRINT-PLANI.md**. 0 tip hatası,
-**340/340 test**, build ✓. 7 migration (0023–0027). Özet:
+**340/340 test**, build ✓. 5 migration (0023–0027). Özet:
 - **Tema 0 — Para doğruluğu:** (1) tahsilat silme/iade sonrası sipariş ödeme durumu
   resync (alacak kaybı hatası kapandı); (2) **alış KDV yakalama + net/brüt tutarlılığı**
   — hammadde maliyeti çift-netleşip kârı ~%17 şişiriyordu, düzeltildi (0023); ağırlıklı

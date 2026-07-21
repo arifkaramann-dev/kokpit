@@ -110,7 +110,7 @@ Migration 0027. 340/340 test.
 
 ## SONUÇ — Tam Mega tamamlandı (19.07.2026)
 Beş temanın hepsi (0+A+B+C+D) kod tarafı bitti; **0 tip hatası, 340/340 test, build ✓**.
-7 yeni migration (0023–0027 arası + 0024). 5 kanıtlı para/mantık hatası kapatıldı,
+5 yeni migration (0023–0027). 5 kanıtlı para/mantık hatası kapatıldı,
 boya üretim çekirdeği (lot/SKT/QC), asistan onay katmanı + nöbetçiler, storefront
 canlıya (SEO+PAYTR+kargo+kampanya), CRM boru hattı eklendi. Patron dış görevleri
 (anahtar/mühür/domain) **PATRON-GOREVLERI.md**'de; kod hazır, "bağla + canlı test" bekliyor.
