@@ -143,7 +143,9 @@ function parseItemRows(items: ItemRow[]) {
 export default function Orders() {
   const utils = trpc.useUtils();
   const [, setLocation] = useLocation();
-  const { data: orders, isLoading } = trpc.orders.list.useQuery();
+  // Pano tam tabloyu çekmez: son N sipariş yeter, gerekirse "daha eski" ile büyür.
+  const [orderLimit, setOrderLimit] = useState(400);
+  const { data: orders, isLoading } = trpc.orders.list.useQuery({ limit: orderLimit });
   const { data: products } = trpc.products.list.useQuery();
   const { data: customersList } = trpc.customers.list.useQuery();
   const { data: mpStatus } = trpc.orders.marketplaceStatus.useQuery();
@@ -1073,6 +1075,13 @@ export default function Orders() {
               </div>
             );
           })}
+          {(orders?.length ?? 0) >= orderLimit && (
+            <div className="pt-1 text-center">
+              <Button variant="outline" size="sm" onClick={() => setOrderLimit(l => Math.min(l + 400, 5000))}>
+                Daha eski siparişleri yükle (son {orderLimit} gösteriliyor)
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </div>

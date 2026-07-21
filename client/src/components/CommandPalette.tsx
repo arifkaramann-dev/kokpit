@@ -66,7 +66,7 @@ export default function CommandPalette() {
 
   // Veriyi yalnızca palet açıkken çek (önbelleğe düşerse anında gelir).
   const { data: products } = trpc.products.list.useQuery(undefined, { enabled: open });
-  const { data: orders } = trpc.orders.list.useQuery(undefined, { enabled: open });
+  const { data: orders } = trpc.orders.list.useQuery({ limit: 200 }, { enabled: open });
   const { data: customers } = trpc.customers.list.useQuery(undefined, { enabled: open });
   const { data: materials } = trpc.materials.list.useQuery(undefined, { enabled: open });
 

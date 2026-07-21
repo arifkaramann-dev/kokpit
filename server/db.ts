@@ -344,9 +344,11 @@ export async function listMaterialUsage(materialId: number) {
 
 /* ------------------------- Orders (Siparişler) ------------------------- */
 
-export async function listOrders() {
+export async function listOrders(limit?: number) {
   const db = await requireDb();
-  return db.select().from(orders).orderBy(desc(orders.sortOrder), desc(orders.createdAt));
+  const q = db.select().from(orders).orderBy(desc(orders.sortOrder), desc(orders.createdAt));
+  // limit verilmezse davranış eskisi gibi (tam liste) — finans/senkron yolları tam veri ister.
+  return limit && limit > 0 ? q.limit(limit) : q;
 }
 
 export async function createOrder(data: InsertOrder) {
@@ -542,9 +544,10 @@ export async function listTransactions(filter?: { customerName?: string; account
     );
   }
   if (filter?.accountId) conds.push(eq(transactions.accountId, filter.accountId));
-  const q = db.select().from(transactions);
-  const rows = conds.length ? await q.where(and(...conds)) : await q;
-  return rows.sort((a, b) => new Date(b.txnDate).getTime() - new Date(a.txnDate).getTime()).slice(0, filter?.limit ?? 300);
+  // Sıralama + limit SQL'de: tablo büyüdükçe tüm satırları çekip JS'te dilimlemeyelim.
+  const base = db.select().from(transactions);
+  const filtered = conds.length ? base.where(and(...conds)) : base;
+  return filtered.orderBy(desc(transactions.txnDate), desc(transactions.id)).limit(filter?.limit ?? 300);
 }
 
 /**

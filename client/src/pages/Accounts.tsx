@@ -51,7 +51,9 @@ export default function Accounts() {
   const utils = trpc.useUtils();
   const confirm = useConfirm();
   const { data: accounts } = trpc.accounts.list.useQuery();
-  const { data: txns } = trpc.transactions.list.useQuery({});
+  // Hareket listesi son N kayıtla başlar; "daha eski" ile büyür (tam tablo çekilmez).
+  const [txnLimit, setTxnLimit] = useState(500);
+  const { data: txns } = trpc.transactions.list.useQuery({ limit: txnLimit });
   const { data: customers } = trpc.customers.list.useQuery();
 
   const [accDialog, setAccDialog] = useState(false);
@@ -320,6 +322,13 @@ export default function Accounts() {
               </div>
             );
           })}
+          {txnRows.length >= txnLimit && (
+            <div className="p-2 text-center">
+              <Button variant="outline" size="sm" onClick={() => setTxnLimit(l => l + 500)}>
+                Daha eski hareketleri yükle (son {txnLimit} gösteriliyor)
+              </Button>
+            </div>
+          )}
         </Card>
       )}
 
