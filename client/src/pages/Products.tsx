@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { formatDate, formatQty, formatTL } from "@/lib/format";
 import { jsonListHasItems, productHealth, type ProductHealth } from "@shared/productHealth";
+import { BarcodeScanButton } from "@/components/BarcodeScanner";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { trpc } from "@/lib/trpc";
 import { Beaker, Boxes, ChevronDown, ChevronRight, CopyCheck, Download, Eraser, Layers, Package, Pencil, Percent, Plus, Printer, Search, Sparkles, Store, Trash2, Wand2 } from "lucide-react";
@@ -713,6 +714,8 @@ export default function Products() {
             className="pl-8"
           />
         </div>
+        {/* Depoda telefonla sayım/toplama: barkod okut → arama kutusuna düşer. */}
+        <BarcodeScanButton title="Barkodla ürün bul" onScan={code => setSearch(code)} />
         <Button
           variant={lowStockOnly ? "default" : "outline"}
           size="sm"

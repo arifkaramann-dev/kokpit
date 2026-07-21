@@ -240,13 +240,16 @@ sihirbazı reçete düzenleme + KDV-dahil maliyet modeli (/fiyat + Maliyet + sih
 ### Tema A — Üretim & Maliyet Gerçeği (dış bağımlılık YOK, önce yapılır)
 - [x] A0. KDV-dahil kâr modeli: calcChannelProfit+suggestPrice productCostVatPercent;
       /fiyat + Maliyet + sihirbaz hizalandı; sihirbazda reçete düzenleme (bu oturum)
-- [ ] A1. Gerçekleşen kâr raporu (reportUtils/channelProfitReport) aynı KDV-dahil maliyet
-      modeline hizala (productCostVatPercent = kanal KDV'si) — beklenen ile tutarlı olsun
+- [x] A1. Gerçekleşen kâr raporu (reportUtils/channelProfitReport) aynı KDV-dahil maliyet
+      modeline hizalı (productCostVatPercent = profile.vatPercent; 21.07 denetiminde
+      kodda zaten yapılmış olduğu doğrulandı, kutu işaretlenmemişti)
 - [x] A2. Ürün tam maliyeti v1: adet başı işçilik + genel gider (KDV hariç) → calcDevProfit
       + calcChannelProfit + suggestPrice; sihirbaz, Maliyet, /fiyat ve gerçekleşen rapor
       hepsi düşüyor; ayar unitLaborOverhead (Settings + sayfalarda düzenlenir). Sonraki
       rafinasyon: ürün bazlı üretim süresi (dk) × saat ücreti (şema ister)
-- [ ] A3. Hammadde alış faturasından birim maliyet + indirilecek KDV otomatik güncelleme
+- [x] A3. Hammadde alış faturasından birim maliyet güncelleme: createPurchase kalemleri
+      hammadde stok + unitCost günceller; alış KDV'si vatSummary'de indiriliyor
+      (21.07 denetiminde mevcut olduğu doğrulandı)
 - [ ] A4. Stok lot/parti + rezervasyon (üretim partisi izlenebilirlik)
 - [ ] A5. Kalite kontrol (parti testi: pH/viskozite/örtücülük/ΔE) kayıt + geçti/kaldı
 
@@ -366,6 +369,44 @@ Tam analiz + fazlı yol haritası: **docs/URUN-CEKIRDEGI-YOL-HARITASI.md**
 Hazırlık (17.07): ürün diyaloğu sabit boyut + HTML temizleme + Türevlere Uygula.
 Canlıda doğrulanacak: Trendyol ürün açma akışı (Ayarlar → marka/kargo/kategori
 eşlemesi girildikten sonra ürün detayından test) + migration 0021.
+
+## ANALİZ SPRINTLERİ — 21.07.2026 (tamamlandı; plan: docs/ANALIZ-GELISTIRME-PLANI-2026-07-21.md)
+Sprint 1 — Sadeleştir & Görünür Kıl:
+- [x] Kokpit aksiyon şeridi ("N yeni sipariş / soru / üretilecek / kritik hammadde /
+      tahsil edilecek" → tıkla-git) + zamanlayıcı sağlık rozeti (30 dk iz eskirse kırmızı)
+- [x] Global hata bildirimi: QueryClient cache aboneliğinde toast (sayfa onError'ı varsa
+      çift bildirim yok; oturum hatası yönlendirmeye devam)
+- [x] Menü IA: Maliyet & Kâr → /fiyat "Tekil Hesaplayıcı" sekmesi (/maliyet redirect),
+      Şablonlar → Ürün & Üretim, Görevler → Genel
+- [x] ComponentShowcase.tsx silindi (1.437 satır ölü kod)
+- [x] Ayarlar → "Bağlantı Durumu" kartı (settings.integrationStatus: 9 entegrasyon +
+      zamanlayıcı canlılığı; gizli değer sızdırmaz)
+
+Sprint 2 — Ölçek & Borç:
+- [x] Sayfalama: orders.list limit (pano 400 + "daha eski yükle", palet 200);
+      listTransactions sıralama+limit SQL'e indi; Kasa hareketleri 500 + "daha eski"
+- [x] routers.ts (2.425 satır) → 59 satırlık barrel + server/modules/{urun,satis,finans,
+      pazarlama,sistem,util}.ts (davranış birebir; 0.4'ün routers yarısı). db.ts bölünmesi
+      BİLİNÇLİ ertelendi: para yolları sıkı bağlı, ayrı denetimli sprint ister
+- [x] Oturum sertleştirme (0.6 kısmi): TTL 1 yıl → 30 gün, JWT'ye iat, auth.logoutAll
+      (sunucu tarafı toplu iptal, settings tabanlı — migration yok) + Ayarlar Güvenlik kartı
+- [x] Senkron kilidi saf mantığa çıkarıldı (syncLock.createInflightGate) + scheduler vade
+      fonksiyonları (isIntervalDue/isDailyDue) + oturum iptali → 9 birim testi
+- [ ] S3 görsel göçü (0.3) + body limit daraltma: depolama kimlik bilgisi bekliyor (patron)
+
+Sprint 3 — Değer Üret:
+- [x] Asistan tool-use ajanı (server/assistantAgent.ts): 8 araç (isletme_ozeti, gorev_ekle/
+      tamamla güvenli; gider/tahsilat/stok/sipariş-durumu/satış onaylı), "evet/hayır" onay
+      katmanı (10 dk bekleyen işlem), hata/anahtar yokluğunda intent akışına düşüş;
+      uygulama içi + WhatsApp aynı kapıdan (runAssistant). assistant.agentMode=0 ile kapanır
+- [x] Eylem mantığı ortak fonksiyonlara ayrıldı (actionAddExpense/Collection/StockMove/
+      CreateOrder/SetOrderStatus/AddTasks/CompleteTasks) — intent ve ajan tek gövde kullanır
+- [x] CRM Satış Boru Hattı (/firsatlar, migration 0023 crmOpportunities): aşama sütunları
+      (yeni→görüşme→teklif→kazanıldı/kaybedildi), sıradaki adım + gecikme uyarısı, boru
+      hattı değeri KPI'ları, müşteri otomatik dolum + WhatsApp; menü + ⌘K kayıtlı
+- [x] Kamerayla barkod okuma (BarcodeScanner, yerleşik BarcodeDetector API — kütüphane yok):
+      Ürünler'de arama yanında buton; okunan barkod aramaya düşer (desteksiz tarayıcıda bilgi)
+- [x] A1 + A3 doğrulandı (yukarıda işaretlendi)
 
 ## Canlıda (Render) doğrulama bekleyenler — kod tarafı hazır
 - [ ] Trendyol: "Bağlantıyı Test Et" HTTP 200 + sipariş akışı + "Trendyol'a Gönder" (stok/fiyat)

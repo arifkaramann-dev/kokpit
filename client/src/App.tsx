@@ -7,6 +7,7 @@ import Analytics from "@/pages/Analytics";
 import Assistant from "@/pages/Assistant";
 import Campaigns from "@/pages/Campaigns";
 import Cheques from "@/pages/Cheques";
+import Crm from "@/pages/Crm";
 import Customers from "@/pages/Customers";
 import Expenses from "@/pages/Expenses";
 import Development from "@/pages/Development";
@@ -43,6 +44,7 @@ function AdminApp() {
         <Route path={"/"} component={Home} />
         <Route path={"/siparisler"} component={Orders} />
         <Route path={"/teklifler"} component={Quotes} />
+        <Route path={"/firsatlar"} component={Crm} />
         <Route path={"/musteriler"} component={Customers} />
         <Route path={"/giderler"} component={Expenses} />
         <Route path={"/kasa"} component={Accounts} />

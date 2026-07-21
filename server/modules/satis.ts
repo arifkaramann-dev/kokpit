@@ -312,3 +312,38 @@ export const quotesRouter = router({
       return { orderId: Number(orderId), orderNo };
     }),
 });
+
+/* ------------------------- CRM Satış Boru Hattı ------------------------- */
+
+const opportunityInput = z.object({
+  title: z.string().min(1),
+  customerName: z.string().nullable().optional(),
+  customerPhone: z.string().nullable().optional(),
+  expectedAmount: z.number().min(0).optional(),
+  stage: z.enum(["yeni", "gorusme", "teklif", "kazanildi", "kaybedildi"]).optional(),
+  nextStep: z.string().nullable().optional(),
+  nextStepDate: z.string().nullable().optional(),
+  note: z.string().nullable().optional(),
+});
+
+const toOpportunityRow = (input: z.infer<typeof opportunityInput>) => ({
+  ...input,
+  expectedAmount: input.expectedAmount != null ? String(input.expectedAmount) : undefined,
+  nextStepDate: input.nextStepDate ? new Date(input.nextStepDate) : null,
+});
+
+export const crmRouter = router({
+  list: protectedProcedure.query(() => db.listOpportunities()),
+  create: protectedProcedure
+    .input(opportunityInput)
+    .mutation(({ input }) => db.createOpportunity(toOpportunityRow(input) as never)),
+  update: protectedProcedure
+    .input(z.object({ id: z.number(), data: opportunityInput.partial() }))
+    .mutation(({ input }) =>
+      db.updateOpportunity(input.id, toOpportunityRow(input.data as z.infer<typeof opportunityInput>) as never),
+    ),
+  setStage: protectedProcedure
+    .input(z.object({ id: z.number(), stage: z.enum(["yeni", "gorusme", "teklif", "kazanildi", "kaybedildi"]) }))
+    .mutation(({ input }) => db.updateOpportunity(input.id, { stage: input.stage })),
+  delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteOpportunity(input.id)),
+});

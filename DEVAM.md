@@ -256,7 +256,24 @@ envanter/olgunluk tablosu, teknik borçlar (routers/db monoliti, base64 görsell
 sayfalamasız list uçları, ölü ComponentShowcase), UX bulguları (menü yoğunluğu,
 Maliyet↔Fiyat çakışması, Kokpit aksiyon şeridi eksiği, sessiz hatalar) ve
 3 sprint + canlı doğrulama hattı planı: **docs/ANALIZ-GELISTIRME-PLANI-2026-07-21.md**.
-Sıradaki uygulama işi Sprint 1 ("Sadeleştir & Görünür Kıl") — önce bu belgeyi oku.
+**ÜÇ SPRINT DE UYGULANDI (21.07.2026, aynı gün):** ayrıntılı işaretli liste todo.md
+"ANALİZ SPRINTLERİ" bölümünde. Özet:
+- Sprint 1: Kokpit aksiyon şeridi + zamanlayıcı sağlık rozeti; global hata toast'u;
+  menü IA (Maliyet→/fiyat sekmesi + redirect, Şablonlar/Görevler taşındı); Ayarlar
+  "Bağlantı Durumu" kartı (settings.integrationStatus); ComponentShowcase silindi.
+- Sprint 2: orders/transactions sayfalama ("daha eski yükle"); routers.ts → 59 satır
+  barrel + server/modules/* (5 domain dosyası, davranış birebir); oturum 30 gün +
+  auth.logoutAll (sunucu tarafı iptal, _core/sdk'da iat kontrolü) + Güvenlik kartı;
+  senkron kilidi/scheduler vadesi/oturum iptali saf fonksiyon + 9 test. db.ts
+  bölünmesi ve S3 göçü bilinçli ertelendi (gerekçe todo.md'de).
+- Sprint 3: **asistan tool-use ajanı** (assistantAgent.ts: 8 araç, onaylı işlemler
+  "evet/hayır" onay katmanından geçer, hata durumunda eski intent akışına düşer;
+  WhatsApp + uygulama içi aynı kapı: runAssistant) — canlıda ANTHROPIC_API_KEY ile
+  test edilecek; CRM Satış Boru Hattı (/firsatlar, migration 0023); kamerayla barkod
+  okuma (Ürünler); A1/A3'ün kodda zaten tamamlanmış olduğu doğrulanıp işaretlendi.
+- Doğrulama: 0 tip hatası, 264/264 test, build ✓. Çalışma dalı:
+  claude/feature-analysis-planning-oq2vv7 (bu oturumun talimatı gereği; main'e
+  merge patron onayıyla).
 
 **Kod dışı bekleyenler (kullanıcı/dış taraf):** HB test bilgileri (e-postayla
 gelecek → PAZARYERI.md süreci), Bizimhesap FirmID (destek talebi), Geliver

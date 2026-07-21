@@ -80,6 +80,7 @@ const menuGroups = [
     label: "Satış & Müşteri",
     items: [
       { icon: ClipboardList, label: "Sipariş Panosu", path: "/siparisler" },
+      { icon: Target, label: "Satış Fırsatları", path: "/firsatlar" },
       { icon: FileText, label: "Teklifler", path: "/teklifler" },
       { icon: Contact, label: "Müşteriler", path: "/musteriler" },
       { icon: MessageSquare, label: "Soru-Cevap", path: "/sorular" },

@@ -25,6 +25,8 @@ import {
   marketingTexts,
   marketplaceQuestions,
   InsertMarketplaceQuestion,
+  crmOpportunities,
+  InsertCrmOpportunity,
   materials,
   notifications,
   orderItems,
@@ -1712,6 +1714,36 @@ export async function bulkUpdatePrices(percent: number, series: string | null) {
     ? await db.update(products).set(setExpr).where(eq(products.series, series))
     : await db.update(products).set(setExpr);
   return { affected: result.affectedRows ?? 0 };
+}
+
+/* ------------------------- CRM Satış Boru Hattı ------------------------- */
+
+export async function listOpportunities() {
+  const db = await requireDb();
+  return db.select().from(crmOpportunities).orderBy(desc(crmOpportunities.updatedAt)).limit(500);
+}
+
+export async function createOpportunity(data: InsertCrmOpportunity) {
+  const db = await requireDb();
+  // Cari bağ: müşteri kayıtlıysa ID ile bağla (isim değişse de fırsat kopmaz).
+  if (data.customerId == null && data.customerName) {
+    data = { ...data, customerId: await resolveCustomerIdByName(data.customerName) };
+  }
+  const [r] = await db.insert(crmOpportunities).values(data);
+  return Number(r.insertId);
+}
+
+export async function updateOpportunity(id: number, data: Partial<InsertCrmOpportunity>) {
+  const db = await requireDb();
+  if (data.customerId == null && data.customerName) {
+    data = { ...data, customerId: await resolveCustomerIdByName(data.customerName) };
+  }
+  await db.update(crmOpportunities).set(data).where(eq(crmOpportunities.id, id));
+}
+
+export async function deleteOpportunity(id: number) {
+  const db = await requireDb();
+  await db.delete(crmOpportunities).where(eq(crmOpportunities.id, id));
 }
 
 /* ------------------------- Ayarlar (Şirket / Fatura) ------------------------- */

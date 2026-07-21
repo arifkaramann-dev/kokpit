@@ -4,7 +4,7 @@
 import { systemRouter } from "./_core/systemRouter";
 import { router } from "./_core/trpc";
 import { materialsRouter, productsRouter, productionRouter, formulaRouter, seriesRouter } from "./modules/urun";
-import { ordersRouter, quotesRouter } from "./modules/satis";
+import { crmRouter, ordersRouter, quotesRouter } from "./modules/satis";
 import {
   purchasesRouter, reportRouter, customersRouter, chequesRouter, accountsRouter, transactionsRouter, expensesRouter, suppliersRouter, invoicesRouter, kargoRouter, reconcileRouter,
 } from "./modules/finans";
@@ -28,6 +28,7 @@ export const appRouter = router({
   series: seriesRouter,
   orders: ordersRouter,
   quotes: quotesRouter,
+  crm: crmRouter,
   dev: devRouter,
   assistant: assistantRouter,
   settings: settingsRouter,

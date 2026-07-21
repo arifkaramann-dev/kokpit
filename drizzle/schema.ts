@@ -773,3 +773,34 @@ export const marketplaceQuestions = mysqlTable(
 
 export type MarketplaceQuestion = typeof marketplaceQuestions.$inferSelect;
 export type InsertMarketplaceQuestion = typeof marketplaceQuestions.$inferInsert;
+
+/**
+ * CRM satış boru hattı (Sprint 3 / Odoo uyarlama 🟠): teklif ÖNCESİ fırsat takibi.
+ * Aşama akışı: yeni → görüşme → teklif → kazanıldı | kaybedildi. Teklife/siparişe
+ * dönüşünce bağ kurulur; kazanılan/kaybedilen fırsatlar panoda ayrı görünür.
+ */
+export const crmOpportunities = mysqlTable(
+  "crmOpportunities",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    title: varchar("title", { length: 255 }).notNull(),
+    customerId: int("customerId"),
+    customerName: varchar("customerName", { length: 255 }),
+    customerPhone: varchar("customerPhone", { length: 64 }),
+    expectedAmount: decimal("expectedAmount", { precision: 12, scale: 2 }).default("0"),
+    stage: mysqlEnum("stage", ["yeni", "gorusme", "teklif", "kazanildi", "kaybedildi"]).notNull().default("yeni"),
+    // Sıradaki adım ("numune gönder", "fiyat revize et") + tarihi — takip kaçmasın.
+    nextStep: varchar("nextStep", { length: 255 }),
+    nextStepDate: timestamp("nextStepDate"),
+    note: text("note"),
+    quoteId: int("quoteId"),
+    orderId: int("orderId"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  t => [index("crmOpp_stage_idx").on(t.stage), index("crmOpp_customer_idx").on(t.customerId)],
+);
+
+export type CrmOpportunity = typeof crmOpportunities.$inferSelect;
+export type InsertCrmOpportunity = typeof crmOpportunities.$inferInsert;
