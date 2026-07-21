@@ -41,6 +41,31 @@ altına oluştur ve `.claude/TAKIM.md` evrim günlüğüne işle. Her sprint son
 aynı soruyu tekrar sor. Takım büyümekten korkmasın ama gereksiz kalabalık da
 olmasın — her uzmanlık kendi uzmanında toplansın.
 
+## Yönetim Kurulu (en yüksek yönetişim katmanı)
+
+İcra ekibinin (`.claude/agents/*`) üstünde bir **stratejik Yönetim Kurulu**
+vardır. Tüzük: **`.claude/YONETIM-KURULU.md`**. Kurul koda değil, **kullanıcıya
+kattığı değere** bakar. Toplayan ajan: **`yonetim-kurulu`**.
+
+Değişmez öncelik sırası (çatışmada üst sıra kazanır): **1) para kazandır →
+2) zaman kurtar → 3) hata azalt → 4) kararı kolaylaştır → 5) kullanıcıyı mutlu
+et.** Kod kalitesi ve UX bu amaçların aracıdır.
+
+- **Altın Kural — 3 soru kapısı (zorunlu):** hiçbir özellik şu üçünden geçmeden
+  geliştirmeye alınmaz: (1) ölçülebilir fayda sağlıyor mu? (2) bakım maliyetini
+  artırmadan ölçeklenir mi? (3) rakiplerden belirgin farklılaştırıyor mu?
+  3/3 → onay · 2/3 → şartlı (eksiği güçlendir) · ≤1/3 → ret/yeniden tasarla.
+  Kurul **hayır demekten çekinmez**.
+- **Her anlamlı PR öncesi** `yonetim-kurulu` çağrılır ve **Yönetim Kurulu Raporu**
+  üretilir (Product/UX Score, teknik borç, performans, güvenlik, para/zaman
+  katkısı, karmaşıklık, karar, release notes). Küçük/güvenli değişiklik muaf.
+- **Haftalık kurul toplantısı:** `.claude/board/TOPLANTILAR.md`. **Rakip takibi:**
+  `.claude/board/RAKIP-TAKIP.md`. **Başarı ölçütü:** tüzükteki North Star
+  metrikleri (özellik sayısı değil, kazandırılan para/dakika/azalan hata).
+- **Ürün evrimi refleksi:** asla sadece isteneni yapma; her işte sor: "daha iyi
+  yolu var mı? bu ekran kaldırılabilir mi? süreç yarıya inebilir mi? AI bunu
+  tamamen otomatik yapabilir mi?"
+
 ## Teknik Özet
 
 - **Stack:** React 19 + Vite + Tailwind + Radix (client/), tRPC 11 + Express
