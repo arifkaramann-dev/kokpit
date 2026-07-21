@@ -251,6 +251,13 @@ sayfa baştan tasarlandı (migration yok; `formula.all` + `produce.note` +
   Rehber: **EFATURA.md**. PayTR patron kararıyla ertelendi.
 - Doğrulama: 0 tip hatası, 252/252 test, build ✓.
 
+**Kapsamlı özellik analizi & plan ✔ (21.07.2026):** tüm modüller denetlendi —
+envanter/olgunluk tablosu, teknik borçlar (routers/db monoliti, base64 görseller,
+sayfalamasız list uçları, ölü ComponentShowcase), UX bulguları (menü yoğunluğu,
+Maliyet↔Fiyat çakışması, Kokpit aksiyon şeridi eksiği, sessiz hatalar) ve
+3 sprint + canlı doğrulama hattı planı: **docs/ANALIZ-GELISTIRME-PLANI-2026-07-21.md**.
+Sıradaki uygulama işi Sprint 1 ("Sadeleştir & Görünür Kıl") — önce bu belgeyi oku.
+
 **Kod dışı bekleyenler (kullanıcı/dış taraf):** HB test bilgileri (e-postayla
 gelecek → PAZARYERI.md süreci), Bizimhesap FirmID (destek talebi), Geliver
 API token (KARGO.md), Trendyol ortak etiket yetkisi (kategori sorumlusu,
