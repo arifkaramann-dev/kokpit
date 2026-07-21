@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import type { Express, Request, Response } from "express";
-import { executeAssistantCommand } from "./assistant";
+import { runAssistant } from "./assistantAgent";
 
 /**
  * WhatsApp Cloud API (Meta) entegrasyonu: sahibin WhatsApp'tan yazdığı
@@ -187,7 +187,8 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
   }
   waLog("mesaj", `Mesaj alındı (${masked}): "${msg.text.body.slice(0, 80)}"`);
   try {
-    const { message } = await executeAssistantCommand(msg.text.body);
+    // Tool-use ajanı (onay katmanlı); hata/eksik anahtar durumunda intent akışına düşer.
+    const { message } = await runAssistant(msg.text.body, msg.from);
     waLog("cevap", `Asistan cevap üretti (${message.length} karakter), gönderiliyor`);
     await sendWhatsAppText(msg.from, `✅ ${message}`);
   } catch (error) {

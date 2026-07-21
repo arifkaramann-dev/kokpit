@@ -11,6 +11,7 @@ import * as db from "../db";
 import { itemsTotal, summarizeItems, toItemRows } from "../orderUtils";
 import { extractInvoice } from "../_core/claude";
 import { executeAssistantCommand, generateOrderNo, generateQuoteNo } from "../assistant";
+import { runAssistant } from "../assistantAgent";
 import { buildSaleTitle, deriveCombos, parseSetCount, renameVariantTitle } from "../productUtils";
 import { computePrice, extractJson, parseFeatures, pickReferenceProduct, scoreReference, suggestSku } from "../autofill";
 import { computeReorderSuggestions, summarizeReorder } from "../reorder";
@@ -95,7 +96,7 @@ export const assistantRouter = router({
     .input(z.object({ transcript: z.string().min(2) }))
     .mutation(async ({ input }) => {
       try {
-        return await executeAssistantCommand(input.transcript);
+        return await runAssistant(input.transcript, "app");
       } catch (error) {
         throw new TRPCError({
           code: "BAD_REQUEST",
