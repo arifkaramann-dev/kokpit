@@ -19,6 +19,23 @@ Her `.claude/agents/*.md` dosyası gerçek bir ekip üyesidir. Takım sicili ve
 evrim günlüğü: **`.claude/TAKIM.md`**. Şirket bilgi tabanı:
 **`.claude/knowledge/art-of-colour.md`** (yeni şirket bilgisi geldikçe güncelle).
 
+### Kurullar (5 kalıcı sohbet — orkestrasyon katmanı)
+
+13 ajanın üstünde **5 kurul** vardır; her kurul kendi bağlamını, hafızasını ve
+önceliklerini korur (strateji ↔ kod ↔ tasarım ↔ AI ↔ uygulama ayrışır). Dizin:
+**`.claude/KURULLAR.md`**; tüzük+hafıza: **`.claude/boards/*.md`**; giriş komutları:
+**`.claude/commands/*.md`**.
+
+- 🏛 **Ürün Kurulu** (`/urun-kurulu`) — ne+neden: strateji, yol haritası, öncelik, rakip analizi
+- 💻 **Teknik Kurul/CTO** (`/teknik-kurul`) — nasıl (teknik): mimari, kalite, refactor, performans, güvenlik
+- 🎨 **UX Lab** (`/ux-lab`) — nasıl (deneyim): ekran, akış, form, dashboard, mobil
+- 🤖 **AI Lab** (`/ai-lab`) — nasıl (zekâ): asistan, otomasyon, ajanlar, sesli, öneriler
+- 🚀 **Yapımcı** (`/yapimci`) — uygula: iş fişini al → kod → test → PR/teslim
+
+Döngü: 🏛 karar → 💻/🎨/🤖 tasarım → 🚀 uygular → 🏛'e döner. Kurul kararı "iş fişi"
+ile devredilir (format `.claude/KURULLAR.md`). Kurullar ajanların yerine geçmez;
+onları gruplar. Küçük/tek dosyalık işte kurul töreni şart değil — kredi israf etme.
+
 Delegasyon kuralları:
 
 - **`proje-yoneticisi` her zaman orkestratördür**: büyük/çok modüllü işlerde önce
