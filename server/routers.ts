@@ -14,7 +14,7 @@ import { buildSaleTitle, deriveCombos, parseSetCount, renameVariantTitle } from 
 import { computePrice, extractJson, parseFeatures, pickReferenceProduct, scoreReference, suggestSku } from "./autofill";
 import { computeReorderSuggestions, summarizeReorder } from "./reorder";
 import { importUrunKayit } from "./importSeed";
-import { answerTrendyolQuestion, syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf } from "./trendyol";
+import { answerTrendyolQuestion, syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf, TrendyolLabelNotAllowedError } from "./trendyol";
 import {
   fetchTrendyolCategoryAttributes,
   getTrendyolProductBatchStatus,
@@ -24,6 +24,17 @@ import {
   searchTrendyolBrands,
 } from "./trendyolProducts";
 import { pushHepsiburadaStockPrice } from "./hepsiburada";
+import {
+  hbCatalogSendTestProduct,
+  hbCatalogStatus,
+  hbCreateTestOrder,
+  hbListListings,
+  hbListPaidOrdersRaw,
+  hbListingTestPush,
+  hbPackageOrder,
+  hbTestInfo,
+} from "./hepsiburadaTest";
+import { getWhatsAppDiagnostics, sendWhatsAppText } from "./whatsapp";
 import { pushN11StockPrice } from "./n11";
 import { pushCiceksepetiStockPrice } from "./ciceksepeti";
 import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "./marketplace";
@@ -40,7 +51,7 @@ import { createShipment, isKargoConfigured } from "./kargo";
 import { applyCoupon, findCoupon, parseCoupons } from "@shared/campaigns";
 import { parseBankStatement, reconcile } from "@shared/reconcile";
 import { channelProfitReport } from "./reportUtils";
-import { DEFAULT_CHANNEL_PROFILES, normalizeChannelProfile } from "@shared/pricing";
+import { DEFAULT_CHANNEL_PROFILES, deriveUnitLaborOverhead, normalizeChannelProfile } from "@shared/pricing";
 import { ENV } from "./_core/env";
 
 /* ------------------------- Zod schemas ------------------------- */
@@ -1263,6 +1274,10 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
     items: protectedProcedure
       .input(z.object({ orderId: z.number() }))
       .query(({ input }) => db.listOrderItems(input.orderId)),
+    // Toplu içerik dökümü: seçilen siparişlerin kalemleri tek sorguda.
+    itemsBulk: protectedProcedure
+      .input(z.object({ orderIds: z.array(z.number()).min(1).max(300) }))
+      .query(({ input }) => db.listOrderItemsBulk(input.orderIds)),
     syncTrendyol: protectedProcedure.mutation(async () => {
       try {
         return await syncTrendyolOrders();
@@ -1298,10 +1313,29 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
             message: "Bu siparişte kargo takip numarası yok — kargoya verildikten sonra senkronla ve tekrar dene.",
           });
         }
+        // Ortak etiket bu hesapta kapalıysa (COMMON_LABEL_NOT_ALLOWED) Trendyol'u
+        // her seferinde yormayız: 7 gün doğrudan kendi etikete düşülür, sonra bir
+        // kez daha denenir (kategori sorumlusu yetkiyi açmış olabilir).
+        const cfg = await db.getSettings();
+        const blockedAt = Date.parse(cfg.trendyolCommonLabelBlockedAt ?? "");
+        if (Number.isFinite(blockedAt) && Date.now() - blockedAt < 7 * 24 * 60 * 60 * 1000) {
+          return {
+            pdfBase64: null,
+            fallback: "not_allowed" as const,
+            message:
+              "Trendyol ortak etiket yetkisi bu hesapta kapalı — kendi barkodlu etiketimiz kullanılıyor. Yetki için kategori sorumlusuna başvurulabilir; haftada bir otomatik yeniden denenir.",
+          };
+        }
         try {
           const pdf = await getTrendyolCommonLabelPdf(order.cargoTrackingNumber);
-          return { pdfBase64: pdf.toString("base64") };
+          // Yetki açılmışsa eski engel kaydını temizle.
+          if (cfg.trendyolCommonLabelBlockedAt) await db.setSettings({ trendyolCommonLabelBlockedAt: "" });
+          return { pdfBase64: pdf.toString("base64"), fallback: null, message: null };
         } catch (error) {
+          if (error instanceof TrendyolLabelNotAllowedError) {
+            await db.setSettings({ trendyolCommonLabelBlockedAt: new Date().toISOString() });
+            return { pdfBase64: null, fallback: "not_allowed" as const, message: error.message };
+          }
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: error instanceof Error ? error.message : "Etiket alınamadı",
@@ -1596,10 +1630,24 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
 
   settings: router({
     // Şirket/fatura bilgileri (unvan, adres, vergi no, IBAN, KDV oranı vb.).
-    get: protectedProcedure.query(() => db.getSettings()),
+    // Maliyet parametrelerinden türetilen adet başı işçilik+genel gider payı da
+    // eklenir: unitLaborOverheadEffective (elle değer boşsa otomatik hesap).
+    get: protectedProcedure.query(async (): Promise<Record<string, string>> => {
+      const cfg = await db.getSettings();
+      const derived = deriveUnitLaborOverhead(cfg);
+      return {
+        ...cfg,
+        unitLaborOverheadEffective: String(derived.value),
+        unitLaborOverheadSource: derived.source,
+      };
+    }),
     save: protectedProcedure
       .input(z.record(z.string(), z.string()))
-      .mutation(({ input }) => db.setSettings(input)),
+      .mutation(({ input }) => {
+        // Türetilmiş alanlar kaydedilmez (form ekranı olduğu gibi geri yollar).
+        const { unitLaborOverheadEffective: _e, unitLaborOverheadSource: _s, ...rest } = input;
+        return db.setSettings(rest);
+      }),
     nextInvoiceNo: protectedProcedure.mutation(() => db.nextInvoiceNo()),
     // ÜRÜN KAYIT Excel verilerini tek tuşla aktarır (Render ücretsiz planda
     // Shell yok). Idempotent: tekrar basmak var olan kayıtları ezmez.
@@ -1815,7 +1863,7 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
             },
           ]),
         );
-        const laborOverhead = parseFloat(cfg.unitLaborOverhead ?? "0") || 0;
+        const laborOverhead = deriveUnitLaborOverhead(cfg).value;
         return { days, ...channelProfitReport(orders, items, costs, profiles, since, laborOverhead) };
       }),
   }),
@@ -2176,6 +2224,115 @@ Türkçe yaz. Sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, o
         ),
       )
       .mutation(({ input }) => db.setSettings({ storeCoupons: JSON.stringify(input) })),
+  }),
+
+  // WhatsApp tanı: "mesaj attım cevap gelmedi" durumunda sebep burada görünür.
+  whatsapp: router({
+    diagnostics: protectedProcedure.query(() => getWhatsAppDiagnostics()),
+    // Uygulamadan test mesajı yollar; Graph API'nin ham cevabını döner —
+    // süresi dolmuş token / yanlış numara / izin sorunu anında ortaya çıkar.
+    sendTest: protectedProcedure
+      .input(z.object({ to: z.string().optional() }).optional())
+      .mutation(async ({ input }) => {
+        const firstAllowed = (process.env.WHATSAPP_ALLOWED_NUMBERS ?? "").split(",")[0]?.trim();
+        const to = (input?.to?.trim() || firstAllowed || "").replace(/\D/g, "");
+        if (!to) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Gönderilecek numara yok: WHATSAPP_ALLOWED_NUMBERS boş ve numara girilmedi.",
+          });
+        }
+        const result = await sendWhatsAppText(
+          to,
+          "✅ Kokpit test mesajı — bu mesajı görüyorsan gönderim çalışıyor. Şimdi bu mesaja cevap yaz; cevap panelde 'mesaj alındı' olarak görünmüyorsa sorun webhook tarafındadır.",
+        );
+        return { to: `${to.slice(0, 5)}***`, ...result };
+      }),
+  }),
+
+  // Hepsiburada canlıya geçiş test paneli (SIT ortamı) — HB'nin istediği
+  // 3 kanıtı üretir: katalog trackingId, listing uploadId, sipariş+paketleme.
+  hbTest: router({
+    info: protectedProcedure.query(() => hbTestInfo()),
+    sendProduct: protectedProcedure
+      .input(
+        z.object({
+          categoryId: z.number().int().positive(),
+          merchantSku: z.string().min(1),
+          name: z.string().min(1),
+          brand: z.string().min(1),
+          price: z.number().positive(),
+          stock: z.number().int().min(0).optional(),
+          barcode: z.string().optional(),
+          description: z.string().optional(),
+          imageUrl: z.string().optional(),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        try {
+          return await hbCatalogSendTestProduct(input);
+        } catch (error) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Katalog gönderimi başarısız" });
+        }
+      }),
+    productStatus: protectedProcedure
+      .input(z.object({ trackingId: z.string().min(1) }))
+      .mutation(async ({ input }) => {
+        try {
+          return await hbCatalogStatus(input.trackingId);
+        } catch (error) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Durum sorgusu başarısız" });
+        }
+      }),
+    listings: protectedProcedure.mutation(async () => {
+      try {
+        return await hbListListings();
+      } catch (error) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Listeleme çekilemedi" });
+      }
+    }),
+    pushListing: protectedProcedure
+      .input(z.object({ merchantSku: z.string().min(1), price: z.number().positive(), stock: z.number().int().min(0) }))
+      .mutation(async ({ input }) => {
+        try {
+          return await hbListingTestPush(input);
+        } catch (error) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Stok/fiyat gönderimi başarısız" });
+        }
+      }),
+    createOrder: protectedProcedure
+      .input(
+        z.object({
+          hbSku: z.string().min(1),
+          merchantSku: z.string().optional(),
+          quantity: z.number().int().positive().optional(),
+          price: z.number().positive().optional(),
+          rawBody: z.string().optional(),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        try {
+          return await hbCreateTestOrder(input);
+        } catch (error) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Test siparişi oluşturulamadı" });
+        }
+      }),
+    listOrders: protectedProcedure.mutation(async () => {
+      try {
+        return await hbListPaidOrdersRaw();
+      } catch (error) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Siparişler çekilemedi" });
+      }
+    }),
+    packageOrder: protectedProcedure
+      .input(z.object({ orderNumber: z.string().min(1) }))
+      .mutation(async ({ input }) => {
+        try {
+          return await hbPackageOrder(input);
+        } catch (error) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Paketleme başarısız" });
+        }
+      }),
   }),
 
   // e-Fatura / e-Arşiv (Tema C) — payload üretimi + (yapılandırılmışsa) gönderim.

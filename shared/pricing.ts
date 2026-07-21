@@ -155,6 +155,67 @@ export function calcChannelProfit(input: ChannelProfitInput): ChannelProfit {
   };
 }
 
+/* ------------------------- İşçilik + genel gider payı ------------------------- */
+
+/**
+ * Patron rakamları (21.07.2026): işçilik 150 ₺/saat, aylık genel gider 15.000 ₺,
+ * aylık ortalama üretim 150 adet. Ayarlarda alan boşsa bu varsayılanlar geçerlidir;
+ * ekrandan değiştirilebilir (gerçek rakamlar değiştikçe güncellenir).
+ */
+export const DEFAULT_COST_SETTINGS = {
+  laborHourlyRate: 150,
+  monthlyOverhead: 15000,
+  monthlyAvgProduction: 150,
+  laborMinutesPerUnit: 0,
+} as const;
+
+export type CostSettingsLike = {
+  /** Elle girilen adet başı işçilik+genel gider; doluysa otomatik hesabı EZER. */
+  unitLaborOverhead?: string | null;
+  laborHourlyRate?: string | null;
+  monthlyOverhead?: string | null;
+  monthlyAvgProduction?: string | null;
+  /** Bir adedin ortalama işçilik süresi (dakika); 0 = işçilik payı katılmaz. */
+  laborMinutesPerUnit?: string | null;
+};
+
+export type UnitLaborOverhead = {
+  /** Hesaba katılacak adet başı işçilik + genel gider (₺, KDV hariç). */
+  value: number;
+  source: "manual" | "auto";
+  /** Otomatik hesabın dökümü (genel gider payı + işçilik payı). */
+  overheadShare: number;
+  laborShare: number;
+};
+
+/**
+ * Adet başı işçilik+genel gider payı: elle değer girildiyse o; yoksa
+ * (aylık genel gider ÷ aylık ortalama adet) + (saat ücreti × dakika ÷ 60).
+ * Varsayılanlarla: 15000 ÷ 150 = 100 ₺/adet.
+ */
+export function deriveUnitLaborOverhead(cfg: CostSettingsLike): UnitLaborOverhead {
+  const num = (v: string | null | undefined, d: number) => {
+    const n = parseFloat(String(v ?? ""));
+    return Number.isFinite(n) ? n : d;
+  };
+  const manual = num(cfg.unitLaborOverhead, 0);
+  const overhead = num(cfg.monthlyOverhead, DEFAULT_COST_SETTINGS.monthlyOverhead);
+  const avgUnits = num(cfg.monthlyAvgProduction, DEFAULT_COST_SETTINGS.monthlyAvgProduction);
+  const rate = num(cfg.laborHourlyRate, DEFAULT_COST_SETTINGS.laborHourlyRate);
+  const minutes = num(cfg.laborMinutesPerUnit, DEFAULT_COST_SETTINGS.laborMinutesPerUnit);
+  const overheadShare = avgUnits > 0 ? overhead / avgUnits : 0;
+  const laborShare = (rate * Math.max(minutes, 0)) / 60;
+  if (manual > 0) {
+    return { value: +manual.toFixed(2), source: "manual", overheadShare: +overheadShare.toFixed(2), laborShare: +laborShare.toFixed(2) };
+  }
+  return {
+    value: +(overheadShare + laborShare).toFixed(2),
+    source: "auto",
+    overheadShare: +overheadShare.toFixed(2),
+    laborShare: +laborShare.toFixed(2),
+  };
+}
+
 /* ------------------------- Ürün geliştirme sihirbazı kâr hesabı ------------------------- */
 
 export type DevProfitInput = {

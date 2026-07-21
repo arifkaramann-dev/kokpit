@@ -201,6 +201,29 @@ const trendyolHeaders = () => ({
 });
 
 /**
+ * Trendyol "ortak etiket" servisi satıcı hesabında yetkili değil hatası
+ * (COMMON_LABEL_NOT_ALLOWED). Bu KOD hatası değildir: ortak etiket servisi
+ * yalnızca Trendyol kategori sorumlusunun açtığı hesaplarda çalışır.
+ * Tespit edilince tekrar tekrar denemek yerine kendi etiketimize düşülür.
+ */
+export class TrendyolLabelNotAllowedError extends Error {
+  constructor() {
+    super(
+      "Trendyol ortak etiket servisi bu hesapta yetkili değil (COMMON_LABEL_NOT_ALLOWED). " +
+        "Kategori sorumlunuzdan 'ortak etiket (common label) servisi yetkisi' isteyin; " +
+        "o zamana kadar kendi barkodlu etiketimiz kullanılır.",
+    );
+    this.name = "TrendyolLabelNotAllowedError";
+  }
+}
+
+/** Yanıt gövdesinden kalıcı yetki hatasını (ortak etiket kapalı) tanır (saf/testli). */
+export function isCommonLabelNotAllowed(status: number, body: string): boolean {
+  if (status !== 400 && status !== 403) return false;
+  return body.includes("COMMON_LABEL_NOT_ALLOWED") || body.includes("yetkiniz bulunmamaktadır");
+}
+
+/**
  * Trendyol "ortak etiket" (common label) barkodunu üretip ZPL'i alır,
  * ardından Labelary ile PDF'e çevirip döner.
  *
@@ -225,15 +248,24 @@ export async function getTrendyolCommonLabelPdf(cargoTrackingNumber: string): Pr
     headers: { ...trendyolHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify({ format: "ZPL" }),
   });
-  if (createRes.status === 401 || createRes.status === 403) {
-    throw new Error("Trendyol API bilgileri reddedildi (yetki hatası).");
+  if (!createRes.ok) {
+    const createBody = (await createRes.text().catch(() => "")).slice(0, 400);
+    if (isCommonLabelNotAllowed(createRes.status, createBody)) {
+      throw new TrendyolLabelNotAllowedError();
+    }
+    if (createRes.status === 401 || createRes.status === 403) {
+      throw new Error("Trendyol API bilgileri reddedildi (yetki hatası).");
+    }
+    // 409/400 "zaten var" olabilir; okuma adımı asıl doğrulamayı yapar.
   }
-  // 409/400 "zaten var" olabilir; okuma adımı asıl doğrulamayı yapar.
 
   // 2) Oluşan ZPL etiketini oku.
   const getRes = await fetch(base, { headers: { ...trendyolHeaders(), Accept: "application/json" } });
   if (!getRes.ok) {
     const body = (await getRes.text()).slice(0, 300);
+    if (isCommonLabelNotAllowed(getRes.status, body)) {
+      throw new TrendyolLabelNotAllowedError();
+    }
     throw new Error(`Trendyol etiketi alınamadı (${getRes.status}): ${body}`);
   }
   const raw = await getRes.text();

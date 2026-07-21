@@ -1,10 +1,13 @@
+import { HbTestPanel } from "@/components/HbTestPanel";
+import { WhatsappDiagPanel } from "@/components/WhatsappDiagPanel";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
-import { AlertCircle, Building2, CheckCircle2, DatabaseZap, Store } from "lucide-react";
+import { deriveUnitLaborOverhead } from "@shared/pricing";
+import { AlertCircle, Building2, Calculator, CheckCircle2, DatabaseZap, Store } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -20,9 +23,17 @@ const FIELDS: { key: string; label: string; placeholder?: string; textarea?: boo
   { key: "iban", label: "IBAN", placeholder: "TR.." },
   { key: "bankName", label: "Banka", placeholder: "Örn. Ziraat Bankası" },
   { key: "vatRate", label: "KDV Oranı (%)", placeholder: "20" },
-  { key: "unitLaborOverhead", label: "İşçilik + Genel Gider (₺/adet)", placeholder: "Örn. 25 (aylık gider ÷ aylık adet + işçilik payı)" },
   { key: "devCommissionPercent", label: "Varsayılan Komisyon/Ödeme (%)", placeholder: "Örn. 3.9 (PAYTR)" },
   { key: "invoiceNote", label: "Fatura Alt Notu", placeholder: "Teşekkür / iade koşulları vb.", textarea: true },
+];
+
+/** Maliyet parametreleri (patron rakamları 21.07.2026 varsayılan gelir). */
+const COST_FIELDS: { key: string; label: string; placeholder: string }[] = [
+  { key: "laborHourlyRate", label: "İşçilik Saat Ücreti (₺/saat)", placeholder: "150" },
+  { key: "monthlyOverhead", label: "Aylık Genel Gider (₺)", placeholder: "15000" },
+  { key: "monthlyAvgProduction", label: "Aylık Ortalama Üretim (adet)", placeholder: "150" },
+  { key: "laborMinutesPerUnit", label: "Adet Başı İşçilik (dakika)", placeholder: "0 (bilinmiyorsa boş)" },
+  { key: "unitLaborOverhead", label: "Elle Değer (₺/adet — boş = otomatik)", placeholder: "Boş bırak: otomatik hesaplanır" },
 ];
 
 export default function Settings() {
@@ -122,6 +133,50 @@ export default function Settings() {
 
       <Card className="p-5 space-y-4">
         <h2 className="font-semibold flex items-center gap-2">
+          <Calculator className="h-4 w-4 text-primary" /> Maliyet Parametreleri (işçilik + genel gider)
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Net kârın GERÇEK olması için hammaddeye ek olarak adet başına genel gider payı düşülür:
+          aylık genel gider ÷ aylık ortalama adet (+ işçilik dakikası × saat ücreti). Fiyat &amp; Kâr
+          Motoru, Maliyet ve Kanal Kârlılığı hesapları bu değeri otomatik kullanır.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {COST_FIELDS.map(f => (
+            <div key={f.key} className="space-y-1.5">
+              <Label>{f.label}</Label>
+              <Input
+                value={form[f.key] ?? ""}
+                onChange={e => setForm(s => ({ ...s, [f.key]: e.target.value }))}
+                placeholder={f.placeholder}
+              />
+            </div>
+          ))}
+        </div>
+        {(() => {
+          const d = deriveUnitLaborOverhead(form);
+          return (
+            <p className="text-sm rounded-md border border-emerald-500/40 p-2.5">
+              Hesaba katılan pay: <b>{d.value.toFixed(2)} ₺/adet</b>{" "}
+              {d.source === "manual" ? (
+                <span className="text-muted-foreground">(elle girilen değer)</span>
+              ) : (
+                <span className="text-muted-foreground">
+                  (otomatik: genel gider {d.overheadShare.toFixed(2)} ₺
+                  {d.laborShare > 0 ? ` + işçilik ${d.laborShare.toFixed(2)} ₺` : ""})
+                </span>
+              )}
+            </p>
+          );
+        })()}
+        <div className="flex justify-end">
+          <Button onClick={() => save.mutate(form)} disabled={save.isPending}>
+            Kaydet
+          </Button>
+        </div>
+      </Card>
+
+      <Card className="p-5 space-y-4">
+        <h2 className="font-semibold flex items-center gap-2">
           <Store className="h-4 w-4 text-primary" /> Pazaryeri Bağlantıları
         </h2>
         <p className="text-sm text-muted-foreground">
@@ -138,6 +193,11 @@ export default function Settings() {
                   <AlertCircle className="h-4 w-4 text-amber-600" />
                 )}
                 <span className="font-medium">{m.label}</span>
+                {m.testMode && (
+                  <span className="text-[10px] rounded-full border border-amber-500/50 text-amber-600 px-1.5 py-0.5">
+                    TEST ORTAMI — senkron kapalı
+                  </span>
+                )}
                 <span
                   className={`text-xs ml-auto ${m.configured ? "text-emerald-600" : "text-amber-600"}`}
                 >
@@ -321,6 +381,10 @@ export default function Settings() {
           {importSeed.isPending ? "Aktarılıyor..." : "Verileri İçe Aktar"}
         </Button>
       </Card>
+
+      <WhatsappDiagPanel />
+
+      <HbTestPanel />
     </div>
   );
 }

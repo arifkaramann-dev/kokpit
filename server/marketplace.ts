@@ -1,6 +1,6 @@
 import { ENV } from "./_core/env";
 import { isCiceksepetiConfigured, syncCiceksepetiOrders, testCiceksepetiConnection } from "./ciceksepeti";
-import { isHepsiburadaConfigured, syncHepsiburadaOrders, testHepsiburadaConnection } from "./hepsiburada";
+import { isHbTestEnv, isHepsiburadaConfigured, syncHepsiburadaOrders, testHepsiburadaConnection } from "./hepsiburada";
 import { isN11Configured, syncN11Orders, testN11Connection } from "./n11";
 import { isTrendyolConfigured, syncTrendyolOrders, testTrendyolConnection } from "./trendyol";
 
@@ -18,6 +18,8 @@ export type MarketplaceStatus = {
   label: string;
   configured: boolean;
   missing: string[];
+  /** true = test (SIT) ortamına bağlı; oto-senkron kapalı, test paneli aktif. */
+  testMode?: boolean;
 };
 
 export function marketplaceStatus(): MarketplaceStatus[] {
@@ -36,6 +38,7 @@ export function marketplaceStatus(): MarketplaceStatus[] {
       key: "hepsiburada",
       label: "Hepsiburada",
       configured: isHepsiburadaConfigured(),
+      testMode: isHbTestEnv(),
       missing: [
         !ENV.hepsiburadaMerchantId && "HEPSIBURADA_MERCHANT_ID",
         !ENV.hepsiburadaUsername && "HEPSIBURADA_USERNAME",
@@ -84,7 +87,7 @@ export type SyncResult = {
   updated: number;
   skipped: number;
   error: string | null;
-  skippedReason?: "not_configured";
+  skippedReason?: "not_configured" | "test_mode";
 };
 
 // Aynı anda birden fazla çekme çalışırsa (otomatik + elle) aynı sipariş iki kez
@@ -108,10 +111,18 @@ async function runSyncAll(): Promise<SyncResult[]> {
     key: MarketplaceKey;
     label: string;
     configured: boolean;
+    /** Dolu ise senkron atlanır (test ortamı verisi canlı panoya karışmasın). */
+    skip?: "test_mode";
     run: () => Promise<{ imported: number; skipped: number; updated?: number }>;
   }[] = [
     { key: "trendyol", label: "Trendyol", configured: isTrendyolConfigured(), run: () => syncTrendyolOrders() },
-    { key: "hepsiburada", label: "Hepsiburada", configured: isHepsiburadaConfigured(), run: () => syncHepsiburadaOrders() },
+    {
+      key: "hepsiburada",
+      label: "Hepsiburada",
+      configured: isHepsiburadaConfigured(),
+      skip: isHbTestEnv() ? "test_mode" : undefined,
+      run: () => syncHepsiburadaOrders(),
+    },
     { key: "n11", label: "N11", configured: isN11Configured(), run: () => syncN11Orders() },
     { key: "ciceksepeti", label: "Çiçeksepeti", configured: isCiceksepetiConfigured(), run: () => syncCiceksepetiOrders() },
   ];
@@ -119,6 +130,10 @@ async function runSyncAll(): Promise<SyncResult[]> {
   for (const r of runners) {
     if (!r.configured) {
       results.push({ key: r.key, label: r.label, ok: false, imported: 0, updated: 0, skipped: 0, error: null, skippedReason: "not_configured" });
+      continue;
+    }
+    if (r.skip) {
+      results.push({ key: r.key, label: r.label, ok: true, imported: 0, updated: 0, skipped: 0, error: null, skippedReason: r.skip });
       continue;
     }
     try {

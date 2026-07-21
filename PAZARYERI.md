@@ -1,5 +1,39 @@
 # Pazaryeri Bağlantıları & Fatura
 
+## Hepsiburada TEST ORTAMI → canlıya geçiş (güncel durum: test bilgileri bekleniyor)
+
+HB, canlı API bilgilerini vermeden önce test (SIT) ortamında 3 adımın
+kanıtlanmasını istiyor. Kokpit'te bunun için hazır panel var:
+**Ayarlar → "Hepsiburada Test Ortamı (canlıya geçiş)"**.
+
+**Adım adım:**
+
+1. **Test bilgileri e-postayla gelince** (arif.karamann@gmail.com'a gelecek)
+   Render → Environment'a gir:
+   - `HEPSIBURADA_ENV` = `sit`  ← test ortamı anahtarı (bunu girince oto-senkron
+     kapanır, test siparişleri panoya karışmaz)
+   - `HEPSIBURADA_MERCHANT_ID` / `HEPSIBURADA_USERNAME` / `HEPSIBURADA_PASSWORD`
+     = e-postadaki TEST değerleri (+ verdilerse `HEPSIBURADA_SERVICE_KEY`)
+2. **Ayarlar → Hepsiburada Test Ortamı** panelinde sırayla:
+   - **1) Katalog:** Kategori ID gir (e-postada/dokümanda test için önerilen
+     kategori; yoksa boya kategorisinin ID'si) → "Ürünü Gönder" →
+     **trackingId**'yi kopyala. "Durum Sorgula" hatasız görünmeli.
+   - **2) Listing:** "Envanteri Getir" → HB'nin yüklediği üründen birini seç →
+     "Stok/Fiyat Gönder" → **priceUploadId + stockUploadId**'yi kopyala.
+   - **3) Sipariş:** envanterden hbSku seçiliyken "Test Siparişi Oluştur" →
+     "Siparişleri Getir" ile listelendiğini gör → sipariş numarasıyla
+     **"Paketle"** → **packageNumber**'ı kopyala.
+3. **HB'ye yeni ticket aç:** üç kanıtı (trackingId, uploadId'ler, paketlenen
+   test siparişi no) yapıştır, canlı ortam bilgilerini iste.
+4. **Canlı bilgiler gelince:** `HEPSIBURADA_ENV`'i SİL, canlı Merchant
+   ID/kullanıcı/şifre/Servis Anahtarı'nı gir → "Bağlantıyı Test Et" → sipariş
+   senkronu otomatik açılır.
+
+> Not: Panel test API'lerine yalnızca canlıda (Render) ulaşabilir; ham API
+> yanıtları panelde aynen gösterilir — bir adım hata verirse yanıtı bana
+> ilet, düzeltilmiş halini hemen gönderirim. Test ortamı uçları canlının
+> "-sit" ekli halleridir (developers.hepsiburada.com).
+
 ## Neden Trendyol siparişleri gelmiyor olabilir?
 
 Sipariş Panosu artık en üstte **bağlantı durumu** gösteriyor: her pazaryeri için

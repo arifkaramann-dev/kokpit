@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, isNull, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   accounts,
@@ -951,6 +951,17 @@ export async function dedupeOrders() {
 export async function listOrderItems(orderId: number) {
   const db = await requireDb();
   return db.select().from(orderItems).where(eq(orderItems.orderId, orderId)).orderBy(orderItems.id);
+}
+
+/** Birden çok siparişin kalemleri tek sorguda (toplu içerik dökümü yazdırma için). */
+export async function listOrderItemsBulk(orderIds: number[]) {
+  if (orderIds.length === 0) return [];
+  const db = await requireDb();
+  return db
+    .select()
+    .from(orderItems)
+    .where(inArray(orderItems.orderId, orderIds))
+    .orderBy(orderItems.orderId, orderItems.id);
 }
 
 /**

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   calcChannelProfit,
   calcDevProfit,
+  deriveUnitLaborOverhead,
   matchPriceRows,
   normalizeChannelProfile,
   parsePriceCsv,
@@ -385,5 +386,43 @@ describe("matchPriceRows", () => {
     expect(matches).toHaveLength(1);
     expect(matches[0].newPrice).toBe(120);
     expect(unmatched).toHaveLength(1);
+  });
+});
+
+describe("deriveUnitLaborOverhead (işçilik + genel gider payı)", () => {
+  it("patron varsayılanlarıyla 100 ₺/adet türetir (15000 ÷ 150)", () => {
+    const d = deriveUnitLaborOverhead({});
+    expect(d.value).toBe(100);
+    expect(d.source).toBe("auto");
+    expect(d.overheadShare).toBe(100);
+    expect(d.laborShare).toBe(0);
+  });
+
+  it("işçilik dakikası girilince payı ekler (10 dk × 150 ₺/saat = 25 ₺)", () => {
+    const d = deriveUnitLaborOverhead({ laborMinutesPerUnit: "10" });
+    expect(d.laborShare).toBe(25);
+    expect(d.value).toBe(125);
+  });
+
+  it("elle değer otomatik hesabı ezer", () => {
+    const d = deriveUnitLaborOverhead({ unitLaborOverhead: "42", monthlyOverhead: "99999" });
+    expect(d.value).toBe(42);
+    expect(d.source).toBe("manual");
+  });
+
+  it("özel rakamlarla doğru böler", () => {
+    const d = deriveUnitLaborOverhead({ monthlyOverhead: "20000", monthlyAvgProduction: "400" });
+    expect(d.value).toBe(50);
+  });
+
+  it("aylık adet 0/boşsa genel gider payı 0 olur (sıfıra bölme yok)", () => {
+    const d = deriveUnitLaborOverhead({ monthlyAvgProduction: "0" });
+    expect(d.overheadShare).toBe(0);
+    expect(d.value).toBe(0);
+  });
+
+  it("geçersiz metinlerde varsayılanlara düşer", () => {
+    const d = deriveUnitLaborOverhead({ monthlyOverhead: "abc", monthlyAvgProduction: "" });
+    expect(d.value).toBe(100);
   });
 });

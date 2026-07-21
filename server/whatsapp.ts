@@ -30,15 +30,65 @@ function normalizeNumber(value: string): string {
   return value.replace(/\D/g, "");
 }
 
-function isAllowedSender(from: string): boolean {
-  const raw = process.env.WHATSAPP_ALLOWED_NUMBERS ?? "";
-  const allowed = raw
+/**
+ * İzinli numara eşleşmesi (saf/testli). Ülke kodu/baştaki 0 farkları en sık
+ * "cevap gelmiyor" sebebiydi: "05551112233" ile Meta'nın gönderdiği
+ * "905551112233" eşleşmiyordu. Son 10 hane (TR yerel numara) karşılaştırılır.
+ */
+export function isAllowedNumberMatch(from: string, allowedCsv: string): boolean {
+  const tail = (s: string) => normalizeNumber(s).slice(-10);
+  const fromTail = tail(from);
+  if (fromTail.length < 10) return false;
+  const allowed = allowedCsv
     .split(",")
-    .map(s => normalizeNumber(s))
-    .filter(Boolean);
+    .map(s => tail(s))
+    .filter(s => s.length === 10);
   // Liste boşsa güvenlik için kimseye cevap verme.
-  if (allowed.length === 0) return false;
-  return allowed.includes(normalizeNumber(from));
+  return allowed.includes(fromTail);
+}
+
+function isAllowedSender(from: string): boolean {
+  return isAllowedNumberMatch(from, process.env.WHATSAPP_ALLOWED_NUMBERS ?? "");
+}
+
+/* ------------------------- Tanı (diagnostik) kaydı ------------------------- */
+
+export type WhatsAppDiagEvent = {
+  at: string;
+  kind: "webhook" | "mesaj" | "cevap" | "gonderim" | "hata";
+  detail: string;
+  ok: boolean;
+};
+
+// Son olaylar bellekte tutulur (yeniden başlatınca sıfırlanır — tanı için yeterli).
+const diagEvents: WhatsAppDiagEvent[] = [];
+export function waLog(kind: WhatsAppDiagEvent["kind"], detail: string, ok = true) {
+  diagEvents.unshift({ at: new Date().toISOString(), kind, detail: detail.slice(0, 300), ok });
+  if (diagEvents.length > 100) diagEvents.pop();
+}
+
+/** Numarayı maskeler: 905551112233 → 90555***2233 (tanı ekranında sızıntı olmasın). */
+function maskNumber(value: string): string {
+  const d = normalizeNumber(value);
+  return d.length > 7 ? `${d.slice(0, 5)}***${d.slice(-4)}` : d || value;
+}
+
+/** Ayarlar sayfasındaki "WhatsApp Tanı" kartının veri kaynağı. */
+export function getWhatsAppDiagnostics() {
+  const allowedRaw = (process.env.WHATSAPP_ALLOWED_NUMBERS ?? "")
+    .split(",")
+    .map(s => s.trim())
+    .filter(Boolean);
+  return {
+    configured: isWhatsAppConfigured(),
+    accessToken: Boolean(process.env.WHATSAPP_ACCESS_TOKEN),
+    phoneNumberId: Boolean(process.env.WHATSAPP_PHONE_NUMBER_ID),
+    verifyToken: Boolean(process.env.WHATSAPP_VERIFY_TOKEN),
+    appSecret: Boolean(process.env.WHATSAPP_APP_SECRET),
+    anthropicKey: Boolean(process.env.ANTHROPIC_API_KEY),
+    allowedNumbers: allowedRaw.map(maskNumber),
+    events: diagEvents.slice(0, 50),
+  };
 }
 
 /**
@@ -61,24 +111,38 @@ export function verifyWebhookSignature(
   return crypto.timingSafeEqual(providedBuf, expectedBuf);
 }
 
-export async function sendWhatsAppText(to: string, body: string): Promise<void> {
-  const res = await fetch(`${GRAPH_BASE}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      messaging_product: "whatsapp",
-      to,
-      type: "text",
-      // WhatsApp tek mesajda 4096 karakter sınırı koyar.
-      text: { body: body.slice(0, 4000) },
-    }),
-  });
-  if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    console.error(`[whatsapp] send failed ${res.status}: ${detail}`);
+export type SendWhatsAppResult = { ok: boolean; status: number; detail: string };
+
+export async function sendWhatsAppText(to: string, body: string): Promise<SendWhatsAppResult> {
+  try {
+    const res = await fetch(`${GRAPH_BASE}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: "text",
+        // WhatsApp tek mesajda 4096 karakter sınırı koyar.
+        text: { body: body.slice(0, 4000) },
+      }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      console.error(`[whatsapp] send failed ${res.status}: ${detail}`);
+      // En sık sebep: süresi dolmuş access token (geçici token 24 saatte ölür).
+      waLog("gonderim", `Gönderim başarısız (${res.status}): ${detail}`, false);
+      return { ok: false, status: res.status, detail: detail.slice(0, 300) };
+    }
+    waLog("gonderim", `Mesaj gönderildi → ${to.slice(0, 5)}***`);
+    return { ok: true, status: res.status, detail: "" };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Ağ hatası";
+    console.error(`[whatsapp] send error: ${detail}`);
+    waLog("gonderim", `Gönderim hatası: ${detail}`, false);
+    return { ok: false, status: 0, detail };
   }
 }
 
@@ -103,22 +167,32 @@ function alreadyProcessed(id: string): boolean {
 
 async function handleMessage(msg: IncomingMessage): Promise<void> {
   if (alreadyProcessed(msg.id)) return;
+  const masked = `${normalizeNumber(msg.from).slice(0, 5)}***`;
   if (!isAllowedSender(msg.from)) {
     console.warn(`[whatsapp] izinsiz numara yok sayıldı: ${msg.from}`);
+    waLog(
+      "mesaj",
+      `İzinsiz numaradan mesaj YOK SAYILDI (${masked}). Cevap istiyorsan WHATSAPP_ALLOWED_NUMBERS'a bu numarayı ekle.`,
+      false,
+    );
     return;
   }
   if (msg.type !== "text" || !msg.text?.body) {
+    waLog("mesaj", `Metin dışı mesaj (${msg.type}) — bilgilendirme gönderiliyor`);
     await sendWhatsAppText(
       msg.from,
       "Şimdilik yalnızca yazılı mesajları işleyebiliyorum. 🎤 Sesli komut için telefon klavyendeki mikrofon (dikte) ile konuşarak yazdırabilirsin — aynı şekilde çalışır."
     );
     return;
   }
+  waLog("mesaj", `Mesaj alındı (${masked}): "${msg.text.body.slice(0, 80)}"`);
   try {
     const { message } = await executeAssistantCommand(msg.text.body);
+    waLog("cevap", `Asistan cevap üretti (${message.length} karakter), gönderiliyor`);
     await sendWhatsAppText(msg.from, `✅ ${message}`);
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Komut işlenemedi";
+    waLog("hata", `Asistan hatası: ${reason}`, false);
     await sendWhatsAppText(msg.from, `⚠️ ${reason}`);
   }
 }
@@ -136,8 +210,10 @@ export function registerWhatsAppRoutes(app: Express) {
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
     if (mode === "subscribe" && token && token === process.env.WHATSAPP_VERIFY_TOKEN) {
+      waLog("webhook", "Meta webhook doğrulaması BAŞARILI (verify token eşleşti)");
       res.status(200).send(String(challenge ?? ""));
     } else {
+      waLog("webhook", "Webhook doğrulama isteği reddedildi (verify token eşleşmedi)", false);
       res.sendStatus(403);
     }
   });
@@ -150,25 +226,42 @@ export function registerWhatsAppRoutes(app: Express) {
       const signature = req.header("x-hub-signature-256");
       if (!rawBody || !verifyWebhookSignature(rawBody, signature, appSecret)) {
         console.warn("[whatsapp] geçersiz webhook imzası, istek reddedildi");
+        waLog(
+          "webhook",
+          "Webhook İMZASI GEÇERSİZ, istek reddedildi — WHATSAPP_APP_SECRET Meta panelindeki App Secret ile birebir aynı mı?",
+          false,
+        );
         res.sendStatus(401);
         return;
       }
     }
     res.sendStatus(200);
-    if (!isWhatsAppConfigured()) return;
+    if (!isWhatsAppConfigured()) {
+      waLog("webhook", "Webhook geldi ama WHATSAPP_* ayarları eksik — mesaj işlenmedi", false);
+      return;
+    }
     try {
       const entries = (req.body?.entry ?? []) as {
-        changes?: { value?: { messages?: IncomingMessage[] } }[];
+        changes?: { value?: { messages?: IncomingMessage[]; statuses?: unknown[] } }[];
       }[];
+      let messageCount = 0;
       for (const entry of entries) {
         for (const change of entry.changes ?? []) {
           for (const msg of change.value?.messages ?? []) {
-            void handleMessage(msg).catch(err => console.error("[whatsapp] işleme hatası:", err));
+            messageCount++;
+            void handleMessage(msg).catch(err => {
+              console.error("[whatsapp] işleme hatası:", err);
+              waLog("hata", `Mesaj işleme hatası: ${err instanceof Error ? err.message : String(err)}`, false);
+            });
           }
         }
       }
+      // Mesaj içermeyen webhook'lar (teslimat durumu vb.) normaldir; kaydı tutulur
+      // ki "webhook geliyor mu?" sorusu tanı ekranından cevaplanabilsin.
+      if (messageCount === 0) waLog("webhook", "Webhook alındı (mesaj yok — durum bildirimi)");
     } catch (error) {
       console.error("[whatsapp] webhook ayrıştırma hatası:", error);
+      waLog("hata", `Webhook ayrıştırma hatası: ${error instanceof Error ? error.message : String(error)}`, false);
     }
   });
 }

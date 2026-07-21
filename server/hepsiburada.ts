@@ -12,9 +12,19 @@ import { itemsTotal, shouldSyncOrderStatus, summarizeItems, toItemRows, type Ord
  * yanıt ayrıştırma savunmacı yazılmıştır (birden çok alan adı denenir).
  */
 
-const HB_API_BASE = process.env.HEPSIBURADA_API_BASE_URL ?? "https://oms-external.hepsiburada.com";
+// HEPSIBURADA_ENV=sit → tüm uçlar test (SIT) ortamına döner; canlıya geçişte
+// değişken silinir/prod yapılır. Açık *_BASE_URL değişkenleri her zaman kazanır.
+const HB_SIT = (process.env.HEPSIBURADA_ENV ?? "").toLowerCase() === "sit";
+const HB_API_BASE =
+  process.env.HEPSIBURADA_API_BASE_URL ??
+  (HB_SIT ? "https://oms-external-sit.hepsiburada.com" : "https://oms-external.hepsiburada.com");
 const PAGE_SIZE = 100;
 const MAX_PAGES = 10;
+
+/** Hepsiburada test (SIT) ortamında mıyız? Test modunda oto-senkron devre dışıdır. */
+export function isHbTestEnv(): boolean {
+  return HB_SIT;
+}
 
 type HbLineRaw = {
   productName?: string;
@@ -190,7 +200,8 @@ export async function testHepsiburadaConnection(): Promise<{ ok: boolean; status
 /* ------------------------- Stok & fiyat gönderme (Listing API) ------------------------- */
 
 const HB_LISTING_API_BASE =
-  process.env.HEPSIBURADA_LISTING_API_BASE_URL ?? "https://listing-external.hepsiburada.com";
+  process.env.HEPSIBURADA_LISTING_API_BASE_URL ??
+  (HB_SIT ? "https://listing-external-sit.hepsiburada.com" : "https://listing-external.hepsiburada.com");
 
 export type HbStockPriceItem = {
   /** Satıcı SKU'su — bizde ürün barkodu bu alana yazılır (listelemedeki merchantSku ile aynı olmalı). */

@@ -114,8 +114,9 @@ export default function Pricing() {
 
   const [profileIdx, setProfileIdx] = useState(0);
   const profile = profiles[Math.min(profileIdx, profiles.length - 1)];
-  // Adet başı işçilik + genel gider (KDV hariç) — ayarlardan; net kâra doğrudan yansır.
-  const laborOverhead = num(settings?.unitLaborOverhead);
+  // Adet başı işçilik + genel gider (KDV hariç) — ayarlardan; elle değer yoksa
+  // maliyet parametrelerinden otomatik türetilir (15000₺/ay ÷ 150 adet = 100₺).
+  const laborOverhead = num(settings?.unitLaborOverheadEffective ?? settings?.unitLaborOverhead);
 
   const saveSettings = trpc.settings.save.useMutation({
     onSuccess: () => {

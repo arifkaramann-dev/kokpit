@@ -18,14 +18,13 @@ Durum işaretleri: `[ ]` yapılmadı · `[~]` başvuru sürüyor · `[x]` tamam 
 
 Bu tema büyük ölçüde bende. Senden gereken tek şey birkaç **oran/sabit** girmen:
 
-- [ ] **İşçilik saat ücreti & aylık genel gider (overhead).**
-  - **Neden:** Net kâr şu an sadece hammadde maliyetini içeriyor; işçilik ve
-    kira/elektrik/amortisman gibi genel giderler girince kâr GERÇEK olur.
-  - **Nasıl:** Bana şu 3 rakamı ver: (1) bir üretim işçisinin saatlik maliyeti (₺),
-    (2) aylık toplam genel gider (₺), (3) aylık ortalama üretilen adet/parti sayısı.
-    Bunlarla ürün başına genel gider payını otomatik dağıtırım.
-  - **Süre & maliyet:** 10 dakika, ücretsiz. **Neyi açar:** Maliyet & Fiyat sayfalarında
-    "tam maliyet" (hammadde + işçilik + genel gider) ve gerçek net kâr.
+- [x] **İşçilik saat ücreti & aylık genel gider (overhead).** ✔ 21.07.2026
+  - **Verilen rakamlar:** işçilik **150 ₺/saat**, aylık genel gider **15.000 ₺**,
+    aylık ortalama üretim **150 adet** → adet başı genel gider payı **100 ₺**
+    otomatik hesaplanıyor (Ayarlar → Maliyet Parametreleri; Fiyat & Kâr Motoru,
+    Maliyet ve Kanal Kârlılığı hesaplarına otomatik dahil).
+  - **Kalan mini iş:** bir adedin ortalama işçilik DAKİKASINI öğrenirsen
+    (örn. 10 dk) Ayarlar'a gir — işçilik payı da otomatik eklenir.
 - [ ] **Hammadde alış faturalarını sisteme girme alışkanlığı.**
   - **Neden:** Alış faturasından hammadde birim maliyeti + indirilecek KDV otomatik
     güncellenirse, maliyet hep güncel kalır (elle güncelleme derdi biter).
@@ -44,7 +43,9 @@ Bu tema büyük ölçüde bende. Senden gereken tek şey birkaç **oran/sabit** 
     açman yeter. Yoksa bir sağlayıcıdan (GoDaddy, Natro, İsimtescil) al.
   - **Süre & maliyet:** 30 dk; `.com` ~ 300–500 ₺/yıl. **Bana ver:** kullanmak
     istediğin adres. **Neyi açar:** Mağazanın canlı adresi + Render'da domain bağlama.
-- [ ] **Sanal POS / ödeme altyapısı — PAYTR (veya iyzico).**
+- [~] **Sanal POS / ödeme altyapısı — PAYTR (veya iyzico).** *(patron kararı
+  21.07.2026: hesap hazır ama ŞİMDİLİK ERTELENDİ — web mağaza canlıya yaklaşınca
+  anahtarlar girilecek.)*
   - **Neden:** Web mağazasında kartla tahsilat için ödeme kuruluşu şart. Excel'inde
     zaten PAYTR %3,9 kullanıyorsun — onunla devam mantıklı.
   - **Nasıl:** (1) paytr.com → Üye İşyeri başvurusu, (2) şirket evrakların (vergi
@@ -53,17 +54,13 @@ Bu tema büyük ölçüde bende. Senden gereken tek şey birkaç **oran/sabit** 
   - **Süre & maliyet:** Başvuru onayı 2–5 iş günü; kurulum ücretsiz, işlem başına ~%3,9.
   - **Bana ver (Render):** `PAYTR_MERCHANT_ID`, `PAYTR_MERCHANT_KEY`, `PAYTR_MERCHANT_SALT`.
   - **Neyi açar:** Mağazada sepet → kartla ödeme → sipariş otomatik panoya düşer.
-- [ ] **Kargo (kendi mağaza siparişleri için).**
-  - **Neden:** Pazaryeri kargosu anlaşmalı; ama kendi mağaza siparişini sen
-    göndereceksin. Anlaşmalı kargo hem ucuz hem otomatik etiket sağlar.
-  - **Nasıl (iki yol):**
-    - **Kolay yol (önerilen):** Bir kargo toplayıcı (Navlungo, Basit Kargo,
-      Kolay Gelsin) hesabı aç → tek panelden çok firma + API ile otomatik etiket.
-    - **Klasik yol:** Doğrudan bir kargo firmasıyla (Sürat, MNG, Aras, Yurtiçi)
-      anlaşma yap → müşteri no + API bilgileri al.
-  - **Süre & maliyet:** 1–3 iş günü; desi bazlı ücret (hacme göre pazarlık).
-  - **Bana ver (Render):** seçtiğin sağlayıcının API anahtarı/müşteri no.
-  - **Neyi açar:** Mağaza siparişine otomatik kargo etiketi + takip no.
+- [~] **Kargo (kendi mağaza siparişleri için) — GELİVER seçildi.** *(21.07.2026:
+  patron zaten Geliver kullanıyor; kod adaptörü hazır.)*
+  - **Nasıl:** Rehberin tamamı **`KARGO.md`** dosyasında. Özet: app.geliver.io →
+    **API Tokenları** → token üret → Render'a `GELIVER_API_TOKEN` (+ önerilen
+    `GELIVER_SENDER_ADDRESS_ID`, ilk kurulumda `GELIVER_TEST_MODE=1`) gir.
+  - **Neyi açar:** Sipariş kartından "Geliver gönderisi" → otomatik teklif
+    satın alma + takip no siparişe işlenir + etiket açılır.
 - [ ] **SEO/analitik: Google Analytics 4 + Search Console + Meta Pixel (opsiyonel ama önerilir).**
   - **Neden:** Mağazaya gelen trafiği ölçmek, reklam dönüşümü görmek için.
   - **Nasıl:** analytics.google.com → GA4 mülkü aç → **Ölçüm Kimliği (G-XXXX)** al;
@@ -75,22 +72,15 @@ Bu tema büyük ölçüde bende. Senden gereken tek şey birkaç **oran/sabit** 
 
 ## C) e-FATURA / e-ARŞİV + ÖN MUHASEBE (yasal olmazsa-olmaz)
 
-- [ ] **Mali mühür (tüzel kişi) veya e-İmza (şahıs firması).**
-  - **Neden:** e-Fatura/e-Arşiv kesmek için yasal zorunlu. Tüm entegratörler bunu ister.
-  - **Nasıl:** Kamu Sertifikasyon Merkezi (kamusm.gov.tr) → Mali Mühür başvurusu
-    (şirket türüne göre). Şahıs firmasıysan nitelikli e-İmza da yeterli olabilir.
-  - **Süre & maliyet:** 1–2 hafta; mali mühür ~ 700–1.000 ₺/3 yıl.
-  - **Neyi açar:** Aşağıdaki entegratör başvurusunu.
-- [ ] **e-Fatura entegratörü seç ve başvur.**
-  - **Neden:** GİB'e doğrudan bağlanmak yerine bir özel entegratör API'siyle fatura kesmek çok daha kolay.
-  - **Nasıl:** Bir entegratör seç ve API'li paket al:
-    - **Paraşüt / Mikro / Logo İşbaşı:** KOBİ dostu, hazır API.
-    - **İzibiz / Uyumsoft / Foriba (Sovos):** kurumsal, güçlü API.
-    - Öneri: fatura hacmin düşükse **Paraşüt** veya **Uyumsoft** hızlı başlangıç.
-  - Başvuruda: şirket bilgileri + mali mühür → sana **API kullanıcı adı/şifre + test/canlı uç** verirler.
-  - **Süre & maliyet:** 3–7 iş günü; yıllık ~ 2.000–6.000 ₺ (kontör/paket bazlı).
-  - **Bana ver (Render):** seçtiğin entegratörün `EFATURA_*` bilgileri (kullanıcı, şifre, uç adresi).
-  - **Neyi açar:** Siparişten tek tuş e-Fatura/e-Arşiv kesme + otomatik gönderme.
+- [x] **Mali mühür (tüzel kişi) veya e-İmza (şahıs firması).** ✔ 21.07.2026 —
+  mali mühür MEVCUT (patron onayı).
+- [~] **e-Fatura entegratörü — BİZİMHESAP seçildi.** *(21.07.2026: patron zaten
+  Bizimhesap abonesi; yeni anlaşmaya gerek yok, kod adaptörü hazır.)*
+  - **Nasıl:** Rehber **`EFATURA.md`**. Özet: Bizimhesap destek talebiyle
+    **Firma ID (FirmID)** iste → Render'a `EFATURA_PROVIDER=bizimhesap` +
+    `BIZIMHESAP_FIRM_ID` gir → abonelikte e-fatura modülü + mali mühür tanımını doğrula.
+  - **Neyi açar:** Siparişten faturanın Bizimhesap'a otomatik işlenmesi;
+    GİB'e e-Fatura/e-Arşiv gönderimi Bizimhesap altyapısından.
 - [ ] **Banka hesap ekstresi erişimi (mutabakat için).**
   - **Neden:** Kasa/banka bakiyesini gerçekle otomatik eşleştirmek (mutabakat) için.
   - **Nasıl (kolaydan zora):** (1) internet bankacılığından **MT940 veya CSV/Excel
@@ -108,11 +98,16 @@ Bu tema büyük ölçüde bende. Senden gereken tek şey birkaç **oran/sabit** 
     **Satıcı ID, API Key, API Secret**.
   - **Bana ver (Render):** `TRENDYOL_SELLER_ID`, `TRENDYOL_API_KEY`, `TRENDYOL_API_SECRET`.
   - **Neyi açar:** Sipariş çekme, stok/fiyat gönderme, kargo etiketi, **soru-cevap oto-çekme/oto-cevap** (yeni).
-- [ ] **Hepsiburada API (kodda hazır — mevcut 401 kimlik eksikliğinden).**
-  - **Nasıl:** HB Merchant paneli → Entegrasyon/OMS → **Merchant ID, kullanıcı adı,
-    şifre**; Listing için ayrıca **Servis Anahtarı**.
-  - **Bana ver (Render):** `HEPSIBURADA_MERCHANT_ID`, `HEPSIBURADA_USERNAME`,
-    `HEPSIBURADA_PASSWORD`, `HEPSIBURADA_SERVICE_KEY`.
+- [~] **Hepsiburada API — TEST ORTAMI süreci başladı (21.07.2026).**
+  - HB, canlı bilgilerden önce test (SIT) ortamında 3 kanıt istiyor; test
+    bilgileri **arif.karamann@gmail.com**'a e-postayla gelecek.
+  - **Nasıl:** e-posta gelince Render'a `HEPSIBURADA_ENV=sit` + test
+    Merchant ID/kullanıcı/şifre gir → **Ayarlar → Hepsiburada Test Ortamı**
+    panelinden 3 adımı koştur → kimlikleri HB ticket'ına yapıştır.
+    Adım adım rehber: **PAZARYERI.md** (en üstte).
+  - **Canlıya geçince (Render):** `HEPSIBURADA_ENV` silinir; canlı
+    `HEPSIBURADA_MERCHANT_ID`, `HEPSIBURADA_USERNAME`, `HEPSIBURADA_PASSWORD`,
+    `HEPSIBURADA_SERVICE_KEY` girilir.
   - **Neyi açar:** HB sipariş/stok/fiyat akışı.
 - [ ] **N11 API.**
   - **Nasıl:** N11 Mağaza paneli → Entegrasyon/API → **appKey, appSecret**.
@@ -124,6 +119,12 @@ Bu tema büyük ölçüde bende. Senden gereken tek şey birkaç **oran/sabit** 
   - **Nasıl:** Her pazaryeri panelinden anlaşmalı kargo firmanı seç; Trendyol için
     kargo firma ID'sini Ayarlar → "Anlaşmalı Kargo ID" alanına gireceksin.
   - **Neyi açar:** Otomatik kargo etiketi (ZPL→PDF).
+  - **Trendyol "ortak etiket" notu (21.07.2026):** canlıda
+    `COMMON_LABEL_NOT_ALLOWED` hatası alındı = bu servis hesabında **yetkili
+    değil**. İstersen Trendyol **kategori sorumluna** "ortak etiket (common
+    label) servisi yetkisi" için yaz; açılana kadar uygulama otomatik olarak
+    kendi barkodlu etiketimizi basıyor (hata değil, bilinen durum — haftada bir
+    kendiliğinden yeniden dener).
 
 ---
 

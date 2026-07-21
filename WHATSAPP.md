@@ -74,9 +74,30 @@ Cevap birkaç saniyede gelir. ✅
 - Token'ları kimseyle paylaşma; sızarsa Meta panelinden yenile.
 
 ## Sorun giderme
-- **Webhook doğrulanmıyor** → Render'daki `WHATSAPP_VERIFY_TOKEN` ile Meta'ya
-  yazdığın kelime birebir aynı mı? Servis uyanık mı (ücretsiz planda ilk istek
-  ~1 dk sürebilir; önce siteyi bir kez aç)?
-- **Mesaj gidiyor ama cevap gelmiyor** → Render → Logs'ta `[whatsapp]` satırlarına
-  bak; numaran `WHATSAPP_ALLOWED_NUMBERS`'ta kayıtlı mı (başında 90 ile)?
-- **"ANTHROPIC_API_KEY gerekli" cevabı** → Render Environment'a API anahtarını ekle.
+
+**Önce Ayarlar → "WhatsApp Tanı" kartına bak (yeni, 21.07.2026).** Kart şunları
+gösterir: hangi ayar eksik, son webhook/mesaj/gönderim olayları ve hataları.
+"Test Mesajı Gönder" butonu Meta'nın ham cevabını gösterir — süresi dolmuş
+token anında belli olur.
+
+**"Mesaj attım, cevap gelmiyor" karar ağacı:**
+
+1. **Tanı kartında hiç olay yok** → Meta webhook'u bize hiç ulaşmıyor:
+   - Webhook kurulumunu yeniden yap (yukarıda 4. adım: Callback URL + verify
+     token + **messages** aboneliği). Uygulama Meta'da "Live" modda mı?
+   - Render ücretsiz planda servis uyuyorsa ilk webhook zaman aşımına düşebilir;
+     siteyi bir kez açıp tekrar dene (kalıcı çözüm: uptime monitörü).
+2. **"İzinsiz numaradan mesaj YOK SAYILDI" görünüyor** → numaranı
+   `WHATSAPP_ALLOWED_NUMBERS`'a ekle. (Eşleşme artık son 10 hane üzerinden;
+   05xx / 905xx / +90 farkları sorun olmaktan çıktı.)
+3. **"Webhook İMZASI GEÇERSİZ" görünüyor** → `WHATSAPP_APP_SECRET` Meta →
+   Settings → Basic → App Secret ile birebir aynı değil; düzelt.
+4. **"Mesaj alındı" var ama "gönderim başarısız (401)"** → access token süresi
+   dolmuş (geçici token 24 saat yaşar). Yukarıdaki 2. adımla **kalıcı System
+   User token'ı** üret, Render'da değiştir.
+5. **"Gönderim başarısız (131030 / recipient not in allowed list)"** → Meta test
+   numarası kullanıyorsun ve alıcı numara Meta panelindeki "To" listesine
+   ekli değil (1. adım, madde 4).
+6. **"ANTHROPIC_API_KEY gerekli" cevabı** → Render Environment'a API anahtarını ekle.
+
+Render → Logs'taki `[whatsapp]` satırları da aynı olayları yazar.

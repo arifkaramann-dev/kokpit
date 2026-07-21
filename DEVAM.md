@@ -215,9 +215,47 @@ sayfa baştan tasarlandı (migration yok; `formula.all` + `produce.note` +
 - **Geçmiş:** ürün/not araması, boş durumlar, "daha eski kayıtları göster"
   (limit 50→+100, azami 500), mobilde yatay kaydırma. 0 tip hatası, 124/124 test.
 
-**Kod dışı bekleyenler (kullanıcı/dış taraf):** e-Fatura entegratör anlaşması
-(İzibiz/Foriba), N11-Çiçeksepeti API anahtarları, Hepsiburada API onayı,
-uptime monitörü kurulumu (cron-job.org → /api/health, 10 dk'da bir).
+**"Problemlerimiz" sprint'i ✔ yapıldı (21.07.2026, patron notlarından 8 başlık):**
+- **Trendyol ortak etiket `COMMON_LABEL_NOT_ALLOWED`:** kalıcı yetki hatası artık
+  tanınıyor (`isCommonLabelNotAllowed`, testli) → ayara damga vurulup 7 gün API
+  yorulmadan kendi etikete düşülüyor (sonra otomatik yeniden dener); kullanıcıya
+  hata değil bilgi tostu. Yetki için kategori sorumlusuna başvuru notu
+  PATRON-GOREVLERI'nde. Uç artık `{pdfBase64|null, fallback, message}` döner.
+- **WhatsApp "cevap gelmiyor" tanısı:** izinli numara eşleşmesi son-10-hane
+  oldu (05xx/905xx/+90 farkı çözüldü, saf `isAllowedNumberMatch` + 7 test);
+  tüm webhook/mesaj/gönderim olayları bellekte loglanıyor; **Ayarlar →
+  "WhatsApp Tanı"** kartı (yapılandırma kontrol listesi + son olaylar + test
+  mesajı butonu, `whatsapp.diagnostics/sendTest`). WHATSAPP.md'ye karar ağacı.
+- **Sipariş içerik dökümü:** panoda **"İçerik Dökümü"** butonu (Yeni/Aktif/
+  Filtrelenen tümü) + kart menüsünde tek sipariş; kalem kalem A4 toplama fişi
+  (işaret kutulu), sipariş başına sayfa, tarayıcıdan PDF (`lib/orderContents.ts`,
+  `orders.itemsBulk` tek sorgu).
+- **Maliyet parametreleri işlendi (patron rakamları):** işçilik 150 ₺/saat,
+  genel gider 15.000 ₺/ay, ortalama 150 adet/ay → **100 ₺/adet** pay otomatik
+  (`deriveUnitLaborOverhead`, shared/pricing, 6 test; elle değer ezer). Ayarlar'da
+  "Maliyet Parametreleri" kartı; Fiyat Motoru/Maliyet/Kanal Kârlılığı/sihirbaz
+  `unitLaborOverheadEffective` kullanıyor.
+- **Hepsiburada canlıya geçiş testi:** `HEPSIBURADA_ENV=sit` ile tüm uçlar SIT'e
+  döner (OMS/listing/mpop; oto-senkron kapanır, test verisi panoya karışmaz);
+  **Ayarlar → "Hepsiburada Test Ortamı"** paneli: katalog gönder→trackingId,
+  envanter listele→stok/fiyat push→uploadId'ler, test siparişi→listele→paketle→
+  packageNumber (`server/hepsiburadaTest.ts`, `hbTest.*` uçları). Rehber PAZARYERI.md.
+- **Geliver kargo:** `server/kargo.ts` gerçek adaptör (POST /shipments → en ucuz
+  teklif /transactions ile satın al → takip no siparişe, etiket URL açılır;
+  `GELIVER_TEST_MODE=1` ücretsiz deneme). Kart menüsünde "Geliver gönderisi"
+  (onaylı). Patron rehberi: **KARGO.md** (token: app.geliver.io/apitokens).
+- **e-Fatura = Bizimhesap:** karar + adaptör (`buildBizimhesapInvoice`, 4 birim
+  test; addinvoice alan adları resmi apidocs ile birebir). Gerekli tek şey
+  destek talebiyle **FirmID** → `EFATURA_PROVIDER=bizimhesap` + `BIZIMHESAP_FIRM_ID`.
+  Cevap netleşti: GİB'e "direkt" kesim yok, doğru mimari Kokpit→Bizimhesap→GİB.
+  Rehber: **EFATURA.md**. PayTR patron kararıyla ertelendi.
+- Doğrulama: 0 tip hatası, 252/252 test, build ✓.
+
+**Kod dışı bekleyenler (kullanıcı/dış taraf):** HB test bilgileri (e-postayla
+gelecek → PAZARYERI.md süreci), Bizimhesap FirmID (destek talebi), Geliver
+API token (KARGO.md), Trendyol ortak etiket yetkisi (kategori sorumlusu,
+opsiyonel), N11-Çiçeksepeti API anahtarları, uptime monitörü kurulumu
+(cron-job.org → /api/health, 10 dk'da bir), adet başı işçilik dakikası (Ayarlar).
 Sırada (kod): görsellerin S3'e taşınması (0.3), routers/db modül bölünmesi (0.4),
 asistanın tool-use ajanına dönüşümü, pazaryeri soru-cevap kuyruğu.
 

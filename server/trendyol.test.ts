@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractZpl, mapPackageToOrder, type TrendyolPackage } from "./trendyol";
+import { extractZpl, isCommonLabelNotAllowed, mapPackageToOrder, type TrendyolPackage } from "./trendyol";
 
 function samplePackage(overrides: Partial<TrendyolPackage> = {}): TrendyolPackage {
   return {
@@ -94,5 +94,26 @@ describe("extractZpl", () => {
     expect(extractZpl("   ")).toBeNull();
     expect(extractZpl("{}")).toBeNull();
     expect(extractZpl('{"zpl":""}')).toBeNull();
+  });
+});
+
+describe("isCommonLabelNotAllowed (ortak etiket yetki hatası tespiti)", () => {
+  const hbBody =
+    '{"error":{"status":400,"errors":[{"code":400,"type":"COMMON_LABEL_NOT_ALLOWED","title":"Bu servisi kullanmak için yetkiniz bulunmamaktadır. Kategori sorumlunuz ile iletişime geçiniz."}]}}';
+
+  it("gerçek hata gövdesini (400 + tip kodu) tanır", () => {
+    expect(isCommonLabelNotAllowed(400, hbBody)).toBe(true);
+  });
+
+  it("403'te de tanır", () => {
+    expect(isCommonLabelNotAllowed(403, "COMMON_LABEL_NOT_ALLOWED")).toBe(true);
+  });
+
+  it("başka 400 hatalarını yetki hatası saymaz", () => {
+    expect(isCommonLabelNotAllowed(400, '{"error":"invalid cargoTrackingNumber"}')).toBe(false);
+  });
+
+  it("500 gibi durumları yetki hatası saymaz", () => {
+    expect(isCommonLabelNotAllowed(500, hbBody)).toBe(false);
   });
 });

@@ -338,7 +338,7 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
       setRates(r => ({
         vat: r.vat || (settings.vatRate ?? "20"),
         commission: r.commission || (settings.devCommissionPercent ?? "3.9"),
-        labor: r.labor || (settings.unitLaborOverhead ?? "0"),
+        labor: r.labor || (settings.unitLaborOverheadEffective ?? settings.unitLaborOverhead ?? "0"),
       }));
     }
   }, [settings]);
@@ -825,11 +825,16 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
             </Button>
             <Button
               onClick={() => {
-                saveRates.mutate({
+                // İşçilik+genel gider: türetilen değerden farklıysa elle değer
+                // olarak kaydet; aynıysa otomatik hesabı bozma.
+                const ratePatch: Record<string, string> = {
                   vatRate: rates.vat || "20",
                   devCommissionPercent: rates.commission || "0",
-                  unitLaborOverhead: rates.labor || "0",
-                });
+                };
+                if ((rates.labor || "0") !== (settings?.unitLaborOverheadEffective ?? "")) {
+                  ratePatch.unitLaborOverhead = rates.labor || "0";
+                }
+                saveRates.mutate(ratePatch);
                 saveFields(["packagingCost", "shippingCost", "salePrice"], 5);
               }}
             >

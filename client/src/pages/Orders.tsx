@@ -29,6 +29,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import { ALL_ORDER_STATUSES, CANCELLED_STATUS, CHANNELS, formatDate, formatTL, ORDER_STATUSES, OrderStatus } from "@/lib/format";
 import { printInvoice } from "@/lib/invoice";
+import { printOrderContents } from "@/lib/orderContents";
 import { printShippingLabel } from "@/lib/shippingLabel";
 import {
   AlertCircle,
@@ -44,6 +45,7 @@ import {
   MoreHorizontal,
   Pencil,
   Plus,
+  Printer,
   RefreshCw,
   Search,
   Settings,
@@ -145,6 +147,7 @@ export default function Orders() {
   const { data: products } = trpc.products.list.useQuery();
   const { data: customersList } = trpc.customers.list.useQuery();
   const { data: mpStatus } = trpc.orders.marketplaceStatus.useQuery();
+  const { data: kargoCfg } = trpc.kargo.configured.useQuery();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editOrder, setEditOrder] = useState<OrderRow | null>(null);
   const [form, setForm] = useState(emptyForm);
@@ -240,7 +243,8 @@ export default function Orders() {
       const imported = results.reduce((s, r) => s + r.imported, 0);
       const updated = results.reduce((s, r) => s + (r.updated ?? 0), 0);
       const errors = results.filter(r => r.error);
-      const configured = results.filter(r => r.skippedReason !== "not_configured");
+      // Test (SIT) modundaki pazaryeri senkrona girmez; sonuç mesajına da katılmaz.
+      const configured = results.filter(r => !r.skippedReason);
       if (configured.length === 0) {
         toast.error("Hiçbir pazaryeri bağlı değil. Ayarlar'dan API bilgilerini girin.");
         return;
@@ -337,10 +341,18 @@ export default function Orders() {
     if (canOfficial) {
       const t = toast.loading("Trendyol resmi kargo etiketi alınıyor…");
       try {
-        const { pdfBase64 } = await utils.client.orders.shippingLabel.mutate({ orderId: order.id });
-        openPdfBase64(pdfBase64, `kargo-${order.orderNo}.pdf`);
-        toast.success("Resmi kargo etiketi hazır", { id: t });
-        return;
+        const res = await utils.client.orders.shippingLabel.mutate({ orderId: order.id });
+        if (res.pdfBase64) {
+          openPdfBase64(res.pdfBase64, `kargo-${order.orderNo}.pdf`);
+          toast.success("Resmi kargo etiketi hazır", { id: t });
+          return;
+        }
+        // Ortak etiket bu hesapta yetkili değil — hata değil, bilinen durum:
+        // sessizce kendi etiketimize düş, sebebini bir kez bilgi olarak göster.
+        toast.info(res.message ?? "Ortak etiket kapalı — kendi etiketimiz açılıyor.", {
+          id: t,
+          duration: 8000,
+        });
       } catch (e) {
         toast.error(
           `${e instanceof Error ? e.message : "Resmi etiket alınamadı"} — kendi etiketimiz açılıyor.`,
@@ -353,6 +365,48 @@ export default function Orders() {
       maybeAdvanceOnLabel(order);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Kargo etiketi oluşturulamadı");
+    }
+  }
+
+  // Geliver gönderisi: kendi mağaza/elden siparişine kargo kaydı açar, en ucuz
+  // teklifi satın alır; takip no siparişe işlenir, etiket varsa yeni sekmede açılır.
+  const createShipmentMut = trpc.kargo.createShipment.useMutation({
+    onSuccess: r => {
+      utils.orders.list.invalidate();
+      if (r.created && r.trackingNumber) {
+        toast.success(`Geliver gönderisi hazır — takip no: ${r.trackingNumber}`);
+        if (r.labelUrl) window.open(r.labelUrl, "_blank");
+      } else if (r.created) {
+        toast.info(r.reason ?? "Gönderi oluştu — etiket Geliver panelinden alınabilir", { duration: 10000 });
+      } else {
+        toast.error(r.reason ?? "Gönderi oluşturulamadı", { duration: 10000 });
+      }
+    },
+    onError: e => toast.error(e.message, { duration: 8000 }),
+  });
+
+  // Sipariş içeriği dökümü (kalem kalem): tek veya toplu; kalemler tek sorguda
+  // çekilir, sipariş başına bir A4 "toplama fişi" olarak yazdırılır/PDF olur.
+  async function handlePrintContents(list: OrderRow[]) {
+    if (list.length === 0) {
+      toast.info("Bu seçimde yazdırılacak sipariş yok");
+      return;
+    }
+    const capped = list.slice(0, 300);
+    if (list.length > 300) toast.info("En fazla 300 sipariş tek seferde yazdırılır — ilk 300 alındı");
+    try {
+      const items = await utils.client.orders.itemsBulk.query({ orderIds: capped.map(o => o.id) });
+      printOrderContents(
+        capped,
+        items.map(i => ({
+          orderId: i.orderId,
+          productName: i.productName,
+          quantity: i.quantity,
+          unitPrice: i.unitPrice,
+        })),
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "İçerik dökümü hazırlanamadı");
     }
   }
 
@@ -544,6 +598,37 @@ export default function Orders() {
             <RefreshCw className={`h-4 w-4 mr-1 ${syncAll.isPending ? "animate-spin" : ""}`} />
             Pazaryerlerinden Çek
           </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline">
+                <Printer className="h-4 w-4 mr-1" /> İçerik Dökümü
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-64">
+              <DropdownMenuItem
+                onClick={() => handlePrintContents(filteredOrders.filter(o => o.status === "new"))}
+              >
+                <Printer className="mr-2 h-4 w-4" /> Yeni siparişler (
+                {filteredOrders.filter(o => o.status === "new").length})
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() =>
+                  handlePrintContents(
+                    filteredOrders.filter(o => ["new", "production", "ready"].includes(o.status)),
+                  )
+                }
+              >
+                <Printer className="mr-2 h-4 w-4" /> Aktif siparişler (
+                {filteredOrders.filter(o => ["new", "production", "ready"].includes(o.status)).length})
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => handlePrintContents(filteredOrders.filter(o => o.status !== "cancelled"))}
+              >
+                <Printer className="mr-2 h-4 w-4" /> Filtrelenen tümü (
+                {filteredOrders.filter(o => o.status !== "cancelled").length})
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button variant="outline" onClick={openManualSale}>
             <Plus className="h-4 w-4 mr-1" /> Elden Satış
           </Button>
@@ -974,6 +1059,9 @@ export default function Orders() {
                           onDelete={id => deleteOrder.mutate({ id })}
                           onInvoice={handleInvoice}
                           onShippingLabel={handleShippingLabel}
+                          onPrintContents={o => handlePrintContents([o])}
+                          kargoEnabled={Boolean(kargoCfg?.kargo)}
+                          onCreateShipment={o => createShipmentMut.mutate({ orderId: o.id })}
                           onTogglePaid={handleTogglePaid}
                           onAdvance={handleAdvance}
                           onSetCancelled={handleSetCancelled}
@@ -997,6 +1085,9 @@ function OrderRowItem({
   onDelete,
   onInvoice,
   onShippingLabel,
+  onPrintContents,
+  kargoEnabled,
+  onCreateShipment,
   onTogglePaid,
   onAdvance,
   onSetCancelled,
@@ -1006,6 +1097,9 @@ function OrderRowItem({
   onDelete: (id: number) => void;
   onInvoice: (o: OrderRow) => void;
   onShippingLabel: (o: OrderRow) => void;
+  onPrintContents: (o: OrderRow) => void;
+  kargoEnabled: boolean;
+  onCreateShipment: (o: OrderRow) => void;
   onTogglePaid: (o: OrderRow) => void;
   onAdvance: (o: OrderRow, dir: 1 | -1) => void;
   onSetCancelled: (o: OrderRow, cancelled: boolean) => void;
@@ -1082,6 +1176,25 @@ function OrderRowItem({
             )}
             <DropdownMenuItem onClick={() => onShippingLabel(order)}>
               <Truck className="mr-2 h-4 w-4" /> Kargo etiketi
+            </DropdownMenuItem>
+            {kargoEnabled && !auto && (
+              <DropdownMenuItem
+                onSelect={async () => {
+                  if (
+                    await confirm({
+                      title: "Geliver gönderisi oluştur",
+                      description: `${order.orderNo} için Geliver'de kargo kaydı açılıp en uygun teklif satın alınsın mı? (Test modu açıksa ücret yansımaz.)`,
+                      confirmText: "Gönderi Oluştur",
+                    })
+                  )
+                    onCreateShipment(order);
+                }}
+              >
+                <Truck className="mr-2 h-4 w-4 text-sky-600" /> Geliver gönderisi
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onClick={() => onPrintContents(order)}>
+              <Printer className="mr-2 h-4 w-4" /> İçerik dökümü
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => onInvoice(order)}>
               <FileText className="mr-2 h-4 w-4" /> Fatura kes

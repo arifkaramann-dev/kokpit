@@ -55,7 +55,8 @@ export default function Costs() {
     if (settings && !vat) setVat(settings.vatRate ?? "20");
   }, [settings, vat]);
   useEffect(() => {
-    if (settings && !labor) setLabor(settings.unitLaborOverhead ?? "0");
+    // Elle değer yoksa maliyet parametrelerinden türetilen pay gelir (örn. 100₺).
+    if (settings && !labor) setLabor(settings.unitLaborOverheadEffective ?? settings.unitLaborOverhead ?? "0");
   }, [settings, labor]);
 
   const productId = selectedId ? Number(selectedId) : null;
@@ -143,7 +144,13 @@ export default function Costs() {
 
   function save() {
     if (!productId) return;
-    saveRates.mutate({ vatRate: vat || "20", unitLaborOverhead: labor || "0" });
+    // İşçilik+genel gider yalnızca kullanıcı türetilen değerden farklı bir şey
+    // girdiyse elle değer olarak yazılır; yoksa otomatik hesap bozulmaz.
+    const rates: Record<string, string> = { vatRate: vat || "20" };
+    if ((labor || "0") !== (settings?.unitLaborOverheadEffective ?? "")) {
+      rates.unitLaborOverhead = labor || "0";
+    }
+    saveRates.mutate(rates);
     updateProduct.mutate({
       id: productId,
       data: {
