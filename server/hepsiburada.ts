@@ -139,16 +139,30 @@ export function mapHbOrder(raw: HbOrderRaw): MappedOrder | null {
   };
 }
 
+/**
+ * Hepsiburada Basic auth başlığı. HB kuralı (onboarding e-postası):
+ *   Username = **Merchantid (GUID)**, Password = **Secretkey**.
+ * (Sık yapılan hata: kullanıcı adı alanına developer username yazmak → 401.)
+ */
+export function hbBasicAuth(secret: string): string {
+  return Buffer.from(`${ENV.hepsiburadaMerchantId}:${secret}`).toString("base64");
+}
+
+/**
+ * User-Agent = **Developer Username** (HEPSIBURADA_USERNAME). HB isteği bu
+ * başlıkla eşler; tanımlı değilse geriye dönük uyum için merchantId'e düşer.
+ */
+export const HB_USER_AGENT = ENV.hepsiburadaUsername || ENV.hepsiburadaMerchantId;
+
 async function fetchOrdersPage(offset: number): Promise<HbOrdersResponse> {
   const url = new URL(`${HB_API_BASE}/orders/merchantid/${ENV.hepsiburadaMerchantId}`);
   url.searchParams.set("offset", String(offset));
   url.searchParams.set("limit", String(PAGE_SIZE));
 
-  const auth = Buffer.from(`${ENV.hepsiburadaUsername}:${ENV.hepsiburadaPassword}`).toString("base64");
   const res = await fetch(url, {
     headers: {
-      Authorization: `Basic ${auth}`,
-      "User-Agent": ENV.hepsiburadaMerchantId,
+      Authorization: `Basic ${hbBasicAuth(ENV.hepsiburadaPassword)}`,
+      "User-Agent": HB_USER_AGENT,
       Accept: "application/json",
     },
   });
@@ -174,11 +188,10 @@ async function probeHbOms(base: string): Promise<{ ok: boolean; status: number; 
   const url = new URL(`${base}/orders/merchantid/${ENV.hepsiburadaMerchantId}`);
   url.searchParams.set("offset", "0");
   url.searchParams.set("limit", "1");
-  const auth = Buffer.from(`${ENV.hepsiburadaUsername}:${ENV.hepsiburadaPassword}`).toString("base64");
   const res = await fetch(url, {
     headers: {
-      Authorization: `Basic ${auth}`,
-      "User-Agent": ENV.hepsiburadaMerchantId,
+      Authorization: `Basic ${hbBasicAuth(ENV.hepsiburadaPassword)}`,
+      "User-Agent": HB_USER_AGENT,
       Accept: "application/json",
     },
   });
@@ -245,8 +258,9 @@ export type HbStockPriceItem = {
 
 function hbListingAuth(): string {
   // Listing API'si "Servis Anahtarı" ile çalışır; tanımlı değilse OMS şifresi denenir.
+  // Kullanıcı adı yine Merchantid (GUID) — hbBasicAuth ile aynı kural.
   const secret = ENV.hepsiburadaServiceKey || ENV.hepsiburadaPassword;
-  return Buffer.from(`${ENV.hepsiburadaUsername}:${secret}`).toString("base64");
+  return hbBasicAuth(secret);
 }
 
 async function hbListingPost(path: string, payload: unknown): Promise<string | null> {
@@ -254,7 +268,7 @@ async function hbListingPost(path: string, payload: unknown): Promise<string | n
     method: "POST",
     headers: {
       Authorization: `Basic ${hbListingAuth()}`,
-      "User-Agent": ENV.hepsiburadaMerchantId,
+      "User-Agent": HB_USER_AGENT,
       "Content-Type": "application/json",
       Accept: "application/json",
     },

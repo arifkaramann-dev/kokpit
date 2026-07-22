@@ -1,5 +1,5 @@
 import { ENV } from "./_core/env";
-import { isHbTestEnv, pushHepsiburadaStockPrice } from "./hepsiburada";
+import { HB_USER_AGENT, hbBasicAuth, isHbTestEnv, pushHepsiburadaStockPrice } from "./hepsiburada";
 
 /**
  * Hepsiburada CANLIYA GEÇİŞ test akışı (SIT ortamı).
@@ -39,7 +39,8 @@ function mpopBase(): string {
 }
 
 function basicAuth(secret?: string): string {
-  return Buffer.from(`${ENV.hepsiburadaUsername}:${secret ?? ENV.hepsiburadaPassword}`).toString("base64");
+  // HB kuralı: Basic auth kullanıcı adı = Merchantid (GUID). hbBasicAuth ile ortak.
+  return hbBasicAuth(secret ?? ENV.hepsiburadaPassword);
 }
 
 export type HbRawResult = { ok: boolean; status: number; body: string; json: unknown };
@@ -174,7 +175,7 @@ export async function hbListListings(limit = 50) {
   const r = await hbFetch(url, {
     headers: {
       Authorization: `Basic ${basicAuth(ENV.hepsiburadaServiceKey || undefined)}`,
-      "User-Agent": ENV.hepsiburadaMerchantId,
+      "User-Agent": HB_USER_AGENT,
       Accept: "application/json",
     },
   });
@@ -246,7 +247,7 @@ export async function hbCreateTestOrder(input: {
     method: "POST",
     headers: {
       Authorization: `Basic ${basicAuth()}`,
-      "User-Agent": ENV.hepsiburadaMerchantId,
+      "User-Agent": HB_USER_AGENT,
       "Content-Type": "application/json",
       Accept: "application/json",
     },
@@ -265,7 +266,7 @@ export async function hbListPaidOrdersRaw(limit = 50) {
   const r = await hbFetch(url, {
     headers: {
       Authorization: `Basic ${basicAuth()}`,
-      "User-Agent": ENV.hepsiburadaMerchantId,
+      "User-Agent": HB_USER_AGENT,
       Accept: "application/json",
     },
   });
@@ -329,7 +330,7 @@ export async function hbPackageOrder(input: { orderNumber: string }) {
     method: "POST",
     headers: {
       Authorization: `Basic ${basicAuth()}`,
-      "User-Agent": ENV.hepsiburadaMerchantId,
+      "User-Agent": HB_USER_AGENT,
       "Content-Type": "application/json",
       Accept: "application/json",
     },
