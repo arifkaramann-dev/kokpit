@@ -24,6 +24,13 @@ Sabah Brifingi), **banka mutabakatı + kupon motoru test ağı**, **boya kalite
 kontrol beyni** `shared/quality.ts`. 302 test. Kalan maddeler canlı/patron/DB-sprint
 kuyruğunda (kurul TaskList + tutanak).
 
+**WhatsApp botu kaldırıldı (2026-07-22, patron kararı):** Meta Cloud API entegrasyonu
+söküldü — `server/whatsapp.ts` + imza testi + `WhatsappDiagPanel` silindi; `notify.ts`
+yalnızca bildirim merkezine yazıyor (WhatsApp kopyası yok); `whatsappRouter`, webhook
+route, WHATSAPP_* env'leri, WHATSAPP.md kaldırıldı. **Korundu:** müşteriye/teklife/
+faturaya tek-tık `wa.me` mesaj linkleri (API'siz). Uygulama içi + sesli asistan aynen
+çalışıyor. Doğrulama: 0 tip hatası, 289 test, build ✓. İstenirse git geçmişinden dönülür.
+
 ## Çalışma kuralları (önemli)
 - **Doğrudan `main`'e gönder** (PR yok). Değişiklikten sonra commit + `main`'e push.
 - **Az kredi, çok iş:** doğrulamayı riske göre yap — küçük/güvenli değişiklikte sadece

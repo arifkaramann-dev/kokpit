@@ -8,7 +8,9 @@
 ## Kapsam (sadece bunlar)
 
 - **Uygulama içi asistan & tool-use ajanı** (`server/assistant.ts`, `server/assistantAgent.ts`): araçlar, onay katmanı, intent düşüşü.
-- **WhatsApp botu** (`server/whatsapp.ts`): webhook, mesaj akışı, tanı.
+- ~~WhatsApp botu~~ **kaldırıldı (2026-07-22, patron kararı):** Meta Cloud API
+  entegrasyonu (webhook/token/imza/oto-cevap) söküldü; müşteriye tek-tık `wa.me`
+  mesaj/teklif linkleri korundu. Yeniden istenirse git geçmişinden dönülebilir.
 - **Sesli asistan / uyandırma** ("Hey Kokpit", Web Speech / Picovoice).
 - **LLM entegrasyonu** (Anthropic SDK): fatura okuma, pazarlama metni, ürün açıklaması/etiket üretimi, görsel üretimi.
 - **Zamanlayıcı nöbetçileri** (`server/scheduler.ts`): oto-senkron, Stok Nöbetçisi, Sabah Brifingi, Tahsilat Takipçisi, soru-cevap oto-cevap.

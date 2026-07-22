@@ -73,9 +73,10 @@ gider payı: **150₺/saat, 15.000₺/ay genel gider, ~150 adet/ay → 100₺/ad
 `server/marketplace.ts` ortak yönetim + yarış-durumu kilidi (`syncLock`). e-Fatura:
 **Bizimhesap köprüsü** (`efatura.ts`; FirmID bekliyor). Kargo: **Geliver**
 (`kargo.ts`; token bekliyor). Ödeme: PayTR (`paytr.ts`). Asistan: uygulama içi +
-WhatsApp + sesli, tek kapı `runAssistant` → tool-use ajanı (8 araç, güvenli/onaylı
-onay katmanı, `ANTHROPIC_API_KEY` yoksa intent akışına düşer). Sesli uyandırma:
-Picovoice/Web Speech.
+sesli, tek kapı `runAssistant` → tool-use ajanı (8 araç, güvenli/onaylı onay
+katmanı, `ANTHROPIC_API_KEY` yoksa intent akışına düşer). Sesli uyandırma:
+Picovoice/Web Speech. **Not (2026-07-22): WhatsApp Cloud API botu kaldırıldı**
+(patron kararı); müşteriye tek-tık `wa.me` mesaj/teklif linkleri korundu.
 
 **Otomasyon (nöbetçiler, `server/scheduler.ts`):** 15 dk pazaryeri oto-senkron +
 soru senkronu, 60 dk Stok Nöbetçisi, 08:00 Sabah Brifingi, 09:00 Tahsilat

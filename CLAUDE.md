@@ -72,7 +72,7 @@ olmasın — her uzmanlık kendi uzmanında toplansın.
 - **Gizli bilgiler** sadece Render → Environment'ta; repoya asla girmez.
 - **Kritik dosyalar:** `server/routers.ts` (tüm tRPC router'ları),
   `drizzle/schema.ts` (şema), `server/{trendyol,hepsiburada,marketplace}.ts`
-  (pazaryeri), `server/{assistant,whatsapp}.ts` (AI asistan),
+  (pazaryeri), `server/{assistant,assistantAgent}.ts` (AI asistan),
   `client/src/pages/*` (sayfalar), `server/_core/*` (çekirdek — dikkatli dokun).
 - **Devir notları:** `DEVAM.md` (durum), `todo.md` (yol haritası),
-  `PAZARYERI.md`, `WHATSAPP.md`, `SESLI.md` (kurulum rehberleri).
+  `PAZARYERI.md`, `SESLI.md` (kurulum rehberleri).

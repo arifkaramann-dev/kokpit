@@ -12,7 +12,7 @@ import {
   devRouter, questionsRouter, templatesRouter, campaignsRouter, marketingRouter, storefrontRouter, couponsRouter,
 } from "./modules/pazarlama";
 import {
-  authRouter, assistantRouter, settingsRouter, notificationsRouter, tasksRouter, dashboardRouter, whatsappRouter, hbTestRouter,
+  authRouter, assistantRouter, settingsRouter, notificationsRouter, tasksRouter, dashboardRouter, hbTestRouter,
 } from "./modules/sistem";
 
 // Eski dışa aktarım korunur (testler ve olası tüketiciler için).
@@ -49,7 +49,6 @@ export const appRouter = router({
   dashboard: dashboardRouter,
   storefront: storefrontRouter,
   coupons: couponsRouter,
-  whatsapp: whatsappRouter,
   hbTest: hbTestRouter,
   invoices: invoicesRouter,
   kargo: kargoRouter,

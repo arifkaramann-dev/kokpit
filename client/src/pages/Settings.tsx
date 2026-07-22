@@ -1,5 +1,4 @@
 import { HbTestPanel } from "@/components/HbTestPanel";
-import { WhatsappDiagPanel } from "@/components/WhatsappDiagPanel";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -438,8 +437,6 @@ export default function Settings() {
           {importSeed.isPending ? "Aktarılıyor..." : "Verileri İçe Aktar"}
         </Button>
       </Card>
-
-      <WhatsappDiagPanel />
 
       <HbTestPanel />
 
