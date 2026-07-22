@@ -1,4 +1,4 @@
-// Sistem: auth, asistan, ayarlar, bildirim, görevler, kokpit özeti, WhatsApp, HB test — server/routers.ts bölünmesi (davranış birebir, Sprint 2).
+// Sistem: auth, asistan, ayarlar, bildirim, görevler, kokpit özeti, HB test — server/routers.ts bölünmesi (davranış birebir, Sprint 2).
 import { COOKIE_NAME } from "@shared/const";
 import { z } from "zod";
 import { getSessionCookieOptions } from "../_core/cookies";
@@ -15,6 +15,7 @@ import { runAssistant } from "../assistantAgent";
 import { buildSaleTitle, deriveCombos, parseSetCount, renameVariantTitle } from "../productUtils";
 import { computePrice, extractJson, parseFeatures, pickReferenceProduct, scoreReference, suggestSku } from "../autofill";
 import { computeReorderSuggestions, summarizeReorder } from "../reorder";
+import { overdueCheques } from "../financeUtils";
 import { importUrunKayit } from "../importSeed";
 import { answerTrendyolQuestion, syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf, TrendyolLabelNotAllowedError, isTrendyolConfigured } from "../trendyol";
 import { isHepsiburadaConfigured } from "../hepsiburada";
@@ -39,7 +40,6 @@ import {
   hbPackageOrder,
   hbTestInfo,
 } from "../hepsiburadaTest";
-import { getWhatsAppDiagnostics, sendWhatsAppText } from "../whatsapp";
 import { pushN11StockPrice } from "../n11";
 import { pushCiceksepetiStockPrice } from "../ciceksepeti";
 import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "../marketplace";
@@ -91,7 +91,7 @@ export const assistantRouter = router({
     modelPath: ENV.picovoiceModelPath,
   })),
   // Sesli/serbest metin komutu: Claude niyeti çözer, sunucu uygular.
-  // WhatsApp webhook'u da aynı beyni kullanır (server/assistant.ts).
+  // Uygulama içi asistan runAssistant beynini kullanır (server/assistantAgent.ts).
   command: protectedProcedure
     .input(z.object({ transcript: z.string().min(2) }))
     .mutation(async ({ input }) => {
@@ -139,12 +139,6 @@ export const settingsRouter = router({
         { key: "hepsiburada", label: "Hepsiburada", ok: isHepsiburadaConfigured(), hint: "HEPSIBURADA_MERCHANT_ID / USERNAME / PASSWORD" },
         { key: "n11", label: "N11", ok: isN11Configured(), hint: "N11 API anahtarları" },
         { key: "ciceksepeti", label: "Çiçeksepeti", ok: isCiceksepetiConfigured(), hint: "Çiçeksepeti API anahtarı" },
-        {
-          key: "whatsapp",
-          label: "WhatsApp",
-          ok: Boolean(process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID),
-          hint: "WHATSAPP_ACCESS_TOKEN / PHONE_NUMBER_ID (tanı: aşağıdaki WhatsApp Tanı kartı)",
-        },
         { key: "ai", label: "AI (Claude)", ok: Boolean(process.env.ANTHROPIC_API_KEY), hint: "ANTHROPIC_API_KEY" },
         { key: "efatura", label: "e-Fatura (Bizimhesap)", ok: isEfaturaConfigured(), hint: "EFATURA_PROVIDER + BIZIMHESAP_FIRM_ID" },
         { key: "kargo", label: "Kargo (Geliver)", ok: isKargoConfigured(), hint: "GELIVER_API_TOKEN (KARGO.md)" },
@@ -196,7 +190,7 @@ export const tasksRouter = router({
 
 export const dashboardRouter = router({
   summary: protectedProcedure.query(async () => {
-    const [today, statusCounts, critical, upcoming, openTasks, finance, unpaid, newQuestions, products, cfg] =
+    const [today, statusCounts, critical, upcoming, openTasks, finance, unpaid, newQuestions, products, cheques, cfg] =
       await Promise.all([
         db.countOrdersToday(),
         db.orderStatusCounts(),
@@ -207,6 +201,7 @@ export const dashboardRouter = router({
         db.listUnpaidOrders(6),
         db.countNewMarketplaceQuestions(),
         db.listProducts(),
+        db.listCheques(),
         db.getSettings(),
       ]);
     // Üretim kuyruğu sayısı: Stok Nöbetçisi / Üretim sayfası kuralıyla aynı
@@ -218,6 +213,9 @@ export const dashboardRouter = router({
     ).length;
     const schedulerLastTickAt = parseInt(cfg["scheduler.lastTickAt"] ?? "0", 10) || 0;
     const schedulerDisabled = process.env.SCHEDULER_DISABLED === "1";
+    // Vadesi geçen çek/senet (Çek Nöbetçisi ile aynı kural) — Kokpit'te aksiyon.
+    const oc = overdueCheques(cheques);
+    const overdueChequesCount = oc.incoming.length + oc.outgoing.length;
     return {
       today,
       statusCounts,
@@ -228,6 +226,8 @@ export const dashboardRouter = router({
       unpaid,
       newQuestions,
       productionQueue,
+      overdueChequesCount,
+      overdueChequesTotal: oc.totalIncoming + oc.totalOutgoing,
       schedulerLastTickAt,
       schedulerDisabled,
     };
@@ -235,29 +235,6 @@ export const dashboardRouter = router({
 });
 
 
-// WhatsApp tanı: "mesaj attım cevap gelmedi" durumunda sebep burada görünür.
-export const whatsappRouter = router({
-  diagnostics: protectedProcedure.query(() => getWhatsAppDiagnostics()),
-  // Uygulamadan test mesajı yollar; Graph API'nin ham cevabını döner —
-  // süresi dolmuş token / yanlış numara / izin sorunu anında ortaya çıkar.
-  sendTest: protectedProcedure
-    .input(z.object({ to: z.string().optional() }).optional())
-    .mutation(async ({ input }) => {
-      const firstAllowed = (process.env.WHATSAPP_ALLOWED_NUMBERS ?? "").split(",")[0]?.trim();
-      const to = (input?.to?.trim() || firstAllowed || "").replace(/\D/g, "");
-      if (!to) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "Gönderilecek numara yok: WHATSAPP_ALLOWED_NUMBERS boş ve numara girilmedi.",
-        });
-      }
-      const result = await sendWhatsAppText(
-        to,
-        "✅ Kokpit test mesajı — bu mesajı görüyorsan gönderim çalışıyor. Şimdi bu mesaja cevap yaz; cevap panelde 'mesaj alındı' olarak görünmüyorsa sorun webhook tarafındadır.",
-      );
-      return { to: `${to.slice(0, 5)}***`, ...result };
-    }),
-});
 
 
 // Hepsiburada canlıya geçiş test paneli (SIT ortamı) — HB'nin istediği

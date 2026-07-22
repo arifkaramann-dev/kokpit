@@ -7,7 +7,6 @@ import { registerLocalAuthRoutes } from "./localAuth";
 import { registerOAuthRoutes } from "./oauth";
 import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
-import { registerWhatsAppRoutes } from "../whatsapp";
 import { registerImageRoutes } from "../images";
 import { startScheduler } from "../scheduler";
 import { createContext } from "./context";
@@ -44,21 +43,11 @@ async function startServer() {
     next();
   });
   // Configure body parser with larger size limit for file uploads
-  app.use(
-    express.json({
-      limit: "50mb",
-      // Webhook imza doğrulaması (WhatsApp X-Hub-Signature-256) ham gövdeyi ister;
-      // parse edilmeden önceki baytları sakla.
-      verify: (req, _res, buf) => {
-        (req as typeof req & { rawBody?: Buffer }).rawBody = buf;
-      },
-    })
-  );
+  app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerStorageProxy(app);
   registerOAuthRoutes(app);
   registerLocalAuthRoutes(app);
-  registerWhatsAppRoutes(app);
   registerImageRoutes(app);
   // Health check for hosting platforms (Render, Railway, uptime monitors).
   app.get("/api/health", (_req, res) => {
