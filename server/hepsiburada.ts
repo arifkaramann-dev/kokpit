@@ -220,10 +220,14 @@ export async function testHepsiburadaConnection(): Promise<{ ok: boolean; status
       return { ok: false, status: primary.status, body: `${HB_SIT ? "SIT" : "Canlı"} ortamı reddetti (${primary.status}). ${fix}` };
     }
     // Her iki ortam da reddetti → gerçekten kimlik bilgisi hatası.
+    // DİKKAT: HB'de Basic auth kullanıcı adı Merchant ID DEĞİLDİR. Merchant ID
+    // ayrı bir GUID'dir (yalnızca URL yolu + User-Agent'ta kullanılır); kullanıcı
+    // adı/şifre HB'nin verdiği ayrı entegrasyon bilgileridir. En sık 401 sebebi:
+    // HEPSIBURADA_USERNAME alanına Merchant ID veya panel e-postasını yazmak.
     return {
       ok: false,
       status: primary.status,
-      body: `${primary.status} — Merchant ID / kullanıcı adı (Merchantid) / şifre (Secretkey) HB'nin verdiği Basic auth bilgileriyle birebir aynı olmalı. Username = Merchantid, Password = Secretkey.`,
+      body: `${primary.status} — Kullanıcı adı/şifre reddedildi. HEPSIBURADA_USERNAME, HB'nin verdiği entegrasyon/API kullanıcı adı olmalı — Merchant ID veya panel e-postası DEĞİL. Merchant ID ayrı bir GUID'dir; sadece URL ve User-Agent'ta kullanılır. HEPSIBURADA_PASSWORD = entegrasyon şifresi. Bilgileri HB panel → Kullanıcı Yönetimi / Entegrasyon bilgilerinden doğrulayın.`,
     };
   } catch (error) {
     return { ok: false, status: 0, body: error instanceof Error ? error.message : "Bağlantı hatası" };
