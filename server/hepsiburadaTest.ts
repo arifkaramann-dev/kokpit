@@ -232,17 +232,40 @@ export async function hbCreateTestOrder(input: {
   requireHbConfig();
   // HB kuralı: test sipariş numarası 10 haneli olmalı.
   const orderNumber = String(Math.floor(1_000_000_000 + Math.random() * 8_999_999_999));
+  const qty = input.quantity ?? 1;
+  const unit = input.price ?? 100;
+  // HB SIT stub şeması: Customer + DeliveryAddress zorunlu; kalemde alan adı
+  // "Sku" (= hbSku), fiyat {Amount,Currency} objesi, Vat/Kargo/Teslimat alanları
+  // gerekli. (Yanlış şema → 400 "Order Lines"; doğru şema + geçersiz Sku → 500
+  // "GetListingNotFoundError".) Adres/müşteri değerleri HB dokümanındaki test sabitleri.
   const body =
     input.rawBody?.trim() ||
     JSON.stringify({
       OrderNumber: orderNumber,
+      OrderDate: new Date().toISOString().slice(0, 19),
+      Customer: { CustomerId: "dfc8a27f-faae-4cb2-859c-8a7d50ee77be", Name: "Test User" },
+      DeliveryAddress: {
+        AddressId: "e66765b3-d37d-488c-ae15-47051245dc9b",
+        Name: "Test Alıcı",
+        AddressDetail: "Test Adres",
+        Email: "customer@hepsiburada.com.tr",
+        CountryCode: "TR",
+        PhoneNumber: "902822613231",
+        AlternatePhoneNumber: "045321538212",
+        Town: "Sisli",
+        District: "Kustepe",
+        City: "İstanbul",
+      },
       LineItems: [
         {
+          Sku: input.hbSku, // HB SKU (Listing'den gelen hbSku) — stub bunu doğrular
           MerchantId: ENV.hepsiburadaMerchantId,
-          HbSku: input.hbSku,
-          MerchantSku: input.merchantSku ?? "",
-          Quantity: input.quantity ?? 1,
-          Price: input.price ?? 100,
+          Quantity: qty,
+          Price: { Amount: unit, Currency: "TRY" },
+          Vat: 0,
+          TotalPrice: { Amount: unit * qty, Currency: "TRY" },
+          CargoCompanyId: 1,
+          DeliveryOptionId: 1,
         },
       ],
     });
