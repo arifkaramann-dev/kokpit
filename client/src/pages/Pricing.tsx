@@ -32,9 +32,12 @@ import { trpc } from "@/lib/trpc";
 import Costs from "./Costs";
 import {
   calcChannelProfit,
+  channelSlugForProfile,
   DEFAULT_CHANNEL_PROFILES,
+  effectiveChannelPrice,
   matchPriceRows,
   normalizeChannelProfile,
+  parseChannelPrices,
   parsePriceCsv,
   suggestPrice,
   type ChannelProfile,
@@ -61,6 +64,11 @@ type PricedRow = {
   p: ProductRow;
   materialCost: number;
   totalCost: number;
+  /** Seçili kanal için geçerli satış fiyatı (kanala özel varsa o, yoksa taban). */
+  effSalePrice: number;
+  effDiscount: number;
+  /** true = bu ürünün seçili kanala özel ayrı fiyatı var. */
+  overridden: boolean;
   netPrice: number;
   channelNet: number;
   channelMargin: number;
@@ -143,6 +151,8 @@ function PricingTable() {
 
   const [profileIdx, setProfileIdx] = useState(0);
   const profile = profiles[Math.min(profileIdx, profiles.length - 1)];
+  // Seçili kanal ayrı fiyat tutulan bir pazaryerine mi denk geliyor? (null = taban/web fiyatı)
+  const channelSlug = useMemo(() => channelSlugForProfile(profile), [profile]);
   // Adet başı işçilik + genel gider (KDV hariç) — ayarlardan; elle değer yoksa
   // maliyet parametrelerinden otomatik türetilir (15000₺/ay ÷ 150 adet = 100₺).
   const laborOverhead = num(settings?.unitLaborOverheadEffective ?? settings?.unitLaborOverhead);
@@ -180,7 +190,13 @@ function PricingTable() {
       const materialCost = costByProduct.get(p.id) ?? 0;
       const packaging = num(p.packagingCost);
       const totalCost = materialCost + packaging + num(p.shippingCost);
-      const netPrice = num(p.salePrice) * (1 - num(p.discountPercent) / 100);
+      // Seçili kanala özel fiyat varsa onu, yoksa taban (web) fiyatını kullan.
+      const eff = effectiveChannelPrice(
+        { salePrice: num(p.salePrice), discountPercent: num(p.discountPercent) },
+        parseChannelPrices(p.channelPrices),
+        channelSlug,
+      );
+      const netPrice = eff.salePrice * (1 - eff.discountPercent / 100);
       const mp = calcChannelProfit({
         salePrice: netPrice,
         productCost: materialCost + packaging,
@@ -190,7 +206,17 @@ function PricingTable() {
         profile,
         shippingOverride: num(p.shippingCost),
       });
-      return { p, materialCost, totalCost, netPrice, channelNet: mp.net, channelMargin: mp.margin };
+      return {
+        p,
+        materialCost,
+        totalCost,
+        effSalePrice: eff.salePrice,
+        effDiscount: eff.discountPercent,
+        overridden: eff.overridden,
+        netPrice,
+        channelNet: mp.net,
+        channelMargin: mp.margin,
+      };
     });
 
     const q = search.trim().toLocaleLowerCase("tr-TR");
@@ -213,13 +239,13 @@ function PricingTable() {
         filtered.sort((a, b) => b.channelMargin - a.channelMargin);
         break;
       case "priceDesc":
-        filtered.sort((a, b) => num(b.p.salePrice) - num(a.p.salePrice));
+        filtered.sort((a, b) => b.effSalePrice - a.effSalePrice);
         break;
       default:
         filtered.sort((a, b) => a.p.name.localeCompare(b.p.name, "tr-TR"));
     }
     return filtered;
-  }, [products, costByProduct, profile, laborOverhead, search, seriesFilter, onlyLoss, sort]);
+  }, [products, costByProduct, profile, channelSlug, laborOverhead, search, seriesFilter, onlyLoss, sort]);
 
   const lossCount = useMemo(
     () => rows.filter(r => r.netPrice > 0 && r.channelNet < 0).length,
@@ -252,6 +278,7 @@ function PricingTable() {
   });
 
   // Satır içi fiyat düzenleme: değişen değerler burada tutulur, Enter/odak kaybında kaydedilir.
+  // Kanal bir pazaryerine denk geliyorsa fiyat o kanala özel yazılır (taban değişmez).
   const [edits, setEdits] = useState<Record<number, string>>({});
   function commitEdit(id: number, oldPrice: number) {
     const raw = edits[id];
@@ -263,7 +290,7 @@ function PricingTable() {
       return next;
     });
     if (!Number.isFinite(value) || value < 0 || +value.toFixed(2) === +oldPrice.toFixed(2)) return;
-    applyPrices.mutate({ updates: [{ id, salePrice: +value.toFixed(2) }] });
+    applyPrices.mutate({ updates: [{ id, salePrice: +value.toFixed(2) }], channel: channelSlug });
   }
 
   /* ------------------------- Toplu fiyatlama (F2) ------------------------- */
@@ -281,7 +308,7 @@ function PricingTable() {
     let skipped = 0;
     for (const r of targetRows) {
       const suggested = suggestPrice({
-        currentPrice: num(r.p.salePrice),
+        currentPrice: r.effSalePrice,
         totalCost: r.totalCost,
         mode,
         value,
@@ -296,11 +323,11 @@ function PricingTable() {
         skipped++;
         continue;
       }
-      if (+suggested.toFixed(2) === num(r.p.salePrice)) continue;
+      if (+suggested.toFixed(2) === r.effSalePrice) continue;
       out.push({
         productId: r.p.id,
         productName: r.p.name,
-        oldPrice: num(r.p.salePrice),
+        oldPrice: r.effSalePrice,
         newPrice: suggested,
         line: 0,
       });
@@ -333,7 +360,14 @@ function PricingTable() {
         id: p.id,
         name: p.name,
         barcode: p.barcode,
-        salePrice: p.salePrice,
+        // Kanal seçiliyse "eski fiyat" o kanalın geçerli fiyatı olsun (fark doğru görünsün).
+        salePrice: String(
+          effectiveChannelPrice(
+            { salePrice: num(p.salePrice), discountPercent: num(p.discountPercent) },
+            parseChannelPrices(p.channelPrices),
+            channelSlug,
+          ).salePrice,
+        ),
       })),
       csvRows,
     );
@@ -501,6 +535,23 @@ function PricingTable() {
         </div>
       </div>
 
+      {/* Kanal bazlı fiyat açıklaması */}
+      <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+        {channelSlug ? (
+          <>
+            <b className="text-foreground">{profile?.name}</b> fiyatlarını düzenliyorsunuz — girdiğiniz satış fiyatı
+            yalnız bu pazaryerine yazılır, web sitesi/taban fiyatı ve diğer kanallar değişmez.
+            <b className="text-primary"> {profile?.name}</b> ilan/senkron gönderiminde bu fiyat kullanılır.
+          </>
+        ) : (
+          <>
+            <b className="text-foreground">Taban (web sitesi) fiyatını</b> düzenliyorsunuz. Trendyol/Hepsiburada için{" "}
+            <b>ayrı fiyat</b> tutmak isterseniz yukarıdaki <b>“Kanal”</b> seçiminden o pazaryerini seçip fiyatı
+            girin; kanal fiyatı yoksa taban fiyat kullanılır.
+          </>
+        )}
+      </div>
+
       {/* Ana tablo */}
       <Card className="overflow-x-auto">
         <Table>
@@ -517,7 +568,9 @@ function PricingTable() {
               <TableHead>Ürün</TableHead>
               <TableHead className="text-right">Stok</TableHead>
               <TableHead className="text-right">Maliyet</TableHead>
-              <TableHead className="text-right w-32">Satış Fiyatı</TableHead>
+              <TableHead className="text-right w-32">
+                Satış Fiyatı{channelSlug ? ` · ${profile?.name}` : ""}
+              </TableHead>
               <TableHead className="text-right">İndirimli Net</TableHead>
               <TableHead className="text-right">Net Kâr ({profile?.name})</TableHead>
               <TableHead className="text-right">Marj</TableHead>
@@ -532,7 +585,7 @@ function PricingTable() {
               </TableRow>
             )}
             {rows.map(r => {
-              const hasPrice = num(r.p.salePrice) > 0;
+              const hasPrice = r.effSalePrice > 0;
               return (
                 <TableRow key={r.p.id} className={r.channelNet < 0 && hasPrice ? "bg-destructive/5" : ""}>
                   <TableCell>
@@ -563,10 +616,10 @@ function PricingTable() {
                   </TableCell>
                   <TableCell className="text-right">
                     <Input
-                      className="h-8 w-28 text-right ml-auto"
-                      value={edits[r.p.id] ?? num(r.p.salePrice).toFixed(2)}
+                      className={`h-8 w-28 text-right ml-auto ${r.overridden ? "border-primary/60" : ""}`}
+                      value={edits[r.p.id] ?? r.effSalePrice.toFixed(2)}
                       onChange={e => setEdits(prev => ({ ...prev, [r.p.id]: e.target.value }))}
-                      onBlur={() => commitEdit(r.p.id, num(r.p.salePrice))}
+                      onBlur={() => commitEdit(r.p.id, r.effSalePrice)}
                       onKeyDown={e => {
                         if (e.key === "Enter") (e.target as HTMLInputElement).blur();
                         if (e.key === "Escape")
@@ -577,11 +630,20 @@ function PricingTable() {
                           });
                       }}
                     />
+                    {channelSlug && (
+                      <p className="text-[10px] mt-0.5 text-muted-foreground">
+                        {r.overridden ? (
+                          <span className="text-primary">{profile?.name} fiyatı</span>
+                        ) : (
+                          <>taban: {formatTL(num(r.p.salePrice))}</>
+                        )}
+                      </p>
+                    )}
                   </TableCell>
                   <TableCell className="text-right">
                     {formatTL(r.netPrice)}
-                    {num(r.p.discountPercent) > 0 && (
-                      <span className="text-xs text-muted-foreground"> (−%{num(r.p.discountPercent)})</span>
+                    {r.effDiscount > 0 && (
+                      <span className="text-xs text-muted-foreground"> (−%{r.effDiscount})</span>
                     )}
                   </TableCell>
                   <TableCell
@@ -718,6 +780,7 @@ function PricingTable() {
                   onClick={() =>
                     applyPrices.mutate({
                       updates: preview.map(m => ({ id: m.productId, salePrice: m.newPrice })),
+                      channel: channelSlug,
                     })
                   }
                 >
@@ -809,6 +872,7 @@ function PricingTable() {
                 csvResult &&
                 applyPrices.mutate({
                   updates: csvResult.matches.map(m => ({ id: m.productId, salePrice: m.newPrice })),
+                  channel: channelSlug,
                 })
               }
             >

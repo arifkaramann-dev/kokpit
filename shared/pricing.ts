@@ -69,6 +69,69 @@ export function normalizeChannelProfile(p: Partial<ChannelProfile> & { name?: st
   };
 }
 
+/* ------------------------- Kanal bazlı satış fiyatı ------------------------- */
+
+/** Ayrı fiyat kaydı tutulan pazaryeri kanalları (products.channelPrices anahtarları). */
+export const MARKETPLACE_CHANNELS = ["trendyol", "hepsiburada", "n11", "ciceksepeti"] as const;
+export type MarketplaceChannel = (typeof MARKETPLACE_CHANNELS)[number];
+
+/** Bir ürünün kanal bazlı fiyat kaydı: kanal anahtarı → fiyat/indirim. */
+export type ChannelPriceMap = Record<string, { salePrice: number; discountPercent?: number }>;
+
+/** products.channelPrices JSON metnini güvenle nesneye çevirir (bozuksa boş). */
+export function parseChannelPrices(json: string | null | undefined): ChannelPriceMap {
+  if (!json) return {};
+  try {
+    const parsed = JSON.parse(json);
+    if (!parsed || typeof parsed !== "object") return {};
+    const out: ChannelPriceMap = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      const o = v as { salePrice?: unknown; discountPercent?: unknown };
+      const sp = Number(o?.salePrice);
+      if (!Number.isFinite(sp)) continue;
+      const dp = Number(o?.discountPercent);
+      out[k] = { salePrice: sp, ...(Number.isFinite(dp) ? { discountPercent: dp } : {}) };
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Fiyat tablosundaki seçili kanal profilini, ayrı fiyat tutulan bir pazaryeri
+ * anahtarına eşler. Web sitesi / elden / bilinmeyen kanal → null (taban fiyat
+ * kullanılır). Eşleme profil adına göredir (varsayılan adlar birebir tutar).
+ */
+export function channelSlugForProfile(p: { name?: string; kind?: ChannelKind }): MarketplaceChannel | null {
+  const n = (p.name ?? "").toLocaleLowerCase("tr-TR");
+  if (n.includes("trendyol")) return "trendyol";
+  if (n.includes("hepsi")) return "hepsiburada";
+  if (n.includes("n11")) return "n11";
+  if (n.includes("çiçek") || n.includes("cicek")) return "ciceksepeti";
+  return null;
+}
+
+/**
+ * Bir kanal için geçerli satış fiyatı: kanalın kendi kaydı varsa o, yoksa
+ * ürünün taban fiyatı (web sitesi fiyatı). `channel` null ise her zaman taban.
+ */
+export function effectiveChannelPrice(
+  base: { salePrice: number; discountPercent: number },
+  channelPrices: ChannelPriceMap,
+  channel: MarketplaceChannel | null,
+): { salePrice: number; discountPercent: number; overridden: boolean } {
+  if (channel && channelPrices[channel]) {
+    const o = channelPrices[channel];
+    return {
+      salePrice: o.salePrice,
+      discountPercent: o.discountPercent ?? base.discountPercent,
+      overridden: true,
+    };
+  }
+  return { salePrice: base.salePrice, discountPercent: base.discountPercent, overridden: false };
+}
+
 /* ------------------------- Kanal net kâr hesabı ------------------------- */
 
 export type ChannelProfitInput = {

@@ -169,29 +169,62 @@ export function isHepsiburadaConfigured(): boolean {
   return Boolean(ENV.hepsiburadaMerchantId && ENV.hepsiburadaUsername && ENV.hepsiburadaPassword);
 }
 
+/** Verilen OMS tabanına gerçek istek atıp ham HTTP sonucunu döner. */
+async function probeHbOms(base: string): Promise<{ ok: boolean; status: number; body: string }> {
+  const url = new URL(`${base}/orders/merchantid/${ENV.hepsiburadaMerchantId}`);
+  url.searchParams.set("offset", "0");
+  url.searchParams.set("limit", "1");
+  const auth = Buffer.from(`${ENV.hepsiburadaUsername}:${ENV.hepsiburadaPassword}`).toString("base64");
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Basic ${auth}`,
+      "User-Agent": ENV.hepsiburadaMerchantId,
+      Accept: "application/json",
+    },
+  });
+  const body = (await res.text()).slice(0, 300);
+  return { ok: res.ok, status: res.status, body };
+}
+
 /**
  * Bağlantı testi: gerçek bir istek atıp Hepsiburada'nın döndürdüğü HTTP
- * durumunu ve yanıt gövdesinin başını döner. 401 hatasının gerçek sebebini
- * (kullanıcı adı/şifre/endpoint) görmek için — canlıda çalıştırılır.
+ * durumunu döner. 401/403 alınırsa aynı kimlik bilgileri DİĞER ortama (test↔canlı)
+ * karşı da denenir — bilgiler orada geçerliyse "yanlış ortam" olduğu net söylenir
+ * (en sık 401 sebebi: test/SIT hesabıyla canlı uca bağlanmak). Canlıda çalıştırılır.
  */
 export async function testHepsiburadaConnection(): Promise<{ ok: boolean; status: number; body: string }> {
   if (!isHepsiburadaConfigured()) {
     return { ok: false, status: 0, body: "Ayarlar eksik (Merchant ID, kullanıcı adı, şifre)." };
   }
-  const url = new URL(`${HB_API_BASE}/orders/merchantid/${ENV.hepsiburadaMerchantId}`);
-  url.searchParams.set("offset", "0");
-  url.searchParams.set("limit", "1");
-  const auth = Buffer.from(`${ENV.hepsiburadaUsername}:${ENV.hepsiburadaPassword}`).toString("base64");
+  // Açık *_BASE_URL verilmişse ortam otomatik seçilmediği için çapraz deneme yapılmaz.
+  const explicitBase = Boolean(process.env.HEPSIBURADA_API_BASE_URL);
   try {
-    const res = await fetch(url, {
-      headers: {
-        Authorization: `Basic ${auth}`,
-        "User-Agent": ENV.hepsiburadaMerchantId,
-        Accept: "application/json",
-      },
-    });
-    const body = (await res.text()).slice(0, 300);
-    return { ok: res.ok, status: res.status, body };
+    const primary = await probeHbOms(HB_API_BASE);
+    if (primary.ok || explicitBase || (primary.status !== 401 && primary.status !== 403)) {
+      return primary;
+    }
+    // 401/403: kimlik bilgileri belki diğer ortama ait — çapraz kontrol.
+    const otherBase = HB_SIT
+      ? "https://oms-external.hepsiburada.com"
+      : "https://oms-external-sit.hepsiburada.com";
+    let cross: { ok: boolean; status: number; body: string } | null = null;
+    try {
+      cross = await probeHbOms(otherBase);
+    } catch {
+      cross = null;
+    }
+    if (cross?.ok) {
+      const fix = HB_SIT
+        ? "Bu bilgiler CANLI ortamda geçerli — Render'da HEPSIBURADA_ENV değişkenini SİLİN (şu an 'sit' = test ortamına bağlısınız)."
+        : "Bu bilgiler TEST (SIT) ortamında geçerli — Render → Environment'a HEPSIBURADA_ENV=sit ekleyin (test hesabı canlı uca bağlanamaz, 401 verir).";
+      return { ok: false, status: primary.status, body: `${HB_SIT ? "SIT" : "Canlı"} ortamı reddetti (${primary.status}). ${fix}` };
+    }
+    // Her iki ortam da reddetti → gerçekten kimlik bilgisi hatası.
+    return {
+      ok: false,
+      status: primary.status,
+      body: `${primary.status} — Merchant ID / kullanıcı adı (Merchantid) / şifre (Secretkey) HB'nin verdiği Basic auth bilgileriyle birebir aynı olmalı. Username = Merchantid, Password = Secretkey.`,
+    };
   } catch (error) {
     return { ok: false, status: 0, body: error instanceof Error ? error.message : "Bağlantı hatası" };
   }

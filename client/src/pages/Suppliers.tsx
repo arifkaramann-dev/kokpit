@@ -51,18 +51,57 @@ export default function Suppliers() {
   const balanceOf = (name: string) => (balances ?? {})[name.trim().toLocaleLowerCase("tr-TR")] ?? 0;
 
   const ledgerQ = trpc.suppliers.ledger.useQuery({ name: detail?.name ?? "" }, { enabled: !!detail });
+  // Cari ekstre satır düzenleme (geriye dönük): fatura veya ödeme tutarı/tarihi.
+  const [editRow, setEditRow] = useState<{ type: "purchase" | "txn"; id: number; amount: string; date: string } | null>(null);
+
+  const afterLedgerChange = () => {
+    utils.suppliers.ledger.invalidate();
+    utils.suppliers.balances.invalidate();
+    utils.accounts.invalidate();
+    utils.transactions.invalidate();
+    utils.purchases.invalidate();
+    utils.dashboard.summary.invalidate();
+    setEditRow(null);
+  };
   const pay = trpc.transactions.create.useMutation({
     onSuccess: () => {
-      utils.suppliers.ledger.invalidate();
-      utils.suppliers.balances.invalidate();
-      utils.accounts.invalidate();
-      utils.transactions.invalidate();
-      utils.dashboard.summary.invalidate();
+      afterLedgerChange();
       setPayAmount("");
       toast.success("Ödeme kaydedildi");
     },
     onError: e => toast.error(e.message),
   });
+  const updatePurchase = trpc.purchases.update.useMutation({
+    onSuccess: () => { afterLedgerChange(); toast.success("Fatura güncellendi"); },
+    onError: e => toast.error(e.message),
+  });
+  const deletePurchase = trpc.purchases.delete.useMutation({
+    onSuccess: () => { afterLedgerChange(); toast.success("Fatura silindi (stok geri alındı)"); },
+    onError: e => toast.error(e.message),
+  });
+  const updateTxn = trpc.transactions.update.useMutation({
+    onSuccess: () => { afterLedgerChange(); toast.success("Hareket güncellendi"); },
+    onError: e => toast.error(e.message),
+  });
+  const deleteTxn = trpc.transactions.delete.useMutation({
+    onSuccess: () => { afterLedgerChange(); toast.success("Hareket silindi"); },
+    onError: e => toast.error(e.message),
+  });
+
+  const toDateInput = (d: Date | string) => {
+    const dt = new Date(d);
+    return Number.isNaN(dt.getTime()) ? "" : dt.toISOString().slice(0, 10);
+  };
+  function saveEditRow() {
+    if (!editRow) return;
+    const amount = parseFloat(editRow.amount);
+    if (!(amount >= 0)) return toast.error("Geçerli tutar girin");
+    if (editRow.type === "purchase") {
+      updatePurchase.mutate({ id: editRow.id, totalAmount: amount, invoiceDate: editRow.date || null });
+    } else {
+      updateTxn.mutate({ id: editRow.id, amount, txnDate: editRow.date || undefined });
+    }
+  }
 
   const createSupplier = trpc.suppliers.create.useMutation({
     onSuccess: () => {
@@ -258,13 +297,14 @@ export default function Suppliers() {
                 </Button>
               </div>
               <div className="space-y-1 max-h-[45vh] overflow-y-auto">
-                <div className="grid grid-cols-[1fr_auto_auto] gap-2 text-[11px] text-muted-foreground px-1">
+                <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 text-[11px] text-muted-foreground px-1">
                   <span>İşlem</span>
                   <span className="text-right w-20">Tutar</span>
                   <span className="text-right w-24">Bakiye</span>
+                  <span className="w-12" />
                 </div>
                 {(ledgerQ.data?.rows ?? []).map((r, i) => (
-                  <div key={i} className="grid grid-cols-[1fr_auto_auto] gap-2 items-center border-b py-1.5 text-sm">
+                  <div key={i} className="grid grid-cols-[1fr_auto_auto_auto] gap-2 items-center border-b py-1.5 text-sm">
                     <div className="min-w-0">
                       <p className="truncate">
                         {r.label}
@@ -276,6 +316,48 @@ export default function Suppliers() {
                       {r.debit > 0 ? formatTL(r.debit) : `−${formatTL(r.credit)}`}
                     </span>
                     <span className="text-right w-24 font-medium">{formatTL(r.balance)}</span>
+                    <div className="flex items-center justify-end gap-0.5 w-12">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-6 w-6"
+                        title="Düzenle"
+                        onClick={() =>
+                          setEditRow({
+                            type: r.type,
+                            id: r.id,
+                            amount: String(r.debit > 0 ? r.debit : Math.abs(r.credit)),
+                            date: toDateInput(r.date),
+                          })
+                        }
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-6 w-6 text-destructive"
+                        title="Sil"
+                        onClick={async () => {
+                          const isPurchase = r.type === "purchase";
+                          if (
+                            await confirm({
+                              title: isPurchase ? "Faturayı sil" : "Hareketi sil",
+                              description: isPurchase
+                                ? `"${r.label}"${r.ref ? ` (${r.ref})` : ""} silinsin mi? Faturanın eklediği hammadde stoğu geri alınır.`
+                                : `"${r.label}" hareketi silinsin mi?`,
+                              confirmText: "Sil",
+                              destructive: true,
+                            })
+                          ) {
+                            if (isPurchase) deletePurchase.mutate({ id: r.id });
+                            else deleteTxn.mutate({ id: r.id });
+                          }
+                        }}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
                   </div>
                 ))}
                 {(ledgerQ.data?.rows ?? []).length === 0 && (
@@ -284,6 +366,45 @@ export default function Suppliers() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!editRow} onOpenChange={o => !o && setEditRow(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{editRow?.type === "purchase" ? "Alış Faturasını Düzenle" : "Hareketi Düzenle"}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>Tutar (₺)</Label>
+              <Input
+                type="number"
+                value={editRow?.amount ?? ""}
+                onChange={e => setEditRow(r => (r ? { ...r, amount: e.target.value } : r))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Tarih</Label>
+              <Input
+                type="date"
+                value={editRow?.date ?? ""}
+                onChange={e => setEditRow(r => (r ? { ...r, date: e.target.value } : r))}
+              />
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              {editRow?.type === "purchase"
+                ? "Fatura tutarını/tarihini geriye dönük düzeltir (cari ekstre). Hammadde stok girişleri değişmez."
+                : "Ödeme/hareketin tutarını ve tarihini geriye dönük düzeltir."}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditRow(null)}>
+              İptal
+            </Button>
+            <Button onClick={saveEditRow} disabled={updatePurchase.isPending || updateTxn.isPending}>
+              Kaydet
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
