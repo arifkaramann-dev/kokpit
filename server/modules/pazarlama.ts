@@ -38,7 +38,6 @@ import {
   hbPackageOrder,
   hbTestInfo,
 } from "../hepsiburadaTest";
-import { getWhatsAppDiagnostics, sendWhatsAppText } from "../whatsapp";
 import { pushN11StockPrice } from "../n11";
 import { pushCiceksepetiStockPrice } from "../ciceksepeti";
 import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "../marketplace";

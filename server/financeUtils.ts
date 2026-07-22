@@ -194,3 +194,65 @@ export function overdueReceivables(
   }
   return Array.from(byCustomer.values()).sort((a, b) => b.totalDue - a.totalDue);
 }
+
+/* ------------------- Vadesi geçen çek/senet (Çek Nöbetçisi) ------------------- */
+
+export type ChequeLike = {
+  id: number;
+  type: "cek" | "senet";
+  direction: "alinan" | "verilen";
+  partyName: string | null;
+  amount: unknown;
+  dueDate: Date | string | null;
+  status: string;
+};
+
+export type OverdueChequeRow = {
+  id: number;
+  partyName: string;
+  type: "cek" | "senet";
+  amount: number;
+  daysOverdue: number;
+};
+
+export type OverdueChequesResult = {
+  /** Alınan (müşteriden) — tahsil edilmeliydi. */
+  incoming: OverdueChequeRow[];
+  /** Verilen (tedarikçiye) — ödenmeliydi. */
+  outgoing: OverdueChequeRow[];
+  totalIncoming: number;
+  totalOutgoing: number;
+};
+
+/**
+ * Portföyde olup vadesi geçmiş çek/senetler. Yalnızca status "portfoyde" ve
+ * dueDate bugünden önce olanlar; tahsil/ödendi/karşılıksız/iade ve vadesi
+ * gelmemişler hariç. Alınan tahsil, verilen ödeme sinyalidir; en eski vade önce.
+ */
+export function overdueCheques(cheques: ChequeLike[], now: Date = new Date()): OverdueChequesResult {
+  const dayMs = 24 * 60 * 60 * 1000;
+  const incoming: OverdueChequeRow[] = [];
+  const outgoing: OverdueChequeRow[] = [];
+  for (const c of cheques) {
+    if (c.status !== "portfoyde" || c.dueDate == null) continue;
+    const t = new Date(c.dueDate as never).getTime();
+    if (Number.isNaN(t) || t >= now.getTime()) continue;
+    const row: OverdueChequeRow = {
+      id: c.id,
+      partyName: (c.partyName ?? "").trim() || "(isimsiz)",
+      type: c.type,
+      amount: toNum(c.amount),
+      daysOverdue: Math.floor((now.getTime() - t) / dayMs),
+    };
+    (c.direction === "alinan" ? incoming : outgoing).push(row);
+  }
+  const byOldest = (a: OverdueChequeRow, b: OverdueChequeRow) => b.daysOverdue - a.daysOverdue;
+  incoming.sort(byOldest);
+  outgoing.sort(byOldest);
+  return {
+    incoming,
+    outgoing,
+    totalIncoming: incoming.reduce((s, r) => s + r.amount, 0),
+    totalOutgoing: outgoing.reduce((s, r) => s + r.amount, 0),
+  };
+}

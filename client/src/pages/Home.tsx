@@ -10,6 +10,7 @@ import {
   CalendarDays,
   ClipboardList,
   Contact,
+  Factory,
   ListChecks,
   Package,
   PiggyBank,
@@ -45,6 +46,8 @@ export default function Home() {
     actions.push({ label: "hammadde kritik seviyede", count: String(data?.critical?.length), path: "/stok", tone: "rose" });
   if ((finance?.receivables ?? 0) > 0)
     actions.push({ label: "tahsil edilecek", count: formatTL(finance?.receivables ?? 0), path: "/cari", tone: "rose" });
+  if ((data?.overdueChequesCount ?? 0) > 0)
+    actions.push({ label: "çek/senet vadesi geçti", count: String(data?.overdueChequesCount), path: "/cek-senet", tone: "rose" });
 
   // Zamanlayıcı sağlığı: iz 30 dk'dan eskiyse otomasyon durmuş demektir (Render uykusu).
   const lastTick = data?.schedulerLastTickAt ?? 0;
@@ -113,36 +116,44 @@ export default function Home() {
         </div>
       )}
 
-      {/* Özet kartları */}
+      {/* Özet kartları — hepsi ilgili sayfaya tıklanabilir */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard
-          icon={<ShoppingCart className="h-5 w-5" />}
-          label="Bugünkü Sipariş"
-          value={isLoading ? "..." : String(data?.today?.count ?? 0)}
-          sub={isLoading ? "" : formatTL(data?.today?.total ?? 0)}
-          color="text-blue-600 bg-blue-50 dark:bg-blue-950/40"
-        />
-        <StatCard
-          icon={<ClipboardList className="h-5 w-5" />}
-          label="Aktif Sipariş"
-          value={isLoading ? "..." : String(activeOrders)}
-          sub="Yeni + Üretimde + Hazır"
-          color="text-amber-600 bg-amber-50 dark:bg-amber-950/40"
-        />
-        <StatCard
-          icon={<AlertTriangle className="h-5 w-5" />}
-          label="Kritik Stok"
-          value={isLoading ? "..." : String(data?.critical?.length ?? 0)}
-          sub="Eşik altındaki malzeme"
-          color="text-rose-600 bg-rose-50 dark:bg-rose-950/40"
-        />
-        <StatCard
-          icon={<CalendarDays className="h-5 w-5" />}
-          label="Yaklaşan Kampanya"
-          value={isLoading ? "..." : String(data?.upcoming?.length ?? 0)}
-          sub="Önümüzdeki 30 gün"
-          color="text-violet-600 bg-violet-50 dark:bg-violet-950/40"
-        />
+        <button className="text-left w-full" onClick={() => setLocation("/siparisler")}>
+          <StatCard
+            icon={<ShoppingCart className="h-5 w-5" />}
+            label="Bugünkü Sipariş"
+            value={isLoading ? "..." : String(data?.today?.count ?? 0)}
+            sub={isLoading ? "" : formatTL(data?.today?.total ?? 0)}
+            color="text-blue-600 bg-blue-50 dark:bg-blue-950/40"
+          />
+        </button>
+        <button className="text-left w-full" onClick={() => setLocation("/siparisler")}>
+          <StatCard
+            icon={<ClipboardList className="h-5 w-5" />}
+            label="Aktif Sipariş"
+            value={isLoading ? "..." : String(activeOrders)}
+            sub="Yeni + Üretimde + Hazır"
+            color="text-amber-600 bg-amber-50 dark:bg-amber-950/40"
+          />
+        </button>
+        <button className="text-left w-full" onClick={() => setLocation("/stok")}>
+          <StatCard
+            icon={<AlertTriangle className="h-5 w-5" />}
+            label="Kritik Stok"
+            value={isLoading ? "..." : String(data?.critical?.length ?? 0)}
+            sub="Eşik altındaki malzeme"
+            color="text-rose-600 bg-rose-50 dark:bg-rose-950/40"
+          />
+        </button>
+        <button className="text-left w-full" onClick={() => setLocation("/uretim")}>
+          <StatCard
+            icon={<Factory className="h-5 w-5" />}
+            label="Üretilecek"
+            value={isLoading ? "..." : String(data?.productionQueue ?? 0)}
+            sub="Eksi / eşik altı mamul"
+            color="text-violet-600 bg-violet-50 dark:bg-violet-950/40"
+          />
+        </button>
       </div>
 
       {/* Finans özeti */}

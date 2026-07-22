@@ -19,6 +19,26 @@ Her `.claude/agents/*.md` dosyası gerçek bir ekip üyesidir. Takım sicili ve
 evrim günlüğü: **`.claude/TAKIM.md`**. Şirket bilgi tabanı:
 **`.claude/knowledge/art-of-colour.md`** (yeni şirket bilgisi geldikçe güncelle).
 
+### Kurullar (5 kalıcı sohbet — orkestrasyon katmanı)
+
+13 ajanın üstünde **5 kurul** vardır; her kurul kendi bağlamını, hafızasını ve
+önceliklerini korur (strateji ↔ kod ↔ tasarım ↔ AI ↔ uygulama ayrışır). Dizin:
+**`.claude/KURULLAR.md`**; tüzük+hafıza: **`.claude/boards/*.md`**; giriş komutları:
+**`.claude/commands/*.md`**.
+
+- 🏛 **Ürün Kurulu** (`/urun-kurulu`) — ne+neden: strateji, yol haritası, öncelik, rakip analizi
+- 💻 **Teknik Kurul/CTO** (`/teknik-kurul`) — nasıl (teknik): mimari, kalite, refactor, performans, güvenlik
+- 🎨 **UX Lab** (`/ux-lab`) — nasıl (deneyim): ekran, akış, form, dashboard, mobil
+- 🤖 **AI Lab** (`/ai-lab`) — nasıl (zekâ): asistan, otomasyon, ajanlar, sesli, öneriler
+- 🚀 **Yapımcı** (`/yapimci`) — uygula: iş fişini al → kod → test → PR/teslim
+
+Döngü: 🏛 karar → 💻/🎨/🤖 tasarım → 🚀 uygular → 🏛'e döner. Kurul kararı "iş fişi"
+ile devredilir (format `.claude/KURULLAR.md`). Kurullar ajanların yerine geçmez;
+onları gruplar. Küçük/tek dosyalık işte kurul töreni şart değil — kredi israf etme.
+
+Bu 5 kurulun **üstünde** aşağıdaki **Yönetim Kurulu** değer-kapısı vardır: o
+*yapmaya değer mi*'ye karar verir, kurullar *nasıl*'ı yürütür (iki ayrı katman).
+
 Delegasyon kuralları:
 
 - **`proje-yoneticisi` her zaman orkestratördür**: büyük/çok modüllü işlerde önce
@@ -80,7 +100,7 @@ et.** Kod kalitesi ve UX bu amaçların aracıdır.
 - **Gizli bilgiler** sadece Render → Environment'ta; repoya asla girmez.
 - **Kritik dosyalar:** `server/routers.ts` (tüm tRPC router'ları),
   `drizzle/schema.ts` (şema), `server/{trendyol,hepsiburada,marketplace}.ts`
-  (pazaryeri), `server/{assistant,whatsapp}.ts` (AI asistan),
+  (pazaryeri), `server/{assistant,assistantAgent}.ts` (AI asistan),
   `client/src/pages/*` (sayfalar), `server/_core/*` (çekirdek — dikkatli dokun).
 - **Devir notları:** `DEVAM.md` (durum), `todo.md` (yol haritası),
-  `PAZARYERI.md`, `WHATSAPP.md`, `SESLI.md` (kurulum rehberleri).
+  `PAZARYERI.md`, `SESLI.md` (kurulum rehberleri).

@@ -21,11 +21,31 @@ CTO (ana oturum) her sprint sonunda bu dosyayı gözden geçirir.
 | `devops-muhendisi` | Render/deploy/env | Dağıtım, build, env değişkeni işleri |
 | `ux-tasarimci` | Bilgi mimarisi/UX desenleri | Yeni modül/ekran akışı tasarımı, menü düzeni, onay kartı desenleri — frontend'den önce |
 
-### Yönetişim katmanı (icra ekibinin üstünde)
+## Yönetişim katmanı (icra ekibinin üstünde)
 
 | Ajan | Rol | Ne zaman çağrılır |
 |---|---|---|
 | `yonetim-kurulu` | Stratejik Yönetim Kurulu (10 koltuk tek geçişte) | Her anlamlı PR öncesi değer denetimi, haftalık kurul toplantısı, Altın Kural kapısı, rakip takibi, "bunu yapmalı mıyız / daha iyi yolu var mı" kararları. Kod yazmaz; değerlendirir, karar verir, yönlendirir. Tüzük: `.claude/YONETIM-KURULU.md` |
+
+## Kurullar (5 kalıcı sohbet — orkestrasyon katmanı)
+
+Kadro (yukarıdaki 13 ajan) çalışan ekiptir; **5 kurul** bu ekibi 5 kalıcı
+bağlama toplar. Tanım + işleyiş döngüsü + iş fişi formatı: **`.claude/KURULLAR.md`**.
+Her kurulun tüzüğü + yaşayan hafızası: **`.claude/boards/*.md`**. Giriş komutları:
+**`.claude/commands/*.md`** (`/kurullar` dizin). Not: bu "kurullar" operasyonel
+orkestrasyon; `yonetim-kurulu` ise en üst stratejik değer-kapısıdır (ayrı katmanlar).
+
+| Kurul | Komut | Lider/üye ajanlar |
+|---|---|---|
+| 🏛 Ürün Kurulu | `/urun-kurulu` | `buyume-pazarlama-uzmani` + `proje-yoneticisi` |
+| 💻 Teknik Kurul (CTO) | `/teknik-kurul` | `backend-gelistirici`, `veritabani-mimari`, `guvenlik-denetcisi`, `devops-muhendisi`, `muhasebe-entegrasyon-uzmani` |
+| 🎨 UX Lab | `/ux-lab` | `ux-tasarimci` + `frontend-gelistirici` |
+| 🤖 AI Lab | `/ai-lab` | `ai-otomasyon-muhendisi` |
+| 🚀 Yapımcı (Builder) | `/yapimci` | `proje-yoneticisi` (orkestrasyon) + tüm geliştiriciler + `qa-test-uzmani` (zorunlu) |
+
+Alan uzmanları (`finans-muhasebe-uzmani`, `urun-uretim-uzmani`,
+`pazaryeri-entegratoru`) tek kurula bağlı değil; işleri hangi kurula düşerse
+oraya danışman çağrılır. Döngü: 🏛 (ne+neden) → 💻/🎨/🤖 (nasıl) → 🚀 (uygula) → 🏛.
 
 ## Çalışma kuralları
 
@@ -59,6 +79,7 @@ da aynı şekilde emekli edilir (dosya silinir, günlüğe not düşülür).
 | Tarih | Değişiklik | Gerekçe |
 |---|---|---|
 | 2026-07-21 | **Yönetim Kurulu (Board of Directors) yönetişim katmanı kuruldu.** Tüzük `.claude/YONETIM-KURULU.md` (misyon, 5'li öncelik sırası, 10 koltuk + imza soruları + koltuk→ajan eşlemesi, Altın Kural 3 soru kapısı, 10 North Star metriği, PR raporu + haftalık toplantı şablonları). Tek orkestratör ajan `yonetim-kurulu` (10 koltuğu tek geçişte toplar). Yaşayan artefaktlar: `.claude/board/TOPLANTILAR.md` (kuruluş toplantısıyla seed) + `.claude/board/RAKIP-TAKIP.md`. CLAUDE.md'ye yönetişim bölümü işlendi. | Patron direktifi: Kokpit'in hedefi "çalışan bir ERP" değil "Türkiye'nin en iyi KOBİ işletim sistemi" olmalı; kararlar koda değil kullanıcıya kattığı değere göre alınmalı. Kurul stratejik **karar/değerlendirme** katmanıdır, icra ekibinden ayrıdır. **Bloat'tan kaçınmak için** 6 ayrı koltuk ajanı yerine tek orkestratör kuruldu; teknik koltuklar (CTO/UX/Güvenlik/DevOps) mevcut icra ajanlarına eşlendi, tekrarlanmadı — CLAUDE.md "gereksiz kalabalık olmasın" ilkesi. |
+| 2026-07-21 | **Kurullar katmanı kuruldu:** 13 ajanın üstüne 5 kalıcı sohbet/kurul (🏛 Ürün Kurulu, 💻 Teknik Kurul, 🎨 UX Lab, 🤖 AI Lab, 🚀 Yapımcı) orkestrasyon katmanı eklendi. Tüzük + hafıza `.claude/boards/*.md`, dizin `.claude/KURULLAR.md`, giriş komutları `.claude/commands/*.md` (`/kurullar`, `/urun-kurulu`, `/teknik-kurul`, `/ux-lab`, `/ai-lab`, `/yapimci`). Yeni ajan YOK — mevcut kadro yeniden gruplandı. | Patron teklifi: strateji/kod/tasarım/AI/uygulama bağlamlarının birbirine karışmaması için "5 ayrı kalıcı sohbet". Claude Code'da bu, git ile sürümlenen tüzük+hafıza dosyaları (claude.ai Projesinden daha kalıcı) + slash komut giriş noktaları olarak uygulandı; her kurul kendi bağlamını ve karar günlüğünü korur, aralarında "iş fişi" ile devir yapar. |
 | 2026-07-19 | Mega Sprint DÖRTLÜ (Üretim+Storefront+e-Fatura+Çoklu Kanal) kod tarafı: KDV-dahil maliyet modeli (calcDevProfit/calcChannelProfit + işçilik/genel gider) tüm fiyat sayfalarına; Soru-Cevap oto-çekme/oto-cevap (Trendyol QnA); kendi web mağazası (public storefront + PAYTR iskeleti + kupon motoru); e-Fatura entegratör iskeleti + banka mutabakatı; kargo soyutlaması. Yeni ajan: **muhasebe-entegrasyon-uzmani** kuruldu. 226 test. | e-Belge/entegratör tekrar eden, mevzuat-yoğun ve dış-servis bağımlı bir uzmanlık; finans-muhasebe-uzmani'nin para/KDV mantığından ayrı bir "entegrasyon adaptörü" sahibi gerekti. Storefront/PAYTR/kargo/e-Fatura kod iskeletleri anahtar gelince canlıya döner (PATRON-GOREVLERI.md). |
 | 2026-07-16 | Mega Sprint "Satış Döngüsü & Kârlılık": Teklif modülü, mamul kritik stok eşiği, Tahsilat Takipçisi, Kanal Kârlılığı raporu, finans saf fonksiyonları + 27 birim testi. Sprint sonu değerlendirmesi: yeni ajan ihtiyacı YOK — teklif modülü finans+satış kesişimi mevcut kadroyla karşılandı; finans mantığı testle kilitlendiği için onaylı kâr modeli (v2) artık regresyona karşı korumalı. Aday listesi geçerli (e-fatura-entegratoru dış anlaşmayı bekliyor). | Faz 1'in açık maddesi (Tahsilat Takipçisi) ve Bizimhesap/Qukasoft paritesinin en büyük iki eksiği (teklif, kanal bazlı net kâr raporu) kapatıldı; finans birim test borcu ödendi. |
 | 2026-07-15 | Kokpit V2 stratejik analizi tamamlandı (`docs/KOKPIT-V2-ANALIZ.md`): mevcut durum, 7 platform karşılaştırması, 30 modüllük değerlendirme, V2 mimarisi, 4 fazlı yol haritası. Yeni ajan: `ux-tasarimci` kuruldu | V2 analizi UX/bilgi mimarisinin tekrarlanan ve sahipsiz bir uzmanlık olduğunu gösterdi (26 maddelik menü, desen tutarsızlığı, onay kartı tasarımı, PWA akışları). Faz 0-3 boyunca her modül yeniden tasarımında frontend'den önce akış tasarımı gerekecek. |

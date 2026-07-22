@@ -10,9 +10,26 @@ https://artofcolour-kokpit.onrender.com/ (Render, ücretsiz plan). Veritabanı: 
 
 ## AI Takımı (yeni)
 Proje artık ajan takımıyla yönetiliyor: `CLAUDE.md` (CTO protokolü),
-`.claude/TAKIM.md` (kadro + evrim günlüğü), `.claude/agents/*.md` (12 uzman),
+`.claude/TAKIM.md` (kadro + evrim günlüğü), `.claude/agents/*.md` (13 uzman),
 `.claude/knowledge/art-of-colour.md` (şirket bilgi tabanı). Büyük işlerde
 orkestratör `proje-yoneticisi`dir.
+
+**Kurullar (5 kalıcı sohbet, 2026-07-22):** 13 ajanın üstünde 5 kurul orkestrasyon
+katmanı — `.claude/KURULLAR.md`, tüzük+hafıza `.claude/boards/*.md`, komutlar
+`/urun-kurulu /teknik-kurul /ux-lab /ai-lab /yapimci` (dizin `/kurullar`). 1. kurul
+toplantısında en önemli 20 geliştirme oy çokluğuyla sıralandı
+(`.claude/boards/KURUL-TOPLANTILARI.md`). Uygulanan ilk dilimler (dış bağımlılıksız,
+doğrulanmış): **Çek/Senet Nöbetçisi** (scheduler 09:00 + Kokpit aksiyon şeridi +
+Sabah Brifingi), **banka mutabakatı + kupon motoru test ağı**, **boya kalite
+kontrol beyni** `shared/quality.ts`. 302 test. Kalan maddeler canlı/patron/DB-sprint
+kuyruğunda (kurul TaskList + tutanak).
+
+**WhatsApp botu kaldırıldı (2026-07-22, patron kararı):** Meta Cloud API entegrasyonu
+söküldü — `server/whatsapp.ts` + imza testi + `WhatsappDiagPanel` silindi; `notify.ts`
+yalnızca bildirim merkezine yazıyor (WhatsApp kopyası yok); `whatsappRouter`, webhook
+route, WHATSAPP_* env'leri, WHATSAPP.md kaldırıldı. **Korundu:** müşteriye/teklife/
+faturaya tek-tık `wa.me` mesaj linkleri (API'siz). Uygulama içi + sesli asistan aynen
+çalışıyor. Doğrulama: 0 tip hatası, 289 test, build ✓. İstenirse git geçmişinden dönülür.
 
 ## Çalışma kuralları (önemli)
 - **Doğrudan `main`'e gönder** (PR yok). Değişiklikten sonra commit + `main`'e push.

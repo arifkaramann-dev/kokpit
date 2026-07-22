@@ -36,14 +36,6 @@ services:
         sync: false # Hepsiburada OMS şifresi (opsiyonel)
       - key: ANTHROPIC_API_KEY
         sync: false # AI pazarlama metinleri için (opsiyonel)
-      - key: WHATSAPP_VERIFY_TOKEN
-        sync: false # WhatsApp asistanı: webhook doğrulama kelimesi (opsiyonel)
-      - key: WHATSAPP_ACCESS_TOKEN
-        sync: false # WhatsApp asistanı: Meta erişim anahtarı (opsiyonel)
-      - key: WHATSAPP_PHONE_NUMBER_ID
-        sync: false # WhatsApp asistanı: Cloud API numara kimliği (opsiyonel)
-      - key: WHATSAPP_ALLOWED_NUMBERS
-        sync: false # Cevap verilecek numaralar, virgülle: 90555... (opsiyonel)
       - key: PICOVOICE_ACCESS_KEY
         sync: false # Sesli uyandırma (Porcupine) AccessKey — console.picovoice.ai (opsiyonel)
       - key: PICOVOICE_KEYWORD_PATH
