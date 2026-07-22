@@ -129,7 +129,9 @@ export async function hbCatalogSendTestProduct(input: HbTestProductInput) {
     GarantiSuresi: input.guaranteeMonths ?? 24,
     kg: input.kg ?? "1",
     tax_vat_rate: input.vatRate ?? "20",
-    price: String(input.price),
+    // HB fiyatı Türkçe ondalık (virgül) ister: "189,90". Nokta ile gönderilirse
+    // listeleme "0 fiyat / 0 stok" oluşur ("Değer uygun formatta değildir").
+    price: String(input.price).replace(".", ","),
     stock: String(input.stock ?? 10),
   };
   if (input.imageUrl) attributes.Image1 = input.imageUrl;
