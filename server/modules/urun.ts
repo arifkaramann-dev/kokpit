@@ -54,7 +54,7 @@ import { createShipment, isKargoConfigured } from "../kargo";
 import { applyCoupon, findCoupon, parseCoupons } from "@shared/campaigns";
 import { parseBankStatement, reconcile } from "@shared/reconcile";
 import { channelProfitReport } from "../reportUtils";
-import { DEFAULT_CHANNEL_PROFILES, deriveUnitLaborOverhead, normalizeChannelProfile } from "@shared/pricing";
+import { DEFAULT_CHANNEL_PROFILES, deriveUnitLaborOverhead, normalizeChannelProfile, effectiveChannelPrice, parseChannelPrices, MARKETPLACE_CHANNELS } from "@shared/pricing";
 import { ENV } from "../_core/env";
 import { toDecimalFields } from "./util";
 
@@ -767,12 +767,14 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
     .input(
       z.object({
         updates: z
-          .array(z.object({ id: z.number(), salePrice: z.number().min(0).max(1000000) }))
+          .array(z.object({ id: z.number(), salePrice: z.number().min(0).max(1000000), discountPercent: z.number().min(0).max(100).optional() }))
           .min(1)
           .max(2000),
+        // Dolu ise fiyat o pazaryerine özel yazılır (taban/web fiyatı değişmez).
+        channel: z.enum(MARKETPLACE_CHANNELS).nullable().optional(),
       }),
     )
-    .mutation(({ input }) => db.applyPriceUpdates(input.updates)),
+    .mutation(({ input }) => db.applyPriceUpdates(input.updates, input.channel ?? null)),
   // Barkodlu ürünlerin stok ve fiyatını Trendyol'a gönderir (mevcut listelemeleri günceller).
   pushToTrendyol: protectedProcedure
     .input(z.object({ ids: z.array(z.number()).optional() }))
@@ -783,13 +785,17 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
         // Yalnız "satista" ürünler pazaryerine gider (Faz A3).
         .filter(p => p.status === "satista" && p.barcode && p.barcode.trim())
         .map(p => {
-          const list = parseFloat(String(p.salePrice)) || 0;
-          const disc = parseFloat(String(p.discountPercent)) || 0;
+          // Trendyol'a özel fiyat varsa o kullanılır, yoksa taban (web) fiyatı.
+          const eff = effectiveChannelPrice(
+            { salePrice: parseFloat(String(p.salePrice)) || 0, discountPercent: parseFloat(String(p.discountPercent)) || 0 },
+            parseChannelPrices(p.channelPrices),
+            "trendyol",
+          );
           return {
             barcode: p.barcode!.trim(),
             quantity: p.stockQty ?? 0,
-            listPrice: list,
-            salePrice: +(list * (1 - disc / 100)).toFixed(2),
+            listPrice: eff.salePrice,
+            salePrice: +(eff.salePrice * (1 - eff.discountPercent / 100)).toFixed(2),
           };
         });
       if (items.length === 0) {
@@ -817,11 +823,15 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
         // Yalnız "satista" ürünler pazaryerine gider (Faz A3).
         .filter(p => p.status === "satista" && p.barcode && p.barcode.trim())
         .map(p => {
-          const list = parseFloat(String(p.salePrice)) || 0;
-          const disc = parseFloat(String(p.discountPercent)) || 0;
+          // Hepsiburada'ya özel fiyat varsa o kullanılır, yoksa taban (web) fiyatı.
+          const eff = effectiveChannelPrice(
+            { salePrice: parseFloat(String(p.salePrice)) || 0, discountPercent: parseFloat(String(p.discountPercent)) || 0 },
+            parseChannelPrices(p.channelPrices),
+            "hepsiburada",
+          );
           return {
             merchantSku: p.barcode!.trim(),
-            price: +(list * (1 - disc / 100)).toFixed(2),
+            price: +(eff.salePrice * (1 - eff.discountPercent / 100)).toFixed(2),
             availableStock: p.stockQty ?? 0,
           };
         });
@@ -849,12 +859,15 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
       const items = chosen
         .filter(p => p.status === "satista" && ((p.sku && p.sku.trim()) || (p.barcode && p.barcode.trim())))
         .map(p => {
-          const list = parseFloat(String(p.salePrice)) || 0;
-          const disc = parseFloat(String(p.discountPercent)) || 0;
+          const eff = effectiveChannelPrice(
+            { salePrice: parseFloat(String(p.salePrice)) || 0, discountPercent: parseFloat(String(p.discountPercent)) || 0 },
+            parseChannelPrices(p.channelPrices),
+            "n11",
+          );
           return {
             sellerStockCode: (p.sku?.trim() || p.barcode!.trim()),
             quantity: p.stockQty ?? 0,
-            price: +(list * (1 - disc / 100)).toFixed(2),
+            price: +(eff.salePrice * (1 - eff.discountPercent / 100)).toFixed(2),
           };
         });
       if (items.length === 0) {
@@ -881,12 +894,15 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
       const items = chosen
         .filter(p => p.status === "satista" && ((p.sku && p.sku.trim()) || (p.barcode && p.barcode.trim())))
         .map(p => {
-          const list = parseFloat(String(p.salePrice)) || 0;
-          const disc = parseFloat(String(p.discountPercent)) || 0;
+          const eff = effectiveChannelPrice(
+            { salePrice: parseFloat(String(p.salePrice)) || 0, discountPercent: parseFloat(String(p.discountPercent)) || 0 },
+            parseChannelPrices(p.channelPrices),
+            "ciceksepeti",
+          );
           return {
             stockCode: (p.sku?.trim() || p.barcode!.trim()),
             quantity: p.stockQty ?? 0,
-            price: +(list * (1 - disc / 100)).toFixed(2),
+            price: +(eff.salePrice * (1 - eff.discountPercent / 100)).toFixed(2),
           };
         });
       if (items.length === 0) {

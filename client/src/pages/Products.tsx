@@ -49,6 +49,8 @@ export type ProductRow = {
   description: string | null;
   salePrice: string;
   discountPercent: string;
+  // Kanal bazlı fiyat JSON'u (web ≠ Trendyol ≠ Hepsiburada); boşsa taban fiyat.
+  channelPrices: string | null;
   packagingCost: string;
   shippingCost: string;
   packaging: string | null;

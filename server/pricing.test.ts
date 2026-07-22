@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   calcChannelProfit,
   calcDevProfit,
+  channelSlugForProfile,
   deriveUnitLaborOverhead,
+  effectiveChannelPrice,
   matchPriceRows,
   normalizeChannelProfile,
+  parseChannelPrices,
   parsePriceCsv,
   parsePriceNumber,
   roundPrice,
@@ -424,5 +427,56 @@ describe("deriveUnitLaborOverhead (işçilik + genel gider payı)", () => {
   it("geçersiz metinlerde varsayılanlara düşer", () => {
     const d = deriveUnitLaborOverhead({ monthlyOverhead: "abc", monthlyAvgProduction: "" });
     expect(d.value).toBe(100);
+  });
+});
+
+describe("parseChannelPrices", () => {
+  it("boş/bozuk girdide boş nesne döner", () => {
+    expect(parseChannelPrices(null)).toEqual({});
+    expect(parseChannelPrices("")).toEqual({});
+    expect(parseChannelPrices("{bozuk")).toEqual({});
+  });
+  it("geçerli JSON'u ayrıştırır ve sayısal olmayan fiyatı atar", () => {
+    const map = parseChannelPrices(
+      '{"trendyol":{"salePrice":259.9,"discountPercent":10},"hepsiburada":{"salePrice":"x"}}',
+    );
+    expect(map.trendyol).toEqual({ salePrice: 259.9, discountPercent: 10 });
+    expect(map.hepsiburada).toBeUndefined();
+  });
+});
+
+describe("channelSlugForProfile", () => {
+  it("varsayılan pazaryeri adlarını doğru anahtara eşler", () => {
+    expect(channelSlugForProfile({ name: "Trendyol" })).toBe("trendyol");
+    expect(channelSlugForProfile({ name: "Hepsiburada" })).toBe("hepsiburada");
+    expect(channelSlugForProfile({ name: "N11" })).toBe("n11");
+    expect(channelSlugForProfile({ name: "Çiçeksepeti" })).toBe("ciceksepeti");
+  });
+  it("web/elden/bilinmeyen kanal için null (taban fiyat) döner", () => {
+    expect(channelSlugForProfile({ name: "Web Sitesi" })).toBeNull();
+    expect(channelSlugForProfile({ name: "Elden" })).toBeNull();
+    expect(channelSlugForProfile({ name: "Instagram" })).toBeNull();
+  });
+});
+
+describe("effectiveChannelPrice", () => {
+  const base = { salePrice: 250, discountPercent: 0 };
+  it("kanal null ise her zaman taban fiyat", () => {
+    const r = effectiveChannelPrice(base, { trendyol: { salePrice: 320 } }, null);
+    expect(r).toEqual({ salePrice: 250, discountPercent: 0, overridden: false });
+  });
+  it("kanala özel fiyat varsa onu kullanır", () => {
+    const r = effectiveChannelPrice(base, { trendyol: { salePrice: 320, discountPercent: 5 } }, "trendyol");
+    expect(r).toEqual({ salePrice: 320, discountPercent: 5, overridden: true });
+  });
+  it("kanal kaydı yoksa tabana düşer", () => {
+    const r = effectiveChannelPrice(base, { hepsiburada: { salePrice: 300 } }, "trendyol");
+    expect(r.salePrice).toBe(250);
+    expect(r.overridden).toBe(false);
+  });
+  it("kanal fiyatı var ama indirim yoksa taban indirimi devreder", () => {
+    const r = effectiveChannelPrice({ salePrice: 250, discountPercent: 10 }, { trendyol: { salePrice: 320 } }, "trendyol");
+    expect(r.salePrice).toBe(320);
+    expect(r.discountPercent).toBe(10);
   });
 });

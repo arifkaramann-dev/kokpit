@@ -98,13 +98,19 @@ Bu tema büyük ölçüde bende. Senden gereken tek şey birkaç **oran/sabit** 
     **Satıcı ID, API Key, API Secret**.
   - **Bana ver (Render):** `TRENDYOL_SELLER_ID`, `TRENDYOL_API_KEY`, `TRENDYOL_API_SECRET`.
   - **Neyi açar:** Sipariş çekme, stok/fiyat gönderme, kargo etiketi, **soru-cevap oto-çekme/oto-cevap** (yeni).
-- [~] **Hepsiburada API — TEST ORTAMI süreci başladı (21.07.2026).**
+- [~] **Hepsiburada API — TEST ORTAMI bilgileri GELDİ (22.07.2026).**
   - HB, canlı bilgilerden önce test (SIT) ortamında 3 kanıt istiyor; test
-    bilgileri **arif.karamann@gmail.com**'a e-postayla gelecek.
-  - **Nasıl:** e-posta gelince Render'a `HEPSIBURADA_ENV=sit` + test
-    Merchant ID/kullanıcı/şifre gir → **Ayarlar → Hepsiburada Test Ortamı**
-    panelinden 3 adımı koştur → kimlikleri HB ticket'ına yapıştır.
-    Adım adım rehber: **PAZARYERI.md** (en üstte).
+    bilgileri **arif.karamann@gmail.com**'a e-postayla geldi (Merchant/Secretkey).
+  - **⚠ ŞU AN 401 SEBEBİ:** Render'a Merchant ID/USERNAME/PASSWORD girildi ama
+    **`HEPSIBURADA_ENV=sit` girilmedi.** Test hesabı yalnız SIT ucunda geçerli;
+    bu değişken olmadan uygulama CANLI uca gidiyor ve HB 401 döndürüyor.
+    **YAP:** Render → Environment → `HEPSIBURADA_ENV=sit` ekle → Save (yeniden
+    dağıtım) → Ayarlar → "Bağlantıyı Test Et" 200 olur. (Bağlantı testi artık
+    401'de otomatik "yanlış ortam" uyarısı verir.)
+  - **Kimlik eşleşmesi (HB e-postası):** `HEPSIBURADA_USERNAME` = Merchantid,
+    `HEPSIBURADA_PASSWORD` = Secretkey (ikisi de HB'nin verdiği Basic auth).
+  - **Sonra:** **Ayarlar → Hepsiburada Test Ortamı** panelinden 3 adımı koştur →
+    kimlikleri HB ticket'ına yapıştır. Adım adım rehber: **PAZARYERI.md** (en üstte).
   - **Canlıya geçince (Render):** `HEPSIBURADA_ENV` silinir; canlı
     `HEPSIBURADA_MERCHANT_ID`, `HEPSIBURADA_USERNAME`, `HEPSIBURADA_PASSWORD`,
     `HEPSIBURADA_SERVICE_KEY` girilir.
@@ -132,7 +138,8 @@ Bu tema büyük ölçüde bende. Senden gereken tek şey birkaç **oran/sabit** 
 
 - [ ] Trendyol "Bağlantıyı Test Et" → HTTP 200 + sipariş akışı + stok/fiyat gönderme.
 - [ ] Trendyol resmi kargo etiketi (kargo takip no dolunca ZPL→Labelary→PDF).
-- [ ] Hepsiburada bağlantı testi (anahtarlar Render'a girince 401 kalkar).
+- [~] Hepsiburada bağlantı testi — **401 alınıyor çünkü `HEPSIBURADA_ENV=sit` eksik**
+  (test hesabı canlı uca bağlanamaz). Render'a `HEPSIBURADA_ENV=sit` ekleyince 401 kalkar.
 - [ ] **Soru-Cevap oto-cevap** açma kararı (yeni özellik — Trendyol bağlanınca canlıda dener,
   emin olduğu cevaplar otomatik gider, gerisi onayına kalır).
 - [ ] Sesli uyandırma ("Hey Kokpit") — Picovoice AccessKey.

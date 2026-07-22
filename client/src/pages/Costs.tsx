@@ -14,8 +14,9 @@ import { Separator } from "@/components/ui/separator";
 import { formatTL, num } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
 import { calcChannelProfit, calcDevProfit } from "@shared/pricing";
-import { Calculator, Save, TrendingDown, TrendingUp } from "lucide-react";
+import { Calculator, FlaskConical, Save, TrendingDown, TrendingUp } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "wouter";
 import { toast } from "sonner";
 import type { ProductRow } from "./Products";
 
@@ -206,9 +207,47 @@ export default function Costs() {
               <Calculator className="h-4 w-4 text-primary" /> Girdiler
             </h2>
             <div className="space-y-3">
-              <div className="flex items-center justify-between rounded-lg bg-muted p-3">
-                <span className="text-sm">Hammadde Maliyeti (formülden)</span>
-                <span className="font-semibold">{formatTL(materialCost)}</span>
+              <div className="rounded-lg bg-muted p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">Hammadde Maliyeti (formülden)</span>
+                  <span className="font-semibold">{formatTL(materialCost)}</span>
+                </div>
+                {(formulaItems ?? []).length > 0 ? (
+                  <div className="space-y-1 border-t border-border/60 pt-2">
+                    {(formulaItems ?? []).map(it => (
+                      <div key={it.id} className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                        <span className="truncate">
+                          {it.materialName ?? "—"}
+                          <span className="opacity-70">
+                            {" · "}
+                            {num(it.qty)} {it.materialUnit} × {formatTL(it.materialUnitCost)}
+                          </span>
+                        </span>
+                        <span className="tabular-nums whitespace-nowrap">
+                          {formatTL(num(it.qty) * num(it.materialUnitCost))}
+                        </span>
+                      </div>
+                    ))}
+                    <div className="flex justify-end pt-1">
+                      <Link
+                        href={`/formuller?urun=${productId}`}
+                        className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                      >
+                        <FlaskConical className="h-3 w-3" /> Formül Defteri'nde düzenle
+                      </Link>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-2 text-xs text-muted-foreground">
+                    <span>Bu ürünün formülü yok — hammadde maliyeti ₺0 görünür.</span>
+                    <Link
+                      href={`/formuller?urun=${productId}`}
+                      className="inline-flex items-center gap-1 whitespace-nowrap text-primary hover:underline"
+                    >
+                      <FlaskConical className="h-3 w-3" /> Formül ekle
+                    </Link>
+                  </div>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
