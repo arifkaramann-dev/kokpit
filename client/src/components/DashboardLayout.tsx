@@ -363,6 +363,13 @@ function DashboardLayoutContent({
                 </div>
               </div>
             </div>
+            <button
+              onClick={() => window.dispatchEvent(new Event("open-command-palette"))}
+              className="h-9 w-9 flex items-center justify-center rounded-lg border bg-background text-muted-foreground hover:bg-accent transition-colors"
+              aria-label="Ara"
+            >
+              <Search className="h-4 w-4" />
+            </button>
           </div>
         )}
         <main className="flex-1 p-4">{children}</main>

@@ -36,6 +36,9 @@ Döngü: 🏛 karar → 💻/🎨/🤖 tasarım → 🚀 uygular → 🏛'e dön
 ile devredilir (format `.claude/KURULLAR.md`). Kurullar ajanların yerine geçmez;
 onları gruplar. Küçük/tek dosyalık işte kurul töreni şart değil — kredi israf etme.
 
+Bu 5 kurulun **üstünde** aşağıdaki **Yönetim Kurulu** değer-kapısı vardır: o
+*yapmaya değer mi*'ye karar verir, kurullar *nasıl*'ı yürütür (iki ayrı katman).
+
 Delegasyon kuralları:
 
 - **`proje-yoneticisi` her zaman orkestratördür**: büyük/çok modüllü işlerde önce

@@ -11,6 +11,13 @@ Kurullar **ajanların yerine geçmez** — üstünde bir *orkestrasyon katmanıd
 vardır. Hafıza dosyada durduğu için git ile sürümlenir, cihazlar/oturumlar
 arası taşınır — claude.ai'deki bir "Proje"den daha kalıcıdır.
 
+> **Üst katman — Yönetim Kurulu:** Bu 5 kurulun üstünde stratejik bir **Yönetim
+> Kurulu** (`.claude/YONETIM-KURULU.md`, ajan `yonetim-kurulu`) durur: "bunu
+> yapmalı mıyız / değer katıyor mu" **değer-kapısı**. Tam akış:
+> 🎩 Yönetim Kurulu (değer onayı) → 🏛 Ürün Kurulu (öncelik) → 💻/🎨/🤖 (tasarım)
+> → 🚀 Yapımcı (uygula). Kısaca: **Yönetim Kurulu *neyi/niçin*'e karar verir,
+> Kurullar *nasıl*'ı yürütür.** İkisi ayrı katman; biri diğerinin yerine geçmez.
+
 ## Beş Kurul
 
 | # | Kurul | Ne yapar (tek cümle) | Lider ajan | Komut | Tüzük |
