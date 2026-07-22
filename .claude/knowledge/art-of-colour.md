@@ -49,6 +49,45 @@
 - Asistan/WhatsApp üzerinden finans soru-cevabı aktif kullanılıyor
 - Sesli uyandırma ("Hey Kokpit") opt-in özellik
 
+## Sistem haritası (kod-doğrulanmış, 2026-07-22 onboarding)
+
+> Aşağıdakiler koddan doğrulandı (tahmin değil). Şirket verisi değil, sistemin
+> nasıl çalıştığıdır — yeni sohbet hızlı bağlam alsın diye.
+
+**Mimari:** React 19 + Vite + Tailwind 4 + Radix (client/), tRPC 11 + Express
+(server/), Drizzle + MySQL/TiDB (drizzle/, 29 tablo, 23 migration), Anthropic SDK.
+tRPC ~35 router, 5 domain modülü (`server/modules/urun|satis|finans|pazarlama|sistem`)
++ barrel `routers.ts`. Yetki: `publicProcedure` / `protectedProcedure` /
+`adminProcedure` (rol user|admin). Tek sahip (patron) girişi: OWNER_EMAIL/PASSWORD,
+JWT cookie (jose), 30 gün TTL + `auth.logoutAll`. 32 sayfa; `/magaza` giriş
+gerektirmez (public storefront), gerisi DashboardLayout altında korumalı.
+
+**Kâr modeli parametreleri (`shared/pricing.ts`, finans onaylı):** KDV-hariç baza
+indirger, komisyon/ödeme/kargo KDV'sini indirir. Varsayılan kanal profilleri —
+Elden: kesintisiz; Web Sitesi: %2,5 ödeme; **Trendyol: %20 komisyon + %0,96 ödeme
++ 12,6₺ işlem + %1 stopaj**; **Hepsiburada: %15 + 10₺ + %1 stopaj**. İşçilik+genel
+gider payı: **150₺/saat, 15.000₺/ay genel gider, ~150 adet/ay → 100₺/adet**
+(Ayarlar'dan ezilebilir). Trendyol resmi hesaplayıcısıyla kuruş kuruş aynı.
+
+**Entegrasyon haritası:** Pazaryeri (4): Trendyol, Hepsiburada, N11, Çiçeksepeti —
+`server/marketplace.ts` ortak yönetim + yarış-durumu kilidi (`syncLock`). e-Fatura:
+**Bizimhesap köprüsü** (`efatura.ts`; FirmID bekliyor). Kargo: **Geliver**
+(`kargo.ts`; token bekliyor). Ödeme: PayTR (`paytr.ts`). Asistan: uygulama içi +
+WhatsApp + sesli, tek kapı `runAssistant` → tool-use ajanı (8 araç, güvenli/onaylı
+onay katmanı, `ANTHROPIC_API_KEY` yoksa intent akışına düşer). Sesli uyandırma:
+Picovoice/Web Speech.
+
+**Otomasyon (nöbetçiler, `server/scheduler.ts`):** 15 dk pazaryeri oto-senkron +
+soru senkronu, 60 dk Stok Nöbetçisi, 08:00 Sabah Brifingi, 09:00 Tahsilat
+Takipçisi, 09:00 Çek/Senet Nöbetçisi. Render free uykuya dalınca durur →
+`/api/health` uptime monitörü şart. `SCHEDULER_DISABLED=1` ile kapanır.
+
+**İş akışları:** Sipariş new→production→ready→done|cancelled (iptal ciro/cari/KDV
+hariç, stok iade). Üretim: reçete (formulaItems) → hammadde düş (stockMovements),
+mamul art (productMovements) + productionRuns. Ürün geliştirme: 5 adımlı sihirbaz
+(devProjects). Finans: alış→stok+maliyet+indirilecek KDV; satış→ciro+hesaplanan
+KDV; cari ID-öncelikli (isim yedek); kasa/banka; çek/senet; KDV raporu; mutabakat.
+
 ## Öğrenilecekler (boşluklar)
 
 - Ürün serilerinin adları ve fiyat aralıkları (canlı veriden öğrenilecek)

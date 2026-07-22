@@ -1,5 +1,5 @@
 import * as db from "./db";
-import { overdueReceivables } from "./financeUtils";
+import { overdueCheques, overdueReceivables } from "./financeUtils";
 import { isHepsiburadaConfigured } from "./hepsiburada";
 import { isTrendyolConfigured } from "./trendyol";
 import { syncAllMarketplaces } from "./marketplace";
@@ -20,6 +20,8 @@ import { notifyOwner } from "./notify";
  *  - Sabah Brifingi (her gün 08:00 İstanbul): işletme özeti → bildirim + WhatsApp
  *  - Tahsilat Takipçisi (her gün 09:00 İstanbul): 30+ gündür ödenmemiş
  *    siparişleri müşteri bazında toplar → bildirim + WhatsApp
+ *  - Çek/Senet Nöbetçisi (her gün 09:00 İstanbul): portföyde olup vadesi geçmiş
+ *    çek/senetleri (alınan=tahsil, verilen=ödeme) toplar → bildirim
  *
  * Not: Render ücretsiz planda süreç uykuya dalarsa zamanlayıcı da durur;
  * /api/health'e bağlı bir uptime monitörü süreci ayakta tutar.
@@ -32,6 +34,7 @@ const STOCK_INTERVAL_MS = 60 * 60 * 1000;
 const BRIEFING_HOUR_TR = 8; // İstanbul saatiyle
 const COLLECTION_HOUR_TR = 9; // İstanbul saatiyle
 const COLLECTION_MIN_DAYS = 30; // bu kadar gündür ödenmemişse hatırlat
+const CHEQUE_HOUR_TR = 9; // İstanbul saatiyle (çek/senet vade nöbeti)
 
 const KEY_LAST_TICK = "scheduler.lastTickAt";
 const TICK_TRACE_INTERVAL_MS = 5 * 60 * 1000; // iz her turda değil, 5 dk'da bir yazılır (DB yükü)
@@ -40,6 +43,7 @@ const KEY_LAST_QUESTIONS = "scheduler.lastQuestionsSyncAt";
 const KEY_LAST_STOCK = "scheduler.lastStockCheckAt";
 const KEY_LAST_BRIEFING = "scheduler.lastBriefingDate";
 const KEY_LAST_COLLECTION = "scheduler.lastCollectionDate";
+const KEY_LAST_CHEQUE = "scheduler.lastChequeCheckDate";
 
 let ticking = false;
 
@@ -94,6 +98,11 @@ async function tick() {
     if (isDailyDue(cfg[KEY_LAST_COLLECTION], todayTR, istanbulHour(new Date()), COLLECTION_HOUR_TR)) {
       await db.setSettings({ [KEY_LAST_COLLECTION]: todayTR });
       await runCollectionChaser();
+    }
+
+    if (isDailyDue(cfg[KEY_LAST_CHEQUE], todayTR, istanbulHour(new Date()), CHEQUE_HOUR_TR)) {
+      await db.setSettings({ [KEY_LAST_CHEQUE]: todayTR });
+      await runChequeWatch();
     }
   } catch (error) {
     // DB yoksa (yerel araç çalıştırma) sessizce geç; diğer hataları logla.
@@ -231,6 +240,35 @@ async function runCollectionChaser() {
     title: `💰 ${overdue.length} müşteride vadesi geçen alacak — ${tl(total)}`,
     body: lines.join("\n"),
     link: "/cari",
+  });
+}
+
+/**
+ * Çek/Senet Nöbetçisi: portföyde olup vadesi geçmiş çek/senetleri (alınan =
+ * tahsil edilecek, verilen = ödenecek) tek bildirimde toplar. Vadesi geçen yoksa
+ * sessiz kalır (spam yok).
+ */
+async function runChequeWatch() {
+  const cheques = await db.listCheques();
+  const { incoming, outgoing, totalIncoming, totalOutgoing } = overdueCheques(cheques);
+  const count = incoming.length + outgoing.length;
+  if (count === 0) return;
+  const tl = (n: number) => `${n.toLocaleString("tr-TR", { maximumFractionDigits: 0 })} TL`;
+  const lines: string[] = [];
+  if (incoming.length > 0) {
+    lines.push(`📥 Tahsil edilecek (alınan) — ${tl(totalIncoming)}:`);
+    for (const c of incoming.slice(0, 8)) lines.push(`• ${c.partyName}: ${tl(c.amount)} (${c.daysOverdue} gün geçti)`);
+  }
+  if (outgoing.length > 0) {
+    if (lines.length) lines.push("");
+    lines.push(`📤 Ödenecek (verilen) — ${tl(totalOutgoing)}:`);
+    for (const c of outgoing.slice(0, 8)) lines.push(`• ${c.partyName}: ${tl(c.amount)} (${c.daysOverdue} gün geçti)`);
+  }
+  await notifyOwner({
+    kind: "cek-senet-vade",
+    title: `📄 ${count} çek/senet vadesi geçti`,
+    body: lines.join("\n"),
+    link: "/cek-senet",
   });
 }
 
