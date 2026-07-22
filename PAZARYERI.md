@@ -1,5 +1,76 @@
 # Pazaryeri Bağlantıları & Fatura
 
+## API Anahtarları — Tam Referans (Trendyol & Hepsiburada)
+
+> Resmi belgelerden (developers.trendyol.com / developers.hepsiburada.com)
+> doğrulanmış, tek bakışta anahtar–panel yolu–env eşlemesi. **Hangi bilgiyi
+> nereden alıyoruz, Render'da hangi değişkene giriyoruz, kod nerede kullanıyor.**
+> Gizli bilgiler yalnızca Render → Environment'ta durur; repoya asla girmez.
+
+### Trendyol Satıcı API
+
+**Kimlik bilgisi nereden alınır:** Satıcı Paneli → **Hesabım (Hesap Bilgilerim)
+→ Entegrasyon Bilgileri**. Bu ekran yalnızca panelin **master (ana) kullanıcısına**
+görünür. Buradan üç değer alınır:
+
+| Bilgi | Render env değişkeni | Kod kullanımı |
+|---|---|---|
+| Satıcı/Tedarikçi ID (Seller/Supplier ID) | `TRENDYOL_SELLER_ID` | URL yolu + User-Agent |
+| API Key | `TRENDYOL_API_KEY` | Basic auth kullanıcı adı |
+| API Secret | `TRENDYOL_API_SECRET` | Basic auth şifresi |
+
+- **Kimlik doğrulama:** HTTP **Basic auth** → `base64(API_KEY:API_SECRET)`.
+- **User-Agent (zorunlu):** `"{SellerID} - SelfIntegration"` (kendi entegrasyonumuz;
+  entegratör firma kullanılsaydı `"{SellerID} - {FirmaAdı}"`, alfanümerik, max 30 karakter).
+  **User-Agent göndermeyen istek 403 ile bloklanır** — bu yüzden koda gömülüdür.
+- **Taban URL:** canlı `https://apigw.trendyol.com` · test (stage)
+  `https://stageapigw.trendyol.com` (`TRENDYOL_API_BASE_URL` ile geçersiz kılınır).
+  Prod ve stage için **ayrı API Key/Secret** verilir; ortamla eşleşmeli.
+- **Hız sınırı:** endpoint başına **10 saniyede 50 istek**; aşılırsa `429`.
+- **Kullandığımız servis grupları:** sipariş/paket (`/integration/order/.../orders`),
+  stok-fiyat (`/integration/inventory/.../price-and-inventory`), ortak etiket
+  (`/integration/sellers/.../common-label/...`), müşteri soruları
+  (`/integration/qna/.../questions`). (Ürün açma, iade/talep, finans/hakediş,
+  webhook servisleri de mevcut — ileride eklenebilir.)
+
+### Hepsiburada API
+
+Hepsiburada'da **üç ayrı servis** ve **iki farklı kimlik modeli** vardır. Bilgiler
+merchant panelinden (**merchant.hepsiburada.com → Hesabım → Entegrasyon Bilgileri /
+API Entegrasyon İşlemleri**) alınır. **Secretkey yalnızca bir kez gösterilir** —
+güvenli sakla.
+
+| Bilgi | Render env değişkeni | Kod kullanımı |
+|---|---|---|
+| Merchant ID (GUID) | `HEPSIBURADA_MERCHANT_ID` | Basic auth **kullanıcı adı** + URL yolu |
+| Secretkey | `HEPSIBURADA_PASSWORD` | Basic auth **şifresi** (OMS) |
+| Developer Username (ör. `artofcolour_dev`) | `HEPSIBURADA_USERNAME` | **User-Agent** başlığı |
+| Servis Anahtarı (Listing) | `HEPSIBURADA_SERVICE_KEY` | Listing Basic auth şifresi (boşsa Secretkey) |
+| Test ortamı anahtarı | `HEPSIBURADA_ENV=sit` | tüm uçları `-sit`'e çevirir, oto-senkronu kapatır |
+
+- **Kimlik modeli (kritik):** Basic auth **kullanıcı adı = Merchant ID (GUID)**,
+  şifre = Secretkey; **User-Agent = Developer Username**. En sık 401 sebebi:
+  developer username'i Basic auth kullanıcı adı sanmak. (Kod bunu otomatik doğru kurar.)
+- **Servis tabanları (canlı / test):**
+  - OMS (sipariş): `oms-external.hepsiburada.com` / `oms-external-sit.hepsiburada.com`
+  - Listing (stok/fiyat): `listing-external.hepsiburada.com` / `listing-external-sit.hepsiburada.com`
+  - MPOP (katalog/ürün açma): `mpop.hepsiburada.com` / `mpop-sit.hepsiburada.com`
+    (`HEPSIBURADA_MPOP_BASE_URL` ile geçersiz kılınır)
+  - Test uçları = canlı uçların **"-sit" ekli** halidir.
+- **MPOP farkı:** OMS ve Listing **Basic auth** kullanır; **MPOP JWT** ister —
+  `POST /api/authenticate {username, password, authenticationType:"INTEGRATOR"}`
+  ile token alınıp `Bearer` olarak gönderilir.
+- **Servis Anahtarı:** Listing API'si Secretkey yerine ayrı bir **Servis Anahtarı**
+  ister; panelde **API Entegrasyon İşlemleri** altında üretilir/görüntülenir.
+- **Katalog gotcha'ları:** MPOP ürün ekleme yalnızca **gece 00:00–03:00** arasında
+  kabul edilir; IP başına ~**500 istek/sn** sınırı vardır.
+
+> ⚠️ **Ortam kısıtı:** geliştirme ortamı pazaryerlerine çıkamaz; bu uçlar ancak
+> canlıda (Render) test edilir. "Bağlantıyı Test Et" butonu gerçek isteği atıp
+> HB/Trendyol'un ham yanıtını gösterir — 401/403 alınca yukarıdaki eşlemeyi kontrol et.
+
+---
+
 ## Hepsiburada TEST ORTAMI → canlıya geçiş (güncel durum: test bilgileri bekleniyor)
 
 HB, canlı API bilgilerini vermeden önce test (SIT) ortamında 3 adımın
