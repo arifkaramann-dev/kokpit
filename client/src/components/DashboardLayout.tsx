@@ -85,8 +85,6 @@ const menuGroups = [
       { icon: Contact, label: "Müşteriler", path: "/musteriler" },
       { icon: MessageSquare, label: "Soru-Cevap", path: "/sorular" },
       { icon: Store, label: "Web Mağaza", path: "/magaza" },
-      { icon: CalendarDays, label: "Kampanya Takvimi", path: "/kampanyalar" },
-      { icon: Sparkles, label: "AI Pazarlama", path: "/pazarlama" },
     ],
   },
   {
@@ -96,22 +94,17 @@ const menuGroups = [
       { icon: TrendingDown, label: "Giderler", path: "/giderler" },
       { icon: Wallet, label: "Kasa & Banka", path: "/kasa" },
       { icon: Scale, label: "Cari Hesaplar", path: "/cari" },
-      { icon: ScrollText, label: "Çek & Senet", path: "/cek-senet" },
-      { icon: Landmark, label: "Banka Mutabakatı", path: "/mutabakat" },
     ],
   },
   {
     label: "Ürün & Üretim",
     items: [
       { icon: Package, label: "Ürünler & Türevler", path: "/urunler" },
-      { icon: FlaskConical, label: "Ürün Geliştirme", path: "/gelistirme" },
-      { icon: Beaker, label: "Formül Defteri", path: "/formuller" },
+      { icon: BadgePercent, label: "Fiyat & Kâr Motoru", path: "/fiyat" },
       { icon: Factory, label: "Üretim", path: "/uretim" },
       { icon: Warehouse, label: "Stok & Hammadde", path: "/stok" },
-      { icon: BadgePercent, label: "Fiyat & Kâr Motoru", path: "/fiyat" },
-      { icon: Truck, label: "Tedarikçiler", path: "/tedarikciler" },
-      { icon: LibraryBig, label: "Şablonlar & Seriler", path: "/sablonlar" },
-      { icon: ArrowLeftRight, label: "İçe / Dışa Aktar", path: "/urun-aktar" },
+      { icon: Beaker, label: "Formül Defteri", path: "/formuller" },
+      { icon: FlaskConical, label: "Ürün Geliştirme", path: "/gelistirme" },
     ],
   },
   {
@@ -120,6 +113,20 @@ const menuGroups = [
       { icon: BarChart3, label: "Satış Analizi", path: "/analiz" },
       { icon: Target, label: "Strateji & Rapor", path: "/strateji" },
       { icon: Settings2, label: "Ayarlar", path: "/ayarlar" },
+    ],
+  },
+  // Az kullanılan / ileri araçlar — ana grupları sadeleştirmek için altta toplandı
+  // (hepsi ⌘K komut paletinde de aranıp açılabilir). Kullanım arttıkça yukarı taşınır.
+  {
+    label: "Araçlar & Diğer",
+    items: [
+      { icon: Sparkles, label: "AI Pazarlama", path: "/pazarlama" },
+      { icon: CalendarDays, label: "Kampanya Takvimi", path: "/kampanyalar" },
+      { icon: Truck, label: "Tedarikçiler", path: "/tedarikciler" },
+      { icon: LibraryBig, label: "Şablonlar & Seriler", path: "/sablonlar" },
+      { icon: ArrowLeftRight, label: "İçe / Dışa Aktar", path: "/urun-aktar" },
+      { icon: ScrollText, label: "Çek & Senet", path: "/cek-senet" },
+      { icon: Landmark, label: "Banka Mutabakatı", path: "/mutabakat" },
     ],
   },
 ];

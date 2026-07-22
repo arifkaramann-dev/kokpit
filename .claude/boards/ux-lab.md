@@ -52,5 +52,6 @@ Yapımcı kodlar. Navigasyon/yerleşim değişikliğinde görsel doğrulama zoru
 
 | Tarih | Karar | Gerekçe | Devir |
 |---|---|---|---|
+| 2026-07-22 | #17 menü sadeleştirme uygulandı: 29 öğe/5 grup → ana gruplar (Satış 6, Finans 4, Ürün 6) sadeleşti; az kullanılan 7 öğe (AI Pazarlama, Kampanya, Tedarikçiler, Şablonlar, İçe/Dışa Aktar, Çek/Senet, Banka Mutabakatı) altta "⚙ Araçlar & Diğer" grubuna toplandı. Sayfa kaybı yok, hepsi ⌘K'da. | Patron: menü yoğun + çek/senet kullanılmıyor. Düşük riskli veri değişikliği (DashboardLayout menuGroups). | Görsel teyit Render'da |
 | 2026-07-22 | 1. Kurul toplantısı: en önemli 20 geliştirme oy çokluğuyla sıralandı (tutanak `.claude/boards/KURUL-TOPLANTILARI.md`). UX Lab oyu: menü/IA sadeleştir, mobilleştir, storefront'u ürün çekirdeğinden tasarla; S3 görsel deneyimi. | Şirketin ilk ortak önceliklendirmesi; her kurul görüş verdi, ortak karar + fazlama yapıldı. | 🚀 Yapımcı: ilk 3 madde iş fişine |
 | 2026-07-21 | UX Lab kuruldu; akış-önce ilkesi (frontend'den ÖNCE tasarım) bu kurulda kurumsallaştı. | IA/UX tekrarlanan, sahipsiz bir uzmanlıktı; ekran akışı kararı kod yazımından ayrı bir kalıcı bağlam istiyordu. | — |
