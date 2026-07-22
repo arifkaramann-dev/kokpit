@@ -118,7 +118,9 @@ export type HbTestProductInput = {
  */
 export async function hbCatalogSendTestProduct(input: HbTestProductInput) {
   const attributes: Record<string, unknown> = {
-    merchant_sku: input.merchantSku,
+    // HB katalog alan adı camelCase: "merchantSku" (snake_case "merchant_sku"
+    // sessizce boş sayılır → importStatus FAILED "Merchant sku can't be empty").
+    merchantSku: input.merchantSku,
     VaryantGroupID: input.merchantSku,
     Barcode: input.barcode || input.merchantSku,
     UrunAdi: input.name,
