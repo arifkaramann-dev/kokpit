@@ -56,4 +56,5 @@ sıradakini seç, kararı günlüğe yaz.
 
 | Tarih | Karar | Gerekçe | Devir |
 |---|---|---|---|
+| 2026-07-22 | 1. Kurul toplantısı: en önemli 20 geliştirme oy çokluğuyla sıralandı (tutanak `.claude/boards/KURUL-TOPLANTILARI.md`). Ürün Kurulu oyu: yasal (e-Fatura) → gelir kanalı (storefront, N11/ÇS) → boya moat (lot/kalite). | Şirketin ilk ortak önceliklendirmesi; her kurul görüş verdi, ortak karar + fazlama yapıldı. | 🚀 Yapımcı: ilk 3 madde iş fişine |
 | 2026-07-21 | Ürün Kurulu kuruldu; `todo.md` yol haritasının sahibi bu kurul. | Strateji/önceliklendirme kalıcı ve sahipsiz bir bağlamdı; kod/tasarımdan ayrı bir "ne+neden" sohbeti gerekiyordu. | — |

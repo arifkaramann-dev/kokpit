@@ -51,4 +51,5 @@ HER iş `guvenlik-denetcisi`nden geçer. Periyodik güvenlik taraması bu kurulu
 
 | Tarih | Karar | Gerekçe | Devir |
 |---|---|---|---|
+| 2026-07-22 | 1. Kurul toplantısı: en önemli 20 geliştirme oy çokluğuyla sıralandı (tutanak `.claude/boards/KURUL-TOPLANTILARI.md`). Teknik Kurul oyu: önce zemin (uptime, S3, db.ts bölünmesi, güvenlik) sonra kule. | Şirketin ilk ortak önceliklendirmesi; her kurul görüş verdi, ortak karar + fazlama yapıldı. | 🚀 Yapımcı: ilk 3 madde iş fişine |
 | 2026-07-21 | Teknik Kurul kuruldu; teknik borç + mimari + güvenlik + deploy tek bağlamda toplandı. | Bu dört disiplin sürekli ve birbirine bağlı; "nasıl (teknik)" kararı ürün/tasarım sohbetinden ayrılmalıydı. | — |

@@ -57,4 +57,5 @@
 
 | Tarih | Karar | Gerekçe | Devir |
 |---|---|---|---|
+| 2026-07-22 | 1. Kurul toplantısı: en önemli 20 geliştirme oy çokluğuyla sıralandı (tutanak `.claude/boards/KURUL-TOPLANTILARI.md`). Yapımcı oyu: "built vs shipped" açığını kapat — yazılmış kodu (pazaryeri canlı testleri, e-Fatura, kargo etiketi) sahaya indir. İlk 3 madde (e-Fatura, uptime, S3) iş fişine alınacak. | Şirketin ilk ortak önceliklendirmesi; her kurul görüş verdi, ortak karar + fazlama yapıldı. | Faz 1: canlı doğrulama kuyruğu |
 | 2026-07-21 | Yapımcı kuruldu; "yalnızca onaylı iş fişini uygular" ilkesi netleşti. | Uygulama (kod/test/PR) ile karar (strateji/mimari/akış) ayrıştı; her kurul kendi bağlamını korurken tek bir seri-üretim şeridi oluştu. | — |

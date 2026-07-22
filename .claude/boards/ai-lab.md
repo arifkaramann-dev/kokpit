@@ -53,4 +53,5 @@ onayından geçer. Her sprint sonunda: "Takımda eksik uzmanlık var mı?" sorus
 
 | Tarih | Karar | Gerekçe | Devir |
 |---|---|---|---|
+| 2026-07-22 | 1. Kurul toplantısı: en önemli 20 geliştirme oy çokluğuyla sıralandı (tutanak `.claude/boards/KURUL-TOPLANTILARI.md`). AI Lab oyu: kurulmuş zekâyı (asistan ajanı + nöbetçiler) canlıya al ve besle; uptime AI'ın 1 numaralı oyu (nöbetçiler ona bağımlı). | Şirketin ilk ortak önceliklendirmesi; her kurul görüş verdi, ortak karar + fazlama yapıldı. | 🚀 Yapımcı: ilk 3 madde iş fişine |
 | 2026-07-21 | AI Lab kuruldu; ajan takımının kendi evrimi de (meta) bu kurulun kapsamına alındı. | AI/otomasyon hızla büyüyen, kendi bilgi tabanını hak eden bir alan; asistan/sesli/nöbetçi işleri tek kalıcı bağlamda toplanmalıydı. | — |

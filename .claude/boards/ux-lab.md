@@ -52,4 +52,5 @@ Yapımcı kodlar. Navigasyon/yerleşim değişikliğinde görsel doğrulama zoru
 
 | Tarih | Karar | Gerekçe | Devir |
 |---|---|---|---|
+| 2026-07-22 | 1. Kurul toplantısı: en önemli 20 geliştirme oy çokluğuyla sıralandı (tutanak `.claude/boards/KURUL-TOPLANTILARI.md`). UX Lab oyu: menü/IA sadeleştir, mobilleştir, storefront'u ürün çekirdeğinden tasarla; S3 görsel deneyimi. | Şirketin ilk ortak önceliklendirmesi; her kurul görüş verdi, ortak karar + fazlama yapıldı. | 🚀 Yapımcı: ilk 3 madde iş fişine |
 | 2026-07-21 | UX Lab kuruldu; akış-önce ilkesi (frontend'den ÖNCE tasarım) bu kurulda kurumsallaştı. | IA/UX tekrarlanan, sahipsiz bir uzmanlıktı; ekran akışı kararı kod yazımından ayrı bir kalıcı bağlam istiyordu. | — |
