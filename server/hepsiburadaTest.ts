@@ -120,16 +120,12 @@ export type HbTestProductInput = {
  * yeniden gönderilir.
  */
 export async function hbCatalogSendTestProduct(input: HbTestProductInput) {
-  const token = await mpopToken(console.log({
-  url: `${mpopBase()}/api/authenticate`,
-  body: {
-    username: ENV.hepsiburadaUsername,
-    password: ENV.hepsiburadaPassword,
-    authenticationType: "INTEGRATOR",
-  },
-}););
+  const token = await mpopToken();
+  // HB MPOP sistem alan adları camelCase'tir: attributes.merchantSku.
+  // (snake_case "merchant_sku" gönderilirse HB alanı boş sayar →
+  //  importStatus FAILED "Merchant sku can't be empty".)
   const attributes: Record<string, unknown> = {
-    merchant_sku: input.merchantSku,
+    merchantSku: input.merchantSku,
     VaryantGroupID: input.merchantSku,
     Barcode: input.barcode || input.merchantSku,
     UrunAdi: input.name,
