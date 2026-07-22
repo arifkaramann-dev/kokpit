@@ -15,6 +15,7 @@ import { runAssistant } from "../assistantAgent";
 import { buildSaleTitle, deriveCombos, parseSetCount, renameVariantTitle } from "../productUtils";
 import { computePrice, extractJson, parseFeatures, pickReferenceProduct, scoreReference, suggestSku } from "../autofill";
 import { computeReorderSuggestions, summarizeReorder } from "../reorder";
+import { overdueCheques } from "../financeUtils";
 import { importUrunKayit } from "../importSeed";
 import { answerTrendyolQuestion, syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf, TrendyolLabelNotAllowedError, isTrendyolConfigured } from "../trendyol";
 import { isHepsiburadaConfigured } from "../hepsiburada";
@@ -196,7 +197,7 @@ export const tasksRouter = router({
 
 export const dashboardRouter = router({
   summary: protectedProcedure.query(async () => {
-    const [today, statusCounts, critical, upcoming, openTasks, finance, unpaid, newQuestions, products, cfg] =
+    const [today, statusCounts, critical, upcoming, openTasks, finance, unpaid, newQuestions, products, cheques, cfg] =
       await Promise.all([
         db.countOrdersToday(),
         db.orderStatusCounts(),
@@ -207,6 +208,7 @@ export const dashboardRouter = router({
         db.listUnpaidOrders(6),
         db.countNewMarketplaceQuestions(),
         db.listProducts(),
+        db.listCheques(),
         db.getSettings(),
       ]);
     // Üretim kuyruğu sayısı: Stok Nöbetçisi / Üretim sayfası kuralıyla aynı
@@ -218,6 +220,9 @@ export const dashboardRouter = router({
     ).length;
     const schedulerLastTickAt = parseInt(cfg["scheduler.lastTickAt"] ?? "0", 10) || 0;
     const schedulerDisabled = process.env.SCHEDULER_DISABLED === "1";
+    // Vadesi geçen çek/senet (Çek Nöbetçisi ile aynı kural) — Kokpit'te aksiyon.
+    const oc = overdueCheques(cheques);
+    const overdueChequesCount = oc.incoming.length + oc.outgoing.length;
     return {
       today,
       statusCounts,
@@ -228,6 +233,8 @@ export const dashboardRouter = router({
       unpaid,
       newQuestions,
       productionQueue,
+      overdueChequesCount,
+      overdueChequesTotal: oc.totalIncoming + oc.totalOutgoing,
       schedulerLastTickAt,
       schedulerDisabled,
     };

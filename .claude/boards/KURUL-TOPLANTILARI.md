@@ -100,3 +100,17 @@ Ham oy sırası önceliği verir; ortak karar bunu **efor + bağımlılıkla** d
 **Devir:** İlk 3 madde (#1-#3) 🚀 Yapımcı iş fişine alınacak. Riskli maddeler
 zorunlu duraklardan geçer: para → `finans-muhasebe-uzmani`+`qa`; şema (#4,#6) →
 `veritabani-mimari`; canlı pazaryeri → Render doğrulaması.
+
+### Uygulama günlüğü (bu ortamda doğrulananlar)
+
+> Bu ortam pazaryerine/TiDB/Anthropic'e çıkamaz ve canlı DB yok; yalnızca
+> `pnpm check` + `pnpm test` + `pnpm build` ile doğrulanabilen, dış bağımlılığı
+> olmayan dilimler yapılır. Kalanlar canlı/patron/DB-sprint kuyruğunda (TaskList).
+
+- **Batch 1 (#13 + #19 + #16):** reconcile + campaigns test ağı; Çek/Senet
+  Nöbetçisi (`overdueCheques` + scheduler 09:00); bilgi tabanı sistem haritası.
+- **Batch 2 (#19 uçtan uca + #6 beyin):** Çek/senet vadesi Kokpit aksiyon
+  şeridinde + Sabah Brifingi'nde (dashboard.summary genişletildi); boya kalite
+  kontrol beyni `shared/quality.ts` (pH/viskozite/örtücülük/ΔE/parlaklık/kuruma
+  → geçti/kaldı) + testler. #6'nın şema+UI'si DB-sprintte bağlanacak.
+- **Doğrulama:** 0 tip hatası, 302/302 test, `pnpm build` ✓.

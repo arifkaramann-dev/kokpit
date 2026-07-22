@@ -274,12 +274,13 @@ async function runChequeWatch() {
 
 /** Sabah Brifingi: işletmenin güncel durumunu tek mesajda özetler. */
 async function runMorningBriefing() {
-  const [finance, statusCounts, critical, unpaid, openTasks] = await Promise.all([
+  const [finance, statusCounts, critical, unpaid, openTasks, cheques] = await Promise.all([
     db.financeSummary(),
     db.orderStatusCounts(),
     db.listCriticalMaterials(),
     db.listUnpaidOrders(5),
     db.listTasks(undefined, "open"),
+    db.listCheques(),
   ]);
   const tl = (n: number) => `${n.toLocaleString("tr-TR", { maximumFractionDigits: 0 })} TL`;
   const statusLabels: Record<string, string> = { new: "Yeni", production: "Üretimde", ready: "Hazır", done: "Tamamlandı", cancelled: "İptal" };
@@ -300,6 +301,10 @@ async function runMorningBriefing() {
   }
   if (critical.length > 0) {
     lines.push("", `🧯 Kritik stok: ${critical.map(m => m.name).slice(0, 8).join(", ")}`);
+  }
+  const oc = overdueCheques(cheques);
+  if (oc.incoming.length + oc.outgoing.length > 0) {
+    lines.push("", `📄 Vadesi geçen çek/senet: ${oc.incoming.length + oc.outgoing.length} (${tl(oc.totalIncoming + oc.totalOutgoing)})`);
   }
   const eksik = openTasks.filter(t => t.kind === "eksik").length;
   const gorev = openTasks.filter(t => t.kind === "gorev").length;

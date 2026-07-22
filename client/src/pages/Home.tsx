@@ -45,6 +45,8 @@ export default function Home() {
     actions.push({ label: "hammadde kritik seviyede", count: String(data?.critical?.length), path: "/stok", tone: "rose" });
   if ((finance?.receivables ?? 0) > 0)
     actions.push({ label: "tahsil edilecek", count: formatTL(finance?.receivables ?? 0), path: "/cari", tone: "rose" });
+  if ((data?.overdueChequesCount ?? 0) > 0)
+    actions.push({ label: "çek/senet vadesi geçti", count: String(data?.overdueChequesCount), path: "/cek-senet", tone: "rose" });
 
   // Zamanlayıcı sağlığı: iz 30 dk'dan eskiyse otomasyon durmuş demektir (Render uykusu).
   const lastTick = data?.schedulerLastTickAt ?? 0;
