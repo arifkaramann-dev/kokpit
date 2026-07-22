@@ -78,24 +78,21 @@ export function hbTestInfo() {
 
 /* ------------------------- 1) Katalog (MPOP) ------------------------- */
 
-/** MPOP JWT alır: POST /api/authenticate {username, password, authenticationType:"INTEGRATOR"}. */
-async function mpopToken(): Promise<string> {
+/**
+ * MPOP (katalog) çağrıları da **Basic auth** kullanır: kullanıcı adı = Merchantid
+ * (GUID), şifre = Secretkey, ve User-Agent = Developer Username. HB'nin eski
+ * `authenticate`/JWT (Bearer) akışı bu hesapta geçerli DEĞİL — gateway
+ * "login.errors.authentication" döner; doğrudan Basic auth ile istek atılır.
+ * (Doğrulama: GET /product/api/categories/get-all-categories → 200.)
+ */
+function mpopHeaders(extra?: Record<string, string>): Record<string, string> {
   requireHbConfig();
-  const r = await hbFetch(`${mpopBase()}/api/authenticate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({
-      username: ENV.hepsiburadaUsername,
-      password: ENV.hepsiburadaPassword,
-      authenticationType: "INTEGRATOR",
-    }),
-  });
-  const j = r.json as { id_token?: string; token?: string; data?: { token?: string } } | null;
-  const token = j?.id_token ?? j?.token ?? j?.data?.token;
-  if (!token) {
-    throw new Error(`MPOP kimlik doğrulama başarısız (${r.status}): ${r.body.slice(0, 300)}`);
-  }
-  return token;
+  return {
+    Authorization: `Basic ${basicAuth()}`,
+    "User-Agent": HB_USER_AGENT,
+    Accept: "application/json",
+    ...extra,
+  };
 }
 
 export type HbTestProductInput = {
@@ -120,14 +117,6 @@ export type HbTestProductInput = {
  * yeniden gönderilir.
  */
 export async function hbCatalogSendTestProduct(input: HbTestProductInput) {
-  const token = await mpopToken(console.log({
-  url: `${mpopBase()}/api/authenticate`,
-  body: {
-    username: ENV.hepsiburadaUsername,
-    password: ENV.hepsiburadaPassword,
-    authenticationType: "INTEGRATOR",
-  },
-}););
   const attributes: Record<string, unknown> = {
     merchant_sku: input.merchantSku,
     VaryantGroupID: input.merchantSku,
@@ -146,9 +135,10 @@ export async function hbCatalogSendTestProduct(input: HbTestProductInput) {
 
   const fd = new FormData();
   fd.append("file", new Blob([JSON.stringify(payload)], { type: "application/json" }), "products.json");
+  // Multipart: Content-Type'ı (boundary) FormData ayarlar; elle verme.
   const r = await hbFetch(`${mpopBase()}/product/api/products/import`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+    headers: mpopHeaders(),
     body: fd,
   });
   const j = r.json as { data?: { trackingId?: string }; trackingId?: string } | null;
@@ -158,11 +148,13 @@ export async function hbCatalogSendTestProduct(input: HbTestProductInput) {
 
 /** Katalog gönderiminin durumunu trackingId ile sorgular (hata satırlarını gösterir). */
 export async function hbCatalogStatus(trackingId: string) {
-  const token = await mpopToken();
-  const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
-  // Güncel yol ticket-api; eski kurulumlar için ürün-status yoluna düşülür.
+  const headers = mpopHeaders();
+  // Import akışının durumu genelde product/api/products/status ucundadır; bazı
+  // kurulumlarda ticket-api yolu kullanılır. Önce ticket-api denenir; bulunamazsa
+  // (HTTP 404 YA DA success:false / "not found" — ör. code 4007) ürün-status'a düşülür.
   let r = await hbFetch(`${mpopBase()}/ticket-api/api/integrator/status/${encodeURIComponent(trackingId)}`, { headers });
-  if (r.status === 404) {
+  const notFound = r.status === 404 || (r.json != null && (r.json as { success?: boolean }).success === false);
+  if (notFound) {
     r = await hbFetch(`${mpopBase()}/product/api/products/status/${encodeURIComponent(trackingId)}`, { headers });
   }
   return r;
