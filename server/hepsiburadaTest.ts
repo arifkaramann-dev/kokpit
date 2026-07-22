@@ -120,7 +120,14 @@ export type HbTestProductInput = {
  * yeniden gönderilir.
  */
 export async function hbCatalogSendTestProduct(input: HbTestProductInput) {
-  const token = await mpopToken();
+  const token = await mpopToken(console.log({
+  url: `${mpopBase()}/api/authenticate`,
+  body: {
+    username: ENV.hepsiburadaUsername,
+    password: ENV.hepsiburadaPassword,
+    authenticationType: "INTEGRATOR",
+  },
+}););
   const attributes: Record<string, unknown> = {
     merchant_sku: input.merchantSku,
     VaryantGroupID: input.merchantSku,
