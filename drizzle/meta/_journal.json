@@ -169,6 +169,13 @@
       "when": 1784672562592,
       "tag": "0023_futuristic_bruce_banner",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "5",
+      "when": 1784724395468,
+      "tag": "0024_flowery_tarot",
+      "breakpoints": true
     }
   ]
 }

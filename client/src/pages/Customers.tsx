@@ -84,19 +84,44 @@ export default function Customers() {
   });
 
   const ledgerQ = trpc.customers.ledger.useQuery({ name: detail?.name ?? "" }, { enabled: !!detail });
+  // Cari ekstre hareket düzenleme (geriye dönük): tahsilat/hareket tutarı ve tarihi.
+  const [editRow, setEditRow] = useState<{ id: number; amount: string; date: string } | null>(null);
+
+  const afterLedgerChange = () => {
+    utils.customers.ledger.invalidate();
+    utils.customers.balances.invalidate();
+    utils.orders.list.invalidate();
+    utils.dashboard.summary.invalidate();
+    utils.accounts.invalidate();
+    utils.transactions.invalidate();
+    setEditRow(null);
+  };
   const collect = trpc.transactions.create.useMutation({
     onSuccess: () => {
-      utils.customers.ledger.invalidate();
-      utils.customers.balances.invalidate();
-      utils.orders.list.invalidate();
-      utils.dashboard.summary.invalidate();
-      utils.accounts.invalidate();
-      utils.transactions.invalidate();
+      afterLedgerChange();
       setCollectAmount("");
       toast.success("Tahsilat kaydedildi");
     },
     onError: e => toast.error(e.message),
   });
+  const updateTxn = trpc.transactions.update.useMutation({
+    onSuccess: () => { afterLedgerChange(); toast.success("Hareket güncellendi"); },
+    onError: e => toast.error(e.message),
+  });
+  const deleteTxn = trpc.transactions.delete.useMutation({
+    onSuccess: () => { afterLedgerChange(); toast.success("Hareket silindi"); },
+    onError: e => toast.error(e.message),
+  });
+  const toDateInput = (d: Date | string) => {
+    const dt = new Date(d);
+    return Number.isNaN(dt.getTime()) ? "" : dt.toISOString().slice(0, 10);
+  };
+  function saveEditRow() {
+    if (!editRow) return;
+    const amount = parseFloat(editRow.amount);
+    if (!(amount >= 0)) return toast.error("Geçerli tutar girin");
+    updateTxn.mutate({ id: editRow.id, amount, txnDate: editRow.date || undefined });
+  }
 
   const filtered = useMemo(() => {
     const list = (customers as CustomerRow[]) ?? [];
@@ -311,13 +336,14 @@ export default function Customers() {
               </div>
 
               <div className="space-y-1 max-h-[45vh] overflow-y-auto">
-                <div className="grid grid-cols-[1fr_auto_auto] gap-2 text-[11px] text-muted-foreground px-1">
+                <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 text-[11px] text-muted-foreground px-1">
                   <span>İşlem</span>
                   <span className="text-right w-20">Tutar</span>
                   <span className="text-right w-24">Bakiye</span>
+                  <span className="w-12" />
                 </div>
                 {(ledgerQ.data?.rows ?? []).map((r, i) => (
-                  <div key={i} className="grid grid-cols-[1fr_auto_auto] gap-2 items-center border-b py-1.5 text-sm">
+                  <div key={i} className="grid grid-cols-[1fr_auto_auto_auto] gap-2 items-center border-b py-1.5 text-sm">
                     <div className="min-w-0">
                       <p className="truncate">
                         {r.label}
@@ -329,6 +355,50 @@ export default function Customers() {
                       {r.debit > 0 ? formatTL(r.debit) : `−${formatTL(r.credit)}`}
                     </span>
                     <span className="text-right w-24 font-medium">{formatTL(r.balance)}</span>
+                    <div className="flex items-center justify-end gap-0.5 w-12">
+                      {r.type === "txn" ? (
+                        <>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-6 w-6"
+                            title="Düzenle"
+                            onClick={() =>
+                              setEditRow({
+                                id: r.id,
+                                amount: String(r.debit > 0 ? r.debit : Math.abs(r.credit)),
+                                date: toDateInput(r.date),
+                              })
+                            }
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-6 w-6 text-destructive"
+                            title="Sil"
+                            onClick={async () => {
+                              if (
+                                await confirm({
+                                  title: "Hareketi sil",
+                                  description: `"${r.label}" hareketi silinsin mi?`,
+                                  confirmText: "Sil",
+                                  destructive: true,
+                                })
+                              )
+                                deleteTxn.mutate({ id: r.id });
+                            }}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        </>
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground/70" title="Sipariş kaydı Siparişler sayfasından düzenlenir">
+                          sipariş
+                        </span>
+                      )}
+                    </div>
                   </div>
                 ))}
                 {(ledgerQ.data?.rows ?? []).length === 0 && (
@@ -337,6 +407,43 @@ export default function Customers() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!editRow} onOpenChange={o => !o && setEditRow(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Hareketi Düzenle</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>Tutar (₺)</Label>
+              <Input
+                type="number"
+                value={editRow?.amount ?? ""}
+                onChange={e => setEditRow(r => (r ? { ...r, amount: e.target.value } : r))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Tarih</Label>
+              <Input
+                type="date"
+                value={editRow?.date ?? ""}
+                onChange={e => setEditRow(r => (r ? { ...r, date: e.target.value } : r))}
+              />
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Tahsilat/hareketin tutarını ve tarihini geriye dönük düzeltir.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditRow(null)}>
+              İptal
+            </Button>
+            <Button onClick={saveEditRow} disabled={updateTxn.isPending}>
+              Kaydet
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

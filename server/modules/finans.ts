@@ -155,6 +155,29 @@ export const purchasesRouter = router({
         });
       }
     }),
+  // Alış faturasını geriye dönük düzenle (cari ekstre düzeltmesi — finans başlığı).
+  update: protectedProcedure
+    .input(
+      z.object({
+        id: z.number(),
+        totalAmount: z.number().min(0).optional(),
+        invoiceDate: z.string().nullable().optional(),
+        invoiceNo: z.string().nullable().optional(),
+        note: z.string().nullable().optional(),
+        supplierName: z.string().nullable().optional(),
+      }),
+    )
+    .mutation(({ input }) => {
+      const { id, invoiceDate, ...rest } = input;
+      return db.updatePurchase(id, {
+        ...rest,
+        ...(invoiceDate !== undefined
+          ? { invoiceDate: invoiceDate ? new Date(invoiceDate) : null }
+          : {}),
+      });
+    }),
+  // Alış faturasını sil (eklediği hammadde stoğu geri alınır).
+  delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deletePurchase(input.id)),
 });
 
 
@@ -279,6 +302,23 @@ export const transactionsRouter = router({
       txnDate: txnDate ? new Date(txnDate) : new Date(),
     } as never);
   }),
+  // Hareketi geriye dönük düzenle (tutar/tarih/açıklama) — cari ekstre düzeltmesi.
+  update: protectedProcedure
+    .input(
+      z.object({
+        id: z.number(),
+        amount: z.number().min(0).optional(),
+        txnDate: z.string().optional(),
+        description: z.string().nullable().optional(),
+      }),
+    )
+    .mutation(({ input }) => {
+      const { id, txnDate, ...rest } = input;
+      return db.updateTransaction(id, {
+        ...rest,
+        ...(txnDate !== undefined ? { txnDate: new Date(txnDate) } : {}),
+      });
+    }),
   delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteTransaction(input.id)),
 });
 

@@ -61,6 +61,7 @@ import {
   vatSummarySince,
 } from "./financeUtils";
 import { ENV } from "./_core/env";
+import { parseChannelPrices, type MarketplaceChannel } from "@shared/pricing";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -640,11 +641,11 @@ export async function customerLedger(name: string) {
     db.select().from(orders).where(orderCond),
     db.select().from(transactions).where(txnCond),
   ]);
-  type Entry = { date: Date; label: string; debit: number; credit: number; ref: string };
+  type Entry = { date: Date; label: string; debit: number; credit: number; ref: string; type: "order" | "txn"; id: number };
   const entries: Entry[] = [];
   for (const o of ords) {
     if (o.status === "cancelled") continue; // iptal/iade cari ekstreye girmez
-    entries.push({ date: new Date(o.createdAt), label: "Sipariş", debit: toNum(o.totalAmount), credit: 0, ref: o.orderNo });
+    entries.push({ date: new Date(o.createdAt), label: "Sipariş", debit: toNum(o.totalAmount), credit: 0, ref: o.orderNo, type: "order", id: o.id });
   }
   for (const t of txns) {
     const isIn = t.direction === "in";
@@ -654,6 +655,8 @@ export async function customerLedger(name: string) {
       debit: isIn ? 0 : toNum(t.amount),
       credit: isIn ? toNum(t.amount) : 0,
       ref: t.orderNo ?? "",
+      type: "txn",
+      id: t.id,
     });
   }
   entries.sort((a, b) => a.date.getTime() - b.date.getTime());
@@ -718,14 +721,14 @@ export async function supplierLedger(name: string) {
     db.select().from(purchases).where(purCond),
     db.select().from(transactions).where(txnCond),
   ]);
-  type Entry = { date: Date; label: string; debit: number; credit: number; ref: string };
+  type Entry = { date: Date; label: string; debit: number; credit: number; ref: string; type: "purchase" | "txn"; id: number };
   const entries: Entry[] = [];
   for (const p of purs) {
-    entries.push({ date: new Date((p.invoiceDate ?? p.createdAt) as never), label: "Alış Faturası", debit: toNum(p.totalAmount), credit: 0, ref: p.invoiceNo ?? "" });
+    entries.push({ date: new Date((p.invoiceDate ?? p.createdAt) as never), label: "Alış Faturası", debit: toNum(p.totalAmount), credit: 0, ref: p.invoiceNo ?? "", type: "purchase", id: p.id });
   }
   for (const t of txns) {
     const isOut = t.direction === "out";
-    entries.push({ date: new Date(t.txnDate), label: isOut ? "Ödeme" : t.description || t.category, debit: 0, credit: isOut ? toNum(t.amount) : -toNum(t.amount), ref: "" });
+    entries.push({ date: new Date(t.txnDate), label: isOut ? "Ödeme" : t.description || t.category, debit: 0, credit: isOut ? toNum(t.amount) : -toNum(t.amount), ref: "", type: "txn", id: t.id });
   }
   entries.sort((a, b) => a.date.getTime() - b.date.getTime());
   let running = 0;
@@ -1501,6 +1504,103 @@ export async function listPurchases() {
   return rows.map(p => ({ ...p, items: items.filter(i => i.purchaseId === p.id) }));
 }
 
+/**
+ * Alış faturasının FİNANS başlığını geriye dönük düzenler (cari ekstre düzeltme):
+ * tutar, tarih, fatura no, tedarikçi, not. Kalem/stok girişleri değişmez — yalnız
+ * cari/muhasebe kaydı düzeltilir. Tedarikçi adı değişirse cari bağ (ID) yenilenir.
+ */
+export async function updatePurchase(
+  id: number,
+  data: {
+    totalAmount?: number;
+    invoiceDate?: Date | null;
+    invoiceNo?: string | null;
+    note?: string | null;
+    supplierName?: string | null;
+  },
+) {
+  const db = await requireDb();
+  const patch: Record<string, unknown> = {};
+  if (data.totalAmount != null) patch.totalAmount = String(data.totalAmount);
+  if (data.invoiceDate !== undefined) patch.invoiceDate = data.invoiceDate;
+  if (data.invoiceNo !== undefined) patch.invoiceNo = data.invoiceNo;
+  if (data.note !== undefined) patch.note = data.note;
+  if (data.supplierName !== undefined) {
+    patch.supplierName = data.supplierName;
+    patch.supplierId = await resolveSupplierIdByName(data.supplierName);
+  }
+  if (Object.keys(patch).length === 0) return { updated: false };
+  await db.update(purchases).set(patch as never).where(eq(purchases.id, id));
+  return { updated: true };
+}
+
+/**
+ * Alış faturasını siler ve eklediği hammadde stoğunu geri alır (fatura hiç
+ * girilmemiş gibi): her kalem için materyal stoğu düşülür ve izlenebilirlik
+ * amacıyla ters bir stok hareketi ("out") yazılır. Birim maliyet geçmişi
+ * saklanmadığından son bilinen maliyet olduğu gibi kalır.
+ */
+export async function deletePurchase(id: number) {
+  const db = await requireDb();
+  const items = await db.select().from(purchaseItems).where(eq(purchaseItems.purchaseId, id));
+  const [pur] = await db.select().from(purchases).where(eq(purchases.id, id)).limit(1);
+  for (const it of items) {
+    const qty = toNum(it.qty);
+    if (qty > 0) {
+      await db
+        .update(materials)
+        .set({ stockQty: sql`${materials.stockQty} - ${qty}` })
+        .where(eq(materials.id, it.materialId));
+      await db.insert(stockMovements).values({
+        materialId: it.materialId,
+        type: "out",
+        qty: String(qty),
+        note: `Fatura silindi (geri alım)${pur?.invoiceNo ? ` — ${pur.invoiceNo}` : ""}`,
+      });
+    }
+  }
+  await db.delete(purchaseItems).where(eq(purchaseItems.purchaseId, id));
+  await db.delete(purchases).where(eq(purchases.id, id));
+  return { deleted: true, reversedItems: items.length };
+}
+
+/**
+ * Para/cari hareketini (tahsilat/ödeme/gider/gelir) geriye dönük düzenler:
+ * tutar, tarih, açıklama. Hareket bir siparişe bağlıysa (orderId) siparişin
+ * ödeme durumu yeniden hesaplanır.
+ */
+export async function updateTransaction(
+  id: number,
+  data: { amount?: number; txnDate?: Date; description?: string | null },
+) {
+  const db = await requireDb();
+  const patch: Record<string, unknown> = {};
+  if (data.amount != null) patch.amount = String(data.amount);
+  if (data.txnDate !== undefined) patch.txnDate = data.txnDate;
+  if (data.description !== undefined) patch.description = data.description;
+  if (Object.keys(patch).length === 0) return { updated: false };
+  await db.update(transactions).set(patch as never).where(eq(transactions.id, id));
+
+  const [txn] = await db.select().from(transactions).where(eq(transactions.id, id)).limit(1);
+  if (txn?.orderId && txn.category === "tahsilat" && txn.direction === "in") {
+    const [ord] = await db.select().from(orders).where(eq(orders.id, txn.orderId)).limit(1);
+    if (ord) {
+      const collected = collectionTotal(
+        await db
+          .select({ amount: transactions.amount, direction: transactions.direction, category: transactions.category })
+          .from(transactions)
+          .where(eq(transactions.orderId, txn.orderId)),
+      );
+      const status = paymentStatusFor(collected, toNum(ord.totalAmount));
+      await db
+        .update(orders)
+        .set({ paidAmount: String(Math.max(0, collected)), paymentStatus: status })
+        .where(eq(orders.id, txn.orderId));
+    }
+  }
+  return { updated: true };
+}
+
 /* ------------------------- Şablonlar & Görseller ------------------------- */
 
 export async function listTemplates() {
@@ -1692,10 +1792,39 @@ export async function deleteProductSeries(id: number) {
   await db.delete(productSeries).where(eq(productSeries.id, id));
 }
 
-/** Önizlemesi onaylanmış toplu fiyat listesini uygular (formül/CSV güncellemeleri). */
-export async function applyPriceUpdates(updates: { id: number; salePrice: number }[]) {
+/**
+ * Önizlemesi onaylanmış toplu fiyat listesini uygular (formül/CSV güncellemeleri).
+ * `channel` verilirse fiyat o pazaryerine özel kayda (products.channelPrices JSON)
+ * yazılır; taban salePrice değişmez. `channel` yoksa taban fiyat güncellenir
+ * (web sitesi / varsayılan fiyat).
+ */
+export async function applyPriceUpdates(
+  updates: { id: number; salePrice: number; discountPercent?: number }[],
+  channel?: MarketplaceChannel | null,
+) {
   const db = await requireDb();
   let affected = 0;
+  if (channel) {
+    for (const u of updates) {
+      const [row] = await db
+        .select({ channelPrices: products.channelPrices })
+        .from(products)
+        .where(eq(products.id, u.id))
+        .limit(1);
+      if (!row) continue;
+      const map = parseChannelPrices(row.channelPrices);
+      map[channel] = {
+        salePrice: +u.salePrice.toFixed(2),
+        ...(u.discountPercent != null ? { discountPercent: u.discountPercent } : {}),
+      };
+      const [result] = await db
+        .update(products)
+        .set({ channelPrices: JSON.stringify(map) })
+        .where(eq(products.id, u.id));
+      affected += result.affectedRows ?? 0;
+    }
+    return { affected };
+  }
   for (const u of updates) {
     const [result] = await db
       .update(products)

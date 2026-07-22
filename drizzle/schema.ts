@@ -113,6 +113,10 @@ export const products = mysqlTable(
   description: text("description"),
   salePrice: decimal("salePrice", { precision: 12, scale: 2 }).notNull().default("0"),
   discountPercent: decimal("discountPercent", { precision: 5, scale: 2 }).notNull().default("0"),
+  // Kanal bazlı satış fiyatı (web sitesi ≠ Trendyol ≠ Hepsiburada). JSON:
+  // {"trendyol":{"salePrice":259.9,"discountPercent":0},"hepsiburada":{...}}.
+  // Bir kanal için kayıt yoksa yukarıdaki taban salePrice/discountPercent kullanılır.
+  channelPrices: text("channelPrices"),
   packagingCost: decimal("packagingCost", { precision: 12, scale: 2 }).notNull().default("0"),
   shippingCost: decimal("shippingCost", { precision: 12, scale: 2 }).notNull().default("0"),
   packaging: varchar("packaging", { length: 128 }),
