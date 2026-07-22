@@ -12,7 +12,8 @@
     "test": "vitest run",
     "db:push": "drizzle-kit generate && drizzle-kit migrate",
     "db:migrate": "node scripts/ensure-db.mjs && drizzle-kit migrate",
-    "import:urun-kayit": "node scripts/import-urun-kayit.mjs"
+    "import:urun-kayit": "node scripts/import-urun-kayit.mjs",
+    "render": "NODE_USE_ENV_PROXY=1 node scripts/render.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",

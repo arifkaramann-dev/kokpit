@@ -63,12 +63,19 @@ Bağlantı durumunu **Ayarlar** sayfasından da görebilirsin.
 ## Hepsiburada kurulumu
 
 1. Hepsiburada **Merchant/İş Ortağı paneli** → Entegrasyon / OMS bilgileri.
-2. Şunları al: **Merchant ID**, **entegrasyon kullanıcı adı** ve **şifresi**.
-3. Render → **Environment**:
-   - `HEPSIBURADA_MERCHANT_ID`
-   - `HEPSIBURADA_USERNAME`
-   - `HEPSIBURADA_PASSWORD`
+2. Şunları al: **Merchant ID (GUID)**, **Secretkey** ve **Developer Username**.
+3. Render → **Environment** (HB'nin kimlik modeli — bkz. aşağıdaki not):
+   - `HEPSIBURADA_MERCHANT_ID` = Merchant ID (GUID). **Basic auth kullanıcı adı da budur.**
+   - `HEPSIBURADA_PASSWORD` = Secretkey.
+   - `HEPSIBURADA_USERNAME` = **Developer Username** (ör. `artofcolour_dev`).
+     Bu değer **User-Agent** başlığına yazılır — Basic auth kullanıcı adı DEĞİLDİR.
 4. Kaydet. "Hepsiburada — bağlı" görünmeli.
+
+> **HB kimlik modeli (önemli):** Onboarding e-postasındaki ifadeyle
+> _"Username (Merchantid)"_ ve _"User-Agent (Developer Username)"_. Yani Basic
+> auth kullanıcı adı = **Merchantid (GUID)**, Password = **Secretkey**, ve
+> **User-Agent = Developer Username**. Kod bunu otomatik böyle kurar
+> (`HEPSIBURADA_USERNAME` → User-Agent, `HEPSIBURADA_MERCHANT_ID` → Basic auth adı).
 
 > Not: Her iki pazaryeri de **10 dakikada bir otomatik** çekilir (sayfa açıkken)
 > ve "Pazaryerlerinden Çek" ile elle tetiklenebilir. Aynı sipariş iki kez eklenmez.
@@ -82,11 +89,16 @@ değerlerde**. Sırayla kontrol et:
 1. **Ayarlar → Pazaryeri Bağlantıları → "Bağlantıyı Test Et"** butonuna bas.
    Hepsiburada'nın döndürdüğü **tam HTTP yanıtını** gösterir (ör. `HTTP 401 ...`).
    Bu yanıtı bana iletirsen kesin sebebi söylerim.
-2. En sık hata: `HEPSIBURADA_USERNAME` alanına **panel e-postanı** veya **Merchant
-   ID**'yi yazmak. Buraya Hepsiburada'nın verdiği **entegrasyon/API kullanıcı adı**
-   girilmeli (panel → Kullanıcı Yönetimi / Entegrasyon bilgileri).
+2. **En sık hata (bizde de buydu):** Basic auth kullanıcı adı yanlış. HB'nin
+   Basic auth **kullanıcı adı = Merchantid (GUID)**'dir; developer username
+   (`artofcolour_dev`) buraya DEĞİL, **User-Agent** başlığına gider. Kod bunu
+   doğru kurar; sen sadece env'leri yukarıdaki gibi doldur (`HEPSIBURADA_USERNAME`
+   = developer username, `HEPSIBURADA_MERCHANT_ID` = GUID).
 3. `HEPSIBURADA_MERCHANT_ID` bir **GUID**'dir (uzun harf-rakam dizisi), müşteri
-   numarası değil.
+   numarası değil. Password alanına **Secretkey**'i yaz.
+4. **Development bilgileri yalnızca SIT (test) ortamında geçerlidir:**
+   `HEPSIBURADA_ENV=sit` olmalı. Canlı uçta 401 verir; canlı bilgiler HB test
+   onayından sonra verilir, o zaman `HEPSIBURADA_ENV` silinir.
 4. Değişkenleri Render → Environment'a girdikten sonra servisin yeniden başladığından
    emin ol.
 
