@@ -339,9 +339,12 @@ export default function Orders() {
   // Kargo etiketi: Trendyol siparişinde takip no varsa resmi etiketi (PDF) çeker;
   // yoksa/başarısızsa kendi barkodlu etiketimizi yazdırır.
   async function handleShippingLabel(order: OrderRow) {
-    const canOfficial = order.channel === "trendyol" && !!order.cargoTrackingNumber;
+    // Trendyol: takip no gerekir. Hepsiburada: paket no (orderNo) yeterli.
+    const canOfficial =
+      (order.channel === "trendyol" && !!order.cargoTrackingNumber) || order.channel === "hepsiburada";
     if (canOfficial) {
-      const t = toast.loading("Trendyol resmi kargo etiketi alınıyor…");
+      const channelLabel = order.channel === "hepsiburada" ? "Hepsiburada" : "Trendyol";
+      const t = toast.loading(`${channelLabel} resmi kargo etiketi alınıyor…`);
       try {
         const res = await utils.client.orders.shippingLabel.mutate({ orderId: order.id });
         if (res.pdfBase64) {
