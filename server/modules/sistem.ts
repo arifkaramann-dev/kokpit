@@ -44,6 +44,11 @@ import { pushN11StockPrice } from "../n11";
 import { pushCiceksepetiStockPrice } from "../ciceksepeti";
 import { marketplaceStatus, syncAllMarketplaces, testMarketplaceConnection } from "../marketplace";
 import {
+  MP_KEY_PREFIX,
+  getMarketplaceCredentials,
+  saveMarketplaceCredentials,
+} from "../marketplaceCredentials";
+import {
   generateQuestionAnswer,
   getAutoAnswerEnabled,
   setAutoAnswerEnabled,
@@ -113,13 +118,25 @@ export const settingsRouter = router({
   // eklenir: unitLaborOverheadEffective (elle değer boşsa otomatik hesap).
   get: protectedProcedure.query(async (): Promise<Record<string, string>> => {
     const cfg = await db.getSettings();
-    const derived = deriveUnitLaborOverhead(cfg);
+    // Pazaryeri kimlik bilgileri ("mp:" ön ekli) burada sızdırılmaz; onlar
+    // maskeli olarak settings.marketplaceCredentials üzerinden döner.
+    const publicCfg: Record<string, string> = {};
+    for (const [k, v] of Object.entries(cfg)) {
+      if (!k.startsWith(MP_KEY_PREFIX)) publicCfg[k] = v;
+    }
+    const derived = deriveUnitLaborOverhead(publicCfg);
     return {
-      ...cfg,
+      ...publicCfg,
       unitLaborOverheadEffective: String(derived.value),
       unitLaborOverheadSource: derived.source,
     };
   }),
+  // Pazaryeri kimlik bilgileri: her alanın durumu (sırlar maskeli). Ham sır dönmez.
+  marketplaceCredentials: protectedProcedure.query(() => getMarketplaceCredentials()),
+  // Uygulama içinden pazaryeri anahtarı kaydet → DB + anında env overlay tazelenir.
+  saveMarketplaceCredentials: protectedProcedure
+    .input(z.record(z.string(), z.string()))
+    .mutation(({ input }) => saveMarketplaceCredentials(input)),
   save: protectedProcedure
     .input(z.record(z.string(), z.string()))
     .mutation(({ input }) => {

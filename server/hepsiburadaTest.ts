@@ -1,5 +1,5 @@
 import { ENV } from "./_core/env";
-import { HB_USER_AGENT, hbBasicAuth, isHbTestEnv, pushHepsiburadaStockPrice } from "./hepsiburada";
+import { hbUserAgent, hbBasicAuth, isHbTestEnv, pushHepsiburadaStockPrice } from "./hepsiburada";
 
 /**
  * Hepsiburada CANLIYA GEÇİŞ test akışı (SIT ortamı).
@@ -89,7 +89,7 @@ function mpopHeaders(extra?: Record<string, string>): Record<string, string> {
   requireHbConfig();
   return {
     Authorization: `Basic ${basicAuth()}`,
-    "User-Agent": HB_USER_AGENT,
+    "User-Agent": hbUserAgent(),
     Accept: "application/json",
     ...extra,
   };
@@ -178,7 +178,7 @@ export async function hbListListings(limit = 50) {
   const r = await hbFetch(url, {
     headers: {
       Authorization: `Basic ${basicAuth(ENV.hepsiburadaServiceKey || undefined)}`,
-      "User-Agent": HB_USER_AGENT,
+      "User-Agent": hbUserAgent(),
       Accept: "application/json",
     },
   });
@@ -273,7 +273,7 @@ export async function hbCreateTestOrder(input: {
     method: "POST",
     headers: {
       Authorization: `Basic ${basicAuth()}`,
-      "User-Agent": HB_USER_AGENT,
+      "User-Agent": hbUserAgent(),
       "Content-Type": "application/json",
       Accept: "application/json",
     },
@@ -292,7 +292,7 @@ export async function hbListPaidOrdersRaw(limit = 50) {
   const r = await hbFetch(url, {
     headers: {
       Authorization: `Basic ${basicAuth()}`,
-      "User-Agent": HB_USER_AGENT,
+      "User-Agent": hbUserAgent(),
       Accept: "application/json",
     },
   });
@@ -356,7 +356,7 @@ export async function hbPackageOrder(input: { orderNumber: string }) {
     method: "POST",
     headers: {
       Authorization: `Basic ${basicAuth()}`,
-      "User-Agent": HB_USER_AGENT,
+      "User-Agent": hbUserAgent(),
       "Content-Type": "application/json",
       Accept: "application/json",
     },

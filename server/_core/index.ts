@@ -9,6 +9,7 @@ import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { registerImageRoutes } from "../images";
 import { startScheduler } from "../scheduler";
+import { refreshMarketplaceCredentials } from "../marketplaceCredentials";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 
@@ -74,6 +75,10 @@ async function startServer() {
   if (port !== preferredPort) {
     console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
   }
+
+  // Uygulama içi girilen pazaryeri anahtarlarını (DB) env üzerine bindir.
+  // DB erişilemezse sessizce env varsayılanlarıyla devam eder.
+  await refreshMarketplaceCredentials().catch(() => {});
 
   server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);
