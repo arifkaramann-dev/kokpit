@@ -190,6 +190,37 @@ Resmi belgelerden (developers.trendyol.com / developers.hepsiburada.com, 2026) d
 - `"Product quantity cannot exceed 20000"`
 - `"Invalid image URL format"`
 
+### 7. Sipariş Senkronu (Order Integration)
+
+**Endpoint:** `GET /sales/sellers/{sellerId}/orders?offset={offset}&limit={limit}`
+
+**Kimlik:** Basic auth + User-Agent (yukarıda)
+
+**Yanıt:**
+```json
+{
+  "orders": [
+    {
+      "orderNumber": "string",
+      "status": "PENDING_PAYMENT" | "PAID" | "SHIPPED" | "DELIVERED" | "CANCELLED",
+      "grandTotal": number,
+      "lineItems": [
+        {
+          "id": "string",
+          "barcode": "string",
+          "quantity": number,
+          "price": number,
+          "totalPrice": number
+        }
+      ]
+    }
+  ],
+  "totalCount": number
+}
+```
+
+**Rate Limit:** 600 req/min (order endpoints)
+
 ---
 
 ## Hepsiburada API'leri
@@ -347,23 +378,168 @@ Accept: application/json
 - `"Invalid barcode"` → Barcode format
 - `"Category is not a leaf"` → categoryId'nin subcategory'si var
 
-### 2. OMS (Sipariş Yönetimi)
+### 2. OMS (Sipariş Yönetimi) — Test & Canlı
 
-#### 2.1 Siparişleri Listele
+#### 2.0 Ortam & Kimlik
 
-**Endpoint:** `GET /orders/merchantid/{merchantId}?offset={offset}&limit={limit}`
+**SIT (Test) Ortamı:**
+- Stub (test sipariş oluş): `https://oms-stub-external-sit.hepsiburada.com`
+- OMS (sipariş listele): `https://oms-external-sit.hepsiburada.com`
 
-**Header:**
+**Canlı Ortam:**
+- Base: `https://oms-external.hepsiburada.com`
+- **SIT'te stub API vardır, canlıda YOKTUR**
+
+**Header (tüm istekler):**
 ```
 Authorization: Basic {base64(merchantId:secretkey)}
 User-Agent: {developer_username}
+Content-Type: application/json
+Accept: application/json
 ```
 
-**Response:** sipariş listesi (field adları account'a göre değişebilir — savunmacı parsing)
+#### 2.1 Test Siparişi Oluşturma (SIT Ortamı Yalnızca)
+
+**Endpoint:** `POST /orders/merchantId/{merchantId}` (stub base'de)
+
+**Amaç:** Canlıya geçiş öncesinde HB'nin istediği 3 kanıttan biri
+
+**Payload:**
+```json
+{
+  "OrderNumber": "1234567890",
+  "OrderDate": "2026-07-22T10:30:00Z",
+  "Customer": {
+    "CustomerId": "string",
+    "FirstName": "string",
+    "LastName": "string",
+    "Email": "string",
+    "PhoneNumber": "string"
+  },
+  "DeliveryAddress": {
+    "AddressId": "string",
+    "FirstName": "string",
+    "LastName": "string",
+    "AddressLine": "string",
+    "CityCode": number,
+    "DistrictCode": number,
+    "PostalCode": "string",
+    "PhoneNumber": "string"
+  },
+  "LineItems": [
+    {
+      "Sku": "HB_SKU_123",
+      "MerchantId": "{MERCHANT_ID}",
+      "MerchantSku": "{SKU}",
+      "Quantity": 1,
+      "Price": {
+        "Amount": 99.99,
+        "Currency": "TRY"
+      },
+      "Vat": 19.99,
+      "TotalPrice": 119.98,
+      "CargoCompanyId": 1,
+      "DeliveryOptionId": "STANDARD"
+    }
+  ]
+}
+```
+
+**Kurallar:**
+- **OrderNumber:** 10 haneli rakam (benzersiz)
+- **Price.Amount + Vat = TotalPrice**
+
+**Response:**
+```json
+{
+  "orderId": "string",
+  "orderNumber": "1234567890",
+  "status": "PENDING_PAYMENT"
+}
+```
+
+#### 2.2 Ödemesi Tamamlanmış Siparişleri Listele
+
+**Endpoint:** `GET /orders/merchantid/{merchantId}?offset=0&limit=50`
+
+**Header:** (Basic auth — yukarıda)
 
 **Yanıt Biçimi Varyasyonları:**
 - `{"items": [...]}` veya `{"orders": [...]}` veya `{"content": [...]}`
-- Kalem: nested array (`items` / `details` / `lineItems`)
+
+**Kalem Yapısı:**
+```json
+{
+  "orderNumber": "1234567890",
+  "orderId": "string",
+  "status": "PAID",
+  "lineItems": [
+    {
+      "id": "line-item-id",
+      "sku": "HB_SKU",
+      "merchantSku": "MERCHANT_SKU",
+      "productName": "string",
+      "quantity": 1,
+      "price": 99.99
+    }
+  ]
+}
+```
+
+**Kurallar:**
+- **Limit:** max 50
+- **Veri Saklama:** son 1 ay
+- **Field adları savunmacı:** `sku`, `merchantSku`, `hbSku` — tüm varyasyonları dene
+
+#### 2.3 Pakete Yerleştirme (Packaging)
+
+**Endpoint:** `POST /packages/merchantid/{merchantId}`
+
+**Payload:**
+```json
+{
+  "lineItemRequests": [
+    {
+      "id": "{lineItemId}",
+      "quantity": 1
+    }
+  ]
+}
+```
+
+**Response:**
+```json
+{
+  "packageNumber": "PKG123456789",
+  "status": "CREATED"
+}
+```
+
+**Kurallar:**
+- **packageNumber:** HB'ye raporlanmalı (3. kanıt)
+
+#### 2.4 Sipariş İptali
+
+**Endpoint:** `POST /orders/{orderId}/cancel`
+
+**Payload:**
+```json
+{
+  "reason": "MERCHANT_REQUEST" | "OUT_OF_STOCK" | "CUSTOMER_REQUEST",
+  "notes": "string"
+}
+```
+
+**Ceza Tablosu (sipariş tutarına göre):**
+- 0–50 TL → 10 TL
+- 50–100 TL → 30 TL
+- 100–200 TL → 50 TL
+- 200–1,000 TL → 100 TL
+- 1,000–3,000 TL → 300 TL
+- 3,000–6,000 TL → 600 TL
+- 6,000–10,000 TL → 1,000 TL
+- 10,000–20,000 TL → 1,500 TL
+- 20,000+ TL → 2,000 TL
 
 ### 3. Listing (Stok & Fiyat)
 
@@ -373,8 +549,7 @@ User-Agent: {developer_username}
 - Price: `POST /listings/merchantid/{merchantId}/price-uploads`
 - Stock: `POST /listings/merchantid/{merchantId}/stock-uploads`
 
-**Payload (ikisi de aynı format):**
-
+**Payload:**
 ```json
 [
   {
@@ -390,21 +565,94 @@ User-Agent: {developer_username}
 Authorization: Basic {base64(merchantId:serviceKey_or_secretkey)}
 User-Agent: {developer_username}
 Content-Type: application/json
+Accept: application/json
 ```
 
 **Response:**
 ```json
 {
-  "id": "string" (priceUploadId ya da stockUploadId)
+  "id": "string"
 }
 ```
 
 **Kurallar:**
 - **Max 4,000 SKU per request**
-- **merchantSku:** Listing'de var olması gerekir (önceki import'ta kullanılmış)
-- **Servis Anahtarı:** `HEPSIBURADA_SERVICE_KEY` varsa kulllan, yoksa secretkey
+- **merchantSku:** daha önce import edilmiş olmalı
+- **Servis Anahtarı:** varsa kullan, yoksa secretkey
 
-### 4. Katalog (MPOP) Özellikleri
+#### 3.2 Inventory Listele (Ürün Envanterini Sorgula)
+
+**Endpoint:** `GET /listings/merchantid/{merchantId}?offset=0&limit=50`
+
+**Header:** (Basic auth — yukarıda)
+
+**Yanıt Biçimi Varyasyonları:**
+- `{"listings": [...]}` veya `{"data": [...]}` veya `{"items": [...]}`
+
+**Kalem Yapısı:**
+```json
+{
+  "merchantSku": "string",
+  "hbSku": "string",
+  "price": number,
+  "availableStock": number
+}
+```
+
+**Kurallar:**
+- **Limit:** max 50
+- **Field adları savunmacı:** `merchantSku`, `merchantsku`, `sku` — tüm varyasyonları dene
+- **hbSku:** HB sistemindeki SKU (ürün import edilmişse mevcut)
+
+### 4. Rate Limiting & Retry Stratejisi (OMS & Listing)
+
+**Rate Limit:** 1,000 requests/sec (SIT & Canlı)
+
+**Response Headers:**
+```
+X-RateLimit-Limit: 1000
+X-RateLimit-Remaining: 999
+X-RateLimit-Reset: 1234567890
+```
+
+**429 Too Many Requests Hata Durumu:**
+
+```json
+{
+  "statusCode": 429,
+  "message": "Rate limit exceeded"
+}
+```
+
+**Retry Stratejisi:**
+
+1. **İlk Deneme:** immediate
+2. **429 Alındı:** `X-RateLimit-Reset` header'ındaki timestamp'e kadar bekle
+3. **Header yok ise:** exponential backoff (1s → 2s → 4s → 8s → 16s)
+4. **Max 5 retry** sonra fail
+
+**Kod Örneği (pseudo):**
+```javascript
+async function retryWithBackoff(request, maxRetries = 5) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const res = await fetch(request);
+      if (res.status === 429) {
+        const resetTime = res.headers.get('X-RateLimit-Reset');
+        const waitMs = resetTime ? (parseInt(resetTime) * 1000 - Date.now()) : Math.pow(2, i) * 1000;
+        await sleep(Math.max(0, waitMs));
+        continue;
+      }
+      return res;
+    } catch (e) {
+      if (i === maxRetries - 1) throw e;
+      await sleep(Math.pow(2, i) * 1000);
+    }
+  }
+}
+```
+
+### 5. Katalog (MPOP) Özellikleri
 
 **Endpoint:** `GET /product/api/categories/{categoryId}/attributes` (MPOP tabanında)
 
@@ -414,21 +662,55 @@ Content-Type: application/json
 
 ---
 
+## N11 Pazaryeri API (Araştırma Aşaması)
+
+> **NOT:** Resmi N11 API belgelerine ulaşılamadı; eski SDK'lar ve üçüncü taraf entegratörler kullanılmakta.
+
+**Bilinen Bilgiler:**
+- **Auth:** API Key + API Secret (header-based)
+- **Base:** `https://api.n11.com/api/` (unsecure HTTP da eski sistemlerde)
+- **Endpoints:** `/order/list`, `/order/detail/{orderId}`, `/product/create`, `/product/list`
+- **Response Format:** XML (legacy) veya JSON (newer versions)
+
+**TODO:**
+- [ ] Resmi N11 developer portalından (api.n11.com) eksik uç adreslerini al
+- [ ] Auth header adlarını ve format'ını doğrula
+- [ ] Rate limit bilgilerini al
+- [ ] Ürün / sipariş payload şemalarını dokümante et
+
+---
+
+## Çiçeksepeti Pazaryeri API (Araştırma Aşaması)
+
+> **NOT:** Çiçeksepeti API belgelerine kısıtlı erişim mevcut.
+
+**Bilinen Bilgiler:**
+- **Auth:** `x-api-key` header (API anahtarı)
+- **Base:** `https://apis.ciceksepeti.com/`
+- **Endpoints:** `/order`, `/product`, `/inventory`
+
+**TODO:**
+- [ ] Resmi Çiçeksepeti developer portalından endpoint listesi al
+- [ ] Payload şemalarını dokümante et
+- [ ] Rate limit ve error codes'ı al
+- [ ] Test vs Canlı ortam ayrımını belirle
+
+---
+
 ## Pazaryeri-Spesifik Kurallar Tablosu
 
-| Kriter | Trendyol | Hepsiburada |
-|---|---|---|
-| **Ürün Açma** | POST v2 + batch | POST MPOP katalog (JWT) |
-| **Ürün Approval** | batch → onay kuyruğu | import → manuel/otomatik onay |
-| **Max Item/Request** | 1,000 (product v2) · 1,000 (stock-price) | no explicit limit (MPOP) · 4,000 (Listing) |
-| **Field Names** | snake_case (attributes.renk, attributes.beden) | camelCase + PascalCase (merchantSku, UrunAdi, Barcode) |
-| **Auth** | Basic auth + User-Agent | Basic auth + User-Agent (OMS/Listing) + JWT (MPOP) |
-| **Rate Limit** | 60 req/min (product) · 100 req/min (stock-price) | ~100 req/min (MPOP) · 4,000 SKU/request (Listing) |
-| **Batch Tracking** | batchRequestId → getBatchRequestResult | trackingId → status query |
-| **Price Rule** | listPrice >= salePrice | — |
-| **Catalog Window** | — | 00:00–03:00 UTC (ürün ekleme) |
-| **Variants** | productMainId (slicer vs varianter) | VaryantGroupID |
-| **Category** | leaf category (subCategories: []) | leaf category (categoryId) |
+| Kriter | Trendyol | Hepsiburada | N11 | Çiçeksepeti |
+|---|---|---|---|---|
+| **Ürün Açma** | POST v2 + batch | MPOP JWT (multipart) | SDK (XML/JSON) | REST + API Key |
+| **Max Item/Request** | 1,000 | unlimited | — | — |
+| **Field Names** | snake_case | camelCase+PascalCase | — | — |
+| **Auth** | Basic + UA | Basic + UA + JWT | API Key/Secret | x-api-key header |
+| **Rate Limit** | 60-600 req/min | 1,000 req/sec | — | — |
+| **Batch Tracking** | batchRequestId | trackingId | — | — |
+| **Price Rule** | listPrice ≥ salePrice | — | — | — |
+| **Catalog Window** | — | 00:00–03:00 UTC | — | — |
+| **Variants** | productMainId | VaryantGroupID | — | — |
+| **Status** | ✓ Canlı | ✓ Canlı + SIT Test | ⚠ Eksik | ⚠ Eksik |
 
 ---
 
@@ -450,8 +732,14 @@ Content-Type: application/json
 
 - [Trendyol Developers](https://developers.trendyol.com/)
 - [Hepsiburada Developers](https://developers.hepsiburada.com/tr/)
-- Kokpit kodunda: `server/trendyol.ts`, `server/hepsiburada.ts`, `server/hepsiburadaTest.ts`, `server/_core/env.ts`
+- Hepsiburada resmi "Genel Sipariş Entegrasyonu Önemli Bilgiler" dokümanı (05.06.2026 baskı) — kullanıcı tarafından sağlandı, test sipariş/paketleme/iptal/dijital teslimat/rate-limit bölümleri buradan alındı
+- Kokpit kodunda: `server/trendyol.ts`, `server/hepsiburada.ts`, `server/hepsiburadaTest.ts`, `server/marketplace.ts`, `server/_core/env.ts`
+
+**Eksik/Devam Eden Araştırma:**
+- N11 resmi API dokümantasyonu (endpoint/payload/rate limit teyidi gerekiyor)
+- Çiçeksepeti resmi API dokümantasyonu (endpoint/payload/rate limit teyidi gerekiyor)
+- Webhook/push notification akışları (sipariş güncelleme, iptal, teslimat bildirimleri) — her iki pazaryeri için de doğrulanmadı
 
 ---
 
-**Son Güncelleme:** 2026-07-22 (resmi portalslar taranmış, field adları doğrulanmış)
+**Son Güncelleme:** 2026-07-23 (Hepsiburada sipariş entegrasyonu resmi dokümanla genişletildi: test sipariş oluşturma, paketleme, iptal ceza tablosu, dijital ürün teslimatı, rate limit/retry stratejisi; Trendyol sipariş senkron uç noktası eklendi; N11/Çiçeksepeti için araştırma iskeleti oluşturuldu)
