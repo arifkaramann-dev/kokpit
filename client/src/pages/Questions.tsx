@@ -72,7 +72,7 @@ export default function Questions() {
     onSuccess: r => {
       invalidate();
       if (!r.ok && r.errors.length === 0) {
-        toast.info("Trendyol bağlı değil — çekme yalnızca canlı ortamda ve bağlantı sonrası çalışır");
+        toast.info("Pazaryeri bağlı değil (Trendyol/Hepsiburada) — çekme yalnızca canlı ortamda ve bağlantı sonrası çalışır");
       } else if (r.errors.length > 0) {
         toast.error(r.errors[0], { duration: 8000 });
       } else if (r.imported === 0) {

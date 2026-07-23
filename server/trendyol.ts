@@ -336,8 +336,9 @@ type TrendyolQuestionsResponse = {
 };
 
 /** Kuyruğa eklenmeye hazır, pazaryerinden bağımsız soru kaydı. */
+// Pazaryeri-bağımsız soru şekli (marketplaceQuestions ortak kullanır).
 export type MappedQuestion = {
-  source: "trendyol";
+  source: "trendyol" | "hepsiburada";
   externalId: string;
   customerName: string | null;
   questionText: string;

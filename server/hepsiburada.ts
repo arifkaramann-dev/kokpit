@@ -384,3 +384,123 @@ export async function syncHepsiburadaOrders() {
 
   return { imported, updated, skipped };
 }
+
+/* ------------------------- Satıcıya Sor (Soru-Cevap) ------------------------- */
+
+// "Satıcıya Sor" (Ask-to-Seller) API tabanı. Canlıda "-sit" düşer.
+const HB_ASKTOSELLER_BASE =
+  process.env.HEPSIBURADA_ASKTOSELLER_BASE_URL ??
+  (HB_SIT
+    ? "https://api-asktoseller-merchant-sit.hepsiburada.com"
+    : "https://api-asktoseller-merchant.hepsiburada.com");
+
+/**
+ * Soru-Cevap API başlıkları. Auth yine Basic (Merchantid:Secretkey) + User-Agent,
+ * ANCAK bu servis merchantId'yi URL'de değil **MerchantId başlığında** ister
+ * (başlık yoksa 401 döner).
+ */
+function hbAskHeaders(extra?: Record<string, string>): Record<string, string> {
+  return {
+    Authorization: `Basic ${hbBasicAuth(ENV.hepsiburadaPassword)}`,
+    "User-Agent": hbUserAgent(),
+    MerchantId: ENV.hepsiburadaMerchantId,
+    Accept: "application/json",
+    ...extra,
+  };
+}
+
+/** marketplaceQuestions'ın beklediği ortak soru şekli (source = hepsiburada). */
+export type MappedHbQuestion = {
+  source: "hepsiburada";
+  externalId: string;
+  customerName: string | null;
+  questionText: string;
+  productName: string | null;
+};
+
+type HbIssueRaw = {
+  issueNumber?: number | string;
+  lastContent?: string;
+  customerId?: string;
+  status?: string;
+  product?: { name?: string; sku?: string; stockCode?: string };
+};
+
+type HbIssueListResponse = { data?: HbIssueRaw[]; totalPageCount?: number; currentPage?: number };
+
+/**
+ * Cevap bekleyen (status=1 / WaitingForAnswer) Hepsiburada müşteri sorularını çeker.
+ * Sayfa 1'den başlar; `lastContent` cevaplanmamış soruda müşterinin sorusudur.
+ */
+export async function fetchHepsiburadaQuestions(): Promise<MappedHbQuestion[]> {
+  if (!isHepsiburadaConfigured()) {
+    throw new Error("Hepsiburada entegrasyonu yapılandırılmamış (Merchant ID, kullanıcı adı, Secretkey gerekli).");
+  }
+  const out: MappedHbQuestion[] = [];
+  const seen = new Set<string>();
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const url = new URL(`${HB_ASKTOSELLER_BASE}/api/v1.0/issues`);
+    url.searchParams.set("status", "1"); // WaitingForAnswer
+    url.searchParams.set("page", String(page));
+    url.searchParams.set("size", String(PAGE_SIZE));
+    url.searchParams.set("sortBy", "0"); // sorulma tarihi
+    url.searchParams.set("desc", "false");
+
+    const res = await fetch(url, { headers: hbAskHeaders() });
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(
+        "Hepsiburada Soru-Cevap API yetki hatası (Merchant ID / Secretkey ve MerchantId başlığını kontrol edin)."
+      );
+    }
+    if (!res.ok) {
+      const body = (await res.text()).slice(0, 200);
+      throw new Error(`Hepsiburada soru listesi hatası (${res.status}): ${body}`);
+    }
+    const data = (await res.json()) as HbIssueListResponse;
+    const items = data.data ?? [];
+    if (items.length === 0) break;
+    for (const q of items) {
+      const externalId = q.issueNumber != null ? String(q.issueNumber) : null;
+      if (!externalId || seen.has(externalId)) continue;
+      seen.add(externalId);
+      out.push({
+        source: "hepsiburada",
+        externalId,
+        customerName: null, // API yalnız customerId (guid) verir, isim yok
+        questionText: (q.lastContent ?? "").trim(),
+        productName: q.product?.name ?? null,
+      });
+    }
+    if (page >= (data.totalPageCount ?? 1)) break;
+  }
+  return out;
+}
+
+/**
+ * Bir Hepsiburada sorusunu cevaplar (issue number ile). Metin + isteğe bağlı
+ * dosya (bizde yalnız metin). 1 iş günü içinde cevaplanmayan sorular AutoClosed
+ * olur ve HB reddeder — o durumda hata fırlatılır, kuyrukta taslak kalır.
+ */
+export async function answerHepsiburadaQuestion(issueNumber: string | number, text: string): Promise<void> {
+  if (!isHepsiburadaConfigured()) {
+    throw new Error("Hepsiburada entegrasyonu yapılandırılmamış.");
+  }
+  const body = text.trim().slice(0, 2000);
+  if (!body) throw new Error("Boş Hepsiburada cevabı gönderilemez.");
+
+  const res = await fetch(
+    `${HB_ASKTOSELLER_BASE}/api/v1.0/issues/${encodeURIComponent(String(issueNumber))}/answer`,
+    {
+      method: "POST",
+      headers: hbAskHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ Answer: body, Files: [] }),
+    },
+  );
+  if (res.status === 401 || res.status === 403) {
+    throw new Error("Hepsiburada Soru-Cevap API yetki hatası.");
+  }
+  if (!res.ok) {
+    const errBody = (await res.text()).slice(0, 300);
+    throw new Error(`Hepsiburada cevap gönderimi başarısız (${res.status}): ${errBody}`);
+  }
+}
