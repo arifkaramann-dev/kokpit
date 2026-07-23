@@ -152,7 +152,9 @@ export function hbBasicAuth(secret: string): string {
  * User-Agent = **Developer Username** (HEPSIBURADA_USERNAME). HB isteği bu
  * başlıkla eşler; tanımlı değilse geriye dönük uyum için merchantId'e düşer.
  */
-export const HB_USER_AGENT = ENV.hepsiburadaUsername || ENV.hepsiburadaMerchantId;
+export function hbUserAgent(): string {
+  return ENV.hepsiburadaUsername || ENV.hepsiburadaMerchantId;
+}
 
 async function fetchOrdersPage(offset: number): Promise<HbOrdersResponse> {
   const url = new URL(`${HB_API_BASE}/orders/merchantid/${ENV.hepsiburadaMerchantId}`);
@@ -162,7 +164,7 @@ async function fetchOrdersPage(offset: number): Promise<HbOrdersResponse> {
   const res = await fetch(url, {
     headers: {
       Authorization: `Basic ${hbBasicAuth(ENV.hepsiburadaPassword)}`,
-      "User-Agent": HB_USER_AGENT,
+      "User-Agent": hbUserAgent(),
       Accept: "application/json",
     },
   });
@@ -191,7 +193,7 @@ async function probeHbOms(base: string): Promise<{ ok: boolean; status: number; 
   const res = await fetch(url, {
     headers: {
       Authorization: `Basic ${hbBasicAuth(ENV.hepsiburadaPassword)}`,
-      "User-Agent": HB_USER_AGENT,
+      "User-Agent": hbUserAgent(),
       Accept: "application/json",
     },
   });
@@ -268,7 +270,7 @@ async function hbListingPost(path: string, payload: unknown): Promise<string | n
     method: "POST",
     headers: {
       Authorization: `Basic ${hbListingAuth()}`,
-      "User-Agent": HB_USER_AGENT,
+      "User-Agent": hbUserAgent(),
       "Content-Type": "application/json",
       Accept: "application/json",
     },
