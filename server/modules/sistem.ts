@@ -206,6 +206,10 @@ export const tasksRouter = router({
 
 
 export const dashboardRouter = router({
+  // Dönem karşılaştırma: seçilen pencere (gün) vs bir önceki aynı pencere.
+  periodStats: protectedProcedure
+    .input(z.object({ days: z.number().int().min(1).max(365) }))
+    .query(({ input }) => db.periodStats(input.days)),
   summary: protectedProcedure.query(async () => {
     const [today, statusCounts, critical, upcoming, openTasks, finance, unpaid, newQuestions, products, cheques, cfg] =
       await Promise.all([

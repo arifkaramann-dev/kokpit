@@ -702,6 +702,67 @@ export async function transferBetweenAccounts(fromId: number, toId: number, amou
 }
 
 /**
+ * Müşteri 360° profili: sipariş + teklif geçmişi ve özet istatistikler.
+ * ID-öncelikli eşleşme (ledger ile aynı mantık): kayıtlıysa ID ile TÜM
+ * kayıtlar, değilse isimle. Ekstre (customerLedger) finansı verir; bu ise
+ * satış/etkileşim tarafını verir.
+ */
+export async function customerProfile(name: string) {
+  const db = await requireDb();
+  const customerId = await resolveCustomerIdByName(name);
+  const ordCond =
+    customerId != null
+      ? or(eq(orders.customerId, customerId), and(isNull(orders.customerId), eq(orders.customerName, name)))
+      : eq(orders.customerName, name);
+  const qCond =
+    customerId != null
+      ? or(eq(quotes.customerId, customerId), and(isNull(quotes.customerId), eq(quotes.customerName, name)))
+      : eq(quotes.customerName, name);
+
+  const [ords, qts] = await Promise.all([
+    db
+      .select({
+        id: orders.id,
+        orderNo: orders.orderNo,
+        status: orders.status,
+        totalAmount: orders.totalAmount,
+        paymentStatus: orders.paymentStatus,
+        channel: orders.channel,
+        createdAt: orders.createdAt,
+      })
+      .from(orders)
+      .where(ordCond)
+      .orderBy(desc(orders.createdAt))
+      .limit(100),
+    db
+      .select({
+        id: quotes.id,
+        quoteNo: quotes.quoteNo,
+        status: quotes.status,
+        totalAmount: quotes.totalAmount,
+        createdAt: quotes.createdAt,
+      })
+      .from(quotes)
+      .where(qCond)
+      .orderBy(desc(quotes.createdAt))
+      .limit(50),
+  ]);
+
+  const active = ords.filter(o => o.status !== "cancelled");
+  const totalSpent = active.reduce((s, o) => s + (parseFloat(String(o.totalAmount)) || 0), 0);
+  return {
+    orders: ords,
+    quotes: qts,
+    stats: {
+      orderCount: active.length,
+      totalSpent,
+      lastOrderAt: ords[0]?.createdAt ?? null,
+      openQuotes: qts.filter(q => q.status === "sent" || q.status === "draft").length,
+    },
+  };
+}
+
+/**
  * Tüm müşterilerin cari bakiyesi (küçük harf ada göre): sipariş toplamı (borç)
  * − tahsilat (alacak). Pozitif = müşteri bize borçlu.
  */
@@ -1026,6 +1087,49 @@ export async function financeSummary() {
     monthExpense,
     monthNet: monthRevenue - monthExpense,
     cashTotal,
+  };
+}
+
+/**
+ * Dönem karşılaştırma: son `days` günlük pencere ile hemen öncesindeki aynı
+ * uzunluktaki pencereyi kıyaslar (ciro, gider, net, sipariş adedi). Ciro
+ * mantığı financeSummary ile birebir (iptal hariç, sipariş toplamı).
+ */
+export async function periodStats(days: number) {
+  const db = await requireDb();
+  const now = Date.now();
+  const curStart = new Date(now - days * 86400000);
+  const prevStart = new Date(now - 2 * days * 86400000);
+  const num = (v: string | null | undefined) => parseFloat(v ?? "0") || 0;
+
+  const [orderRows, expenseRows, purchaseRows] = await Promise.all([
+    db
+      .select({ total: orders.totalAmount, orderStatus: orders.status, createdAt: orders.createdAt })
+      .from(orders),
+    db.select({ amount: expenses.amount, date: expenses.expenseDate }).from(expenses),
+    db.select({ amount: purchases.totalAmount, date: purchases.createdAt }).from(purchases),
+  ]);
+
+  const windowStats = (from: Date, to: Date) => {
+    let revenue = 0;
+    let orderCount = 0;
+    let expense = 0;
+    for (const o of orderRows) {
+      if (o.orderStatus === "cancelled") continue;
+      if (o.createdAt && o.createdAt >= from && o.createdAt < to) {
+        revenue += num(o.total);
+        orderCount += 1;
+      }
+    }
+    for (const e of expenseRows) if (e.date && e.date >= from && e.date < to) expense += num(e.amount);
+    for (const p of purchaseRows) if (p.date && p.date >= from && p.date < to) expense += num(p.amount);
+    return { revenue, expense, net: revenue - expense, orderCount };
+  };
+
+  return {
+    days,
+    current: windowStats(curStart, new Date(now)),
+    previous: windowStats(prevStart, curStart),
   };
 }
 

@@ -22,11 +22,28 @@ import {
   TrendingUp,
   Wallet,
 } from "lucide-react";
+import { useState } from "react";
 import { useLocation } from "wouter";
+
+const PERIODS = [
+  { days: 1, label: "Bugün" },
+  { days: 7, label: "7 gün" },
+  { days: 30, label: "30 gün" },
+  { days: 90, label: "90 gün" },
+];
+
+/** İki değer arasındaki % değişim + yön (önceki 0 ise yeni değer varsa +100, yoksa 0). */
+function pctChange(cur: number, prev: number): { pct: number; dir: "up" | "down" | "flat" } {
+  if (prev === 0) return { pct: cur > 0 ? 100 : 0, dir: cur > 0 ? "up" : "flat" };
+  const pct = ((cur - prev) / Math.abs(prev)) * 100;
+  return { pct, dir: pct > 0.5 ? "up" : pct < -0.5 ? "down" : "flat" };
+}
 
 export default function Home() {
   const [, setLocation] = useLocation();
   const { data, isLoading } = trpc.dashboard.summary.useQuery();
+  const [periodDays, setPeriodDays] = useState(30);
+  const { data: period } = trpc.dashboard.periodStats.useQuery({ days: periodDays });
 
   const statusMap = new Map((data?.statusCounts ?? []).map(s => [s.status, Number(s.count)]));
   const activeOrders =
@@ -115,6 +132,34 @@ export default function Home() {
           ))}
         </div>
       )}
+
+      {/* Dönem karşılaştırma: seçilen pencere vs bir önceki aynı pencere */}
+      <Card className="p-4 space-y-3">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <h2 className="font-semibold text-sm">Dönem Karşılaştırma</h2>
+          <div className="inline-flex rounded-lg border p-0.5 bg-muted/40">
+            {PERIODS.map(p => (
+              <button
+                key={p.days}
+                onClick={() => setPeriodDays(p.days)}
+                className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+                  periodDays === p.days ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <PeriodTile label="Ciro" cur={period?.current.revenue ?? 0} prev={period?.previous.revenue ?? 0} money />
+          <PeriodTile label="Net" cur={period?.current.net ?? 0} prev={period?.previous.net ?? 0} money />
+          <PeriodTile label="Sipariş" cur={period?.current.orderCount ?? 0} prev={period?.previous.orderCount ?? 0} />
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          Seçilen {periodDays} günlük pencere, hemen öncesindeki {periodDays} günle kıyaslanır.
+        </p>
+      </Card>
 
       {/* Özet kartları — hepsi ilgili sayfaya tıklanabilir */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -387,6 +432,44 @@ export default function Home() {
             />
           </div>
         </Card>
+      </div>
+    </div>
+  );
+}
+
+function PeriodTile({
+  label,
+  cur,
+  prev,
+  money,
+}: {
+  label: string;
+  cur: number;
+  prev: number;
+  money?: boolean;
+}) {
+  const { pct, dir } = pctChange(cur, prev);
+  const fmt = (n: number) => (money ? formatTL(n) : String(n));
+  const tone =
+    dir === "up"
+      ? "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40"
+      : dir === "down"
+        ? "text-rose-600 bg-rose-50 dark:bg-rose-950/40"
+        : "text-muted-foreground bg-muted";
+  return (
+    <div className="rounded-lg border p-3">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="text-xl font-bold leading-tight mt-0.5">{fmt(cur)}</p>
+      <div className="flex items-center gap-1.5 mt-1">
+        <span className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-medium ${tone}`}>
+          {dir === "up" ? (
+            <TrendingUp className="h-3 w-3" />
+          ) : dir === "down" ? (
+            <TrendingDown className="h-3 w-3" />
+          ) : null}
+          {dir === "flat" ? "—" : `${pct > 0 ? "+" : ""}${pct.toFixed(0)}%`}
+        </span>
+        <span className="text-[11px] text-muted-foreground truncate">önceki {fmt(prev)}</span>
       </div>
     </div>
   );
