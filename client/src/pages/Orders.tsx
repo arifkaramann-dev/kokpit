@@ -1,6 +1,7 @@
 import { useConfirm } from "@/components/ConfirmDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -159,7 +160,18 @@ export default function Orders() {
   const [channelFilter, setChannelFilter] = useState<string>("all");
   // Tamamlanan siparişler varsayılan olarak katlı — güncel iş üstte kalsın.
   const [collapsed, setCollapsed] = useState<Set<OrderStatus>>(new Set<OrderStatus>(["done", "cancelled"]));
+  // Çoklu seçim: toplu yazdırma/durum/ödeme için işaretlenen sipariş id'leri.
+  const [selected, setSelected] = useState<Set<number>>(new Set<number>());
   const autoSynced = useRef(false);
+
+  const toggleSelect = (id: number) =>
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const clearSelection = () => setSelected(new Set<number>());
 
   function toggleSection(status: OrderStatus) {
     setCollapsed(prev => {
@@ -460,6 +472,37 @@ export default function Orders() {
     const target = ORDER_STATUSES[idx + dir];
     if (!target) return;
     setStatus.mutate({ id: order.id, status: target.value });
+  }
+
+  // Seçilenleri toplu bir sonraki aşamaya taşı (pazaryeri siparişleri otomatik yönetildiğinden atlanır).
+  function bulkAdvance(list: OrderRow[]) {
+    const manual = list.filter(o => !isAutoOrder(o) && o.status !== "done" && o.status !== "cancelled");
+    if (manual.length === 0) {
+      toast.info("İlerletilecek elle sipariş yok (pazaryeri siparişleri otomatik yönetilir)");
+      return;
+    }
+    manual.forEach(o => handleAdvance(o, 1));
+    toast.success(`${manual.length} sipariş bir sonraki aşamaya taşındı`);
+    clearSelection();
+  }
+
+  // Seçilenleri toplu "ödendi" işaretle (zaten ödenmiş olanlar atlanır).
+  function bulkMarkPaid(list: OrderRow[]) {
+    const unpaid = list.filter(o => o.paymentStatus !== "paid");
+    if (unpaid.length === 0) {
+      toast.info("Seçilenlerin hepsi zaten ödenmiş");
+      return;
+    }
+    unpaid.forEach(o =>
+      setPayment.mutate({
+        id: o.id,
+        paymentStatus: "paid",
+        paidAmount: parseFloat(o.totalAmount) || 0,
+        paymentMethod: o.paymentMethod,
+      }),
+    );
+    toast.success(`${unpaid.length} sipariş ödendi olarak işaretlendi`);
+    clearSelection();
   }
 
   function openCreate() {
@@ -992,6 +1035,32 @@ export default function Orders() {
         </div>
       )}
 
+      {/* Toplu aksiyon çubuğu: bir veya daha fazla sipariş seçilince yapışkan görünür. */}
+      {selected.size > 0 && (
+        <div className="sticky top-2 z-30 flex flex-wrap items-center gap-2 rounded-xl border bg-card/95 p-2.5 shadow-lg backdrop-blur">
+          <span className="text-sm font-semibold px-1">{selected.size} seçili</span>
+          {(() => {
+            const chosen = allOrders.filter(o => selected.has(o.id));
+            return (
+              <>
+                <Button size="sm" variant="outline" onClick={() => handlePrintContents(chosen)}>
+                  <Printer className="h-4 w-4 mr-1" /> İçerik dökümü yazdır
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => bulkAdvance(chosen)}>
+                  <ArrowRight className="h-4 w-4 mr-1" /> Sonraki aşamaya taşı
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => bulkMarkPaid(chosen)}>
+                  <CheckCircle2 className="h-4 w-4 mr-1" /> Ödendi işaretle
+                </Button>
+              </>
+            );
+          })()}
+          <Button size="sm" variant="ghost" className="ml-auto" onClick={clearSelection}>
+            <XCircle className="h-4 w-4 mr-1" /> Seçimi temizle
+          </Button>
+        </div>
+      )}
+
       {isLoading ? (
         <div className="space-y-3">
           {ORDER_STATUSES.map(s => (
@@ -1056,6 +1125,8 @@ export default function Orders() {
                       list.map(order => (
                         <OrderRowItem
                           key={order.id}
+                          selected={selected.has(order.id)}
+                          onToggleSelect={toggleSelect}
                           order={order}
                           onEdit={openEdit}
                           onDelete={id => deleteOrder.mutate({ id })}
@@ -1090,6 +1161,8 @@ export default function Orders() {
 
 function OrderRowItem({
   order,
+  selected,
+  onToggleSelect,
   onEdit,
   onDelete,
   onInvoice,
@@ -1102,6 +1175,8 @@ function OrderRowItem({
   onSetCancelled,
 }: {
   order: OrderRow;
+  selected: boolean;
+  onToggleSelect: (id: number) => void;
   onEdit: (o: OrderRow) => void;
   onDelete: (id: number) => void;
   onInvoice: (o: OrderRow) => void;
@@ -1121,7 +1196,13 @@ function OrderRowItem({
   const prev = ORDER_STATUSES[idx - 1];
 
   return (
-    <div className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center">
+    <div className={`flex flex-col gap-2 p-3 sm:flex-row sm:items-center ${selected ? "bg-primary/5" : ""}`}>
+      <Checkbox
+        checked={selected}
+        onCheckedChange={() => onToggleSelect(order.id)}
+        aria-label="Siparişi seç"
+        className="mt-1 self-start sm:mt-0 sm:self-auto shrink-0"
+      />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-medium text-sm truncate">{order.customerName}</span>

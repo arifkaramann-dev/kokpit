@@ -315,7 +315,7 @@ export default function Stock() {
         </span>
       </div>
 
-      <Card className="overflow-hidden p-0">
+      <Card className="overflow-x-auto p-0">
         <Table>
           <TableHeader>
             <TableRow>

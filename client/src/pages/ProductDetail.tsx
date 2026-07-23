@@ -12,6 +12,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatDate, formatTL } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
+import { effectiveChannelPrice, MARKETPLACE_CHANNELS, parseChannelPrices } from "@shared/pricing";
 import { jsonListHasItems, productHealth } from "@shared/productHealth";
 import {
   ArrowLeft,
@@ -562,6 +563,63 @@ export default function ProductDetail() {
         </TabsContent>
 
         <TabsContent value="pazaryeri" className="mt-3 space-y-3">
+          {/* Kanal bazlı satış fiyatları: kanalın kendi fiyatı varsa o, yoksa taban fiyat. */}
+          {(() => {
+            const base = {
+              salePrice: parseFloat(String(product.salePrice)) || 0,
+              discountPercent: parseFloat(String(product.discountPercent)) || 0,
+            };
+            const map = parseChannelPrices(product.channelPrices);
+            const CH_LABELS: Record<string, string> = {
+              trendyol: "Trendyol",
+              hepsiburada: "Hepsiburada",
+              n11: "N11",
+              ciceksepeti: "Çiçeksepeti",
+            };
+            return (
+              <Card className="p-4 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Store className="h-4 w-4 text-primary" />
+                  <span className="text-sm font-semibold">Pazaryeri Fiyatları</span>
+                  <button
+                    className="ml-auto text-xs text-primary hover:underline"
+                    onClick={() => setLocation(`/urunler?duzenle=${id}`)}
+                  >
+                    Düzenle
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  <div className="rounded-lg border p-2.5">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Taban / Web</p>
+                    <p className="text-lg font-bold">{formatTL(base.salePrice)}</p>
+                    {base.discountPercent > 0 && (
+                      <p className="text-[11px] text-muted-foreground">%{base.discountPercent} indirim</p>
+                    )}
+                  </div>
+                  {MARKETPLACE_CHANNELS.map(ch => {
+                    const eff = effectiveChannelPrice(base, map, ch);
+                    return (
+                      <div key={ch} className="rounded-lg border p-2.5">
+                        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{CH_LABELS[ch]}</p>
+                        <p className="text-lg font-bold">{formatTL(eff.salePrice)}</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          {eff.overridden ? (
+                            <span className="text-primary">kanala özel{eff.discountPercent > 0 ? ` · %${eff.discountPercent}` : ""}</span>
+                          ) : (
+                            "taban fiyat"
+                          )}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Komisyon/kargo/KDV sonrası net kâr için Fiyat &amp; Kâr sayfasına bakın. Kanala özel fiyatı ürün kartından girebilirsiniz.
+                </p>
+              </Card>
+            );
+          })()}
+
           <div className="flex items-center justify-between rounded-lg border bg-muted/40 p-2">
             <p className="text-xs text-muted-foreground">
               Açıklamaları, etiket yazısını ve özellikleri Claude üretsin — sonuç doğrudan karta

@@ -27,6 +27,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { formatDate, formatQty, formatTL } from "@/lib/format";
+import { MARKETPLACE_CHANNELS, parseChannelPrices } from "@shared/pricing";
 import { jsonListHasItems, productHealth, type ProductHealth } from "@shared/productHealth";
 import { BarcodeScanButton } from "@/components/BarcodeScanner";
 import { useConfirm } from "@/components/ConfirmDialog";
@@ -80,6 +81,42 @@ export type ProductRow = {
   status: "taslak" | "satista" | "arsiv";
 };
 
+/** Ürün formunda pazaryeri fiyatları: kanal → {satış, indirim} (metin girdi). */
+type ChannelPriceForm = Record<string, { salePrice: string; discountPercent: string }>;
+
+const CHANNEL_LABELS: Record<string, string> = {
+  trendyol: "Trendyol",
+  hepsiburada: "Hepsiburada",
+  n11: "N11",
+  ciceksepeti: "Çiçeksepeti",
+};
+
+/** products.channelPrices JSON'unu form (metin) biçimine çevirir. */
+function channelPricesToForm(json: string | null): ChannelPriceForm {
+  const map = parseChannelPrices(json);
+  const out: ChannelPriceForm = {};
+  for (const [k, v] of Object.entries(map)) {
+    out[k] = {
+      salePrice: v.salePrice ? String(v.salePrice) : "",
+      discountPercent: v.discountPercent != null ? String(v.discountPercent) : "",
+    };
+  }
+  return out;
+}
+
+/** Form biçimini kaydedilecek JSON'a çevirir; fiyatı boş/sıfır kanal atlanır (= taban fiyat). */
+function formToChannelPrices(cp: ChannelPriceForm): string | null {
+  const map: Record<string, { salePrice: number; discountPercent?: number }> = {};
+  for (const ch of MARKETPLACE_CHANNELS) {
+    const v = cp[ch];
+    const sp = v ? parseFloat(v.salePrice.replace(",", ".")) : 0;
+    if (!sp || sp <= 0) continue;
+    const dp = v?.discountPercent ? parseFloat(v.discountPercent.replace(",", ".")) : NaN;
+    map[ch] = { salePrice: sp, ...(Number.isFinite(dp) ? { discountPercent: dp } : {}) };
+  }
+  return Object.keys(map).length ? JSON.stringify(map) : null;
+}
+
 const emptyForm = {
   name: "",
   series: "",
@@ -116,6 +153,7 @@ const emptyForm = {
   mockupUrl: "",
   labelWarnings: "",
   status: "satista" as "taslak" | "satista" | "arsiv",
+  channelPrices: {} as ChannelPriceForm,
 };
 
 /** DB'de JSON dizi olarak duran alanı (features/imageUrls) form metnine çevirir. */
@@ -595,6 +633,7 @@ export default function Products() {
       mockupUrl: p.mockupUrl ?? "",
       labelWarnings: p.labelWarnings ?? "",
       status: p.status ?? "satista",
+      channelPrices: channelPricesToForm(p.channelPrices),
     });
     setDialogOpen(true);
   }
@@ -640,6 +679,7 @@ export default function Products() {
       mockupUrl: form.mockupUrl.trim() || null,
       labelWarnings: form.labelWarnings || null,
       status: form.status,
+      channelPrices: formToChannelPrices(form.channelPrices),
     };
     if (editing) {
       updateProduct.mutate({ id: editing.id, data: payload });
@@ -1169,6 +1209,52 @@ export default function Products() {
                   onChange={e => setForm(f => ({ ...f, stockQty: e.target.value }))}
                   placeholder="0"
                 />
+              </div>
+            </div>
+
+            {/* Pazaryeri fiyatları: kanala özel satış fiyatı; boş = taban (web) fiyatı. */}
+            <div className="rounded-lg border p-3 space-y-2.5">
+              <div className="flex items-center gap-2">
+                <Store className="h-4 w-4 text-primary" />
+                <span className="text-sm font-medium">Pazaryeri Fiyatları</span>
+                <span className="text-[11px] text-muted-foreground ml-auto">
+                  Boş bırakılan kanal, taban fiyatı ({formatTL(parseFloat(form.salePrice) || 0)}) kullanır.
+                </span>
+              </div>
+              <div className="space-y-2">
+                {MARKETPLACE_CHANNELS.map(ch => {
+                  const cp = form.channelPrices[ch] ?? { salePrice: "", discountPercent: "" };
+                  const setCp = (patch: Partial<{ salePrice: string; discountPercent: string }>) =>
+                    setForm(f => ({
+                      ...f,
+                      channelPrices: {
+                        ...f.channelPrices,
+                        [ch]: { ...(f.channelPrices[ch] ?? { salePrice: "", discountPercent: "" }), ...patch },
+                      },
+                    }));
+                  return (
+                    <div key={ch} className="grid grid-cols-[110px_1fr_1fr] items-center gap-2">
+                      <span className="text-sm text-muted-foreground">{CHANNEL_LABELS[ch]}</span>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={cp.salePrice}
+                        onChange={e => setCp({ salePrice: e.target.value })}
+                        placeholder="Fiyat (₺) — boş = taban"
+                      />
+                      <Input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.1"
+                        value={cp.discountPercent}
+                        onChange={e => setCp({ discountPercent: e.target.value })}
+                        placeholder="İndirim % (ops.)"
+                      />
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
