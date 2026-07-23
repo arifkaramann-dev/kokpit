@@ -2,9 +2,12 @@ import { formatTL } from "./format";
 
 /**
  * Sipariş içeriği dökümü — kalem kalem, tek veya toplu yazdırma/PDF.
- * Her sipariş A4'te ayrı bir "toplama fişi" sayfasıdır: kalem tablosu
- * (işaret kutusu + adet + birim fiyat + tutar), adres/telefon ve notlar.
- * Tarayıcının "PDF olarak kaydet" seçeneğiyle PDF üretilir; harici servis yok.
+ * Toplu yazdırmada siparişler varsayılan olarak birbirini takip eder ve aynı
+ * sayfada toplanır (kağıt israfı olmaz); "Her siparişi ayrı sayfaya yazdır"
+ * kutusu işaretlenince her fiş kendi A4 sayfasına düşer (toplama fişi modu).
+ * Her fiş: kalem tablosu (işaret kutusu + adet + birim fiyat + tutar),
+ * adres/telefon ve notlar. Tarayıcının "PDF olarak kaydet" seçeneğiyle PDF
+ * üretilir; harici servis yok.
  */
 
 export type ContentOrder = {
@@ -124,17 +127,25 @@ export function printOrderContents(orders: ContentOrder[], items: ContentItem[])
   const win = window.open("", "_blank", "width=900,height=1100");
   if (!win) return;
 
+  const multi = orders.length > 1;
+
   win.document.write(`<!doctype html><html lang="tr"><head><meta charset="utf-8">
 <title>${esc(title)}</title>
 <style>
   @page { size: A4; margin: 1.2cm; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: Arial, sans-serif; color: #000; font-size: 12px; }
-  .actions { padding: 10px; }
-  .actions button { font: inherit; padding: 8px 16px; margin-right: 8px; border: 1px solid #1e1b4b; background: #1e1b4b; color: #fff; border-radius: 6px; cursor: pointer; }
+  .actions { padding: 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .actions button { font: inherit; padding: 8px 16px; border: 1px solid #1e1b4b; background: #1e1b4b; color: #fff; border-radius: 6px; cursor: pointer; }
   .actions button.ghost { background: #fff; color: #1e1b4b; }
-  .sheet { padding: 16px 8px; page-break-after: always; }
-  .sheet:last-of-type { page-break-after: auto; }
+  .actions label { font: inherit; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: #1e1b4b; margin-left: 4px; }
+  /* Varsayılan: siparişler birbirini takip eder (tek sayfada toplanır). */
+  .sheet { padding: 16px 8px; }
+  .sheet + .sheet { margin-top: 18px; padding-top: 18px; border-top: 3px double #999; }
+  /* "Her sipariş ayrı sayfa" seçildiğinde her fiş kendi A4 sayfasına düşer. */
+  body.paged .sheet { page-break-after: always; margin-top: 0; padding-top: 16px; border-top: none; }
+  body.paged .sheet:last-of-type { page-break-after: auto; }
+  .sheet { page-break-inside: avoid; }
   header { display: flex; justify-content: space-between; gap: 16px; border-bottom: 2px solid #000; padding-bottom: 8px; margin-bottom: 10px; }
   h2 { font-size: 15px; letter-spacing: 0.06em; }
   .meta { color: #444; margin-top: 3px; }
@@ -154,6 +165,7 @@ export function printOrderContents(orders: ContentOrder[], items: ContentItem[])
 <div class="actions">
   <button onclick="window.print()">Yazdır / PDF Kaydet</button>
   <button class="ghost" onclick="window.close()">Kapat</button>
+  ${multi ? `<label><input type="checkbox" onchange="document.body.classList.toggle('paged', this.checked)"> Her siparişi ayrı sayfaya yazdır</label>` : ""}
 </div>
 ${sheets}
 <script>window.onload = () => setTimeout(() => window.print(), 300);</script>
