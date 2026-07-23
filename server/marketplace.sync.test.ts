@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { shouldSyncOrderStatus } from "./orderUtils";
-import { mapHbOrder } from "./hepsiburada";
+import { mapHbOrder, mapHbPackage } from "./hepsiburada";
 
 describe("shouldSyncOrderStatus (pazaryeri senkronu durum akışı)", () => {
   it("durum yalnızca ileri akar", () => {
@@ -60,5 +60,47 @@ describe("mapHbOrder (Hepsiburada sipariş eşlemesi)", () => {
   it("iptal ve iadeleri içe aktarmaz", () => {
     expect(mapHbOrder({ ...sample, status: "Cancelled" })).toBeNull();
     expect(mapHbOrder({ ...sample, status: "Returned" })).toBeNull();
+  });
+});
+
+describe("mapHbPackage (Hepsiburada paket → sipariş; canlıda /packages ucu)", () => {
+  // Canlı /packages yanıtından sadeleştirilmiş gerçek paket.
+  const pkg = {
+    packageNumber: "5498289635",
+    status: "Open",
+    recipientName: "Çağatay Turan",
+    totalPrice: { amount: 350 },
+    items: [
+      {
+        productName: "Art Of Colour Opel 40R Olimpik Beyaz Rötuş Kalemi 2li Set",
+        merchantSku: "RTŞ207",
+        productBarcode: "00000aocrt203",
+        hbSku: "HBCV000049Q7IY",
+        quantity: 1,
+        price: { amount: 350 },
+        totalPrice: { amount: 350 },
+        orderNumber: "4713035922",
+      },
+    ],
+  };
+
+  it("paket kalemlerini panoya doğru eşler (ad, adet, fiyat, barkod)", () => {
+    const order = mapHbPackage(pkg)!;
+    expect(order).not.toBeNull();
+    expect(order.orderNo).toBe("HB-5498289635");
+    expect(order.channel).toBe("hepsiburada");
+    expect(order.status).toBe("new"); // Open → new
+    expect(order.customerName).toBe("Çağatay Turan");
+    expect(order.totalAmount).toBe("350");
+    expect(order.items[0]).toEqual({
+      productName: "Art Of Colour Opel 40R Olimpik Beyaz Rötuş Kalemi 2li Set",
+      quantity: 1,
+      unitPrice: 350,
+      barcode: "00000aocrt203", // productBarcode katalog eşlemesi için
+    });
+  });
+
+  it("iptal paketini içe aktarmaz", () => {
+    expect(mapHbPackage({ ...pkg, status: "Cancelled" })).toBeNull();
   });
 });

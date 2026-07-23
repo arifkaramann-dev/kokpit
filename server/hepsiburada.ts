@@ -156,8 +156,55 @@ export function hbUserAgent(): string {
   return ENV.hepsiburadaUsername || ENV.hepsiburadaMerchantId;
 }
 
-async function fetchOrdersPage(offset: number): Promise<HbOrdersResponse> {
-  const url = new URL(`${HB_API_BASE}/orders/merchantid/${ENV.hepsiburadaMerchantId}`);
+// Canlıda satıcıya gelen siparişler **paket** (fulfillment birimi) olarak
+// /packages/merchantid ucunda döner; /orders ucu boş gelir. Paket kalemi
+// productName/productBarcode/orderNumber gibi zengin alanlar taşır.
+type HbPackageItemRaw = {
+  productName?: string;
+  merchantSku?: string;
+  productBarcode?: string;
+  hbSku?: string;
+  quantity?: number;
+  price?: { amount?: number } | number;
+  totalPrice?: { amount?: number } | number;
+  orderNumber?: string;
+};
+type HbPackageRaw = {
+  packageNumber?: string;
+  id?: string;
+  status?: string;
+  customerName?: string;
+  recipientName?: string;
+  totalPrice?: { amount?: number } | number;
+  items?: HbPackageItemRaw[];
+};
+
+/** HB paketini mevcut (test edilmiş) mapHbOrder şekline çevirir. */
+function packageToOrderRaw(pkg: HbPackageRaw): HbOrderRaw {
+  return {
+    orderNumber: pkg.packageNumber ?? pkg.id ?? pkg.items?.[0]?.orderNumber,
+    status: pkg.status,
+    customerName: pkg.customerName ?? pkg.recipientName,
+    totalPrice: pkg.totalPrice,
+    items: (pkg.items ?? []).map(i => ({
+      productName: i.productName,
+      quantity: i.quantity,
+      unitPrice: i.price,
+      totalPrice: i.totalPrice,
+      // Katalog eşlemesi için barkod: productBarcode > merchantSku.
+      merchantSku: i.productBarcode ?? i.merchantSku,
+    })),
+  };
+}
+
+/** HB paketini panoya uygun MappedOrder'a çevirir (iptal/iade ise null). */
+export function mapHbPackage(pkg: HbPackageRaw): MappedOrder | null {
+  return mapHbOrder(packageToOrderRaw(pkg));
+}
+
+/** HB paketlerini sayfalı çeker (gerçek sipariş birimi). Yanıt düz dizi olabilir. */
+async function fetchPackagesPage(offset: number): Promise<HbPackageRaw[]> {
+  const url = new URL(`${HB_API_BASE}/packages/merchantid/${ENV.hepsiburadaMerchantId}`);
   url.searchParams.set("offset", String(offset));
   url.searchParams.set("limit", String(PAGE_SIZE));
 
@@ -178,7 +225,8 @@ async function fetchOrdersPage(offset: number): Promise<HbOrdersResponse> {
     const body = (await res.text()).slice(0, 200);
     throw new Error(`Hepsiburada API hatası (${res.status}): ${body}`);
   }
-  return (await res.json()) as HbOrdersResponse;
+  const data = (await res.json()) as HbPackageRaw[] | { items?: HbPackageRaw[] };
+  return Array.isArray(data) ? data : (data.items ?? []);
 }
 
 export function isHepsiburadaConfigured(): boolean {
@@ -328,15 +376,14 @@ export async function syncHepsiburadaOrders() {
   const seen = new Set<string>();
 
   for (let page = 0; page < MAX_PAGES; page++) {
-    const data = await fetchOrdersPage(page * PAGE_SIZE);
-    const orders = data.items ?? data.orders ?? data.content ?? [];
-    if (orders.length === 0) break;
+    const packages = await fetchPackagesPage(page * PAGE_SIZE);
+    if (packages.length === 0) break;
 
-    for (const raw of orders) {
-      const mapped = mapHbOrder(raw);
+    for (const pkg of packages) {
+      const mapped = mapHbPackage(pkg);
       if (!mapped) {
         // İptal/iade: içe alınmış sipariş varsa iptal et (stok iadesi otomatik).
-        const rawNo = raw.orderNumber ?? raw.orderId ?? raw.id;
+        const rawNo = pkg.packageNumber ?? pkg.id ?? pkg.items?.[0]?.orderNumber;
         if (rawNo) {
           const cancelledNo = `HB-${rawNo}`;
           if (!seen.has(cancelledNo)) {
@@ -379,7 +426,7 @@ export async function syncHepsiburadaOrders() {
       imported++;
     }
 
-    if (page >= (data.totalPages ?? 1) - 1) break;
+    if (packages.length < PAGE_SIZE) break;
   }
 
   return { imported, updated, skipped };
