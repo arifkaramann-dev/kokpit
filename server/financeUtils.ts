@@ -7,6 +7,21 @@
 const toNum = (v: unknown) => parseFloat(String(v ?? "0")) || 0;
 const trKey = (n: string) => n.trim().toLocaleLowerCase("tr-TR");
 
+/**
+ * Serbest metinle söylenen tedarikçi/müşteri adını kayıtlı listedeki gerçek
+ * ada çevirir (cari ekstre ada/ID'ye göre bağlandığından tutarlı ad şart).
+ * Önce tam eşleşme (Türkçe küçük harf), sonra kısmi eşleşme; bulunamazsa
+ * girilen adı olduğu gibi döndürür.
+ */
+export function canonicalPartyName(names: { name: string }[], input: string): string {
+  const needle = trKey(input);
+  if (!needle) return input.trim();
+  const exact = names.find(n => trKey(n.name) === needle);
+  if (exact) return exact.name;
+  const partial = names.find(n => trKey(n.name).includes(needle) || needle.includes(trKey(n.name)));
+  return partial?.name ?? input.trim();
+}
+
 /* ------------------- Kasa/banka bakiyesi ------------------- */
 
 /** Hesap bakiyesi: açılış + giren − çıkan. */
