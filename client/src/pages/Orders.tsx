@@ -41,6 +41,7 @@ import {
   ChevronRight,
   ClipboardList,
   FileText,
+  History,
   MapPin,
   MessageCircle,
   MoreHorizontal,
@@ -162,6 +163,8 @@ export default function Orders() {
   const [collapsed, setCollapsed] = useState<Set<OrderStatus>>(new Set<OrderStatus>(["done", "cancelled"]));
   // Çoklu seçim: toplu yazdırma/durum/ödeme için işaretlenen sipariş id'leri.
   const [selected, setSelected] = useState<Set<number>>(new Set<number>());
+  // Detay & zaman çizgisi panelinde açık olan sipariş.
+  const [detailOrder, setDetailOrder] = useState<OrderRow | null>(null);
   const autoSynced = useRef(false);
 
   const toggleSelect = (id: number) =>
@@ -1127,6 +1130,7 @@ export default function Orders() {
                           key={order.id}
                           selected={selected.has(order.id)}
                           onToggleSelect={toggleSelect}
+                          onDetail={setDetailOrder}
                           order={order}
                           onEdit={openEdit}
                           onDelete={id => deleteOrder.mutate({ id })}
@@ -1155,7 +1159,169 @@ export default function Orders() {
           )}
         </div>
       )}
+
+      <OrderDetailDialog order={detailOrder} onClose={() => setDetailOrder(null)} />
     </div>
+  );
+}
+
+/** Sipariş detay + zaman çizgisi paneli: kalemler, iletişim, kargo, olay defteri, not. */
+function OrderDetailDialog({ order, onClose }: { order: OrderRow | null; onClose: () => void }) {
+  const utils = trpc.useUtils();
+  const [note, setNote] = useState("");
+  const events = trpc.orders.events.useQuery(
+    { orderId: order?.id ?? 0 },
+    { enabled: !!order },
+  );
+  const itemsQ = trpc.orders.itemsBulk.useQuery(
+    { orderIds: order ? [order.id] : [] },
+    { enabled: !!order },
+  );
+  const addNote = trpc.orders.addNote.useMutation({
+    onSuccess: () => {
+      setNote("");
+      utils.orders.events.invalidate();
+      toast.success("Not eklendi");
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  const EVENT_ICON: Record<string, { icon: typeof History; cls: string }> = {
+    created: { icon: Plus, cls: "text-blue-600 bg-blue-500/10" },
+    synced: { icon: RefreshCw, cls: "text-violet-600 bg-violet-500/10" },
+    status: { icon: ArrowRight, cls: "text-amber-600 bg-amber-500/10" },
+    payment: { icon: CheckCircle2, cls: "text-emerald-600 bg-emerald-500/10" },
+    cargo: { icon: Truck, cls: "text-sky-600 bg-sky-500/10" },
+    note: { icon: MessageCircle, cls: "text-muted-foreground bg-muted" },
+  };
+
+  return (
+    <Dialog open={!!order} onOpenChange={o => !o && onClose()}>
+      <DialogContent className="sm:max-w-2xl max-h-[88vh] overflow-y-auto">
+        {order && (
+          <>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 flex-wrap">
+                {order.customerName}
+                <Badge variant="outline" className="text-[10px]">{order.channel}</Badge>
+                <span className="text-xs font-normal text-muted-foreground">{order.orderNo}</span>
+              </DialogTitle>
+            </DialogHeader>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              {/* Sol: özet + kalemler */}
+              <div className="space-y-3">
+                <div className="rounded-lg border p-3 space-y-1.5 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Tutar</span>
+                    <span className="font-semibold">{formatTL(order.totalAmount)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Ödeme</span>
+                    <span className={order.paymentStatus === "paid" ? "text-emerald-600" : "text-amber-600"}>
+                      {order.paymentStatus === "paid" ? "Ödendi" : order.paymentStatus === "partial" ? "Kısmi" : "Bekliyor"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Tarih</span>
+                    <span>{formatDate(order.createdAt)}</span>
+                  </div>
+                  {order.customerPhone && (
+                    <div className="flex justify-between items-center gap-2">
+                      <span className="text-muted-foreground">Telefon</span>
+                      <a href={waLink(order)} target="_blank" rel="noreferrer" className="text-emerald-600 hover:underline inline-flex items-center gap-1">
+                        <MessageCircle className="h-3.5 w-3.5" /> {order.customerPhone}
+                      </a>
+                    </div>
+                  )}
+                  {order.customerAddress && (
+                    <div className="pt-1 text-xs text-muted-foreground flex items-start gap-1">
+                      <MapPin className="h-3.5 w-3.5 shrink-0 mt-0.5" /> {order.customerAddress}
+                    </div>
+                  )}
+                  {order.cargoTrackingNumber && (
+                    <div className="flex justify-between items-center gap-2 pt-1">
+                      <span className="text-muted-foreground">Kargo</span>
+                      {order.cargoTrackingLink ? (
+                        <a href={order.cargoTrackingLink} target="_blank" rel="noreferrer" className="text-sky-600 hover:underline inline-flex items-center gap-1">
+                          <Truck className="h-3.5 w-3.5" /> {order.cargoTrackingNumber}
+                        </a>
+                      ) : (
+                        <span className="inline-flex items-center gap-1"><Truck className="h-3.5 w-3.5" /> {order.cargoTrackingNumber}</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-lg border overflow-hidden">
+                  <div className="bg-muted/40 px-3 py-1.5 text-xs font-medium text-muted-foreground">Kalemler</div>
+                  {itemsQ.isLoading ? (
+                    <div className="p-3 text-xs text-muted-foreground">Yükleniyor…</div>
+                  ) : (itemsQ.data ?? []).length === 0 ? (
+                    <div className="p-3 text-xs text-muted-foreground">{order.itemsSummary || "Kalem kaydı yok"}</div>
+                  ) : (
+                    <div className="divide-y">
+                      {(itemsQ.data ?? []).map((it, i) => (
+                        <div key={i} className="flex items-center gap-2 px-3 py-1.5 text-sm">
+                          <span className="flex-1 truncate">{it.productName}</span>
+                          <span className="text-muted-foreground text-xs">{it.quantity}×</span>
+                          <span className="font-medium whitespace-nowrap">{formatTL(parseFloat(String(it.unitPrice)) * parseFloat(String(it.quantity)))}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Sağ: zaman çizgisi + not */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <History className="h-4 w-4 text-primary" /> Zaman Çizgisi
+                </div>
+                <div className="flex gap-2">
+                  <Input
+                    value={note}
+                    onChange={e => setNote(e.target.value)}
+                    placeholder="Not ekle (ör. müşteri aradı)…"
+                    onKeyDown={e => {
+                      if (e.key === "Enter" && note.trim()) addNote.mutate({ orderId: order.id, note: note.trim() });
+                    }}
+                  />
+                  <Button size="sm" disabled={!note.trim() || addNote.isPending} onClick={() => addNote.mutate({ orderId: order.id, note: note.trim() })}>
+                    Ekle
+                  </Button>
+                </div>
+                <div className="relative space-y-3 pl-1 pt-1">
+                  {events.isLoading ? (
+                    <p className="text-xs text-muted-foreground">Yükleniyor…</p>
+                  ) : (events.data ?? []).length === 0 ? (
+                    <p className="text-xs text-muted-foreground">Henüz olay yok.</p>
+                  ) : (
+                    (events.data ?? []).map(ev => {
+                      const cfg = EVENT_ICON[ev.type] ?? EVENT_ICON.note;
+                      const Icon = cfg.icon;
+                      return (
+                        <div key={ev.id} className="flex gap-2.5">
+                          <div className={`h-6 w-6 shrink-0 rounded-full flex items-center justify-center ${cfg.cls}`}>
+                            <Icon className="h-3.5 w-3.5" />
+                          </div>
+                          <div className="min-w-0 pb-1">
+                            <p className="text-sm leading-tight">{ev.message}</p>
+                            <p className="text-[11px] text-muted-foreground">
+                              {new Date(ev.createdAt).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1163,6 +1329,7 @@ function OrderRowItem({
   order,
   selected,
   onToggleSelect,
+  onDetail,
   onEdit,
   onDelete,
   onInvoice,
@@ -1177,6 +1344,7 @@ function OrderRowItem({
   order: OrderRow;
   selected: boolean;
   onToggleSelect: (id: number) => void;
+  onDetail: (o: OrderRow) => void;
   onEdit: (o: OrderRow) => void;
   onDelete: (id: number) => void;
   onInvoice: (o: OrderRow) => void;
@@ -1205,7 +1373,13 @@ function OrderRowItem({
       />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-medium text-sm truncate">{order.customerName}</span>
+          <button
+            className="font-medium text-sm truncate hover:text-primary hover:underline text-left"
+            onClick={() => onDetail(order)}
+            title="Detay & zaman çizgisi"
+          >
+            {order.customerName}
+          </button>
           {order.customerAddress && <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
           <button
             onClick={() => onTogglePaid(order)}
@@ -1257,6 +1431,10 @@ function OrderRowItem({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuItem onClick={() => onDetail(order)}>
+              <History className="mr-2 h-4 w-4" /> Detay &amp; zaman çizgisi
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
             {order.customerPhone && (
               <DropdownMenuItem asChild>
                 <a href={waLink(order)} target="_blank" rel="noreferrer">

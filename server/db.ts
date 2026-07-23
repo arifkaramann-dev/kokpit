@@ -30,6 +30,7 @@ import {
   materials,
   notifications,
   orderItems,
+  orderEvents,
   orders,
   products,
   productImages,
@@ -355,6 +356,52 @@ export async function listOrders(limit?: number) {
   return limit && limit > 0 ? q.limit(limit) : q;
 }
 
+/* ------------------------- Sipariş olay defteri ------------------------- */
+
+const ORDER_STATUS_TR: Record<string, string> = {
+  new: "Yeni",
+  production: "Üretimde",
+  ready: "Hazır",
+  done: "Tamamlandı",
+  cancelled: "İptal",
+};
+const PAYMENT_STATUS_TR: Record<string, string> = {
+  unpaid: "Bekliyor",
+  partial: "Kısmi",
+  paid: "Ödendi",
+};
+const MP_CHANNELS = new Set(["trendyol", "hepsiburada", "n11", "ciceksepeti", "pazaryeri"]);
+
+/** Sipariş zaman çizgisine bir olay ekler (denetim izi). Hata sipariş akışını bozmaz. */
+export async function logOrderEvent(
+  orderId: number,
+  type: "created" | "synced" | "status" | "payment" | "cargo" | "note",
+  message: string,
+  meta?: Record<string, unknown>,
+) {
+  try {
+    const db = await requireDb();
+    await db.insert(orderEvents).values({
+      orderId,
+      type,
+      message,
+      meta: meta ? JSON.stringify(meta) : null,
+    });
+  } catch {
+    /* olay kaydı ikincildir — asıl mutasyonu asla düşürmez */
+  }
+}
+
+/** Bir siparişin olaylarını en yeniden eskiye döner. */
+export async function listOrderEvents(orderId: number) {
+  const db = await requireDb();
+  return db
+    .select()
+    .from(orderEvents)
+    .where(eq(orderEvents.orderId, orderId))
+    .orderBy(desc(orderEvents.createdAt));
+}
+
 export async function createOrder(data: InsertOrder) {
   const db = await requireDb();
   // Cari bağ: müşteri adı CRM'de kayıtlıysa ID ile bağla (isim değişse de ekstre kopmaz).
@@ -362,6 +409,14 @@ export async function createOrder(data: InsertOrder) {
     data = { ...data, customerId: await resolveCustomerIdByName(data.customerName) };
   }
   const [result] = await db.insert(orders).values(data);
+  const id = Number(result.insertId);
+  // İlk olay: elle mi açıldı yoksa pazaryerinden mi alındı?
+  const ch = String(data.channel ?? "").toLowerCase();
+  if (MP_CHANNELS.has(ch)) {
+    await logOrderEvent(id, "synced", `Pazaryerinden alındı · ${data.channel}`);
+  } else {
+    await logOrderEvent(id, "created", `Sipariş oluşturuldu${data.channel ? ` · ${data.channel}` : ""}`);
+  }
   return result.insertId;
 }
 
@@ -374,21 +429,52 @@ export async function updateOrder(id: number, data: Partial<InsertOrder>) {
   // İptal geçişleri mamul stoğu yönetir: iptale girişte kalemler iade edilir,
   // iptalden çıkışta yeniden düşülür. (Tüm durum değişimleri bu fonksiyondan
   // geçer: pano, asistan, pazaryeri senkronu.)
-  if (data.status !== undefined) {
-    const old = await getOrder(id);
-    if (old && old.status !== data.status) {
-      const items = await db
-        .select({ productId: orderItems.productId, quantity: orderItems.quantity })
-        .from(orderItems)
-        .where(eq(orderItems.orderId, id));
-      if (old.status !== "cancelled" && data.status === "cancelled") {
-        await applyItemsStock(items, "in", `İptal/iade: ${old.orderNo}`, id);
-      } else if (old.status === "cancelled" && data.status !== "cancelled") {
-        await applyItemsStock(items, "out", `İptal geri alındı: ${old.orderNo}`, id);
-      }
+  // Durum/kargo/ödeme değişimini olay defterine yazmak için eski hâli çekeriz.
+  const needsOld =
+    data.status !== undefined ||
+    data.cargoTrackingNumber !== undefined ||
+    data.paymentStatus !== undefined;
+  const old = needsOld ? await getOrder(id) : null;
+
+  if (data.status !== undefined && old && old.status !== data.status) {
+    const items = await db
+      .select({ productId: orderItems.productId, quantity: orderItems.quantity })
+      .from(orderItems)
+      .where(eq(orderItems.orderId, id));
+    if (old.status !== "cancelled" && data.status === "cancelled") {
+      await applyItemsStock(items, "in", `İptal/iade: ${old.orderNo}`, id);
+    } else if (old.status === "cancelled" && data.status !== "cancelled") {
+      await applyItemsStock(items, "out", `İptal geri alındı: ${old.orderNo}`, id);
     }
   }
   await db.update(orders).set(data).where(eq(orders.id, id));
+
+  // Olay kaydı (mutasyon başarılıysa) — zaman çizgisini besler.
+  if (old) {
+    if (data.status !== undefined && old.status !== data.status) {
+      await logOrderEvent(
+        id,
+        "status",
+        `Durum: ${ORDER_STATUS_TR[old.status] ?? old.status} → ${ORDER_STATUS_TR[data.status] ?? data.status}`,
+        { from: old.status, to: data.status },
+      );
+    }
+    if (
+      data.cargoTrackingNumber !== undefined &&
+      data.cargoTrackingNumber &&
+      data.cargoTrackingNumber !== old.cargoTrackingNumber
+    ) {
+      await logOrderEvent(id, "cargo", `Kargo takip no: ${data.cargoTrackingNumber}`);
+    }
+    if (data.paymentStatus !== undefined && old.paymentStatus !== data.paymentStatus) {
+      await logOrderEvent(
+        id,
+        "payment",
+        `Ödeme: ${PAYMENT_STATUS_TR[old.paymentStatus] ?? old.paymentStatus} → ${PAYMENT_STATUS_TR[data.paymentStatus] ?? data.paymentStatus}`,
+        { from: old.paymentStatus, to: data.paymentStatus },
+      );
+    }
+  }
 }
 
 export async function deleteOrder(id: number) {
@@ -425,7 +511,17 @@ export async function setOrderPayment(
   data: { paymentStatus: "unpaid" | "partial" | "paid"; paidAmount: string; paymentMethod: string | null },
 ) {
   const db = await requireDb();
+  const old = await getOrder(id);
   await db.update(orders).set(data).where(eq(orders.id, id));
+  if (old && old.paymentStatus !== data.paymentStatus) {
+    const method = data.paymentMethod ? ` · ${data.paymentMethod}` : "";
+    await logOrderEvent(
+      id,
+      "payment",
+      `Ödeme: ${PAYMENT_STATUS_TR[old.paymentStatus] ?? old.paymentStatus} → ${PAYMENT_STATUS_TR[data.paymentStatus] ?? data.paymentStatus}${method}`,
+      { from: old.paymentStatus, to: data.paymentStatus, paidAmount: data.paidAmount },
+    );
+  }
 }
 
 /* ------------------------- Müşteriler (CRM) ------------------------- */

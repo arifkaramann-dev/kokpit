@@ -176,6 +176,13 @@
       "when": 1784724395468,
       "tag": "0024_flowery_tarot",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "5",
+      "when": 1784812877885,
+      "tag": "0025_fresh_toxin",
+      "breakpoints": true
     }
   ]
 }
