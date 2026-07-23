@@ -27,7 +27,7 @@ import {
   pushTrendyolProductCards,
   searchTrendyolBrands,
 } from "../trendyolProducts";
-import { pushHepsiburadaStockPrice } from "../hepsiburada";
+import { answerHepsiburadaQuestion, pushHepsiburadaStockPrice } from "../hepsiburada";
 import {
   hbCatalogSendTestProduct,
   hbCatalogStatus,
@@ -281,6 +281,15 @@ export const questionsRouter = router({
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: `Trendyol'a gönderilemedi: ${error instanceof Error ? error.message : "bilinmeyen hata"}`,
+          });
+        }
+      } else if (q.source === "hepsiburada" && q.externalId) {
+        try {
+          await answerHepsiburadaQuestion(q.externalId, input.answerText);
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Hepsiburada'ya gönderilemedi: ${error instanceof Error ? error.message : "bilinmeyen hata"}`,
           });
         }
       }

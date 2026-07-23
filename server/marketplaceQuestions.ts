@@ -3,6 +3,11 @@ import { extractJson } from "./autofill";
 import * as db from "./db";
 import { notifyOwner } from "./notify";
 import {
+  answerHepsiburadaQuestion,
+  fetchHepsiburadaQuestions,
+  isHepsiburadaConfigured,
+} from "./hepsiburada";
+import {
   answerTrendyolQuestion,
   fetchTrendyolQuestions,
   isTrendyolConfigured,
@@ -150,8 +155,10 @@ function msg(e: unknown): string {
 async function runSync(): Promise<QuestionSyncResult> {
   const result: QuestionSyncResult = { ok: true, imported: 0, autoAnswered: 0, drafted: 0, errors: [] };
 
-  if (!isTrendyolConfigured()) {
-    // Şu an soru çekme yalnızca Trendyol'da; hiçbiri bağlı değilse sessizce çık.
+  const trendyolOn = isTrendyolConfigured();
+  const hepsiOn = isHepsiburadaConfigured();
+  if (!trendyolOn && !hepsiOn) {
+    // Hiçbir pazaryeri bağlı değilse sessizce çık.
     result.ok = false;
     return result;
   }
@@ -159,13 +166,23 @@ async function runSync(): Promise<QuestionSyncResult> {
   const [cfg, products] = await Promise.all([db.getSettings(), db.listProducts()]);
   const autoAnswer = isAutoAnswerEnabled(cfg);
 
+  // Bağlı her pazaryerinden çek; biri hata verirse diğeri yine işlensin.
   let fetched: MappedQuestion[] = [];
-  try {
-    fetched = await fetchTrendyolQuestions();
-  } catch (e) {
-    result.ok = false;
-    result.errors.push(`Trendyol: ${msg(e)}`);
-    return result;
+  if (trendyolOn) {
+    try {
+      fetched = fetched.concat(await fetchTrendyolQuestions());
+    } catch (e) {
+      result.ok = false;
+      result.errors.push(`Trendyol: ${msg(e)}`);
+    }
+  }
+  if (hepsiOn) {
+    try {
+      fetched = fetched.concat(await fetchHepsiburadaQuestions());
+    } catch (e) {
+      result.ok = false;
+      result.errors.push(`Hepsiburada: ${msg(e)}`);
+    }
   }
 
   for (const q of fetched) {
@@ -203,6 +220,7 @@ async function runSync(): Promise<QuestionSyncResult> {
 
       try {
         if (q.source === "trendyol") await answerTrendyolQuestion(q.externalId, draft.answer);
+        else if (q.source === "hepsiburada") await answerHepsiburadaQuestion(q.externalId, draft.answer);
         await db.updateMarketplaceQuestion(id, {
           answerText: draft.answer,
           status: "answered",
