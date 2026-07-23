@@ -236,6 +236,17 @@ export const ordersRouter = router({
       }),
     ),
   delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteOrder(input.id)),
+  // Sipariş zaman çizgisi: olay defterindeki tüm adımlar (en yeni üstte).
+  events: protectedProcedure
+    .input(z.object({ orderId: z.number() }))
+    .query(({ input }) => db.listOrderEvents(input.orderId)),
+  // Zaman çizgisine elle not ekle (ör. "müşteri aradı, teslimatı erteledi").
+  addNote: protectedProcedure
+    .input(z.object({ orderId: z.number(), note: z.string().min(1).max(500) }))
+    .mutation(async ({ input }) => {
+      await db.logOrderEvent(input.orderId, "note", input.note.trim());
+      return { ok: true };
+    }),
 });
 
 

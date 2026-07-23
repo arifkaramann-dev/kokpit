@@ -638,6 +638,31 @@ export const productMovements = mysqlTable(
 export type ProductMovement = typeof productMovements.$inferSelect;
 
 /**
+ * Sipariş olay defteri (denetim izi): siparişin yaşam döngüsündeki her adım
+ * zaman damgasıyla kaydedilir — oluşturuldu, pazaryerinden senkronlandı, durum
+ * değişti, ödeme alındı, kargoya verildi, not eklendi. "Ne zaman ne oldu"
+ * sorusunun kanıtı; sipariş detayındaki zaman çizgisini besler.
+ */
+export const orderEvents = mysqlTable(
+  "orderEvents",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    orderId: int("orderId").notNull(),
+    // created | synced | status | payment | cargo | note
+    type: varchar("type", { length: 32 }).notNull(),
+    message: varchar("message", { length: 500 }).notNull(),
+    // Opsiyonel yapısal ayrıntı (JSON): örn. {"from":"new","to":"ready"}.
+    meta: text("meta"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  t => [index("orderEvents_orderId_idx").on(t.orderId)],
+);
+
+export type OrderEvent = typeof orderEvents.$inferSelect;
+export type InsertOrderEvent = typeof orderEvents.$inferInsert;
+
+/**
  * Üretim emri kayıtları: ne zaman, hangi üründen kaç adet üretildi.
  * Hammadde düşümü stockMovements'a, mamul girişi productMovements'a işlenir.
  */
