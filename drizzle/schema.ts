@@ -271,6 +271,10 @@ export const customers = mysqlTable(
     email: varchar("email", { length: 320 }),
     address: varchar("address", { length: 512 }),
     city: varchar("city", { length: 128 }),
+    // Fatura/muhasebe bilgileri — cari kartında tutulur, faturaya taşınır.
+    taxOffice: varchar("taxOffice", { length: 128 }), // vergi dairesi
+    taxNumber: varchar("taxNumber", { length: 32 }), // VKN (10 hane) veya TCKN (11 hane)
+    eInvoice: mysqlEnum("eInvoice", ["bilinmiyor", "efatura", "earsiv"]).notNull().default("bilinmiyor"),
     notes: text("notes"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
