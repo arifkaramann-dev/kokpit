@@ -27,7 +27,7 @@ import {
   pushTrendyolProductCards,
   searchTrendyolBrands,
 } from "../trendyolProducts";
-import { pushHepsiburadaStockPrice } from "../hepsiburada";
+import { getHepsiburadaLabelPdf, pushHepsiburadaStockPrice } from "../hepsiburada";
 import {
   hbCatalogSendTestProduct,
   hbCatalogStatus,
@@ -129,10 +129,25 @@ export const ordersRouter = router({
     .mutation(async ({ input }) => {
       const order = await db.getOrder(input.orderId);
       if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "Sipariş bulunamadı" });
+
+      // Hepsiburada: etiket paket numarasından (orderNo = HB-<packageNumber>) çekilir.
+      if (order.channel === "hepsiburada") {
+        const packageNumber = order.orderNo.replace(/^HB-/, "");
+        try {
+          const pdf = await getHepsiburadaLabelPdf(packageNumber);
+          return { pdfBase64: pdf.toString("base64"), fallback: null, message: null };
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Hepsiburada etiketi alınamadı",
+          });
+        }
+      }
+
       if (order.channel !== "trendyol") {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "Resmi kargo etiketi yalnızca Trendyol siparişleri için çekilebilir.",
+          message: "Resmi kargo etiketi yalnızca Trendyol ve Hepsiburada siparişleri için çekilebilir.",
         });
       }
       if (!order.cargoTrackingNumber) {

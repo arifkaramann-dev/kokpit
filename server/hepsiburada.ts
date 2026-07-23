@@ -432,6 +432,62 @@ export async function syncHepsiburadaOrders() {
   return { imported, updated, skipped };
 }
 
+/* ------------------------- Resmi kargo etiketi ------------------------- */
+
+// ZPL etiketini PDF'e çeviren servis (Labelary). 8dpmm ≈ 203dpi, 10×15 cm ≈ 4×6 inç.
+const HB_LABELARY_URL =
+  process.env.LABELARY_URL ?? "https://api.labelary.com/v1/printers/8dpmm/labels/4x6/0/";
+
+/**
+ * Hepsiburada resmi kargo etiketini çeker ve PDF döner. HB etiketi
+ * `GET /packages/merchantid/{id}/packagenumber/{no}/labels` ucundan
+ * `{format:"base64zpl", data:[<base64 ZPL>]}` olarak gelir; base64 çözülüp
+ * ZPL, Labelary ile PDF'e çevrilir (Trendyol ile aynı yöntem).
+ */
+export async function getHepsiburadaLabelPdf(packageNumber: string): Promise<Buffer> {
+  if (!isHepsiburadaConfigured()) {
+    throw new Error("Hepsiburada entegrasyonu yapılandırılmamış.");
+  }
+  if (!packageNumber) throw new Error("Paket numarası yok — sipariş kargoya verildikten sonra tekrar deneyin.");
+
+  const res = await fetch(
+    `${HB_API_BASE}/packages/merchantid/${ENV.hepsiburadaMerchantId}/packagenumber/${encodeURIComponent(packageNumber)}/labels`,
+    {
+      headers: {
+        Authorization: `Basic ${hbBasicAuth(ENV.hepsiburadaPassword)}`,
+        "User-Agent": hbUserAgent(),
+        Accept: "application/json",
+      },
+    },
+  );
+  if (res.status === 401 || res.status === 403) {
+    throw new Error("Hepsiburada API bilgileri reddedildi (yetki hatası).");
+  }
+  if (!res.ok) {
+    const body = (await res.text()).slice(0, 200);
+    throw new Error(`Hepsiburada etiketi alınamadı (${res.status}): ${body}`);
+  }
+  const payload = (await res.json()) as { format?: string; data?: string[] };
+  const entries = payload.data ?? [];
+  if (entries.length === 0) {
+    throw new Error("Hepsiburada etiket içeriği boş döndü (paket henüz kargoya hazır olmayabilir).");
+  }
+  // format "base64zpl" → her parça base64 çözülüp ZPL olarak birleştirilir.
+  const isB64 = (payload.format ?? "").toLowerCase().includes("base64");
+  const zpl = entries.map(e => (isB64 ? Buffer.from(e, "base64").toString("utf8") : e)).join("");
+
+  const pdfRes = await fetch(HB_LABELARY_URL, {
+    method: "POST",
+    headers: { Accept: "application/pdf", "Content-Type": "application/x-www-form-urlencoded" },
+    body: zpl,
+  });
+  if (!pdfRes.ok) {
+    const body = (await pdfRes.text()).slice(0, 200);
+    throw new Error(`Hepsiburada etiketi PDF'e çevrilemedi (${pdfRes.status}): ${body}`);
+  }
+  return Buffer.from(await pdfRes.arrayBuffer());
+}
+
 /* ------------------------- Satıcıya Sor (Soru-Cevap) ------------------------- */
 
 // "Satıcıya Sor" (Ask-to-Seller) API tabanı. Canlıda "-sit" düşer.
