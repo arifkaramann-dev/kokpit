@@ -458,17 +458,12 @@ export async function syncHepsiburadaOrders() {
     imported++;
   }
 
-  // 1) İşlem bekleyen paketler (fulfillment kuyruğu).
-  for (let page = 0; page < MAX_PAGES; page++) {
-    const packages = await fetchPackagesPage(page * PAGE_SIZE, "open");
-    if (packages.length === 0) break;
-    for (const pkg of packages) await processPackage(pkg, false);
-    if (packages.length < PAGE_SIZE) break;
-  }
-
-  // 2) Kargoya verilen paketler → sipariş "Kargoya Hazır"a taşınır. Bu uç
-  //    çekilmezse kargolanan sipariş "open" listesinden düştüğü için panoda
-  //    "Yeni"de kalırdı. /shipped bazı hesaplarda kapalıysa ana senkronu bozmaz.
+  // 1) ÖNCE kargoya verilen paketler → sipariş "Kargoya Hazır"a taşınır. ÖNEMLİ:
+  //    HB'nin "open" (/packages) ucu kargolanan paketi bir süre HÂLÂ "Open" olarak
+  //    döndürüyor; açık döngü önce çalışırsa siparişi `seen`'e "new" olarak ekler ve
+  //    shipped döngüsü "zaten görüldü" deyip ATLAR (sipariş "Yeni"de kalır). Bu yüzden
+  //    kargolanan (doğru/ileri) durum önce işlenir; shouldSyncOrderStatus geri akışı
+  //    zaten engeller. /shipped bazı hesaplarda kapalıysa ana senkronu bozmaz.
   try {
     let shippedSeen = 0;
     for (let page = 0; page < MAX_PAGES; page++) {
@@ -482,6 +477,15 @@ export async function syncHepsiburadaOrders() {
     console.info(`Hepsiburada /shipped: ${shippedSeen} kargolanan paket çekildi.`);
   } catch (err) {
     console.warn("Hepsiburada /shipped senkronu atlandı:", err instanceof Error ? err.message : err);
+  }
+
+  // 2) İşlem bekleyen paketler (fulfillment kuyruğu). Yukarıda "Kargoya Hazır"a
+  //    taşınanlar `seen`'de olduğu için burada tekrar "Yeni"ye çekilmez.
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const packages = await fetchPackagesPage(page * PAGE_SIZE, "open");
+    if (packages.length === 0) break;
+    for (const pkg of packages) await processPackage(pkg, false);
+    if (packages.length < PAGE_SIZE) break;
   }
 
   return { imported, updated, skipped };

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { desiToEdgeCm, extractCityFromAddress, parseGeliverOffers } from "./kargo";
+import { desiToEdgeCm, extractCityFromAddress, extractDistrictFromAddress, parseGeliverOffers, resolveProvince, toIntlPhoneTR } from "./kargo";
 
 describe("kargo — Geliver teklif ayrıştırma", () => {
   it("teklifleri en ucuzdan pahalıya sıralar ve firma adını çıkarır", () => {
@@ -67,5 +67,44 @@ describe("extractCityFromAddress — adres metninden il çıkarma", () => {
     expect(extractCityFromAddress("Sadece sokak ve numara")).toBe("");
     expect(extractCityFromAddress("")).toBe("");
     expect(extractCityFromAddress(null)).toBe("");
+  });
+});
+
+describe("resolveProvince — il adı → resmî ad + plaka kodu (Geliver cityCode)", () => {
+  it("plaka kodunu doğru verir", () => {
+    expect(resolveProvince("İstanbul")).toEqual({ name: "İstanbul", code: "34" });
+    expect(resolveProvince("izmir")).toEqual({ name: "İzmir", code: "35" });
+    expect(resolveProvince("ANKARA")).toEqual({ name: "Ankara", code: "06" });
+    expect(resolveProvince("Adana")).toEqual({ name: "Adana", code: "01" });
+    expect(resolveProvince("Düzce")).toEqual({ name: "Düzce", code: "81" });
+  });
+  it("kısaltmayı çözer, geçersizde null", () => {
+    expect(resolveProvince("Urfa")).toEqual({ name: "Şanlıurfa", code: "63" });
+    expect(resolveProvince("Almanya")).toBeNull();
+    expect(resolveProvince("")).toBeNull();
+  });
+});
+
+describe("extractDistrictFromAddress — adresten ilçe tahmini", () => {
+  it("ilin önündeki anlamlı kelimeyi ilçe alır", () => {
+    expect(extractDistrictFromAddress("Atatürk Mah. 12 Sok. No:5 Kadıköy / İstanbul", "İstanbul")).toBe("Kadıköy");
+    expect(extractDistrictFromAddress("... Nilüfer Bursa", "Bursa")).toBe("Nilüfer");
+  });
+  it("bulunamazsa boş", () => {
+    expect(extractDistrictFromAddress("İstanbul", "İstanbul")).toBe("");
+    expect(extractDistrictFromAddress("", "İstanbul")).toBe("");
+  });
+});
+
+describe("toIntlPhoneTR — TR telefonu +90 biçimine", () => {
+  it("0'lı, 90'lı ve düz 10 haneyi normalize eder", () => {
+    expect(toIntlPhoneTR("0532 123 45 67")).toBe("+905321234567");
+    expect(toIntlPhoneTR("905321234567")).toBe("+905321234567");
+    expect(toIntlPhoneTR("5321234567")).toBe("+905321234567");
+    expect(toIntlPhoneTR("+90 (532) 123-4567")).toBe("+905321234567");
+  });
+  it("boşta boş döner", () => {
+    expect(toIntlPhoneTR("")).toBe("");
+    expect(toIntlPhoneTR(null)).toBe("");
   });
 });

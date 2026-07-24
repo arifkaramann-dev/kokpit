@@ -55,8 +55,9 @@ export function buildShipmentPayload(input: ShipmentInput) {
   };
 }
 
-// 81 il — Geliver "cityName" zorunlu (boşsa E1165 "Şehir bulunamadı"). Sipariş/cari
-// kartında şehir alanı boşsa adres metninden çıkarmak için kullanılır.
+// 81 il — plaka sırasıyla (indeks+1 = plaka kodu). Geliver gönderide hem "cityName"
+// hem "cityCode" (plaka) ister; ikisi eksik/uyumsuzsa "Şehir bulunamadı" (E1165/E1172)
+// döner. Sipariş/cari kartında şehir yoksa adres metninden çıkarmak için de kullanılır.
 const TR_PROVINCES = [
   "Adana", "Adıyaman", "Afyonkarahisar", "Ağrı", "Amasya", "Ankara", "Antalya", "Artvin",
   "Aydın", "Balıkesir", "Bilecik", "Bingöl", "Bitlis", "Bolu", "Burdur", "Bursa", "Çanakkale",
@@ -89,6 +90,9 @@ function foldTr(s: string): string {
     .replace(/ü/g, "u");
 }
 
+// İl adı (normalize) → resmî ad + plaka kodu. extractCity/cityCode ortak kaynağı.
+const PROVINCE_BY_KEY = new Map(TR_PROVINCES.map((name, i) => [foldTr(name).replace(/[^a-z]/g, ""), { name, code: String(i + 1).padStart(2, "0") }]));
+
 /**
  * Adres metninden Türkiye ilini bulur (Geliver'in zorunlu şehir alanı için).
  * İl adı tam kelime olarak aranır (ör. "Van" → "Divan"a takılmaz). Birden çok
@@ -114,6 +118,54 @@ export function extractCityFromAddress(address: string | null | undefined): stri
     }
   }
   return best;
+}
+
+/** İl adından resmî ad + plaka kodunu döner (Geliver cityName+cityCode için). Bulunamazsa null. */
+export function resolveProvince(cityName: string | null | undefined): { name: string; code: string } | null {
+  if (!cityName?.trim()) return null;
+  const key = foldTr(cityName).replace(/[^a-z]/g, "");
+  const direct = PROVINCE_BY_KEY.get(key);
+  if (direct) return direct;
+  const alias = PROVINCE_ALIASES[key];
+  if (alias) return PROVINCE_BY_KEY.get(foldTr(alias).replace(/[^a-z]/g, "")) ?? null;
+  return null;
+}
+
+/**
+ * Adresten ilçe (districtName) tahmini: adres "…İlçe/İl" ya da "…İlçe İl" biçiminde
+ * yazıldığından, ilin hemen ÖNÜNDEKİ anlamlı kelime ilçe kabul edilir (Mah./Sok./
+ * Cad./No gibi ekler atlanır). Bulunamazsa "". (Geliver districtName ister; zayıf
+ * tahmin bile boş göndermekten iyidir, şehir kodu ile birlikte kabul şansını artırır.)
+ */
+export function extractDistrictFromAddress(address: string | null | undefined, cityName: string): string {
+  if (!address?.trim() || !cityName.trim()) return "";
+  const cityKey = foldTr(cityName).replace(/[^a-z]/g, "");
+  // Orijinal kelimeler + normalize eşl
+  const rawWords = address.split(/[\s,./\\-]+/).filter(Boolean);
+  const foldWords = rawWords.map(w => foldTr(w).replace(/[^a-z]/g, ""));
+  const skip = new Set(["mah", "mahalle", "mahallesi", "sok", "sokak", "cad", "cadde", "caddesi", "no", "kat", "daire", "blok", "apt", "sitesi", "site", "bulvar", "bulvari", "cd", "sk"]);
+  const cityIdx = foldWords.lastIndexOf(cityKey);
+  if (cityIdx > 0) {
+    for (let i = cityIdx - 1; i >= 0; i--) {
+      const w = foldWords[i];
+      if (!w || skip.has(w) || /^\d/.test(rawWords[i])) continue;
+      return rawWords[i];
+    }
+  }
+  return "";
+}
+
+/**
+ * Türkiye cep/sabit telefonunu uluslararası biçime çevirir: "+90XXXXXXXXXX".
+ * WhatsApp deep-link ve Geliver alıcı telefonu bu biçimi ister (0532… çözülmez).
+ */
+export function toIntlPhoneTR(phone: string | null | undefined): string {
+  let d = (phone ?? "").replace(/\D/g, "");
+  if (!d) return "";
+  if (d.startsWith("0")) d = d.slice(1);
+  if (d.startsWith("90")) d = d.slice(2);
+  // Kalan 10 hane (5XXXXXXXXX / 2XXXXXXXXX) beklenir; değilse olduğu gibi bırak.
+  return `+90${d}`;
 }
 
 /** Desiden küp kenarı (cm): desi = en×boy×yükseklik / 3000. Saf/testli. */
@@ -223,17 +275,24 @@ async function geliverFetch(path: string, init?: RequestInit): Promise<{ ok: boo
  */
 async function createGeliverShipment(input: ShipmentInput): Promise<ShipmentQuote> {
   const edge = desiToEdgeCm(input.desi ?? 1);
+  // Geliver şehir doğrulaması cityName + cityCode (plaka) ister; ikisi birlikte
+  // gönderilmezse "Şehir bulunamadı" (E1165/E1172) döner. İlçe (districtName) de
+  // beklenir — adresten çıkarılır. Telefon uluslararası (+90) olmalı.
+  const province = resolveProvince(input.city || extractCityFromAddress(input.address));
+  const districtName = input.district?.trim() || extractDistrictFromAddress(input.address, province?.name ?? "");
+  const recipientAddress: Record<string, unknown> = {
+    name: input.recipientName.trim().slice(0, 100) || "Alıcı",
+    phone: toIntlPhoneTR(input.phone),
+    address1: input.address.trim().slice(0, 250),
+    cityName: province?.name ?? input.city?.trim() ?? "",
+    districtName,
+    countryCode: "TR",
+  };
+  if (province?.code) recipientAddress.cityCode = province.code;
   const body: Record<string, unknown> = {
     // Test modunda gerçek etiket satın alınmaz; kurulum doğrulaması içindir.
     test: ENV.geliverTestMode === "1",
-    recipientAddress: {
-      name: input.recipientName.trim().slice(0, 100) || "Alıcı",
-      phone: input.phone.replace(/\D/g, ""),
-      address1: input.address.trim().slice(0, 250),
-      cityName: input.city?.trim() || "",
-      districtName: input.district?.trim() || "",
-      countryCode: "TR",
-    },
+    recipientAddress,
     length: edge,
     width: edge,
     height: edge,

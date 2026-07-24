@@ -50,7 +50,7 @@ import {
 import { notifyOwner } from "../notify";
 import { getPaytrIframeToken, isPaytrConfigured } from "../paytr";
 import { buildInvoicePayload, isEfaturaConfigured, sendInvoice } from "../efatura";
-import { openShipment, buyShipmentOffer, isKargoConfigured, extractCityFromAddress } from "../kargo";
+import { openShipment, buyShipmentOffer, isKargoConfigured, extractCityFromAddress, resolveProvince } from "../kargo";
 import { applyCoupon, findCoupon, parseCoupons } from "@shared/campaigns";
 import { parseBankStatement, reconcile } from "@shared/reconcile";
 import { channelProfitReport } from "../reportUtils";
@@ -420,10 +420,12 @@ export const kargoRouter = router({
         if (!phone) phone = (contact.phone ?? "").trim();
         city = (contact.city ?? "").trim();
       }
-      // Şehir hiçbir kartta yoksa adres metninden çıkar (Geliver "cityName" ister).
+      // Şehir hiçbir kartta yoksa adres metninden çıkar (Geliver "cityName"+"cityCode" ister).
       if (!city) city = extractCityFromAddress(address);
+      // İl adını resmî ada/plakaya çöz — Geliver tanımadığı şehri E1172 ile reddeder.
+      const province = resolveProvince(city);
 
-      // Geliver adres/şehir boşken cryptic hata (E1129/E1165) döner; anlaşılır
+      // Geliver adres/şehir boşken cryptic hata (E1129/E1165/E1172) döner; anlaşılır
       // uyarı verip boşuna API isteği atmayalım.
       if (!address) {
         throw new TRPCError({
@@ -431,10 +433,10 @@ export const kargoRouter = router({
           message: "Bu siparişte teslimat adresi yok ve müşteri kartında da kayıtlı adres bulunamadı. Siparişi (veya müşteri kartını) düzenleyip adres girin, sonra kargo gönderisi oluşturun.",
         });
       }
-      if (!city) {
+      if (!province) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "Gönderi için şehir bulunamadı. Müşteri kartına şehir (il) ekleyin ya da teslimat adresine il adını yazın, sonra tekrar deneyin.",
+          message: "Gönderi için geçerli bir il bulunamadı. Müşteri kartına il (ör. İstanbul) ekleyin ya da teslimat adresinin sonuna il adını yazın, sonra tekrar deneyin.",
         });
       }
       return openShipment({
@@ -442,7 +444,7 @@ export const kargoRouter = router({
         recipientName: order.customerName,
         phone,
         address,
-        city,
+        city: province.name,
         desi: input.desi,
       });
     }),
