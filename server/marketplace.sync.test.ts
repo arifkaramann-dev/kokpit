@@ -149,4 +149,21 @@ describe("mapHbPackage (Hepsiburada paket → sipariş; canlıda /packages ucu)"
   it("iptal paketini içe aktarmaz", () => {
     expect(mapHbPackage({ ...pkg, status: "Cancelled" })).toBeNull();
   });
+
+  it("/shipped ucunun PascalCase kaydını da eşler; kimlik = PackageNumber", () => {
+    // Canlı /shipped yanıtından gerçek kayıt (PascalCase, kalem yok).
+    const shipped = {
+      Id: "6a610464-221a-5791-21b3-628d06060606",
+      Barcode: "62754981315696",
+      PackageNumber: "5498131569",
+      OrderNumber: "4621478905",
+      OrderNumbers: ["4621478905"],
+      ShippedDate: "2026-07-23T14:57:06",
+      Deci: 1,
+    };
+    const order = mapHbPackage(shipped as never);
+    expect(order).not.toBeNull();
+    // Kayıtlı sipariş no PackageNumber'a göre; OrderNumber'a (4621…) DEĞİL.
+    expect(order!.orderNo).toBe("HB-5498131569");
+  });
 });

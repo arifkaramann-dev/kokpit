@@ -183,22 +183,29 @@ type HbPackageItemRaw = {
   totalPrice?: { amount?: number } | number;
   orderNumber?: string | number;
 };
-// /packages (açık) ve /packages/.../shipped (kargolanan) uçları alan adlarında
-// küçük farklar gösterebildiği için tüm kimlik/kalem/statü alanları savunmacı
-// okunur (aksi halde /shipped paketi kimlik çıkaramayıp sessizce boş kalır → sipariş
-// "Yeni"de takılır).
+// ÖNEMLİ: /packages (açık) ucu **camelCase**, /packages/.../shipped (kargolanan) ucu
+// **PascalCase** alan adı döndürür (ör. shipped: {Id, PackageNumber, OrderNumber,
+// Barcode, ShippedDate, Deci}). Ayrıca shipped kaydı kalem/statü/müşteri TAŞIMAZ.
+// Bu yüzden tüm alanlar iki biçimde de okunur; yoksa /shipped paketi kimlik
+// çıkaramaz, mapHbPackage null döner ve sipariş "Yeni"de takılır.
 type HbPackageRaw = {
   packageNumber?: string | number;
+  PackageNumber?: string | number;
   packageId?: string | number;
   id?: string | number;
+  Id?: string | number;
   number?: string | number;
   orderNumber?: string | number;
+  OrderNumber?: string | number;
   orderId?: string | number;
   status?: string;
+  Status?: string;
   packageStatus?: string;
   shipmentStatus?: string;
   customerName?: string;
+  CustomerName?: string;
   recipientName?: string;
+  RecipientName?: string;
   shippingAddress?: { name?: string };
   totalPrice?: { amount?: number } | number;
   items?: HbPackageItemRaw[];
@@ -207,11 +214,16 @@ type HbPackageRaw = {
   lineItems?: HbPackageItemRaw[];
 };
 
-/** Paket kimliği: kayıtlı sipariş no HB-<packageNumber> olduğundan önce paket no denenir. */
+/**
+ * Paket kimliği: kayıtlı sipariş no `HB-<packageNumber>` olduğundan önce PAKET NO
+ * denenir (HB sipariş numarası — OrderNumber — farklıdır, onunla eşleşmez). Hem
+ * camelCase (açık uç) hem PascalCase (shipped uç) okunur.
+ */
 function hbPackageId(pkg: HbPackageRaw): string | undefined {
   const lines = pkg.items ?? pkg.lines ?? pkg.details ?? pkg.lineItems ?? [];
   const raw =
-    pkg.packageNumber ?? pkg.packageId ?? pkg.id ?? pkg.number ?? pkg.orderNumber ?? pkg.orderId ?? lines[0]?.orderNumber;
+    pkg.packageNumber ?? pkg.PackageNumber ?? pkg.packageId ?? pkg.id ?? pkg.Id ?? pkg.number ??
+    pkg.orderNumber ?? pkg.OrderNumber ?? pkg.orderId ?? lines[0]?.orderNumber;
   return raw != null && raw !== "" ? String(raw) : undefined;
 }
 
@@ -220,8 +232,8 @@ function packageToOrderRaw(pkg: HbPackageRaw): HbOrderRaw {
   const lines = pkg.items ?? pkg.lines ?? pkg.details ?? pkg.lineItems ?? [];
   return {
     orderNumber: hbPackageId(pkg),
-    status: pkg.status ?? pkg.packageStatus ?? pkg.shipmentStatus,
-    customerName: pkg.customerName ?? pkg.recipientName ?? pkg.shippingAddress?.name,
+    status: pkg.status ?? pkg.Status ?? pkg.packageStatus ?? pkg.shipmentStatus,
+    customerName: pkg.customerName ?? pkg.CustomerName ?? pkg.recipientName ?? pkg.RecipientName ?? pkg.shippingAddress?.name,
     totalPrice: pkg.totalPrice,
     items: lines.map(i => ({
       productName: i.productName ?? i.name,
@@ -473,6 +485,13 @@ export async function syncHepsiburadaOrders() {
       } else {
         skipped++;
       }
+      return;
+    }
+
+    // /shipped kaydı kalem/tutar/müşteri taşımaz; yerelde eşi yoksa boş bir sipariş
+    // yaratmak yerine atla (bu sipariş açık uçtan/paid senkronundan zaten gelir).
+    if (shipped && mapped.items.length === 0) {
+      skipped++;
       return;
     }
 

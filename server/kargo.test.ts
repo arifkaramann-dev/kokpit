@@ -35,6 +35,14 @@ describe("kargo — Geliver teklif ayrıştırma", () => {
     expect(parseGeliverOffers({})).toEqual([]);
   });
 
+  it("nesne biçimli teklifleri de çözer (list ve cheapest/fastest)", () => {
+    // {list:[…]} sarmalı
+    expect(parseGeliverOffers({ list: [{ id: "a", amount: 50 }] }).map(o => o.id)).toEqual(["a"]);
+    // {cheapest,…} tekil teklif nesnesi
+    const byObj = parseGeliverOffers({ cheapest: { id: "c", amount: 40 }, fastest: { id: "f", amount: 90 } });
+    expect(byObj.map(o => o.id)).toEqual(["c", "f"]);
+  });
+
   it("desiToEdgeCm: desi×3000'ün küp kökü, en az 1", () => {
     expect(Number(desiToEdgeCm(1))).toBeCloseTo(14.4, 1);
     expect(Number(desiToEdgeCm(0))).toBeGreaterThanOrEqual(1);
