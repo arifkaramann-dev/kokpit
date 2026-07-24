@@ -584,6 +584,12 @@ export async function fetchHepsiburadaQuestions(): Promise<MappedHbQuestion[]> {
  * Bir Hepsiburada sorusunu cevaplar (issue number ile). Metin + isteğe bağlı
  * dosya (bizde yalnız metin). 1 iş günü içinde cevaplanmayan sorular AutoClosed
  * olur ve HB reddeder — o durumda hata fırlatılır, kuyrukta taslak kalır.
+ *
+ * Gövde alanı **camelCase `answer`** olmalı: HB'nin diğer JSON uçları (Listing
+ * price/stock) de camelCase kullanır. PascalCase `Answer` gönderilince alan
+ * bağlanmaz ve "Answer: Bu alan geçersizdir" (422/4220) döner. Bazı hesaplarda
+ * uç dosya eki için `multipart/form-data` beklediğinden 400/422'de form-data ile
+ * yeniden denenir (kendi kendini onaran iki aşamalı gönderim).
  */
 export async function answerHepsiburadaQuestion(issueNumber: string | number, text: string): Promise<void> {
   if (!isHepsiburadaConfigured()) {
@@ -592,19 +598,36 @@ export async function answerHepsiburadaQuestion(issueNumber: string | number, te
   const body = text.trim().slice(0, 2000);
   if (!body) throw new Error("Boş Hepsiburada cevabı gönderilemez.");
 
-  const res = await fetch(
-    `${HB_ASKTOSELLER_BASE}/api/v1.0/issues/${encodeURIComponent(String(issueNumber))}/answer`,
-    {
-      method: "POST",
-      headers: hbAskHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ Answer: body, Files: [] }),
-    },
-  );
-  if (res.status === 401 || res.status === 403) {
+  const url = `${HB_ASKTOSELLER_BASE}/api/v1.0/issues/${encodeURIComponent(String(issueNumber))}/answer`;
+
+  // 1) camelCase JSON denemesi (HB'nin standart JSON biçimi).
+  const jsonRes = await fetch(url, {
+    method: "POST",
+    headers: hbAskHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ answer: body }),
+  });
+  if (jsonRes.ok) return;
+  if (jsonRes.status === 401 || jsonRes.status === 403) {
     throw new Error("Hepsiburada Soru-Cevap API yetki hatası.");
   }
-  if (!res.ok) {
-    const errBody = (await res.text()).slice(0, 300);
-    throw new Error(`Hepsiburada cevap gönderimi başarısız (${res.status}): ${errBody}`);
+  const jsonErr = (await jsonRes.text()).slice(0, 300);
+
+  // 2) 400/422 (doğrulama) → uç muhtemelen multipart/form-data bekliyor; `answer`
+  //    form alanı olarak yeniden dene. Content-Type verilmez ki fetch boundary'yi
+  //    kendisi eklesin.
+  if (jsonRes.status === 400 || jsonRes.status === 422) {
+    const form = new FormData();
+    form.append("answer", body);
+    const formRes = await fetch(url, { method: "POST", headers: hbAskHeaders(), body: form });
+    if (formRes.ok) return;
+    if (formRes.status === 401 || formRes.status === 403) {
+      throw new Error("Hepsiburada Soru-Cevap API yetki hatası.");
+    }
+    const formErr = (await formRes.text()).slice(0, 300);
+    throw new Error(
+      `Hepsiburada cevap gönderimi başarısız — JSON (${jsonRes.status}): ${jsonErr} · form-data (${formRes.status}): ${formErr}`,
+    );
   }
+
+  throw new Error(`Hepsiburada cevap gönderimi başarısız (${jsonRes.status}): ${jsonErr}`);
 }
