@@ -105,12 +105,20 @@ function num(v: string): number {
   return parseFloat(v) || 0;
 }
 
+/** TR telefonu WhatsApp'ın beklediği uluslararası biçime çevirir: "905XXXXXXXXX". */
+function waPhone(raw: string | null | undefined): string {
+  let d = (raw ?? "").replace(/\D/g, "");
+  if (d.startsWith("0")) d = d.slice(1);
+  if (!d.startsWith("90")) d = `90${d}`;
+  return d;
+}
+
 function waLink(order: OrderRow): string {
-  // whatsapp:// şeması cihazda YÜKLÜ WhatsApp uygulamasını açar — patron WhatsApp
-  // Business kullandığı için (masaüstü/mobil) tarayıcıdaki WhatsApp Web yerine
-  // doğrudan uygulama açılır. (Not: link seviyesinde "Business"ı kişiselden ayıran
-  // resmî bir yol yok; OS yüklü olan uygulamayı açar.)
-  return `whatsapp://send?phone=${(order.customerPhone ?? "").replace(/\D/g, "")}&text=${encodeURIComponent(
+  // whatsapp:// şeması cihazda YÜKLÜ WhatsApp uygulamasını açar (WhatsApp Business
+  // dahil). Numara ULUSLARARASI olmalı (905XXXXXXXXX) — "0532…" gönderilirse
+  // uygulama sohbeti açamaz, ana ekranda kalır. (Link seviyesinde "Business"ı
+  // kişiselden ayıran resmî yol yok; OS yüklü olan uygulamayı açar.)
+  return `whatsapp://send?phone=${waPhone(order.customerPhone)}&text=${encodeURIComponent(
     `Merhaba ${order.customerName}, ${order.orderNo} numaralı siparişiniz hakkında bilgi vermek istedik.`,
   )}`;
 }
