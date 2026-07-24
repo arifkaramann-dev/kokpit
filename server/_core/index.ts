@@ -9,6 +9,7 @@ import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { registerImageRoutes } from "../images";
 import { startScheduler } from "../scheduler";
+import { startWhatsappBridge } from "../whatsapp";
 import { refreshMarketplaceCredentials } from "../marketplaceCredentials";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -84,6 +85,9 @@ async function startServer() {
     console.log(`Server running on http://localhost:${port}/`);
     // Faz 1 zamanlayıcısı: oto-senkron + stok nöbetçisi + sabah brifingi.
     startScheduler();
+    // WhatsApp bağlı-cihaz köprüsü (WHATSAPP_ENABLED=1 ise): gelen mesaj → asistan
+    // beyni → taslak sipariş + onay. Kapalıysa/hatada sessiz; sunucuyu düşürmez.
+    void startWhatsappBridge();
   });
 }
 
