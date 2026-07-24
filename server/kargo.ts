@@ -55,6 +55,67 @@ export function buildShipmentPayload(input: ShipmentInput) {
   };
 }
 
+// 81 il — Geliver "cityName" zorunlu (boşsa E1165 "Şehir bulunamadı"). Sipariş/cari
+// kartında şehir alanı boşsa adres metninden çıkarmak için kullanılır.
+const TR_PROVINCES = [
+  "Adana", "Adıyaman", "Afyonkarahisar", "Ağrı", "Amasya", "Ankara", "Antalya", "Artvin",
+  "Aydın", "Balıkesir", "Bilecik", "Bingöl", "Bitlis", "Bolu", "Burdur", "Bursa", "Çanakkale",
+  "Çankırı", "Çorum", "Denizli", "Diyarbakır", "Edirne", "Elazığ", "Erzincan", "Erzurum",
+  "Eskişehir", "Gaziantep", "Giresun", "Gümüşhane", "Hakkari", "Hatay", "Isparta", "Mersin",
+  "İstanbul", "İzmir", "Kars", "Kastamonu", "Kayseri", "Kırklareli", "Kırşehir", "Kocaeli",
+  "Konya", "Kütahya", "Malatya", "Manisa", "Kahramanmaraş", "Mardin", "Muğla", "Muş", "Nevşehir",
+  "Niğde", "Ordu", "Rize", "Sakarya", "Samsun", "Siirt", "Sinop", "Sivas", "Tekirdağ", "Tokat",
+  "Trabzon", "Tunceli", "Şanlıurfa", "Uşak", "Van", "Yozgat", "Zonguldak", "Aksaray", "Bayburt",
+  "Karaman", "Kırıkkale", "Batman", "Şırnak", "Bartın", "Ardahan", "Iğdır", "Yalova", "Karabük",
+  "Kilis", "Osmaniye", "Düzce",
+];
+// Adreslerde sık geçen kısaltmalar/eski adlar → resmî il adı.
+const PROVINCE_ALIASES: Record<string, string> = {
+  afyon: "Afyonkarahisar", icel: "Mersin", maras: "Kahramanmaraş",
+  kmaras: "Kahramanmaraş", urfa: "Şanlıurfa", surfa: "Şanlıurfa",
+};
+
+/** Türkçe harfleri ASCII'ye katlar (İ/ı→i, ş→s, ...) — karşılaştırma için. */
+function foldTr(s: string): string {
+  return s
+    .replace(/İ/g, "i")
+    .replace(/I/g, "i")
+    .replace(/ı/g, "i")
+    .toLowerCase()
+    .replace(/ş/g, "s")
+    .replace(/ğ/g, "g")
+    .replace(/ç/g, "c")
+    .replace(/ö/g, "o")
+    .replace(/ü/g, "u");
+}
+
+/**
+ * Adres metninden Türkiye ilini bulur (Geliver'in zorunlu şehir alanı için).
+ * İl adı tam kelime olarak aranır (ör. "Van" → "Divan"a takılmaz). Birden çok
+ * il geçerse metnin SONUNDAKİ seçilir (adreste il genelde en sonda yazılır).
+ * Bulunamazsa "".
+ */
+export function extractCityFromAddress(address: string | null | undefined): string {
+  if (!address?.trim()) return "";
+  const folded = ` ${foldTr(address).replace(/[^a-z]+/g, " ")} `;
+  let best = "";
+  let bestPos = -1;
+  for (const prov of TR_PROVINCES) {
+    const token = foldTr(prov).replace(/[^a-z]/g, "");
+    const pos = folded.lastIndexOf(` ${token} `);
+    if (pos > bestPos) {
+      bestPos = pos;
+      best = prov;
+    }
+  }
+  if (!best) {
+    for (const [alias, canon] of Object.entries(PROVINCE_ALIASES)) {
+      if (folded.includes(` ${alias} `)) return canon;
+    }
+  }
+  return best;
+}
+
 /** Desiden küp kenarı (cm): desi = en×boy×yükseklik / 3000. Saf/testli. */
 export function desiToEdgeCm(desi: number): string {
   const d = desi > 0 ? desi : 1;

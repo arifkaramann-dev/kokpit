@@ -50,7 +50,7 @@ import {
 import { notifyOwner } from "../notify";
 import { getPaytrIframeToken, isPaytrConfigured } from "../paytr";
 import { buildInvoicePayload, isEfaturaConfigured, sendInvoice } from "../efatura";
-import { openShipment, buyShipmentOffer, isKargoConfigured } from "../kargo";
+import { openShipment, buyShipmentOffer, isKargoConfigured, extractCityFromAddress } from "../kargo";
 import { applyCoupon, findCoupon, parseCoupons } from "@shared/campaigns";
 import { parseBankStatement, reconcile } from "@shared/reconcile";
 import { channelProfitReport } from "../reportUtils";
@@ -409,25 +409,32 @@ export const kargoRouter = router({
     .mutation(async ({ input }) => {
       const order = await db.getOrder(input.orderId);
       if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "Sipariş bulunamadı" });
-      // Adres/telefon siparişte yoksa kayıtlı cari kartından tamamla (eski
-      // siparişlerde adres boş kalmış olabilir; müşterinin adresi CRM'de duruyor).
+      // Adres/telefon/şehir siparişte yoksa kayıtlı cari kartından tamamla (eski
+      // siparişlerde boş kalmış olabilir; müşterinin bilgisi CRM'de duruyor).
       let address = (order.customerAddress ?? "").trim();
       let phone = (order.customerPhone ?? "").trim();
-      let city: string | undefined;
-      if (!address || !phone) {
-        const contact = await db.getCustomerById(order.customerId);
-        if (contact) {
-          if (!address) address = (contact.address ?? "").trim();
-          if (!phone) phone = (contact.phone ?? "").trim();
-          city = contact.city ?? undefined;
-        }
+      let city = "";
+      const contact = await db.getCustomerById(order.customerId);
+      if (contact) {
+        if (!address) address = (contact.address ?? "").trim();
+        if (!phone) phone = (contact.phone ?? "").trim();
+        city = (contact.city ?? "").trim();
       }
-      // Geliver adres boşken "E1129 Adres boş" (400) döner; anlaşılır uyarı verip
-      // boşuna API isteği atmayalım.
+      // Şehir hiçbir kartta yoksa adres metninden çıkar (Geliver "cityName" ister).
+      if (!city) city = extractCityFromAddress(address);
+
+      // Geliver adres/şehir boşken cryptic hata (E1129/E1165) döner; anlaşılır
+      // uyarı verip boşuna API isteği atmayalım.
       if (!address) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "Bu siparişte teslimat adresi yok ve müşteri kartında da kayıtlı adres bulunamadı. Siparişi (veya müşteri kartını) düzenleyip adres girin, sonra kargo gönderisi oluşturun.",
+        });
+      }
+      if (!city) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Gönderi için şehir bulunamadı. Müşteri kartına şehir (il) ekleyin ya da teslimat adresine il adını yazın, sonra tekrar deneyin.",
         });
       }
       return openShipment({
