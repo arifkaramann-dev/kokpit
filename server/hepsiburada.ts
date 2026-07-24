@@ -1,7 +1,7 @@
 import { ENV } from "./_core/env";
 import * as db from "./db";
 import { zplToPdf } from "./labelary";
-import { itemsTotal, shouldSyncOrderStatus, summarizeItems, toItemRows, type OrderItemLike } from "./orderUtils";
+import { classifyMarketplaceStatus, itemsTotal, shouldSyncOrderStatus, summarizeItems, toItemRows, type OrderItemLike } from "./orderUtils";
 
 /**
  * Hepsiburada OMS (Sipariş Yönetim Sistemi) entegrasyonu.
@@ -58,20 +58,30 @@ type HbOrdersResponse = {
   totalCount?: number;
 };
 
-/** Hepsiburada durumu → pano sütunu. `null` içe aktarılmaz. */
+/**
+ * Hepsiburada durumu → pano sütunu. `null` içe aktarılmaz. Bu liste bilinen
+ * kodları kesinleştirir; listede olmayan/yeni bir kod gelirse
+ * classifyMarketplaceStatus anahtar kelimeyle sınıflandırır (ör. kargo → hazır).
+ */
 const STATUS_MAP: Record<string, "new" | "production" | "ready" | "done" | null> = {
   Open: "new",
   New: "new",
   Picking: "new",
+  Packaging: "new",
   ReadyToShip: "ready",
   Packaged: "ready",
   Shipped: "ready",
   InTransit: "ready",
+  CargoInProgress: "ready",
   Delivered: "done",
   Completed: "done",
   Cancelled: null,
   Canceled: null,
+  CancelledByCustomer: null,
+  CancelledByMerchant: null,
+  CancelledBySap: null,
   Returned: null,
+  Claim: null,
   UnPacked: "new",
 };
 
@@ -97,7 +107,7 @@ export type MappedOrder = {
 /** Bir Hepsiburada siparişini yerel kayda çevirir; içe aktarılmayacaksa null. */
 export function mapHbOrder(raw: HbOrderRaw): MappedOrder | null {
   const rawStatus = raw.status ?? "New";
-  const status = rawStatus in STATUS_MAP ? STATUS_MAP[rawStatus] : "new";
+  const status = classifyMarketplaceStatus(rawStatus, STATUS_MAP);
   if (status === null) return null;
 
   const orderNumber = raw.orderNumber ?? raw.orderId ?? raw.id;

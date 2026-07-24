@@ -1,6 +1,6 @@
 import { ENV } from "./_core/env";
 import * as db from "./db";
-import { itemsTotal, shouldSyncOrderStatus, summarizeItems, toItemRows, type OrderItemLike } from "./orderUtils";
+import { classifyMarketplaceStatus, itemsTotal, shouldSyncOrderStatus, summarizeItems, toItemRows, type OrderItemLike } from "./orderUtils";
 
 /**
  * Çiçeksepeti REST API entegrasyonu (sipariş çekme + stok/fiyat gönderme).
@@ -84,7 +84,7 @@ export type MappedOrder = {
 /** Bir Çiçeksepeti siparişini yerel kayda çevirir; içe aktarılmayacaksa null. */
 export function mapCsOrder(raw: CsOrderRaw): MappedOrder | null {
   const rawStatus = raw.status ?? raw.orderStatus ?? "New";
-  const status = rawStatus in STATUS_MAP ? STATUS_MAP[rawStatus] : "new";
+  const status = classifyMarketplaceStatus(rawStatus, STATUS_MAP);
   if (status === null) return null;
 
   const orderNumber = raw.orderNumber ?? raw.orderId ?? raw.id;

@@ -96,6 +96,60 @@ export function findOpenOrderForCollection<T extends CollectionOrderLike>(
 
 /* ------------------- Pazaryeri senkronu — durum akışı ------------------- */
 
+export type SyncStatus = "new" | "production" | "ready" | "done";
+
+/**
+ * Ham durumu karşılaştırma için ASCII'ye indirger: küçük harf (ASCII-doğru — "I"→"i"),
+ * Türkçe harfleri (ı/ş/ğ/ç/ü/ö/İ) ASCII karşılığına katlar, boşluk/tire/alt çizgi atar.
+ * tr-TR locale'i "SHIPPED" gibi ASCII kodları "shıpped" yapıp bozduğu için kullanılmaz.
+ */
+function normalizeStatus(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "") // aksan / birleşik nokta (İ→i̇→i)
+    .replace(/ı/g, "i") // dotless ı → i
+    .replace(/[\s._-]/g, "");
+}
+
+// Bilinmeyen bir durum kodu geldiğinde anlamına göre sınıflandıran anahtar kelimeler
+// (hepsi ASCII — metin normalizeStatus ile ASCII'ye katlanmış olarak gelir).
+// Sıra önemli: önce iptal/iade (ör. "undelivered" hem "deliver" hem iptal içerir),
+// sonra teslim, sonra kargo/sevk. Hiçbiri tutmazsa "new" (açık/hazırlanıyor) varsayılır.
+const CANCEL_TOKENS = [
+  "cancel", "iptal", "iade", "return", "reject", "claim",
+  "unsupplied", "undelivered", "refund", "basarisiz", "tedarikedilemedi",
+];
+const DONE_TOKENS = ["deliver", "teslim", "complete", "tamamlan"];
+const READY_TOKENS = [
+  "kargo", "cargo", "ship", "sevk", "transit", "yolda",
+  "gonderi", "collection", "dagitim",
+];
+
+/**
+ * Ham pazaryeri durumunu pano sütununa çevirir. Önce marka özel eşleme (harf/boşluk
+ * duyarsız) denenir; kod bulunamazsa anahtar kelimeyle sınıflandırılır. Bu sayede
+ * pazaryeri beklenmedik ya da yeni bir durum kodu gönderdiğinde sipariş sessizce
+ * "Yeni"de takılıp kalmaz (ör. kargolanan sipariş → "Kargoya Hazır"). `null` =
+ * içe alınmaz / iptal-iade.
+ */
+export function classifyMarketplaceStatus(
+  rawStatus: string,
+  explicitMap: Record<string, SyncStatus | null>,
+): SyncStatus | null {
+  const norm = normalizeStatus(rawStatus);
+  // 1) Marka özel eşleme — anahtarlar da normalleştirilerek karşılaştırılır.
+  for (const [key, value] of Object.entries(explicitMap)) {
+    if (normalizeStatus(key) === norm) return value;
+  }
+  // 2) Anlamlı anahtar kelime sınıflandırması (bilinmeyen kod için güvenli varsayım).
+  if (CANCEL_TOKENS.some(t => norm.includes(t))) return null;
+  if (DONE_TOKENS.some(t => norm.includes(t))) return "done";
+  if (READY_TOKENS.some(t => norm.includes(t))) return "ready";
+  return "new";
+}
+
 const STATUS_RANK: Record<string, number> = { new: 0, production: 1, ready: 2, done: 3 };
 
 /**
