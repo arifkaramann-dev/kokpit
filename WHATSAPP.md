@@ -26,9 +26,12 @@ buradan yapılabilir. Müşteri bu sohbeti görmez.
    - `ANTHROPIC_API_KEY=` (asistan beyni için; yoksa basit intent akışına düşer)
    - `WHATSAPP_AUTH_DIR=/data/wa-auth` (kalıcı disk kullanacaksan)
    - `WHATSAPP_CONTROL_JID=` (boş bırak → "kendine mesaj" kontrol yüzeyi olur)
-2. **Deploy** et. Servis loglarını aç (Render → Logs). Bir **QR kodu** basılacak.
-3. Telefonunda: **WhatsApp > Ayarlar > Bağlı Cihazlar > Cihaz Bağla** → logdaki QR'ı okut.
-4. Log `"[whatsapp] bağlandı ✔"` dediğinde hazırdır. Kendine bir komut yazıp dene.
+2. **Deploy** et (env değişikliği otomatik başlatır).
+3. **QR'ı tarayıcıdan okut** (kolay yol): Kokpit'e giriş yaptıktan sonra
+   **`https://<siten>/api/whatsapp/qr`** adresini aç. Temiz bir QR sayfası çıkar
+   ve bağlanınca kendini yeniler. (Alternatif: Render → Logs'taki ASCII QR.)
+4. Telefonunda: **WhatsApp > Ayarlar > Bağlı Cihazlar > Cihaz Bağla** → QR'ı okut.
+5. Sayfa **"Bağlandı ✔"** dediğinde hazırdır. Kendine bir komut yazıp dene.
 
 ## Kalıcılık (önemli)
 

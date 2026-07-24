@@ -107,6 +107,23 @@ export function getWhatsappBridgeState(): { enabled: boolean; connected: boolean
   return { enabled: readWaConfig().enabled, connected, hasQr: latestQr != null };
 }
 
+/**
+ * Tarayıcıda okutulabilir QR görünümü: bağlıysa svg yok, bekliyorsa güncel QR'ı
+ * SVG olarak üretir. Render loglarındaki ASCII QR yerine korumalı bir endpoint'ten
+ * (bkz. /api/whatsapp/qr) temiz okutmak için.
+ */
+export async function getWhatsappQrView(): Promise<{ enabled: boolean; connected: boolean; svg: string | null }> {
+  const enabled = readWaConfig().enabled;
+  if (!latestQr || connected) return { enabled, connected, svg: null };
+  try {
+    const qrcode = await import("qrcode");
+    const svg = await qrcode.toString(latestQr, { type: "svg", margin: 1, width: 320 });
+    return { enabled, connected, svg };
+  } catch {
+    return { enabled, connected, svg: null };
+  }
+}
+
 // Baileys'in beklediği pino-benzeri asgari sessiz logger (ekstra bağımlılık yok).
 const silentLogger: any = {
   level: "silent",
