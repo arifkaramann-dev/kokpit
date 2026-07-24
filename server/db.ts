@@ -50,6 +50,7 @@ import {
   stockMovements,
   suppliers,
   users,
+  whatsappAuth,
 } from "../drizzle/schema";
 import { resolveProductIdForItem } from "./orderUtils";
 import { isTokenRevoked } from "./authUtils";
@@ -2245,6 +2246,36 @@ export async function setSettings(entries: Record<string, string>) {
       .onDuplicateKeyUpdate({ set: { value } });
   }
   return { saved: Object.keys(entries).length };
+}
+
+/* --------------------- WhatsApp köprüsü oturum saklama --------------------- */
+/* Baileys auth state'i (creds + signal anahtarları) DB'de tutulur; Render'ın
+ * geçici diski sıfırlansa bile oturum kalıcı olur. Bkz. server/whatsapp.ts. */
+
+export async function getWhatsappAuth(names: string[]): Promise<Record<string, string>> {
+  if (names.length === 0) return {};
+  const db = await requireDb();
+  const rows = await db.select().from(whatsappAuth).where(inArray(whatsappAuth.name, names));
+  const out: Record<string, string> = {};
+  for (const r of rows) out[r.name] = r.data;
+  return out;
+}
+
+export async function setWhatsappAuth(name: string, data: string): Promise<void> {
+  const db = await requireDb();
+  await db.insert(whatsappAuth).values({ name, data }).onDuplicateKeyUpdate({ set: { data } });
+}
+
+export async function deleteWhatsappAuth(names: string[]): Promise<void> {
+  if (names.length === 0) return;
+  const db = await requireDb();
+  await db.delete(whatsappAuth).where(inArray(whatsappAuth.name, names));
+}
+
+/** Tüm WhatsApp oturumunu siler (çıkış yapıldığında; sonraki başlangıçta yeni QR). */
+export async function clearWhatsappAuth(): Promise<void> {
+  const db = await requireDb();
+  await db.delete(whatsappAuth);
 }
 
 /** Fatura numarası sayacını 1 artırır ve yeni değeri döner (atomik değil; tek kullanıcı içindir). */

@@ -774,6 +774,21 @@ export const settings = mysqlTable("settings", {
 export type Setting = typeof settings.$inferSelect;
 
 /**
+ * WhatsApp bağlı-cihaz köprüsünün oturum (giriş) durumu. Baileys'in dosya tabanlı
+ * auth state'i yerine buraya yazılır ki Render'ın geçici diski sıfırlansa bile
+ * QR bir kez okutulsun — restart/uyku sonrası oturum DB'den geri yüklenir.
+ * name: "creds" veya "<tür>-<id>" (pre-key, session, app-state-sync-key vb.).
+ * data: BufferJSON ile serileştirilmiş JSON.
+ */
+export const whatsappAuth = mysqlTable("whatsappAuth", {
+  name: varchar("name", { length: 191 }).primaryKey(),
+  data: text("data").notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type WhatsappAuthRow = typeof whatsappAuth.$inferSelect;
+
+/**
  * Pazaryeri/müşteri soru-cevap kuyruğu (Helpdesk). Trendyol/HB/N11/Çiçeksepeti
  * soruları + WhatsApp/e-posta soruları tek kuyrukta toplanır; AI cevap taslağı
  * üretilir, onaylanınca yanıtlanmış işaretlenir. Soru çekme canlıda pazaryeri

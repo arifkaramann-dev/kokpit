@@ -1,4 +1,5 @@
 import { runAssistant } from "./assistantAgent";
+import * as db from "./db";
 
 /**
  * WhatsApp bağlı-cihaz köprüsü (Baileys — resmi olmayan WhatsApp Web istemcisi).
@@ -99,6 +100,7 @@ export function extractMessageText(message: any): string | null {
 /* ------------------------------ Çalışma zamanı ------------------------------ */
 
 let started = false;
+let guardInstalled = false;
 let latestQr: string | null = null;
 let connected = false;
 
@@ -124,6 +126,60 @@ export async function getWhatsappQrView(): Promise<{ enabled: boolean; connected
   }
 }
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/**
+ * Baileys auth state'ini DB'de saklayan adaptör (useMultiFileAuthState'in DB
+ * karşılığı). Render'ın geçici diski sıfırlansa bile oturum kalıcı olur —
+ * QR bir kez okutulur. name="creds" + signal anahtarları ("<tür>-<id>").
+ */
+async function useDbAuthState(baileys: any): Promise<{ state: any; saveCreds: () => Promise<void> }> {
+  const { initAuthCreds, BufferJSON, proto } = baileys;
+  const keyName = (type: string, id: string) => `${type}-${id}`;
+
+  const write = (name: string, value: any) => db.setWhatsappAuth(name, JSON.stringify(value, BufferJSON.replacer));
+  const readCreds = async () => {
+    const rows = await db.getWhatsappAuth(["creds"]);
+    return rows["creds"] ? JSON.parse(rows["creds"], BufferJSON.reviver) : null;
+  };
+
+  const creds = (await readCreds()) || initAuthCreds();
+
+  return {
+    state: {
+      creds,
+      keys: {
+        get: async (type: string, ids: string[]) => {
+          const names = ids.map(id => keyName(type, id));
+          const rows = await db.getWhatsappAuth(names);
+          const data: Record<string, any> = {};
+          ids.forEach((id, i) => {
+            let value = rows[names[i]] ? JSON.parse(rows[names[i]], BufferJSON.reviver) : null;
+            if (type === "app-state-sync-key" && value) value = proto.Message.AppStateSyncKeyData.fromObject(value);
+            if (value) data[id] = value;
+          });
+          return data;
+        },
+        set: async (data: Record<string, Record<string, any>>) => {
+          const jobs: Promise<void>[] = [];
+          const toDelete: string[] = [];
+          for (const type in data) {
+            for (const id in data[type]) {
+              const value = data[type][id];
+              const name = keyName(type, id);
+              if (value) jobs.push(write(name, value));
+              else toDelete.push(name);
+            }
+          }
+          if (toDelete.length) jobs.push(db.deleteWhatsappAuth(toDelete));
+          await Promise.all(jobs);
+        },
+      },
+    },
+    saveCreds: () => write("creds", creds),
+  };
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
 // Baileys'in beklediği pino-benzeri asgari sessiz logger (ekstra bağımlılık yok).
 const silentLogger: any = {
   level: "silent",
@@ -148,14 +204,28 @@ export async function startWhatsappBridge(): Promise<void> {
   if (started) return;
   started = true;
 
+  // Çökme koruması: Baileys'ten gelebilecek yakalanmamış promise reddi Node'u
+  // (varsayılan davranışla) düşürmesin — logla, süreç ayakta kalsın. Yalnızca
+  // köprü açıkken kurulur; bir kez.
+  if (!guardInstalled) {
+    guardInstalled = true;
+    process.on("unhandledRejection", reason => {
+      console.error(
+        "[whatsapp] yakalanmamış promise reddi (yutuldu, süreç ayakta):",
+        reason instanceof Error ? reason.message : reason,
+      );
+    });
+  }
+
   try {
     // Ağır Baileys bağımlılığını yalnızca köprü açıkken yükle.
     const baileys: any = await import("baileys");
     const makeWASocket = baileys.default ?? baileys.makeWASocket;
-    const { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = baileys;
+    const { DisconnectReason, fetchLatestBaileysVersion } = baileys;
     const qrcode: any = await import("qrcode-terminal").then(m => m.default ?? m).catch(() => null);
 
-    const { state, saveCreds } = await useMultiFileAuthState(cfg.authDir);
+    // Oturum DB'de saklanır → Render diski sıfırlansa da QR bir kez okutulur.
+    const { state, saveCreds } = await useDbAuthState(baileys);
 
     let version: [number, number, number] | undefined;
     try {
@@ -176,6 +246,8 @@ export async function startWhatsappBridge(): Promise<void> {
         auth: state,
         logger: silentLogger,
         markOnlineOnConnect: false, // telefonu "çevrimdışı" göstermesin, normal kullanımı bozma
+        syncFullHistory: false, // geçmiş mesaj senkronunu çekme (512MB RAM'de OOM riskini düşür)
+        shouldSyncHistoryMessage: () => false,
         browser: ["Kokpit", "Chrome", "1.0"],
       });
 
@@ -207,10 +279,9 @@ export async function startWhatsappBridge(): Promise<void> {
           const statusCode = lastDisconnect?.error?.output?.statusCode;
           const loggedOut = statusCode === DisconnectReason.loggedOut;
           if (loggedOut) {
-            console.warn(
-              "[whatsapp] oturum kapandı (telefondan bağlantı kaldırıldı). Yeniden bağlamak için .wa-auth klasörünü silip QR'ı tekrar okut.",
-            );
-            return; // yeniden deneme; yeni QR gerekir
+            console.warn("[whatsapp] oturum kapandı (telefondan bağlantı kaldırıldı). DB oturumu temizleniyor; yeni QR gerekir.");
+            void db.clearWhatsappAuth().catch(() => {}); // temiz başlangıç → yeni QR
+            return; // yeniden deneme yok; yeni QR gerekir
           }
           console.warn("[whatsapp] bağlantı koptu, 5 sn sonra yeniden bağlanılıyor…");
           setTimeout(connect, 5000);
