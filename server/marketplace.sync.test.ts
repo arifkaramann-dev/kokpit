@@ -1,6 +1,44 @@
 import { describe, expect, it } from "vitest";
-import { shouldSyncOrderStatus } from "./orderUtils";
+import { classifyMarketplaceStatus, shouldSyncOrderStatus, type SyncStatus } from "./orderUtils";
 import { mapHbOrder, mapHbPackage } from "./hepsiburada";
+
+describe("classifyMarketplaceStatus (dayanıklı durum eşlemesi)", () => {
+  const map: Record<string, SyncStatus | null> = {
+    Open: "new",
+    Shipped: "ready",
+    Delivered: "done",
+    Cancelled: null,
+    ReadyToShip: "ready",
+  };
+
+  it("bilinen kodu birebir eşler", () => {
+    expect(classifyMarketplaceStatus("Shipped", map)).toBe("ready");
+    expect(classifyMarketplaceStatus("Delivered", map)).toBe("done");
+    expect(classifyMarketplaceStatus("Cancelled", map)).toBeNull();
+  });
+
+  it("büyük/küçük harf ve boşluk/tire/alt çizgi farkını yok sayar", () => {
+    expect(classifyMarketplaceStatus("shipped", map)).toBe("ready");
+    expect(classifyMarketplaceStatus("SHIPPED", map)).toBe("ready");
+    expect(classifyMarketplaceStatus("ready_to_ship", map)).toBe("ready");
+    expect(classifyMarketplaceStatus("Ready-To-Ship", map)).toBe("ready");
+  });
+
+  it("haritada olmayan kodu anahtar kelimeyle sınıflar (asıl hata buydu)", () => {
+    // Pazaryeri beklenmedik bir kod yollasa bile kargolanan sipariş "Yeni"de kalmaz.
+    expect(classifyMarketplaceStatus("CargoInProgress", map)).toBe("ready");
+    expect(classifyMarketplaceStatus("InTransit", map)).toBe("ready");
+    expect(classifyMarketplaceStatus("Kargoya Verildi", map)).toBe("ready");
+    expect(classifyMarketplaceStatus("TeslimEdildi", map)).toBe("done");
+    expect(classifyMarketplaceStatus("Müşteri İptal", map)).toBeNull();
+    expect(classifyMarketplaceStatus("İade Talebi", map)).toBeNull();
+  });
+
+  it("gerçekten tanınmayan kodu güvenli tarafta 'new' varsayar", () => {
+    expect(classifyMarketplaceStatus("Foobar", map)).toBe("new");
+    expect(classifyMarketplaceStatus("Preparing", map)).toBe("new");
+  });
+});
 
 describe("shouldSyncOrderStatus (pazaryeri senkronu durum akışı)", () => {
   it("durum yalnızca ileri akar", () => {
@@ -60,6 +98,14 @@ describe("mapHbOrder (Hepsiburada sipariş eşlemesi)", () => {
   it("iptal ve iadeleri içe aktarmaz", () => {
     expect(mapHbOrder({ ...sample, status: "Cancelled" })).toBeNull();
     expect(mapHbOrder({ ...sample, status: "Returned" })).toBeNull();
+  });
+
+  it("kargolanan sipariş 'Kargoya Hazır'a, teslim edilen 'Tamamlandı'ya gider", () => {
+    // Bildirilen hata: kargolanan Hepsiburada siparişi "Yeni"de takılı kalıyordu.
+    expect(mapHbOrder({ ...sample, status: "Shipped" })!.status).toBe("ready");
+    expect(mapHbOrder({ ...sample, status: "shipped" })!.status).toBe("ready"); // harf duyarsız
+    expect(mapHbOrder({ ...sample, status: "CargoInProgress" })!.status).toBe("ready"); // haritada yok → kelime
+    expect(mapHbOrder({ ...sample, status: "Delivered" })!.status).toBe("done");
   });
 });
 

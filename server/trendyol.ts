@@ -1,7 +1,7 @@
 import { ENV } from "./_core/env";
 import * as db from "./db";
 import { zplToPdf } from "./labelary";
-import { itemsTotal, shouldSyncOrderStatus, summarizeItems, toItemRows, type OrderItemLike } from "./orderUtils";
+import { classifyMarketplaceStatus, itemsTotal, shouldSyncOrderStatus, summarizeItems, toItemRows, type OrderItemLike } from "./orderUtils";
 
 /**
  * Trendyol Satıcı API entegrasyonu.
@@ -78,7 +78,7 @@ export type MappedOrder = {
 
 /** Bir Trendyol paketini yerel sipariş kaydına çevirir; içe aktarılmayacaksa null döner. */
 export function mapPackageToOrder(pkg: TrendyolPackage): MappedOrder | null {
-  const status = pkg.status in STATUS_MAP ? STATUS_MAP[pkg.status] : "new";
+  const status = classifyMarketplaceStatus(pkg.status, STATUS_MAP);
   if (status === null) return null;
 
   const items: OrderItemLike[] = (pkg.lines ?? []).map(line => ({
