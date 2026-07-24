@@ -57,7 +57,7 @@ import {
 import { notifyOwner } from "../notify";
 import { getPaytrIframeToken, isPaytrConfigured } from "../paytr";
 import { buildInvoicePayload, isEfaturaConfigured, sendInvoice } from "../efatura";
-import { createShipment, isKargoConfigured } from "../kargo";
+import { isKargoConfigured } from "../kargo";
 import { applyCoupon, findCoupon, parseCoupons } from "@shared/campaigns";
 import { parseBankStatement, reconcile } from "@shared/reconcile";
 import { channelProfitReport } from "../reportUtils";

@@ -50,7 +50,7 @@ import {
 import { notifyOwner } from "../notify";
 import { getPaytrIframeToken, isPaytrConfigured } from "../paytr";
 import { buildInvoicePayload, isEfaturaConfigured, sendInvoice } from "../efatura";
-import { createShipment, isKargoConfigured } from "../kargo";
+import { openShipment, buyShipmentOffer, isKargoConfigured } from "../kargo";
 import { applyCoupon, findCoupon, parseCoupons } from "@shared/campaigns";
 import { parseBankStatement, reconcile } from "@shared/reconcile";
 import { channelProfitReport } from "../reportUtils";
@@ -403,18 +403,27 @@ export const invoicesRouter = router({
 // Kargo (Tema D) — gönderi oluşturma (yapılandırılmışsa canlı, yoksa manuel).
 export const kargoRouter = router({
   configured: protectedProcedure.query(() => ({ kargo: isKargoConfigured() })),
+  // 1. adım: gönderi aç ve teklifleri (kargo firması + fiyat) döndür — SATIN ALMAZ.
   createShipment: protectedProcedure
     .input(z.object({ orderId: z.number(), desi: z.number().optional() }))
     .mutation(async ({ input }) => {
       const order = await db.getOrder(input.orderId);
       if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "Sipariş bulunamadı" });
-      const res = await createShipment({
+      return openShipment({
         orderNo: order.orderNo,
         recipientName: order.customerName,
         phone: order.customerPhone ?? "",
         address: order.customerAddress ?? "",
         desi: input.desi,
       });
+    }),
+  // 2. adım: kullanıcının seçtiği teklifi satın al, takip no + etiketi siparişe işle.
+  buyOffer: protectedProcedure
+    .input(z.object({ orderId: z.number(), offerId: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      const order = await db.getOrder(input.orderId);
+      if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "Sipariş bulunamadı" });
+      const res = await buyShipmentOffer(input.offerId);
       if (res.created && res.trackingNumber) {
         await db.updateOrder(input.orderId, {
           cargoTrackingNumber: res.trackingNumber,
