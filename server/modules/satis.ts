@@ -15,7 +15,8 @@ import { buildSaleTitle, deriveCombos, parseSetCount, renameVariantTitle } from 
 import { computePrice, extractJson, parseFeatures, pickReferenceProduct, scoreReference, suggestSku } from "../autofill";
 import { computeReorderSuggestions, summarizeReorder } from "../reorder";
 import { importUrunKayit } from "../importSeed";
-import { answerTrendyolQuestion, syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf, TrendyolLabelNotAllowedError, isTrendyolConfigured } from "../trendyol";
+import { answerTrendyolQuestion, syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf, getTrendyolCommonLabelZpl, TrendyolLabelNotAllowedError, isTrendyolConfigured } from "../trendyol";
+import { zplToPdf } from "../labelary";
 import { isHepsiburadaConfigured } from "../hepsiburada";
 import { isN11Configured } from "../n11";
 import { isCiceksepetiConfigured } from "../ciceksepeti";
@@ -27,7 +28,7 @@ import {
   pushTrendyolProductCards,
   searchTrendyolBrands,
 } from "../trendyolProducts";
-import { getHepsiburadaLabelPdf, pushHepsiburadaStockPrice } from "../hepsiburada";
+import { getHepsiburadaLabelPdf, getHepsiburadaLabelZpl, pushHepsiburadaStockPrice } from "../hepsiburada";
 import {
   hbCatalogSendTestProduct,
   hbCatalogStatus,
@@ -184,6 +185,55 @@ export const ordersRouter = router({
           message: error instanceof Error ? error.message : "Etiket alınamadı",
         });
       }
+    }),
+  // Toplu resmi kargo etiketi: seçili siparişlerin ZPL'lerini toplayıp TEK
+  // çok-sayfalı PDF döner (Trendyol + Hepsiburada karışık olabilir). Başarısız
+  // olanlar atlanır ve `errors` ile bildirilir; hepsi başarısızsa hata verir.
+  shippingLabelsBulk: protectedProcedure
+    .input(z.object({ orderIds: z.array(z.number()).min(1).max(100) }))
+    .mutation(async ({ input }) => {
+      const zplParts: string[] = [];
+      const errors: { orderNo: string; error: string }[] = [];
+      let count = 0;
+
+      for (const id of input.orderIds) {
+        const order = await db.getOrder(id);
+        if (!order) {
+          errors.push({ orderNo: `#${id}`, error: "Sipariş bulunamadı" });
+          continue;
+        }
+        try {
+          let zpl: string;
+          if (order.channel === "hepsiburada") {
+            zpl = await getHepsiburadaLabelZpl(order.orderNo.replace(/^HB-/, ""));
+          } else if (order.channel === "trendyol") {
+            if (!order.cargoTrackingNumber) throw new Error("kargo takip numarası yok (kargoya verilmemiş)");
+            zpl = await getTrendyolCommonLabelZpl(order.cargoTrackingNumber);
+          } else {
+            throw new Error("resmi etiket yalnızca Trendyol/Hepsiburada siparişlerinde");
+          }
+          zplParts.push(zpl);
+          count++;
+        } catch (error) {
+          const msg =
+            error instanceof TrendyolLabelNotAllowedError
+              ? "Trendyol ortak etiket yetkisi kapalı"
+              : error instanceof Error
+                ? error.message
+                : "etiket alınamadı";
+          errors.push({ orderNo: order.orderNo, error: msg });
+        }
+      }
+
+      if (zplParts.length === 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Hiç etiket alınamadı. ${errors.map(e => `${e.orderNo}: ${e.error}`).join(" · ")}`,
+        });
+      }
+      // Çoklu ZPL → tek çok-sayfalı PDF (Labelary index'siz uç).
+      const pdf = await zplToPdf(zplParts.join("\n"));
+      return { pdfBase64: pdf.toString("base64"), count, errors };
     }),
   // Pazaryerine gerçek istek atıp ham HTTP sonucunu döner (401 teşhisi için).
   testConnection: protectedProcedure

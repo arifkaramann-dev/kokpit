@@ -388,6 +388,40 @@ export default function Orders() {
     }
   }
 
+  // Etiketlenebilir pazaryeri siparişleri: Hepsiburada (paket no yeterli) +
+  // Trendyol (takip no'lu), teslim/iptal olmayanlar.
+  const bulkLabelOrders = (orders ?? []).filter(
+    (o: OrderRow) =>
+      (o.channel === "hepsiburada" || (o.channel === "trendyol" && !!o.cargoTrackingNumber)) &&
+      o.status !== "done" &&
+      o.status !== "cancelled",
+  );
+
+  // Toplu resmi kargo etiketi: tüm uygun pazaryeri siparişlerini TEK PDF'te açar.
+  async function handleBulkLabels() {
+    if (bulkLabelOrders.length === 0) {
+      toast.info("Etiketlenecek pazaryeri siparişi yok (Trendyol takip no'lu / Hepsiburada).");
+      return;
+    }
+    const t = toast.loading(`${bulkLabelOrders.length} sipariş için toplu etiket alınıyor…`);
+    try {
+      const res = await utils.client.orders.shippingLabelsBulk.mutate({
+        orderIds: bulkLabelOrders.map(o => o.id),
+      });
+      openPdfBase64(res.pdfBase64, `toplu-kargo-${new Date().toISOString().slice(0, 10)}.pdf`);
+      if (res.errors.length > 0) {
+        toast.warning(
+          `${res.count} etiket hazır · ${res.errors.length} atlandı (${res.errors[0].orderNo}: ${res.errors[0].error})`,
+          { id: t, duration: 9000 },
+        );
+      } else {
+        toast.success(`${res.count} etiket tek PDF'te hazır`, { id: t });
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Toplu etiket alınamadı", { id: t, duration: 9000 });
+    }
+  }
+
   // Geliver gönderisi: kendi mağaza/elden siparişine kargo kaydı açar, en ucuz
   // teklifi satın alır; takip no siparişe işlenir, etiket varsa yeni sekmede açılır.
   const createShipmentMut = trpc.kargo.createShipment.useMutation({
@@ -649,6 +683,12 @@ export default function Orders() {
             <RefreshCw className={`h-4 w-4 mr-1 ${syncAll.isPending ? "animate-spin" : ""}`} />
             Pazaryerlerinden Çek
           </Button>
+          {bulkLabelOrders.length > 0 && (
+            <Button variant="outline" onClick={handleBulkLabels} title="Trendyol + Hepsiburada resmi etiketlerini tek PDF'te yazdır">
+              <Printer className="h-4 w-4 mr-1" />
+              Toplu Kargo Etiketi ({bulkLabelOrders.length})
+            </Button>
+          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline">
