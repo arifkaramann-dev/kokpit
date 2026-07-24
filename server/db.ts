@@ -409,6 +409,15 @@ export async function createOrder(data: InsertOrder) {
   if (data.customerId == null && data.customerName) {
     data = { ...data, customerId: await resolveCustomerIdByName(data.customerName) };
   }
+  // Adres/telefon boşsa cari kartından tamamla — kayıtlı müşterinin adresi kargo
+  // etiketine ve faturaya taşınır (siparişte elle girilmesine gerek kalmaz).
+  if (data.customerId != null && (!data.customerAddress?.trim() || !data.customerPhone?.trim())) {
+    const contact = await getCustomerById(data.customerId);
+    if (contact) {
+      if (!data.customerAddress?.trim() && contact.address) data = { ...data, customerAddress: contact.address };
+      if (!data.customerPhone?.trim() && contact.phone) data = { ...data, customerPhone: contact.phone };
+    }
+  }
   const [result] = await db.insert(orders).values(data);
   const id = Number(result.insertId);
   // İlk olay: elle mi açıldı yoksa pazaryerinden mi alındı?
@@ -556,6 +565,14 @@ export async function resolveSupplierIdByName(name: string | null | undefined): 
   const needle = trKey(name);
   const hits = rows.filter(s => trKey(s.name) === needle).sort((a, b) => a.id - b.id);
   return hits[0]?.id ?? null;
+}
+
+/** Tek müşteri kaydını ID ile getirir (kargo/fatura için adres-telefon kaynağı). */
+export async function getCustomerById(id: number | null | undefined) {
+  if (id == null) return null;
+  const db = await requireDb();
+  const [row] = await db.select().from(customers).where(eq(customers.id, id)).limit(1);
+  return row ?? null;
 }
 
 export async function createCustomer(data: InsertCustomer) {

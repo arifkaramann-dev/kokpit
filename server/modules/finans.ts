@@ -409,20 +409,33 @@ export const kargoRouter = router({
     .mutation(async ({ input }) => {
       const order = await db.getOrder(input.orderId);
       if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "Sipariş bulunamadı" });
-      // Geliver adres boşken "E1129 Adres boş" (400) döner; kullanıcıya anlaşılır
-      // uyarı verip boşuna API isteği atmayalım. Adres siparişte tutulur.
-      const address = (order.customerAddress ?? "").trim();
+      // Adres/telefon siparişte yoksa kayıtlı cari kartından tamamla (eski
+      // siparişlerde adres boş kalmış olabilir; müşterinin adresi CRM'de duruyor).
+      let address = (order.customerAddress ?? "").trim();
+      let phone = (order.customerPhone ?? "").trim();
+      let city: string | undefined;
+      if (!address || !phone) {
+        const contact = await db.getCustomerById(order.customerId);
+        if (contact) {
+          if (!address) address = (contact.address ?? "").trim();
+          if (!phone) phone = (contact.phone ?? "").trim();
+          city = contact.city ?? undefined;
+        }
+      }
+      // Geliver adres boşken "E1129 Adres boş" (400) döner; anlaşılır uyarı verip
+      // boşuna API isteği atmayalım.
       if (!address) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "Bu siparişte teslimat adresi yok. Siparişi düzenleyip teslimat adresini (ve telefonu) girin, sonra kargo gönderisi oluşturun.",
+          message: "Bu siparişte teslimat adresi yok ve müşteri kartında da kayıtlı adres bulunamadı. Siparişi (veya müşteri kartını) düzenleyip adres girin, sonra kargo gönderisi oluşturun.",
         });
       }
       return openShipment({
         orderNo: order.orderNo,
         recipientName: order.customerName,
-        phone: order.customerPhone ?? "",
+        phone,
         address,
+        city,
         desi: input.desi,
       });
     }),
