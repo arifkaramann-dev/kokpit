@@ -1697,6 +1697,33 @@ export async function createPurchase(
   return { purchaseId, createdCount, updatedCount };
 }
 
+/**
+ * Toplu (kalemsiz) alış faturası: tedarikçi cari ekstresine yalnız BORÇ kaydı
+ * ekler — hammadde/stok hareketi YOK. Asistanın "tedarikçiye X liralık alış
+ * faturası gir" komutu içindir; kullanıcı kalem detayı vermeden sadece tutarı
+ * söylediğinde fatura tedarikçinin carisine "Alış Faturası" satırı olarak düşer
+ * (gider değil). Kalem/stok gerektiren tam fatura için createPurchase kullanılır.
+ */
+export async function createPurchaseInvoice(header: {
+  supplierName: string | null;
+  amount: number;
+  invoiceNo: string | null;
+  invoiceDate: Date | null;
+  note: string | null;
+}) {
+  const db = await requireDb();
+  const [res] = await db.insert(purchases).values({
+    supplierName: header.supplierName,
+    // Cari bağ: tedarikçi kayıtlıysa ID ile bağla (ekstre ada değil ID'ye dayanır).
+    supplierId: await resolveSupplierIdByName(header.supplierName),
+    invoiceNo: header.invoiceNo,
+    invoiceDate: header.invoiceDate,
+    note: header.note,
+    totalAmount: String(header.amount),
+  });
+  return { purchaseId: Number(res.insertId) };
+}
+
 export async function listPurchases() {
   const db = await requireDb();
   const rows = await db.select().from(purchases).orderBy(desc(purchases.createdAt)).limit(100);

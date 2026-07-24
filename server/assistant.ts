@@ -1,5 +1,6 @@
 import { answerBusinessQuestion, parseVoiceCommand } from "./_core/claude";
 import * as db from "./db";
+import { canonicalPartyName } from "./financeUtils";
 import { findOpenOrderForCollection, itemsTotal, summarizeItems, toItemRows } from "./orderUtils";
 
 /**
@@ -267,6 +268,40 @@ export async function actionAddExpense(input: {
     amount: String(input.amount),
   } as never);
   return { message: `Gider eklendi: ${category} — ${input.amount.toFixed(2)} TL ✅ (Giderler sayfasında)` };
+}
+
+/**
+ * Tedarikçiden gelen ALIŞ faturasını tedarikçinin cari hesabına (borç) işler.
+ * Gider'den farkı: bu, belirli bir tedarikçiye olan borcumuzu artırır ve
+ * Tedarikçi > Cari Ekstre'de "Alış Faturası" olarak görünür. Kullanıcı sadece
+ * tutarı söylediğinde kalemsiz (toplu) fatura kaydı yapılır — stok değişmez.
+ */
+export async function actionAddPurchaseInvoice(input: {
+  supplierName: string;
+  amount: number;
+  note?: string | null;
+}): Promise<{ message: string }> {
+  if (input.amount <= 0) {
+    throw new Error(
+      'Fatura tutarını anlayamadım, tutarla birlikte söyler misin? (örn. "Erdem Boya\'ya 2415 liralık alış faturası gir")',
+    );
+  }
+  if (!input.supplierName.trim()) {
+    throw new Error("Hangi tedarikçinin faturası olduğunu anlayamadım, tedarikçi adını da söyler misin?");
+  }
+  const suppliersList = await db.listSuppliers();
+  // Cari ekstre ada/ID'ye göre bağlandığı için kayıtlı adı esas al.
+  const canonical = canonicalPartyName(suppliersList, input.supplierName);
+  await db.createPurchaseInvoice({
+    supplierName: canonical,
+    amount: input.amount,
+    invoiceNo: null,
+    invoiceDate: null,
+    note: input.note?.slice(0, 255) ?? null,
+  });
+  return {
+    message: `Alış faturası eklendi: ${canonical} — ${input.amount.toFixed(2)} TL ✅ (Tedarikçi cari ekstresine işlendi)`,
+  };
 }
 
 export async function actionAddCollection(input: {
