@@ -35,7 +35,20 @@ services:
       - key: HEPSIBURADA_PASSWORD
         sync: false # Hepsiburada OMS şifresi (opsiyonel)
       - key: ANTHROPIC_API_KEY
-        sync: false # AI pazarlama metinleri için (opsiyonel)
+        sync: false # AI pazarlama metinleri + WhatsApp asistanı için (opsiyonel)
+      - key: WHATSAPP_ENABLED
+        sync: false # "1" ise WhatsApp köprüsü açılır (kendine mesaj → taslak sipariş). Kurulum: WHATSAPP.md
+      - key: WHATSAPP_AUTH_DIR
+        sync: false # Oturum klasörü; kalıcılık için diske bağla (aşağıdaki disk bloğunu aç), ör. /data/wa-auth
+      - key: WHATSAPP_CONTROL_JID
+        sync: false # Boş → "kendine mesaj" kontrol yüzeyi; doldurursa o sohbet kontrol olur (opsiyonel)
+    # WhatsApp oturumunun deploy'lar arası kalıcı olması için disk gerekir (ücretli plan).
+    # Free planda dosya sistemi geçicidir → her yeniden başlatmada QR tekrar okutulur.
+    # Kalıcı istiyorsan planı yükselt ve aşağıyı aç, WHATSAPP_AUTH_DIR=/data/wa-auth yap:
+    # disk:
+    #   name: wa-auth
+    #   mountPath: /data
+    #   sizeGB: 1
       - key: PICOVOICE_ACCESS_KEY
         sync: false # Sesli uyandırma (Porcupine) AccessKey — console.picovoice.ai (opsiyonel)
       - key: PICOVOICE_KEYWORD_PATH

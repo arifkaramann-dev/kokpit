@@ -6,3 +6,6 @@ dist/
 !.env.example
 *.tsbuildinfo
 .DS_Store
+# WhatsApp köprüsü oturum sırları (giriş anahtarları) — repoya ASLA girmez
+.wa-auth/
+wa-auth/
