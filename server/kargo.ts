@@ -287,6 +287,55 @@ async function geliverFetch(path: string, init?: RequestInit): Promise<{ ok: boo
   return { ok: res.ok, status: res.status, json, text: text.slice(0, 500) };
 }
 
+type GeliverAddress = {
+  id?: string; ID?: string; _id?: string;
+  type?: string;
+  isSenderAddress?: boolean; isSender?: boolean;
+  isReturnAddress?: boolean; isReturn?: boolean;
+  isDefault?: boolean; default?: boolean;
+};
+
+// Gönderici adres ID'si oturum boyu bir kez çözülür (undefined = henüz denenmedi).
+let cachedSenderAddressId: string | null | undefined;
+
+/** Geliver adres listesinden gönderici (çıkış) adresini seçer; iade adresini eler. */
+function pickSenderAddress(list: GeliverAddress[]): string | null {
+  const idOf = (a: GeliverAddress) => (String(a.id ?? a.ID ?? a._id ?? "") || null);
+  const isReturn = (a: GeliverAddress) => a.isReturnAddress === true || a.isReturn === true || /return|iade/i.test(a.type ?? "");
+  const isSender = (a: GeliverAddress) => a.isSenderAddress === true || a.isSender === true || /sender|gonder|pickup|cikis|çıkış/i.test(a.type ?? "");
+  const senders = list.filter(a => idOf(a) && isSender(a) && !isReturn(a));
+  const pool = senders.length ? senders : list.filter(a => idOf(a) && !isReturn(a));
+  const chosen = pool.find(a => a.isDefault === true || a.default === true) ?? pool[0];
+  return chosen ? idOf(chosen) : null;
+}
+
+/**
+ * Gönderici adres ID'sini çözer: önce env (GELIVER_SENDER_ADDRESS_ID), yoksa
+ * Geliver hesabındaki kayıtlı adreslerden (GET /addresses) otomatik seçer. Geliver
+ * teklif için gönderici adresini ZORUNLU ister; bu sayede patronun ID'yi elle
+ * girmesine gerek kalmaz (hesapta gönderici adresi tanımlıysa).
+ */
+async function resolveGeliverSenderAddressId(): Promise<string | null> {
+  if (ENV.geliverSenderAddressId) return ENV.geliverSenderAddressId;
+  if (cachedSenderAddressId !== undefined) return cachedSenderAddressId;
+  try {
+    const res = await geliverFetch("/addresses");
+    const j = res.json as Record<string, unknown> | GeliverAddress[] | null;
+    const list = (Array.isArray(j) ? j : (j?.["data"] ?? j?.["list"] ?? j?.["addresses"] ?? j?.["result"] ?? [])) as GeliverAddress[];
+    cachedSenderAddressId = pickSenderAddress(Array.isArray(list) ? list : []);
+    console.info(
+      cachedSenderAddressId
+        ? `Geliver gönderici adresi otomatik seçildi: ${cachedSenderAddressId}`
+        : `Geliver /addresses gönderici adresi bulunamadı — ham: ${JSON.stringify(res.json).slice(0, 400)}`,
+    );
+    return cachedSenderAddressId;
+  } catch (err) {
+    console.warn("Geliver /addresses çekilemedi:", err instanceof Error ? err.message : err);
+    cachedSenderAddressId = null;
+    return null;
+  }
+}
+
 /**
  * Geliver'de gönderi oluşturur ve teklifleri (kargo firması + fiyat) döndürür —
  * SATIN ALMAZ. Kullanıcı hangi firmayı istediğini seçer, sonra buyShipmentOffer
@@ -320,7 +369,9 @@ async function createGeliverShipment(input: ShipmentInput): Promise<ShipmentQuot
     massUnit: "kg",
     order: { orderNumber: input.orderNo, sourceIdentifier: "kokpit" },
   };
-  if (ENV.geliverSenderAddressId) body.senderAddressID = ENV.geliverSenderAddressId;
+  // Gönderici adresi zorunlu — env yoksa Geliver hesabından otomatik çekilir.
+  const senderAddressId = await resolveGeliverSenderAddressId();
+  if (senderAddressId) body.senderAddressID = senderAddressId;
 
   const created = await geliverFetch("/shipments", { method: "POST", body: JSON.stringify(body) });
   if (!created.ok) {
@@ -344,11 +395,11 @@ async function createGeliverShipment(input: ShipmentInput): Promise<ShipmentQuot
     // Teşhis: teklif neden boş? Ham yanıt Render loguna (sender adresi mi eksik,
     // yoksa teklifler beklenmedik alanda mı?).
     console.info(`Geliver teklif boş — ham yanıt: ${JSON.stringify(created.json).slice(0, 700)}`);
-    // Geliver teklif için gönderici (çıkış) adresini ZORUNLU ister; tanımlı değilse
-    // hiç teklif dönmez. En sık sebep budur.
-    const reason = !ENV.geliverSenderAddressId
-      ? "Geliver gönderici (çıkış) adresi tanımlı değil — bu yüzden fiyat teklifi dönmüyor. app.geliver.io → Adreslerim'den gönderici adresini ekleyip ID'sini Render'da GELIVER_SENDER_ADDRESS_ID'ye girin."
-      : "Gönderi oluştu ama fiyat teklifi dönmedi (gönderici adresi/desi kontrol edilebilir). Etiket Geliver panelinden alınabilir.";
+    // Geliver teklif için gönderici (çıkış) adresini ZORUNLU ister; ne env'de ne de
+    // hesapta gönderici adresi varsa hiç teklif dönmez. En sık sebep budur.
+    const reason = !senderAddressId
+      ? "Geliver hesabında gönderici (çıkış) adresi tanımlı değil — bu yüzden fiyat teklifi dönmüyor. app.geliver.io → Adreslerim'den gönderici adresinizi ekleyin (bir kez); sistem ID'yi otomatik bulur."
+      : "Gönderi oluştu ama fiyat teklifi dönmedi (desi/adres detayı kontrol edilebilir). Etiket Geliver panelinden alınabilir.";
     return { created: true, provider: "geliver", shipmentId, offers: [], reason };
   }
   return { created: true, provider: "geliver", shipmentId, offers };
