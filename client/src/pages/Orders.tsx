@@ -26,9 +26,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
-import { ALL_ORDER_STATUSES, CANCELLED_STATUS, CHANNELS, formatDate, formatTL, ORDER_STATUSES, OrderStatus } from "@/lib/format";
+import { ALL_ORDER_STATUSES, CHANNELS, formatDate, formatTL, ORDER_STATUSES, OrderStatus } from "@/lib/format";
 import { printInvoice } from "@/lib/invoice";
 import { printOrderContents } from "@/lib/orderContents";
 import { printShippingLabel } from "@/lib/shippingLabel";
@@ -37,27 +45,29 @@ import {
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
-  ChevronDown,
-  ChevronRight,
   ClipboardList,
   FileText,
   History,
   MapPin,
   MessageCircle,
   MoreHorizontal,
+  Package,
   Pencil,
+  Phone,
   Plus,
   Printer,
   RefreshCw,
   Search,
   Settings,
+  ShoppingCart,
   Truck,
   Trash2,
   Undo2,
+  Wallet,
   XCircle,
   Zap,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 
@@ -142,6 +152,58 @@ function parseItemRows(items: ItemRow[]) {
     }));
 }
 
+/** Her durum için rozet + nokta rengi (tablo ve sekmelerde tutarlı görünüm). */
+const STATUS_STYLES: Record<OrderStatus, { label: string; dot: string; pill: string }> = {
+  new: { label: "Yeni", dot: "bg-blue-500", pill: "border-blue-500/25 bg-blue-500/10 text-blue-600 dark:text-blue-400" },
+  production: { label: "Üretimde", dot: "bg-amber-500", pill: "border-amber-500/25 bg-amber-500/10 text-amber-600 dark:text-amber-400" },
+  ready: { label: "Kargoya Hazır", dot: "bg-violet-500", pill: "border-violet-500/25 bg-violet-500/10 text-violet-600 dark:text-violet-400" },
+  done: { label: "Tamamlandı", dot: "bg-emerald-500", pill: "border-emerald-500/25 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
+  cancelled: { label: "İptal / İade", dot: "bg-rose-500", pill: "border-rose-500/25 bg-rose-500/10 text-rose-600 dark:text-rose-400" },
+};
+
+type TabValue = "all" | OrderStatus;
+const ORDER_TABS: { value: TabValue; label: string }[] = [
+  { value: "all", label: "Tümü" },
+  ...ALL_ORDER_STATUSES.map(s => ({ value: s.value as TabValue, label: s.label })),
+];
+
+function StatusPill({ status }: { status: OrderStatus }) {
+  const s = STATUS_STYLES[status];
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${s.pill}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
+      {s.label}
+    </span>
+  );
+}
+
+function PaymentPill({ order, onToggle }: { order: OrderRow; onToggle: (o: OrderRow) => void }) {
+  const paid = order.paymentStatus === "paid";
+  return (
+    <button
+      onClick={() => onToggle(order)}
+      title={paid ? "Ödendi (bekliyor yap)" : "Ödendi olarak işaretle"}
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors ${
+        paid
+          ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+          : order.paymentStatus === "partial"
+            ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+            : "bg-destructive/10 text-destructive hover:bg-destructive/20"
+      }`}
+    >
+      {paid ? "Ödendi" : order.paymentStatus === "partial" ? "Kısmi" : "Bekliyor"}
+    </button>
+  );
+}
+
+function ChannelBadge({ channel }: { channel: string | null }) {
+  return (
+    <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-normal capitalize">
+      {channel ?? "diğer"}
+    </Badge>
+  );
+}
+
 export default function Orders() {
   const utils = trpc.useUtils();
   const [, setLocation] = useLocation();
@@ -159,8 +221,8 @@ export default function Orders() {
   const [search, setSearch] = useState("");
   const [payFilter, setPayFilter] = useState<"all" | "unpaid" | "paid">("all");
   const [channelFilter, setChannelFilter] = useState<string>("all");
-  // Tamamlanan siparişler varsayılan olarak katlı — güncel iş üstte kalsın.
-  const [collapsed, setCollapsed] = useState<Set<OrderStatus>>(new Set<OrderStatus>(["done", "cancelled"]));
+  // Aktif sekme: "all" (tümü) veya bir durum. Yeni siparişler ilk odak noktasıdır.
+  const [activeTab, setActiveTab] = useState<TabValue>("all");
   // Çoklu seçim: toplu yazdırma/durum/ödeme için işaretlenen sipariş id'leri.
   const [selected, setSelected] = useState<Set<number>>(new Set<number>());
   // Detay & zaman çizgisi panelinde açık olan sipariş.
@@ -175,15 +237,6 @@ export default function Orders() {
       return next;
     });
   const clearSelection = () => setSelected(new Set<number>());
-
-  function toggleSection(status: OrderStatus) {
-    setCollapsed(prev => {
-      const next = new Set(prev);
-      if (next.has(status)) next.delete(status);
-      else next.add(status);
-      return next;
-    });
-  }
 
   const setStatus = trpc.orders.setStatus.useMutation({
     onMutate: async input => {
@@ -665,6 +718,49 @@ export default function Orders() {
   });
   const filterActive = q !== "" || payFilter !== "all" || channelFilter !== "all";
 
+  // Sekme sayıları (aktif arama/filtreyi yansıtır) + görünen liste (tarihe göre yeni→eski).
+  const tabCounts = useMemo(() => {
+    const counts: Record<TabValue, number> = { all: 0, new: 0, production: 0, ready: 0, done: 0, cancelled: 0 };
+    for (const o of filteredOrders) {
+      counts.all += 1;
+      counts[o.status] += 1;
+    }
+    return counts;
+  }, [filteredOrders]);
+
+  const visibleOrders = useMemo(() => {
+    const list =
+      activeTab === "all" ? filteredOrders : filteredOrders.filter(o => o.status === activeTab);
+    return [...list].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [filteredOrders, activeTab]);
+
+  // Kokpit özeti: aksiyon gerektiren işleri öne çıkaran metrikler (para → iş → hacim).
+  const kpi = useMemo(() => {
+    let active = 0;
+    let ready = 0;
+    let newCount = 0;
+    let due = 0;
+    for (const o of allOrders) {
+      if (o.status === "new") newCount += 1;
+      if (o.status === "new" || o.status === "production" || o.status === "ready") active += 1;
+      if (o.status === "ready") ready += 1;
+      if (o.status !== "cancelled" && o.paymentStatus !== "paid") {
+        due += Math.max(0, num(o.totalAmount) - num(o.paidAmount));
+      }
+    }
+    return { active, ready, newCount, due };
+  }, [allOrders]);
+
+  // Görünen listedeki tüm siparişleri seç / kaldır (baştaki checkbox için).
+  const allVisibleSelected = visibleOrders.length > 0 && visibleOrders.every(o => selected.has(o.id));
+  const toggleSelectAllVisible = () =>
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (allVisibleSelected) visibleOrders.forEach(o => next.delete(o.id));
+      else visibleOrders.forEach(o => next.add(o.id));
+      return next;
+    });
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -987,6 +1083,39 @@ export default function Orders() {
         </div>
       </div>
 
+      {/* Kokpit özeti — tek bakışta aksiyon gerektiren işler; karta tıkla, o listeye geç. */}
+      {!isLoading && allOrders.length > 0 && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {[
+            { key: "new" as TabValue, label: "Yeni sipariş", value: String(kpi.newCount), icon: ShoppingCart, tone: "text-blue-600 dark:text-blue-400", ring: "bg-blue-500/10" },
+            { key: "ready" as TabValue, label: "Kargo bekleyen", value: String(kpi.ready), icon: Truck, tone: "text-violet-600 dark:text-violet-400", ring: "bg-violet-500/10" },
+            { key: "all" as TabValue, label: "Aktif sipariş", value: String(kpi.active), icon: Package, tone: "text-amber-600 dark:text-amber-400", ring: "bg-amber-500/10" },
+            { key: "__due" as const, label: "Bekleyen tahsilat", value: formatTL(kpi.due), icon: Wallet, tone: "text-rose-600 dark:text-rose-400", ring: "bg-rose-500/10" },
+          ].map(tile => (
+            <button
+              key={tile.label}
+              onClick={() => {
+                if (tile.key === "__due") {
+                  setPayFilter("unpaid");
+                  setActiveTab("all");
+                } else {
+                  setActiveTab(tile.key);
+                }
+              }}
+              className="flex items-center gap-3 rounded-xl border bg-card p-3 text-left transition-colors hover:bg-accent/40"
+            >
+              <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${tile.ring} ${tile.tone}`}>
+                <tile.icon className="h-5 w-5" />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-lg font-bold leading-tight truncate">{tile.value}</span>
+                <span className="block text-xs text-muted-foreground truncate">{tile.label}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {mpStatus && (
         <div className="flex items-center gap-2 flex-wrap text-xs">
           <span className="text-muted-foreground">Pazaryeri bağlantıları:</span>
@@ -1081,6 +1210,37 @@ export default function Orders() {
         </div>
       )}
 
+      {/* Durum sekmeleri — canlı sayaçlarla; sekme değişince tablo o aşamayı gösterir. */}
+      {!isLoading && allOrders.length > 0 && (
+        <div className="flex gap-0.5 overflow-x-auto border-b">
+          {ORDER_TABS.map(tab => {
+            const count = tabCounts[tab.value];
+            const active = activeTab === tab.value;
+            // İptal sekmesi yalnızca kayıt varsa ya da seçiliyken görünür.
+            if (tab.value === "cancelled" && count === 0 && !active) return null;
+            return (
+              <button
+                key={tab.value}
+                onClick={() => setActiveTab(tab.value)}
+                className={`relative flex items-center gap-1.5 whitespace-nowrap px-3 py-2 text-sm font-medium transition-colors ${
+                  active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {tab.label}
+                <span
+                  className={`rounded-full px-1.5 py-0.5 text-[11px] font-semibold ${
+                    active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                  }`}
+                >
+                  {count}
+                </span>
+                {active && <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-primary" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Toplu aksiyon çubuğu: bir veya daha fazla sipariş seçilince yapışkan görünür. */}
       {selected.size > 0 && (
         <div className="sticky top-2 z-30 flex flex-wrap items-center gap-2 rounded-xl border bg-card/95 p-2.5 shadow-lg backdrop-blur">
@@ -1129,70 +1289,96 @@ export default function Orders() {
             </Button>
           </div>
         </div>
+      ) : visibleOrders.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed py-16 text-center">
+          <ClipboardList className="h-10 w-10 text-muted-foreground/40" />
+          <p className="text-sm text-muted-foreground">
+            {filterActive ? "Bu filtreyle sipariş bulunamadı." : "Bu aşamada sipariş yok."}
+          </p>
+          {filterActive && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setSearch("");
+                setPayFilter("all");
+                setChannelFilter("all");
+              }}
+            >
+              Filtreleri temizle
+            </Button>
+          )}
+        </div>
       ) : (
         <div className="space-y-3">
-          {ALL_ORDER_STATUSES.map(status => {
-            const list = filteredOrders.filter(o => o.status === status.value);
-            if (filterActive && list.length === 0) return null;
-            if (status.value === CANCELLED_STATUS.value && list.length === 0) return null;
-            const isCollapsed = collapsed.has(status.value);
-            const total = list.reduce((s, o) => s + num(o.totalAmount), 0);
-            const due = list
-              .filter(o => o.paymentStatus !== "paid")
-              .reduce((s, o) => s + Math.max(0, num(o.totalAmount) - num(o.paidAmount)), 0);
-            return (
-              <div key={status.value} className="rounded-xl border bg-card overflow-hidden">
-                <button
-                  onClick={() => toggleSection(status.value)}
-                  className="flex w-full items-center gap-2 px-3 py-2.5 hover:bg-accent/40 transition-colors"
-                >
-                  {isCollapsed ? (
-                    <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                  ) : (
-                    <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
-                  )}
-                  <span className={`h-2.5 w-2.5 rounded-full ${status.color} shrink-0`} />
-                  <span className="font-semibold text-sm">{status.label}</span>
-                  <Badge variant="secondary">{list.length}</Badge>
-                  <span className="ml-auto text-xs text-muted-foreground whitespace-nowrap">
-                    {formatTL(total)}
-                    {due > 0 && (
-                      <span className="text-destructive font-medium ml-2">{formatTL(due)} bekliyor</span>
-                    )}
-                  </span>
-                </button>
-                {!isCollapsed && (
-                  <div className="divide-y border-t">
-                    {list.length === 0 ? (
-                      <div className="py-8 text-center text-xs text-muted-foreground">
-                        Bu aşamada sipariş yok
-                      </div>
-                    ) : (
-                      list.map(order => (
-                        <OrderRowItem
-                          key={order.id}
-                          selected={selected.has(order.id)}
-                          onToggleSelect={toggleSelect}
-                          onDetail={setDetailOrder}
-                          order={order}
-                          onEdit={openEdit}
-                          onDelete={id => deleteOrder.mutate({ id })}
-                          onInvoice={handleInvoice}
-                          onShippingLabel={handleShippingLabel}
-                          onPrintContents={o => handlePrintContents([o])}
-                          kargoEnabled={Boolean(kargoCfg?.kargo)}
-                          onCreateShipment={o => createShipmentMut.mutate({ orderId: o.id })}
-                          onTogglePaid={handleTogglePaid}
-                          onAdvance={handleAdvance}
-                          onSetCancelled={handleSetCancelled}
-                        />
-                      ))
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {/* Masaüstü: yoğun, taranabilir tablo görünümü */}
+          <div className="hidden overflow-hidden rounded-xl border bg-card md:block">
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent bg-muted/40">
+                  <TableHead className="w-10 pl-3">
+                    <Checkbox
+                      checked={allVisibleSelected}
+                      onCheckedChange={toggleSelectAllVisible}
+                      aria-label="Görünen tüm siparişleri seç"
+                    />
+                  </TableHead>
+                  <TableHead>Müşteri / Sipariş</TableHead>
+                  <TableHead className="hidden lg:table-cell">İçerik</TableHead>
+                  <TableHead>Durum</TableHead>
+                  <TableHead>Ödeme</TableHead>
+                  <TableHead className="text-right">Tutar</TableHead>
+                  <TableHead className="hidden xl:table-cell">Tarih</TableHead>
+                  <TableHead className="pr-3 text-right">İşlemler</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {visibleOrders.map(order => (
+                  <OrderTableRow
+                    key={order.id}
+                    selected={selected.has(order.id)}
+                    onToggleSelect={toggleSelect}
+                    onDetail={setDetailOrder}
+                    order={order}
+                    onEdit={openEdit}
+                    onDelete={id => deleteOrder.mutate({ id })}
+                    onInvoice={handleInvoice}
+                    onShippingLabel={handleShippingLabel}
+                    onPrintContents={o => handlePrintContents([o])}
+                    kargoEnabled={Boolean(kargoCfg?.kargo)}
+                    onCreateShipment={o => createShipmentMut.mutate({ orderId: o.id })}
+                    onTogglePaid={handleTogglePaid}
+                    onAdvance={handleAdvance}
+                    onSetCancelled={handleSetCancelled}
+                  />
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+
+          {/* Mobil: dokunmatik-dostu kart görünümü */}
+          <div className="space-y-2 md:hidden">
+            {visibleOrders.map(order => (
+              <OrderCard
+                key={order.id}
+                selected={selected.has(order.id)}
+                onToggleSelect={toggleSelect}
+                onDetail={setDetailOrder}
+                order={order}
+                onEdit={openEdit}
+                onDelete={id => deleteOrder.mutate({ id })}
+                onInvoice={handleInvoice}
+                onShippingLabel={handleShippingLabel}
+                onPrintContents={o => handlePrintContents([o])}
+                kargoEnabled={Boolean(kargoCfg?.kargo)}
+                onCreateShipment={o => createShipmentMut.mutate({ orderId: o.id })}
+                onTogglePaid={handleTogglePaid}
+                onAdvance={handleAdvance}
+                onSetCancelled={handleSetCancelled}
+              />
+            ))}
+          </div>
+
           {(orders?.length ?? 0) >= orderLimit && (
             <div className="pt-1 text-center">
               <Button variant="outline" size="sm" onClick={() => setOrderLimit(l => Math.min(l + 400, 5000))}>
@@ -1368,22 +1554,8 @@ function OrderDetailDialog({ order, onClose }: { order: OrderRow | null; onClose
   );
 }
 
-function OrderRowItem({
-  order,
-  selected,
-  onToggleSelect,
-  onDetail,
-  onEdit,
-  onDelete,
-  onInvoice,
-  onShippingLabel,
-  onPrintContents,
-  kargoEnabled,
-  onCreateShipment,
-  onTogglePaid,
-  onAdvance,
-  onSetCancelled,
-}: {
+/** Tablo satırı ve mobil kartın ortak prop tipi. */
+type RowProps = {
   order: OrderRow;
   selected: boolean;
   onToggleSelect: (id: number) => void;
@@ -1398,165 +1570,239 @@ function OrderRowItem({
   onTogglePaid: (o: OrderRow) => void;
   onAdvance: (o: OrderRow, dir: 1 | -1) => void;
   onSetCancelled: (o: OrderRow, cancelled: boolean) => void;
-}) {
+};
+
+/** İlerlet butonu + işlem menüsü — hem tabloda hem mobil kartta kullanılır. */
+function RowActions({
+  order,
+  onDetail,
+  onEdit,
+  onDelete,
+  onInvoice,
+  onShippingLabel,
+  onPrintContents,
+  kargoEnabled,
+  onCreateShipment,
+  onAdvance,
+  onSetCancelled,
+}: RowProps) {
   const confirm = useConfirm();
-  const paid = order.paymentStatus === "paid";
   const auto = isAutoOrder(order);
   const idx = ORDER_STATUSES.findIndex(s => s.value === order.status);
   const next = ORDER_STATUSES[idx + 1];
   const prev = ORDER_STATUSES[idx - 1];
 
   return (
-    <div className={`flex flex-col gap-2 p-3 sm:flex-row sm:items-center ${selected ? "bg-primary/5" : ""}`}>
-      <Checkbox
-        checked={selected}
-        onCheckedChange={() => onToggleSelect(order.id)}
-        aria-label="Siparişi seç"
-        className="mt-1 self-start sm:mt-0 sm:self-auto shrink-0"
-      />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            className="font-medium text-sm truncate hover:text-primary hover:underline text-left"
-            onClick={() => onDetail(order)}
-            title="Detay & zaman çizgisi"
+    <>
+      {order.status !== "done" &&
+        (auto ? (
+          <span
+            className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1.5 text-[11px] text-muted-foreground"
+            title="Pazaryeri siparişi — durumu her senkronda otomatik güncellenir"
           >
-            {order.customerName}
-          </button>
-          {order.customerAddress && <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
-          <button
-            onClick={() => onTogglePaid(order)}
-            title={paid ? "Ödendi (bekliyor yap)" : "Ödendi olarak işaretle"}
-            className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors ${
-              paid
-                ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-                : order.paymentStatus === "partial"
-                  ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
-                  : "bg-destructive/10 text-destructive hover:bg-destructive/20"
-            }`}
-          >
-            {paid ? "Ödendi" : order.paymentStatus === "partial" ? "Kısmi" : "Bekliyor"}
-          </button>
-        </div>
-        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mt-0.5">
-          <span>{order.orderNo}</span>
-          <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-            {order.channel}
-          </Badge>
-          <span>{formatDate(order.createdAt)}</span>
-        </div>
-        {order.itemsSummary && (
-          <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">{order.itemsSummary}</p>
-        )}
-      </div>
+            <Zap className="h-3.5 w-3.5" /> Otomatik
+          </span>
+        ) : next ? (
+          <Button size="sm" className="h-8" onClick={() => onAdvance(order, 1)}>
+            {next.label} <ArrowRight className="h-3.5 w-3.5 ml-1" />
+          </Button>
+        ) : null)}
 
-      <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
-        <span className="font-semibold text-sm whitespace-nowrap">{formatTL(order.totalAmount)}</span>
-
-        {order.status !== "done" &&
-          (auto ? (
-            <span
-              className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1.5 text-[11px] text-muted-foreground"
-              title="Pazaryeri siparişi — durumu her senkronda otomatik güncellenir"
-            >
-              <Zap className="h-3.5 w-3.5" /> Otomatik
-            </span>
-          ) : next ? (
-            <Button size="sm" className="h-9" onClick={() => onAdvance(order, 1)}>
-              {next.label} <ArrowRight className="h-3.5 w-3.5 ml-1" />
-            </Button>
-          ) : null)}
-
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button size="icon" variant="ghost" className="h-9 w-9" aria-label="İşlemler">
-              <MoreHorizontal className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-52">
-            <DropdownMenuItem onClick={() => onDetail(order)}>
-              <History className="mr-2 h-4 w-4" /> Detay &amp; zaman çizgisi
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button size="icon" variant="ghost" className="h-8 w-8" aria-label="İşlemler">
+            <MoreHorizontal className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-52">
+          <DropdownMenuItem onClick={() => onDetail(order)}>
+            <History className="mr-2 h-4 w-4" /> Detay &amp; zaman çizgisi
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          {order.customerPhone && (
+            <DropdownMenuItem asChild>
+              <a href={waLink(order)} target="_blank" rel="noreferrer">
+                <MessageCircle className="mr-2 h-4 w-4 text-emerald-600" /> WhatsApp'tan yaz
+              </a>
             </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            {order.customerPhone && (
-              <DropdownMenuItem asChild>
-                <a href={waLink(order)} target="_blank" rel="noreferrer">
-                  <MessageCircle className="mr-2 h-4 w-4 text-emerald-600" /> WhatsApp'tan yaz
-                </a>
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuItem onClick={() => onShippingLabel(order)}>
-              <Truck className="mr-2 h-4 w-4" /> Kargo etiketi
-            </DropdownMenuItem>
-            {kargoEnabled && !auto && (
-              <DropdownMenuItem
-                onSelect={async () => {
-                  if (
-                    await confirm({
-                      title: "Geliver gönderisi oluştur",
-                      description: `${order.orderNo} için Geliver'de kargo kaydı açılıp en uygun teklif satın alınsın mı? (Test modu açıksa ücret yansımaz.)`,
-                      confirmText: "Gönderi Oluştur",
-                    })
-                  )
-                    onCreateShipment(order);
-                }}
-              >
-                <Truck className="mr-2 h-4 w-4 text-sky-600" /> Geliver gönderisi
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuItem onClick={() => onPrintContents(order)}>
-              <Printer className="mr-2 h-4 w-4" /> İçerik dökümü
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => onInvoice(order)}>
-              <FileText className="mr-2 h-4 w-4" /> Fatura kes
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => onEdit(order)}>
-              <Pencil className="mr-2 h-4 w-4" /> Düzenle
-            </DropdownMenuItem>
-            {!auto && prev && (
-              <DropdownMenuItem onClick={() => onAdvance(order, -1)}>
-                <ArrowLeft className="mr-2 h-4 w-4" /> Geri: {prev.label}
-              </DropdownMenuItem>
-            )}
-            {order.status !== "cancelled" ? (
-              <DropdownMenuItem
-                onSelect={async () => {
-                  if (
-                    await confirm({
-                      title: "İptal / İade",
-                      description: `${order.orderNo} iptal/iade olarak işaretlensin mi? Ciro ve cariden düşülür, ürün stoğu iade edilir.`,
-                      confirmText: "İptal / İade",
-                    })
-                  )
-                    onSetCancelled(order, true);
-                }}
-              >
-                <XCircle className="mr-2 h-4 w-4 text-rose-600" /> İptal / İade et
-              </DropdownMenuItem>
-            ) : (
-              <DropdownMenuItem onClick={() => onSetCancelled(order, false)}>
-                <Undo2 className="mr-2 h-4 w-4" /> İptali geri al (Yeni'ye taşı)
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuSeparator />
+          )}
+          <DropdownMenuItem onClick={() => onShippingLabel(order)}>
+            <Truck className="mr-2 h-4 w-4" /> Kargo etiketi
+          </DropdownMenuItem>
+          {kargoEnabled && !auto && (
             <DropdownMenuItem
-              className="text-destructive focus:text-destructive"
               onSelect={async () => {
                 if (
                   await confirm({
-                    title: "Siparişi sil",
-                    description: `${order.orderNo} — ${order.customerName} siparişi silinsin mi? Bu işlem geri alınamaz.`,
-                    confirmText: "Sil",
-                    destructive: true,
+                    title: "Geliver gönderisi oluştur",
+                    description: `${order.orderNo} için Geliver'de kargo kaydı açılıp en uygun teklif satın alınsın mı? (Test modu açıksa ücret yansımaz.)`,
+                    confirmText: "Gönderi Oluştur",
                   })
                 )
-                  onDelete(order.id);
+                  onCreateShipment(order);
               }}
             >
-              <Trash2 className="mr-2 h-4 w-4" /> Sil
+              <Truck className="mr-2 h-4 w-4 text-sky-600" /> Geliver gönderisi
             </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+          )}
+          <DropdownMenuItem onClick={() => onPrintContents(order)}>
+            <Printer className="mr-2 h-4 w-4" /> İçerik dökümü
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onInvoice(order)}>
+            <FileText className="mr-2 h-4 w-4" /> Fatura kes
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onEdit(order)}>
+            <Pencil className="mr-2 h-4 w-4" /> Düzenle
+          </DropdownMenuItem>
+          {!auto && prev && (
+            <DropdownMenuItem onClick={() => onAdvance(order, -1)}>
+              <ArrowLeft className="mr-2 h-4 w-4" /> Geri: {prev.label}
+            </DropdownMenuItem>
+          )}
+          {order.status !== "cancelled" ? (
+            <DropdownMenuItem
+              onSelect={async () => {
+                if (
+                  await confirm({
+                    title: "İptal / İade",
+                    description: `${order.orderNo} iptal/iade olarak işaretlensin mi? Ciro ve cariden düşülür, ürün stoğu iade edilir.`,
+                    confirmText: "İptal / İade",
+                  })
+                )
+                  onSetCancelled(order, true);
+              }}
+            >
+              <XCircle className="mr-2 h-4 w-4 text-rose-600" /> İptal / İade et
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem onClick={() => onSetCancelled(order, false)}>
+              <Undo2 className="mr-2 h-4 w-4" /> İptali geri al (Yeni'ye taşı)
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            className="text-destructive focus:text-destructive"
+            onSelect={async () => {
+              if (
+                await confirm({
+                  title: "Siparişi sil",
+                  description: `${order.orderNo} — ${order.customerName} siparişi silinsin mi? Bu işlem geri alınamaz.`,
+                  confirmText: "Sil",
+                  destructive: true,
+                })
+              )
+                onDelete(order.id);
+            }}
+          >
+            <Trash2 className="mr-2 h-4 w-4" /> Sil
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
+  );
+}
+
+/** Masaüstü tablo satırı: yoğun, taranabilir; müşteri/sipariş, içerik, durum, ödeme, tutar. */
+function OrderTableRow(props: RowProps) {
+  const { order, selected, onToggleSelect, onDetail, onTogglePaid } = props;
+  const due = num(order.totalAmount) - num(order.paidAmount);
+  return (
+    <TableRow data-state={selected ? "selected" : undefined}>
+      <TableCell className="pl-3">
+        <Checkbox
+          checked={selected}
+          onCheckedChange={() => onToggleSelect(order.id)}
+          aria-label="Siparişi seç"
+        />
+      </TableCell>
+      <TableCell className="max-w-[260px]">
+        <button
+          className="block max-w-full truncate text-left font-medium hover:text-primary hover:underline"
+          onClick={() => onDetail(order)}
+          title="Detay & zaman çizgisi"
+        >
+          {order.customerName}
+        </button>
+        <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span className="font-mono">{order.orderNo}</span>
+          <ChannelBadge channel={order.channel} />
+          {order.customerPhone && (
+            <a
+              href={waLink(order)}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center text-emerald-600 hover:text-emerald-500"
+              title="WhatsApp'tan yaz"
+            >
+              <Phone className="h-3 w-3" />
+            </a>
+          )}
+          {order.customerAddress && <MapPin className="h-3 w-3" aria-label="Adres kayıtlı" />}
+        </div>
+      </TableCell>
+      <TableCell className="hidden max-w-[220px] lg:table-cell">
+        <span className="line-clamp-1 text-xs text-muted-foreground">{order.itemsSummary || "—"}</span>
+      </TableCell>
+      <TableCell>
+        <StatusPill status={order.status} />
+      </TableCell>
+      <TableCell>
+        <PaymentPill order={order} onToggle={onTogglePaid} />
+      </TableCell>
+      <TableCell className="text-right">
+        <div className="whitespace-nowrap font-semibold">{formatTL(order.totalAmount)}</div>
+        {order.status !== "cancelled" && order.paymentStatus !== "paid" && due > 0 && (
+          <div className="whitespace-nowrap text-[11px] text-destructive">{formatTL(due)} açık</div>
+        )}
+      </TableCell>
+      <TableCell className="hidden whitespace-nowrap text-xs text-muted-foreground xl:table-cell">
+        {formatDate(order.createdAt)}
+      </TableCell>
+      <TableCell className="pr-3">
+        <div className="flex items-center justify-end gap-1">
+          <RowActions {...props} />
+        </div>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+/** Mobil kart: dokunmatik-dostu; tablo ile aynı bilgi ve aksiyonlar. */
+function OrderCard(props: RowProps) {
+  const { order, selected, onToggleSelect, onDetail, onTogglePaid } = props;
+  return (
+    <div className={`rounded-xl border bg-card p-3 ${selected ? "bg-primary/5 ring-1 ring-primary" : ""}`}>
+      <div className="flex items-start gap-2">
+        <Checkbox
+          checked={selected}
+          onCheckedChange={() => onToggleSelect(order.id)}
+          aria-label="Siparişi seç"
+          className="mt-0.5 shrink-0"
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              className="truncate text-left text-sm font-medium hover:text-primary hover:underline"
+              onClick={() => onDetail(order)}
+            >
+              {order.customerName}
+            </button>
+            <PaymentPill order={order} onToggle={onTogglePaid} />
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+            <StatusPill status={order.status} />
+            <span className="font-mono">{order.orderNo}</span>
+            <ChannelBadge channel={order.channel} />
+            <span>{formatDate(order.createdAt)}</span>
+          </div>
+          {order.itemsSummary && (
+            <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{order.itemsSummary}</p>
+          )}
+        </div>
+        <span className="whitespace-nowrap text-sm font-semibold">{formatTL(order.totalAmount)}</span>
+      </div>
+      <div className="mt-2 flex items-center justify-end gap-1 border-t pt-2">
+        <RowActions {...props} />
       </div>
     </div>
   );
