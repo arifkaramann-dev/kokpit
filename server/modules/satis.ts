@@ -27,7 +27,7 @@ import {
   pushTrendyolProductCards,
   searchTrendyolBrands,
 } from "../trendyolProducts";
-import { pushHepsiburadaStockPrice } from "../hepsiburada";
+import { getHepsiburadaLabelPdf, pushHepsiburadaStockPrice } from "../hepsiburada";
 import {
   hbCatalogSendTestProduct,
   hbCatalogStatus,
@@ -129,10 +129,25 @@ export const ordersRouter = router({
     .mutation(async ({ input }) => {
       const order = await db.getOrder(input.orderId);
       if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "Sipariş bulunamadı" });
+
+      // Hepsiburada: etiket paket numarasından (orderNo = HB-<packageNumber>) çekilir.
+      if (order.channel === "hepsiburada") {
+        const packageNumber = order.orderNo.replace(/^HB-/, "");
+        try {
+          const pdf = await getHepsiburadaLabelPdf(packageNumber);
+          return { pdfBase64: pdf.toString("base64"), fallback: null, message: null };
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Hepsiburada etiketi alınamadı",
+          });
+        }
+      }
+
       if (order.channel !== "trendyol") {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "Resmi kargo etiketi yalnızca Trendyol siparişleri için çekilebilir.",
+          message: "Resmi kargo etiketi yalnızca Trendyol ve Hepsiburada siparişleri için çekilebilir.",
         });
       }
       if (!order.cargoTrackingNumber) {
@@ -221,6 +236,17 @@ export const ordersRouter = router({
       }),
     ),
   delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteOrder(input.id)),
+  // Sipariş zaman çizgisi: olay defterindeki tüm adımlar (en yeni üstte).
+  events: protectedProcedure
+    .input(z.object({ orderId: z.number() }))
+    .query(({ input }) => db.listOrderEvents(input.orderId)),
+  // Zaman çizgisine elle not ekle (ör. "müşteri aradı, teslimatı erteledi").
+  addNote: protectedProcedure
+    .input(z.object({ orderId: z.number(), note: z.string().min(1).max(500) }))
+    .mutation(async ({ input }) => {
+      await db.logOrderEvent(input.orderId, "note", input.note.trim());
+      return { ok: true };
+    }),
 });
 
 

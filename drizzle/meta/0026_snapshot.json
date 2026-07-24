@@ -1,8 +1,8 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "f6845dec-2596-4493-a45c-504fb4aadc7e",
-  "prevId": "2d770f4d-5034-4efc-893a-3883a9daf99a",
+  "id": "7c968d13-72ad-4bcd-a73b-e32341fc547c",
+  "prevId": "f6845dec-2596-4493-a45c-504fb4aadc7e",
   "tables": {
     "accounts": {
       "name": "accounts",
@@ -476,6 +476,28 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "taxOffice": {
+          "name": "taxOffice",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "taxNumber": {
+          "name": "taxNumber",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "eInvoice": {
+          "name": "eInvoice",
+          "type": "enum('bilinmiyor','efatura','earsiv')",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'bilinmiyor'"
         },
         "notes": {
           "name": "notes",

@@ -27,7 +27,17 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatTL } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
-import { CalendarClock, MessageCircle, MoreVertical, Plus, Target, Trash2 } from "lucide-react";
+import {
+  DndContext,
+  DragEndEvent,
+  DragOverlay,
+  PointerSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import { CalendarClock, GripVertical, MessageCircle, MoreVertical, Plus, Target, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
@@ -168,6 +178,32 @@ export default function Crm() {
     showClosed ? true : s.key !== "kazanildi" && s.key !== "kaybedildi",
   );
 
+  // Sürükle-bırak: kartı bir aşama sütununa bırakınca stage güncellenir
+  // (Ürün Geliştirme panosuyla aynı desen — uygulama genelinde tek kanban).
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const [dragId, setDragId] = useState<number | null>(null);
+  const dragged = rows.find(o => o.id === dragId) ?? null;
+
+  function handleDragEnd(e: DragEndEvent) {
+    setDragId(null);
+    const { active, over } = e;
+    if (!over) return;
+    const id = Number(active.id);
+    const stage = String(over.id) as Stage;
+    const opp = rows.find(o => o.id === id);
+    if (opp && opp.stage !== stage) setStage.mutate({ id, stage });
+  }
+
+  async function handleRemove(o: OppRow) {
+    const ok = await confirm({
+      title: "Fırsatı sil",
+      description: `"${o.title}" silinecek. Emin misin?`,
+      confirmText: "Sil",
+      destructive: true,
+    });
+    if (ok) remove.mutate({ id: o.id });
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -221,111 +257,29 @@ export default function Crm() {
           </Button>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-5 gap-3 items-start">
-          {visibleStages.map(stage => {
-            const list = byStage.get(stage.key) ?? [];
-            const total = list.reduce((s, o) => s + num(o.expectedAmount), 0);
-            return (
-              <div key={stage.key} className={`rounded-lg border-t-4 ${stage.color} bg-muted/30 p-2 space-y-2`}>
-                <div className="flex items-center justify-between px-1">
-                  <span className="text-sm font-semibold">{stage.label}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {list.length} · {formatTL(total)}
-                  </span>
-                </div>
-                {list.map(o => {
-                  const overdue =
-                    o.nextStepDate && new Date(o.nextStepDate).getTime() < Date.now() - 24 * 3600 * 1000;
-                  return (
-                    <Card key={o.id} className="p-3 space-y-1.5">
-                      <div className="flex items-start gap-1">
-                        <button className="flex-1 text-left" onClick={() => openEdit(o)}>
-                          <p className="text-sm font-medium leading-tight">{o.title}</p>
-                          {o.customerName && (
-                            <p className="text-xs text-muted-foreground">{o.customerName}</p>
-                          )}
-                        </button>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button size="icon" variant="ghost" className="h-6 w-6 shrink-0">
-                              <MoreVertical className="h-3.5 w-3.5" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            {o.stage === "teklif" && (
-                              <DropdownMenuItem onClick={() => setLocation("/teklifler")}>
-                                Teklif oluştur →
-                              </DropdownMenuItem>
-                            )}
-                            {o.customerPhone && (
-                              <DropdownMenuItem
-                                onClick={() =>
-                                  window.open(
-                                    `https://wa.me/${o.customerPhone!.replace(/\D/g, "")}`,
-                                    "_blank",
-                                  )
-                                }
-                              >
-                                <MessageCircle className="h-3.5 w-3.5 mr-2" /> WhatsApp
-                              </DropdownMenuItem>
-                            )}
-                            <DropdownMenuItem
-                              className="text-destructive"
-                              onClick={async () => {
-                                const ok = await confirm({
-                                  title: "Fırsatı sil",
-                                  description: `"${o.title}" silinecek. Emin misin?`,
-                                  confirmText: "Sil",
-                                  destructive: true,
-                                });
-                                if (ok) remove.mutate({ id: o.id });
-                              }}
-                            >
-                              <Trash2 className="h-3.5 w-3.5 mr-2" /> Sil
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
-                      {num(o.expectedAmount) > 0 && (
-                        <p className="text-sm font-semibold">{formatTL(num(o.expectedAmount))}</p>
-                      )}
-                      {o.nextStep && (
-                        <p
-                          className={`text-xs flex items-center gap-1 ${
-                            overdue ? "text-rose-600 font-medium" : "text-muted-foreground"
-                          }`}
-                        >
-                          <CalendarClock className="h-3 w-3 shrink-0" />
-                          {o.nextStep}
-                          {o.nextStepDate ? ` · ${formatDate(o.nextStepDate)}` : ""}
-                          {overdue ? " (gecikti)" : ""}
-                        </p>
-                      )}
-                      <Select
-                        value={o.stage}
-                        onValueChange={v => setStage.mutate({ id: o.id, stage: v as Stage })}
-                      >
-                        <SelectTrigger className="h-7 text-xs">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {STAGES.map(s => (
-                            <SelectItem key={s.key} value={s.key}>
-                              {s.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </Card>
-                  );
-                })}
-                {list.length === 0 && (
-                  <p className="text-xs text-muted-foreground text-center py-4">Bu aşamada fırsat yok</p>
-                )}
-              </div>
-            );
-          })}
-        </div>
+        <DndContext
+          sensors={sensors}
+          onDragStart={e => setDragId(Number(e.active.id))}
+          onDragEnd={handleDragEnd}
+        >
+          <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-5 gap-3 items-start">
+            {visibleStages.map(stage => (
+              <CrmColumn
+                key={stage.key}
+                stage={stage}
+                list={byStage.get(stage.key) ?? []}
+                num={num}
+                onEdit={openEdit}
+                onRemove={handleRemove}
+                onStage={(id, s) => setStage.mutate({ id, stage: s })}
+                onQuote={() => setLocation("/teklifler")}
+              />
+            ))}
+          </div>
+          <DragOverlay>
+            {dragged ? <CrmCard o={dragged} num={num} overlay /> : null}
+          </DragOverlay>
+        </DndContext>
       )}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -439,5 +393,176 @@ export default function Crm() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+/** Bir aşama sütunu — kart buraya bırakılınca stage değişir (droppable). */
+function CrmColumn({
+  stage,
+  list,
+  num,
+  onEdit,
+  onRemove,
+  onStage,
+  onQuote,
+}: {
+  stage: (typeof STAGES)[number];
+  list: OppRow[];
+  num: (v: unknown) => number;
+  onEdit: (o: OppRow) => void;
+  onRemove: (o: OppRow) => void;
+  onStage: (id: number, stage: Stage) => void;
+  onQuote: () => void;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: stage.key });
+  const total = list.reduce((s, o) => s + num(o.expectedAmount), 0);
+  return (
+    <div
+      ref={setNodeRef}
+      className={`rounded-lg border-t-4 ${stage.color} bg-muted/30 p-2 space-y-2 min-h-[120px] transition-colors ${
+        isOver ? "ring-2 ring-primary/60 bg-accent/40" : ""
+      }`}
+    >
+      <div className="flex items-center justify-between px-1">
+        <span className="text-sm font-semibold">{stage.label}</span>
+        <span className="text-xs text-muted-foreground">
+          {list.length} · {formatTL(total)}
+        </span>
+      </div>
+      {list.map(o => (
+        <DraggableCrmCard
+          key={o.id}
+          o={o}
+          num={num}
+          onEdit={onEdit}
+          onRemove={onRemove}
+          onStage={onStage}
+          onQuote={onQuote}
+        />
+      ))}
+      {list.length === 0 && (
+        <p className="text-xs text-muted-foreground text-center py-4">Bu aşamada fırsat yok</p>
+      )}
+    </div>
+  );
+}
+
+/** Sürüklenebilir sarmalayıcı; görsel kartı CrmCard render eder. */
+function DraggableCrmCard(props: {
+  o: OppRow;
+  num: (v: unknown) => number;
+  onEdit: (o: OppRow) => void;
+  onRemove: (o: OppRow) => void;
+  onStage: (id: number, stage: Stage) => void;
+  onQuote: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: props.o.id });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: transform ? `translate(${transform.x}px, ${transform.y}px)` : undefined,
+        opacity: isDragging ? 0.4 : 1,
+      }}
+    >
+      <CrmCard
+        {...props}
+        dragHandle={{
+          attributes: attributes as unknown as React.HTMLAttributes<HTMLButtonElement>,
+          listeners,
+        }}
+      />
+    </div>
+  );
+}
+
+/** Fırsat kartı (sunum). Sürükle tutamacı + düzenle + menü (teklif/WhatsApp/aşama/sil). */
+function CrmCard({
+  o,
+  num,
+  onEdit,
+  onRemove,
+  onStage,
+  onQuote,
+  overlay,
+  dragHandle,
+}: {
+  o: OppRow;
+  num: (v: unknown) => number;
+  onEdit?: (o: OppRow) => void;
+  onRemove?: (o: OppRow) => void;
+  onStage?: (id: number, stage: Stage) => void;
+  onQuote?: () => void;
+  overlay?: boolean;
+  dragHandle?: {
+    attributes: React.HTMLAttributes<HTMLButtonElement>;
+    listeners: Record<string, unknown> | undefined;
+  };
+}) {
+  const overdue = o.nextStepDate && new Date(o.nextStepDate).getTime() < Date.now() - 24 * 3600 * 1000;
+  return (
+    <Card className={`p-3 space-y-1.5 ${overlay ? "shadow-xl rotate-2" : "shadow-sm"}`}>
+      <div className="flex items-start gap-1">
+        <button
+          className="mt-0.5 text-muted-foreground/60 hover:text-foreground cursor-grab active:cursor-grabbing touch-none shrink-0"
+          {...(dragHandle?.attributes ?? {})}
+          {...(dragHandle?.listeners ?? {})}
+          aria-label="Taşı"
+        >
+          <GripVertical className="h-4 w-4" />
+        </button>
+        <button className="flex-1 text-left min-w-0" onClick={() => onEdit?.(o)}>
+          <p className="text-sm font-medium leading-tight">{o.title}</p>
+          {o.customerName && <p className="text-xs text-muted-foreground">{o.customerName}</p>}
+        </button>
+        {!overlay && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="icon" variant="ghost" className="h-6 w-6 shrink-0">
+                <MoreVertical className="h-3.5 w-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {o.stage === "teklif" && (
+                <DropdownMenuItem onClick={() => onQuote?.()}>Teklif oluştur →</DropdownMenuItem>
+              )}
+              {o.customerPhone && (
+                <DropdownMenuItem
+                  onClick={() =>
+                    window.open(`https://wa.me/${o.customerPhone!.replace(/\D/g, "")}`, "_blank")
+                  }
+                >
+                  <MessageCircle className="h-3.5 w-3.5 mr-2" /> WhatsApp
+                </DropdownMenuItem>
+              )}
+              {/* Dokunmatik cihazlarda sürükleme yerine aşama seçimi (fallback). */}
+              {STAGES.filter(s => s.key !== o.stage).map(s => (
+                <DropdownMenuItem key={s.key} onClick={() => onStage?.(o.id, s.key)}>
+                  → {s.label}
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuItem className="text-destructive" onClick={() => onRemove?.(o)}>
+                <Trash2 className="h-3.5 w-3.5 mr-2" /> Sil
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </div>
+      {num(o.expectedAmount) > 0 && (
+        <p className="text-sm font-semibold pl-5">{formatTL(num(o.expectedAmount))}</p>
+      )}
+      {o.nextStep && (
+        <p
+          className={`text-xs flex items-center gap-1 pl-5 ${
+            overdue ? "text-rose-600 font-medium" : "text-muted-foreground"
+          }`}
+        >
+          <CalendarClock className="h-3 w-3 shrink-0" />
+          {o.nextStep}
+          {o.nextStepDate ? ` · ${formatDate(o.nextStepDate)}` : ""}
+          {overdue ? " (gecikti)" : ""}
+        </p>
+      )}
+    </Card>
   );
 }

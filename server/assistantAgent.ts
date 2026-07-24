@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import {
   actionAddCollection,
   actionAddExpense,
+  actionAddPurchaseInvoice,
   actionAddTasks,
   actionCompleteTasks,
   actionCreateCustomer,
@@ -94,7 +95,8 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: "gider_ekle",
-    description: "Gider kaydeder (kira, kargo, reklam, malzeme...). Tutar TL.",
+    description:
+      "Genel işletme gideri kaydeder (kira, kargo, reklam, komisyon, fatura gibi). Belirli bir TEDARİKÇİYE ait alış faturası için bunu KULLANMA — onun için tedarikci_alis_faturasi aracını kullan. Tutar TL.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -108,6 +110,31 @@ const TOOLS: ToolDef[] = [
     run: async args =>
       (await actionAddExpense({ category: str(args.category) || undefined, amount: numArg(args.amount), description: str(args.description) })).message,
     describe: args => `Gider: ${str(args.category) || "diğer"} — ${numArg(args.amount).toFixed(2)} TL (${str(args.description)})`,
+  },
+  {
+    name: "tedarikci_alis_faturasi",
+    description:
+      "Bir TEDARİKÇİDEN gelen ALIŞ faturasını o tedarikçinin cari hesabına (borç) işler; Tedarikçi > Cari Ekstre'de 'Alış Faturası' olarak görünür ve tedarikçiye borcumuzu artırır. Kullanıcı 'tedarikçi X'e ... liralık (malzeme/boya) alış faturası gir' benzeri bir şey dediğinde BUNU kullan — gider_ekle DEĞİL. Tutar TL.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        supplierName: { type: "string", description: "tedarikçi adı" },
+        amount: { type: "number" },
+        note: { type: "string", description: "fatura açıklaması (opsiyonel)" },
+      },
+      required: ["supplierName", "amount"],
+    },
+    safety: "onayli",
+    run: async args =>
+      (
+        await actionAddPurchaseInvoice({
+          supplierName: str(args.supplierName),
+          amount: numArg(args.amount),
+          note: str(args.note) || undefined,
+        })
+      ).message,
+    describe: args =>
+      `Alış faturası: ${str(args.supplierName)} — ${numArg(args.amount).toFixed(2)} TL (tedarikçi cari ekstresine)`,
   },
   {
     name: "tahsilat_ekle",

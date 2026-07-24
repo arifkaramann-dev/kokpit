@@ -238,6 +238,8 @@ export const customersRouter = router({
   delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteCustomer(input.id)),
   // Müşteri cari ekstresi: siparişler (borç) + tahsilatlar (alacak) + bakiye.
   ledger: protectedProcedure.input(z.object({ name: z.string() })).query(({ input }) => db.customerLedger(input.name)),
+  // Müşteri 360°: sipariş + teklif geçmişi ve özet (LTV, sipariş sayısı, son sipariş).
+  profile: protectedProcedure.input(z.object({ name: z.string() })).query(({ input }) => db.customerProfile(input.name)),
   // Tüm müşterilerin cari bakiyesi (küçük harf ada göre).
   balances: protectedProcedure.query(() => db.customerBalances()),
 });

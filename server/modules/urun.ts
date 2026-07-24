@@ -86,6 +86,9 @@ const productInput = z.object({
   shippingCost: z.number().min(0).default(0),
   packaging: z.string().nullable().optional(),
   barcode: z.string().nullable().optional(),
+  // Kanal bazlı fiyat JSON'u (trendyol/hepsiburada/n11/ciceksepeti → fiyat/indirim).
+  // Boş kanal = taban (web) fiyatı kullanılır. Fiyat & Kâr ve pazaryeri push okur.
+  channelPrices: z.string().nullable().optional(),
   stockQty: z.number().min(0).optional(),
   criticalQty: z.number().min(0).optional(),
   labelSize: z.string().nullable().optional(),

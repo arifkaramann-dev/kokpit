@@ -1,3 +1,4 @@
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
@@ -16,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatTL } from "@/lib/format";
 import { useConfirm } from "@/components/ConfirmDialog";
@@ -55,6 +57,22 @@ const E_INVOICE_LABELS: Record<EInvoice, string> = {
   bilinmiyor: "Bilinmiyor",
   efatura: "e-Fatura mükellefi",
   earsiv: "e-Arşiv",
+};
+
+const ORDER_STATUS_TR: Record<string, string> = {
+  new: "Yeni",
+  production: "Üretimde",
+  ready: "Hazır",
+  done: "Tamam",
+  cancelled: "İptal",
+};
+const QUOTE_STATUS_TR: Record<string, string> = {
+  draft: "Taslak",
+  sent: "Gönderildi",
+  accepted: "Kabul",
+  rejected: "Ret",
+  expired: "Süresi doldu",
+  converted: "Siparişe döndü",
 };
 
 export default function Customers() {
@@ -112,6 +130,7 @@ export default function Customers() {
   });
 
   const ledgerQ = trpc.customers.ledger.useQuery({ name: detail?.name ?? "" }, { enabled: !!detail });
+  const profileQ = trpc.customers.profile.useQuery({ name: detail?.name ?? "" }, { enabled: !!detail });
   // Cari ekstre hareket düzenleme (geriye dönük): tahsilat/hareket tutarı ve tarihi.
   const [editRow, setEditRow] = useState<{ id: number; amount: string; date: string } | null>(null);
 
@@ -346,11 +365,103 @@ export default function Customers() {
       </div>
 
       <Dialog open={!!detail} onOpenChange={o => !o && setDetail(null)}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-2xl max-h-[88vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{detail?.name} — Cari Ekstre</DialogTitle>
+            <DialogTitle className="flex items-center gap-2 flex-wrap">
+              {detail?.name}
+              {detail?.phone && (
+                <a
+                  href={`https://wa.me/${detail.phone.replace(/\D/g, "")}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-emerald-600 hover:underline inline-flex items-center gap-1 text-xs font-normal"
+                >
+                  <MessageCircle className="h-3.5 w-3.5" /> WhatsApp
+                </a>
+              )}
+            </DialogTitle>
           </DialogHeader>
           {detail && (
+            <Tabs defaultValue="genel">
+              <TabsList className="w-full">
+                <TabsTrigger value="genel" className="flex-1">Genel Bakış</TabsTrigger>
+                <TabsTrigger value="ekstre" className="flex-1">Cari Ekstre</TabsTrigger>
+              </TabsList>
+
+              {/* ── 360° Genel Bakış ── */}
+              <TabsContent value="genel" className="mt-3 space-y-3">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <div className="rounded-lg border p-2.5">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Toplam Ciro (LTV)</p>
+                    <p className="text-lg font-bold">{formatTL(profileQ.data?.stats.totalSpent ?? 0)}</p>
+                  </div>
+                  <div className="rounded-lg border p-2.5">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Sipariş</p>
+                    <p className="text-lg font-bold">{profileQ.data?.stats.orderCount ?? 0}</p>
+                  </div>
+                  <div className="rounded-lg border p-2.5">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Bakiye</p>
+                    <p className={`text-lg font-bold ${(ledgerQ.data?.balance ?? 0) > 0 ? "text-rose-600" : "text-emerald-600"}`}>
+                      {formatTL(ledgerQ.data?.balance ?? 0)}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border p-2.5">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Son Sipariş</p>
+                    <p className="text-sm font-medium mt-1">
+                      {profileQ.data?.stats.lastOrderAt ? formatDate(profileQ.data.stats.lastOrderAt) : "—"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border overflow-hidden">
+                  <div className="bg-muted/40 px-3 py-1.5 text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                    <ShoppingBag className="h-3.5 w-3.5" /> Siparişler ({profileQ.data?.orders.length ?? 0})
+                  </div>
+                  {(profileQ.data?.orders ?? []).length === 0 ? (
+                    <p className="p-3 text-xs text-muted-foreground">Sipariş yok.</p>
+                  ) : (
+                    <div className="divide-y max-h-56 overflow-y-auto">
+                      {(profileQ.data?.orders ?? []).map(o => (
+                        <div key={o.id} className="flex items-center gap-2 px-3 py-1.5 text-sm">
+                          <span className="text-muted-foreground text-[11px] w-20 shrink-0 truncate">{o.orderNo}</span>
+                          <Badge variant="outline" className="text-[10px] shrink-0">{ORDER_STATUS_TR[o.status] ?? o.status}</Badge>
+                          <span className="text-[11px] text-muted-foreground flex-1 truncate">{formatDate(o.createdAt)}</span>
+                          <span className={`text-[10px] shrink-0 ${o.paymentStatus === "paid" ? "text-emerald-600" : "text-amber-600"}`}>
+                            {o.paymentStatus === "paid" ? "Ödendi" : o.paymentStatus === "partial" ? "Kısmi" : "Bekliyor"}
+                          </span>
+                          <span className="font-medium whitespace-nowrap">{formatTL(o.totalAmount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {(profileQ.data?.quotes ?? []).length > 0 && (
+                  <div className="rounded-lg border overflow-hidden">
+                    <div className="bg-muted/40 px-3 py-1.5 text-xs font-medium text-muted-foreground">
+                      Teklifler ({profileQ.data?.quotes.length ?? 0})
+                    </div>
+                    <div className="divide-y max-h-40 overflow-y-auto">
+                      {(profileQ.data?.quotes ?? []).map(q => (
+                        <div key={q.id} className="flex items-center gap-2 px-3 py-1.5 text-sm">
+                          <span className="text-muted-foreground text-[11px] w-20 shrink-0 truncate">{q.quoteNo}</span>
+                          <Badge variant="outline" className="text-[10px] shrink-0">{QUOTE_STATUS_TR[q.status] ?? q.status}</Badge>
+                          <span className="text-[11px] text-muted-foreground flex-1 truncate">{formatDate(q.createdAt)}</span>
+                          <span className="font-medium whitespace-nowrap">{formatTL(q.totalAmount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {detail.address && (
+                  <p className="text-xs text-muted-foreground flex items-start gap-1">
+                    <MapPin className="h-3.5 w-3.5 shrink-0 mt-0.5" /> {detail.address}
+                  </p>
+                )}
+              </TabsContent>
+
+              {/* ── Cari Ekstre (mevcut) ── */}
+              <TabsContent value="ekstre" className="mt-3">
             <div className="space-y-3">
               <div className="flex items-center justify-between rounded-lg border p-3">
                 <span className="text-sm text-muted-foreground">Güncel bakiye (borç)</span>
@@ -453,6 +564,8 @@ export default function Customers() {
                 )}
               </div>
             </div>
+              </TabsContent>
+            </Tabs>
           )}
         </DialogContent>
       </Dialog>
