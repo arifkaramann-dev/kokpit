@@ -1,5 +1,6 @@
 import { ENV } from "./_core/env";
 import * as db from "./db";
+import { zplToPdf } from "./labelary";
 import { itemsTotal, shouldSyncOrderStatus, summarizeItems, toItemRows, type OrderItemLike } from "./orderUtils";
 
 /**
@@ -434,17 +435,13 @@ export async function syncHepsiburadaOrders() {
 
 /* ------------------------- Resmi kargo etiketi ------------------------- */
 
-// ZPL etiketini PDF'e çeviren servis (Labelary). 8dpmm ≈ 203dpi, 10×15 cm ≈ 4×6 inç.
-const HB_LABELARY_URL =
-  process.env.LABELARY_URL ?? "https://api.labelary.com/v1/printers/8dpmm/labels/4x6/0/";
-
 /**
- * Hepsiburada resmi kargo etiketini çeker ve PDF döner. HB etiketi
+ * Hepsiburada resmi kargo etiketinin **ZPL**'ini çeker. HB etiketi
  * `GET /packages/merchantid/{id}/packagenumber/{no}/labels` ucundan
  * `{format:"base64zpl", data:[<base64 ZPL>]}` olarak gelir; base64 çözülüp
- * ZPL, Labelary ile PDF'e çevrilir (Trendyol ile aynı yöntem).
+ * ZPL birleştirilir. (Toplu etikette bu ZPL'ler birleştirilip tek PDF olur.)
  */
-export async function getHepsiburadaLabelPdf(packageNumber: string): Promise<Buffer> {
+export async function getHepsiburadaLabelZpl(packageNumber: string): Promise<string> {
   if (!isHepsiburadaConfigured()) {
     throw new Error("Hepsiburada entegrasyonu yapılandırılmamış.");
   }
@@ -474,18 +471,12 @@ export async function getHepsiburadaLabelPdf(packageNumber: string): Promise<Buf
   }
   // format "base64zpl" → her parça base64 çözülüp ZPL olarak birleştirilir.
   const isB64 = (payload.format ?? "").toLowerCase().includes("base64");
-  const zpl = entries.map(e => (isB64 ? Buffer.from(e, "base64").toString("utf8") : e)).join("");
+  return entries.map(e => (isB64 ? Buffer.from(e, "base64").toString("utf8") : e)).join("");
+}
 
-  const pdfRes = await fetch(HB_LABELARY_URL, {
-    method: "POST",
-    headers: { Accept: "application/pdf", "Content-Type": "application/x-www-form-urlencoded" },
-    body: zpl,
-  });
-  if (!pdfRes.ok) {
-    const body = (await pdfRes.text()).slice(0, 200);
-    throw new Error(`Hepsiburada etiketi PDF'e çevrilemedi (${pdfRes.status}): ${body}`);
-  }
-  return Buffer.from(await pdfRes.arrayBuffer());
+/** Hepsiburada resmi kargo etiketini PDF olarak döner (ZPL → Labelary). */
+export async function getHepsiburadaLabelPdf(packageNumber: string): Promise<Buffer> {
+  return zplToPdf(await getHepsiburadaLabelZpl(packageNumber));
 }
 
 /* ------------------------- Satıcıya Sor (Soru-Cevap) ------------------------- */

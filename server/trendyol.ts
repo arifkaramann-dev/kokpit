@@ -1,5 +1,6 @@
 import { ENV } from "./_core/env";
 import * as db from "./db";
+import { zplToPdf } from "./labelary";
 import { itemsTotal, shouldSyncOrderStatus, summarizeItems, toItemRows, type OrderItemLike } from "./orderUtils";
 
 /**
@@ -191,9 +192,6 @@ export async function pushTrendyolStockPrice(items: StockPriceItem[]) {
   return { batchRequestId: data.batchRequestId ?? null, sent: items.length };
 }
 
-// ZPL etiketini PDF'e çeviren servis (Labelary). 8dpmm ≈ 203dpi, 10×15 cm ≈ 4×6 inç.
-const LABELARY_URL =
-  process.env.LABELARY_URL ?? "https://api.labelary.com/v1/printers/8dpmm/labels/4x6/0/";
 
 const trendyolHeaders = () => ({
   Authorization: `Basic ${Buffer.from(`${ENV.trendyolApiKey}:${ENV.trendyolApiSecret}`).toString("base64")}`,
@@ -232,7 +230,8 @@ export function isCommonLabelNotAllowed(status: number, body: string): boolean {
  * kargoya verilmiş (takip no'lu) paketlerde çalışır. Belgeler:
  * developers.trendyol.com → Delivery Integration → Common Label.
  */
-export async function getTrendyolCommonLabelPdf(cargoTrackingNumber: string): Promise<Buffer> {
+/** Trendyol ortak etiketinin ham ZPL'ini üretir/okur (toplu etikette birleştirilir). */
+export async function getTrendyolCommonLabelZpl(cargoTrackingNumber: string): Promise<string> {
   if (!isTrendyolConfigured()) {
     throw new Error("Trendyol entegrasyonu yapılandırılmamış (Satıcı ID, API Key, API Secret gerekli).");
   }
@@ -273,18 +272,12 @@ export async function getTrendyolCommonLabelPdf(cargoTrackingNumber: string): Pr
   if (!zpl) {
     throw new Error("Trendyol etiket içeriği (ZPL) boş döndü. Kargo sağlayıcısı ortak etiketi desteklemiyor olabilir.");
   }
+  return zpl;
+}
 
-  // 3) ZPL → PDF (Labelary).
-  const pdfRes = await fetch(LABELARY_URL, {
-    method: "POST",
-    headers: { Accept: "application/pdf", "Content-Type": "application/x-www-form-urlencoded" },
-    body: zpl,
-  });
-  if (!pdfRes.ok) {
-    const body = (await pdfRes.text()).slice(0, 200);
-    throw new Error(`Etiket PDF'e çevrilemedi (${pdfRes.status}): ${body}`);
-  }
-  return Buffer.from(await pdfRes.arrayBuffer());
+/** Trendyol ortak etiketini PDF olarak döner (ZPL → Labelary). */
+export async function getTrendyolCommonLabelPdf(cargoTrackingNumber: string): Promise<Buffer> {
+  return zplToPdf(await getTrendyolCommonLabelZpl(cargoTrackingNumber));
 }
 
 /** Trendyol get-common-label yanıtından ZPL metnini çıkarır (ham ZPL ya da JSON sarmalı). */
