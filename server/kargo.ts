@@ -227,9 +227,28 @@ function unwrap(json: unknown): Record<string, unknown> {
   return ((j?.data ?? j) ?? {}) as Record<string, unknown>;
 }
 
+/**
+ * Geliver teklifleri düz dizi OLABİLİR ya da nesne olarak gelebilir
+ * (ör. {cheapest, fastest} veya {list:[…]}). Her iki biçimi de teklif dizisine çevirir.
+ */
+function toOfferArray(raw: unknown): GeliverOffer[] {
+  if (Array.isArray(raw)) return raw as GeliverOffer[];
+  if (raw && typeof raw === "object") {
+    const o = raw as Record<string, unknown>;
+    for (const k of ["list", "all", "data", "offers", "rates", "items", "results"]) {
+      if (Array.isArray(o[k])) return o[k] as GeliverOffer[];
+    }
+    const singles = ["cheapest", "fastest", "recommended", "best", "selected"]
+      .map(k => o[k])
+      .filter(v => v && typeof v === "object") as GeliverOffer[];
+    if (singles.length) return singles;
+  }
+  return [];
+}
+
 /** Ham Geliver tekliflerini görünür tekliflere çevirir (en ucuzdan pahalıya sıralı). */
 export function parseGeliverOffers(raw: unknown): ShipmentOffer[] {
-  const list = Array.isArray(raw) ? (raw as GeliverOffer[]) : [];
+  const list = toOfferArray(raw);
   return list
     .map(o => {
       const carrier =
@@ -315,16 +334,22 @@ async function createGeliverShipment(input: ShipmentInput): Promise<ShipmentQuot
   }
   const ship = unwrap(created.json);
   const shipmentId = String(ship.id ?? ship.ID ?? "") || null;
-  const offers = parseGeliverOffers(ship.offers ?? ship.priceOffers ?? ship.rates ?? []);
+  // Teklifler create yanıtında farklı adlarda/biçimde gelebilir (offers dizi ya da
+  // {cheapest,…} nesnesi). Hem açılmış (data) hem ham gövde denenir.
+  const offers = parseGeliverOffers(
+    ship.offers ?? ship.priceOffers ?? ship.rates ?? ship.offerList ?? (created.json as Record<string, unknown>)?.offers ?? [],
+  );
 
   if (offers.length === 0) {
-    return {
-      created: true,
-      provider: "geliver",
-      shipmentId,
-      offers: [],
-      reason: "Gönderi oluştu ama fiyat teklifi dönmedi (gönderici adresi/desi kontrol edilebilir). Etiket Geliver panelinden alınabilir.",
-    };
+    // Teşhis: teklif neden boş? Ham yanıt Render loguna (sender adresi mi eksik,
+    // yoksa teklifler beklenmedik alanda mı?).
+    console.info(`Geliver teklif boş — ham yanıt: ${JSON.stringify(created.json).slice(0, 700)}`);
+    // Geliver teklif için gönderici (çıkış) adresini ZORUNLU ister; tanımlı değilse
+    // hiç teklif dönmez. En sık sebep budur.
+    const reason = !ENV.geliverSenderAddressId
+      ? "Geliver gönderici (çıkış) adresi tanımlı değil — bu yüzden fiyat teklifi dönmüyor. app.geliver.io → Adreslerim'den gönderici adresini ekleyip ID'sini Render'da GELIVER_SENDER_ADDRESS_ID'ye girin."
+      : "Gönderi oluştu ama fiyat teklifi dönmedi (gönderici adresi/desi kontrol edilebilir). Etiket Geliver panelinden alınabilir.";
+    return { created: true, provider: "geliver", shipmentId, offers: [], reason };
   }
   return { created: true, provider: "geliver", shipmentId, offers };
 }
