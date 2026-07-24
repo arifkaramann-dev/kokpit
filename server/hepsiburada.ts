@@ -244,8 +244,14 @@ async function fetchPackagesPage(offset: number, kind: "open" | "shipped" = "ope
     const body = (await res.text()).slice(0, 200);
     throw new Error(`Hepsiburada API hatası (${res.status}): ${body}`);
   }
-  const data = (await res.json()) as HbPackageRaw[] | { items?: HbPackageRaw[] };
-  return Array.isArray(data) ? data : (data.items ?? []);
+  // Yanıt biçimi uca göre değişebilir: düz dizi YA DA sarmalayıcı. /shipped ucu
+  // paketleri farklı anahtarda döndürebildiği için birkaç alan denenir (aksi
+  // halde kargolanan paketler sessizce boş sayılır).
+  const data = (await res.json()) as
+    | HbPackageRaw[]
+    | { items?: HbPackageRaw[]; data?: HbPackageRaw[]; content?: HbPackageRaw[]; packages?: HbPackageRaw[] };
+  if (Array.isArray(data)) return data;
+  return data.items ?? data.data ?? data.content ?? data.packages ?? [];
 }
 
 export function isHepsiburadaConfigured(): boolean {
@@ -464,12 +470,16 @@ export async function syncHepsiburadaOrders() {
   //    çekilmezse kargolanan sipariş "open" listesinden düştüğü için panoda
   //    "Yeni"de kalırdı. /shipped bazı hesaplarda kapalıysa ana senkronu bozmaz.
   try {
+    let shippedSeen = 0;
     for (let page = 0; page < MAX_PAGES; page++) {
       const packages = await fetchPackagesPage(page * PAGE_SIZE, "shipped");
       if (packages.length === 0) break;
+      shippedSeen += packages.length;
       for (const pkg of packages) await processPackage(pkg, true);
       if (packages.length < PAGE_SIZE) break;
     }
+    // Teşhis: /shipped kaç kargolanan paket döndürdü? (Render loglarından görülür.)
+    console.info(`Hepsiburada /shipped: ${shippedSeen} kargolanan paket çekildi.`);
   } catch (err) {
     console.warn("Hepsiburada /shipped senkronu atlandı:", err instanceof Error ? err.message : err);
   }

@@ -106,7 +106,11 @@ function num(v: string): number {
 }
 
 function waLink(order: OrderRow): string {
-  return `https://wa.me/${(order.customerPhone ?? "").replace(/\D/g, "")}?text=${encodeURIComponent(
+  // whatsapp:// şeması cihazda YÜKLÜ WhatsApp uygulamasını açar — patron WhatsApp
+  // Business kullandığı için (masaüstü/mobil) tarayıcıdaki WhatsApp Web yerine
+  // doğrudan uygulama açılır. (Not: link seviyesinde "Business"ı kişiselden ayıran
+  // resmî bir yol yok; OS yüklü olan uygulamayı açar.)
+  return `whatsapp://send?phone=${(order.customerPhone ?? "").replace(/\D/g, "")}&text=${encodeURIComponent(
     `Merhaba ${order.customerName}, ${order.orderNo} numaralı siparişiniz hakkında bilgi vermek istedik.`,
   )}`;
 }
@@ -1529,7 +1533,7 @@ function OrderDetailDialog({ order, onClose }: { order: OrderRow | null; onClose
                   {order.customerPhone && (
                     <div className="flex justify-between items-center gap-2">
                       <span className="text-muted-foreground">Telefon</span>
-                      <a href={waLink(order)} target="_blank" rel="noreferrer" className="text-emerald-600 hover:underline inline-flex items-center gap-1">
+                      <a href={waLink(order)} rel="noreferrer" className="text-emerald-600 hover:underline inline-flex items-center gap-1">
                         <MessageCircle className="h-3.5 w-3.5" /> {order.customerPhone}
                       </a>
                     </div>
@@ -1692,7 +1696,7 @@ function RowActions({
           <DropdownMenuSeparator />
           {order.customerPhone && (
             <DropdownMenuItem asChild>
-              <a href={waLink(order)} target="_blank" rel="noreferrer">
+              <a href={waLink(order)} rel="noreferrer">
                 <MessageCircle className="mr-2 h-4 w-4 text-emerald-600" /> WhatsApp'tan yaz
               </a>
             </DropdownMenuItem>
@@ -1789,7 +1793,6 @@ function OrderTableRow(props: RowProps) {
           {order.customerPhone && (
             <a
               href={waLink(order)}
-              target="_blank"
               rel="noreferrer"
               className="inline-flex items-center text-emerald-600 hover:text-emerald-500"
               title="WhatsApp'tan yaz"
