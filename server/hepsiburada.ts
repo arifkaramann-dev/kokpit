@@ -172,38 +172,64 @@ export function hbUserAgent(): string {
 // productName/productBarcode/orderNumber gibi zengin alanlar taşır.
 type HbPackageItemRaw = {
   productName?: string;
+  name?: string;
   merchantSku?: string;
   productBarcode?: string;
+  sku?: string;
   hbSku?: string;
   quantity?: number;
   price?: { amount?: number } | number;
+  unitPrice?: { amount?: number } | number;
   totalPrice?: { amount?: number } | number;
-  orderNumber?: string;
+  orderNumber?: string | number;
 };
+// /packages (açık) ve /packages/.../shipped (kargolanan) uçları alan adlarında
+// küçük farklar gösterebildiği için tüm kimlik/kalem/statü alanları savunmacı
+// okunur (aksi halde /shipped paketi kimlik çıkaramayıp sessizce boş kalır → sipariş
+// "Yeni"de takılır).
 type HbPackageRaw = {
-  packageNumber?: string;
-  id?: string;
+  packageNumber?: string | number;
+  packageId?: string | number;
+  id?: string | number;
+  number?: string | number;
+  orderNumber?: string | number;
+  orderId?: string | number;
   status?: string;
+  packageStatus?: string;
+  shipmentStatus?: string;
   customerName?: string;
   recipientName?: string;
+  shippingAddress?: { name?: string };
   totalPrice?: { amount?: number } | number;
   items?: HbPackageItemRaw[];
+  lines?: HbPackageItemRaw[];
+  details?: HbPackageItemRaw[];
+  lineItems?: HbPackageItemRaw[];
 };
+
+/** Paket kimliği: kayıtlı sipariş no HB-<packageNumber> olduğundan önce paket no denenir. */
+function hbPackageId(pkg: HbPackageRaw): string | undefined {
+  const lines = pkg.items ?? pkg.lines ?? pkg.details ?? pkg.lineItems ?? [];
+  const raw =
+    pkg.packageNumber ?? pkg.packageId ?? pkg.id ?? pkg.number ?? pkg.orderNumber ?? pkg.orderId ?? lines[0]?.orderNumber;
+  return raw != null && raw !== "" ? String(raw) : undefined;
+}
 
 /** HB paketini mevcut (test edilmiş) mapHbOrder şekline çevirir. */
 function packageToOrderRaw(pkg: HbPackageRaw): HbOrderRaw {
+  const lines = pkg.items ?? pkg.lines ?? pkg.details ?? pkg.lineItems ?? [];
   return {
-    orderNumber: pkg.packageNumber ?? pkg.id ?? pkg.items?.[0]?.orderNumber,
-    status: pkg.status,
-    customerName: pkg.customerName ?? pkg.recipientName,
+    orderNumber: hbPackageId(pkg),
+    status: pkg.status ?? pkg.packageStatus ?? pkg.shipmentStatus,
+    customerName: pkg.customerName ?? pkg.recipientName ?? pkg.shippingAddress?.name,
     totalPrice: pkg.totalPrice,
-    items: (pkg.items ?? []).map(i => ({
-      productName: i.productName,
+    items: lines.map(i => ({
+      productName: i.productName ?? i.name,
       quantity: i.quantity,
-      unitPrice: i.price,
+      unitPrice: i.unitPrice ?? i.price,
       totalPrice: i.totalPrice,
-      // Katalog eşlemesi için barkod: productBarcode > merchantSku.
-      merchantSku: i.productBarcode ?? i.merchantSku,
+      // Katalog eşlemesi için barkod: productBarcode > merchantSku > sku.
+      merchantSku: i.productBarcode ?? i.merchantSku ?? i.sku,
     })),
   };
 }
@@ -410,7 +436,7 @@ export async function syncHepsiburadaOrders() {
     const mapped = mapHbPackage(pkg);
     if (!mapped) {
       // İptal/iade: içe alınmış sipariş varsa iptal et (stok iadesi otomatik).
-      const rawNo = pkg.packageNumber ?? pkg.id ?? pkg.items?.[0]?.orderNumber;
+      const rawNo = hbPackageId(pkg);
       if (rawNo) {
         const cancelledNo = `HB-${rawNo}`;
         if (!seen.has(cancelledNo)) {
@@ -469,6 +495,14 @@ export async function syncHepsiburadaOrders() {
     for (let page = 0; page < MAX_PAGES; page++) {
       const packages = await fetchPackagesPage(page * PAGE_SIZE, "shipped");
       if (packages.length === 0) break;
+      // Teşhis: ilk kargolanan paketin HAM yapısı — alan adları farklıysa buradan
+      // görülür (kimlik çıkarılamazsa sipariş taşınmaz). Render loglarından okunur.
+      if (page === 0) {
+        const sample = packages[0];
+        console.info(
+          `Hepsiburada /shipped örnek paket (id=${hbPackageId(sample) ?? "YOK"}): ${JSON.stringify(sample).slice(0, 900)}`,
+        );
+      }
       shippedSeen += packages.length;
       for (const pkg of packages) await processPackage(pkg, true);
       if (packages.length < PAGE_SIZE) break;

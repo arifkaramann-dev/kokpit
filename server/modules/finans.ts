@@ -420,10 +420,10 @@ export const kargoRouter = router({
         if (!phone) phone = (contact.phone ?? "").trim();
         city = (contact.city ?? "").trim();
       }
-      // Şehir hiçbir kartta yoksa adres metninden çıkar (Geliver "cityName"+"cityCode" ister).
-      if (!city) city = extractCityFromAddress(address);
       // İl adını resmî ada/plakaya çöz — Geliver tanımadığı şehri E1172 ile reddeder.
-      const province = resolveProvince(city);
+      // Karttaki şehir alanı ilçe/mahalle olabilir; bu yüzden hem kart şehri HEM de
+      // adres metni denenir, hangisi gerçek il'e çözülürse o kullanılır.
+      const province = resolveProvince(city) ?? resolveProvince(extractCityFromAddress(address));
 
       // Geliver adres/şehir boşken cryptic hata (E1129/E1165/E1172) döner; anlaşılır
       // uyarı verip boşuna API isteği atmayalım.
