@@ -166,6 +166,9 @@ export async function startWhatsappBridge(): Promise<void> {
 
     // Kendi gönderdiğimiz cevapların echo'sunu atlamak için (self-chat sonsuz döngü koruması).
     const sentIds = new Set<string>();
+    // Bağlantı anından ÖNCEki mesajları (geçmiş senkronu) işleme almamak için eşik.
+    let readyAtSec = 0;
+    const debug = process.env.WHATSAPP_DEBUG === "1";
 
     const connect = () => {
       const sock = makeWASocket({
@@ -190,14 +193,14 @@ export async function startWhatsappBridge(): Promise<void> {
         if (connection === "open") {
           connected = true;
           latestQr = null;
+          // Bu andan itibaren gelen mesajları işle; öncekiler geçmiş senkronudur.
+          readyAtSec = Math.floor(Date.now() / 1000);
           const selfJid = sock.user?.id;
-          const control = cfg.controlJid || selfJid || "";
           console.log(
-            `[whatsapp] bağlandı ✔  hesap=${normalizeJid(selfJid)}  kontrol sohbeti=${
-              cfg.controlJid ? normalizeJid(cfg.controlJid) : "kendine mesaj (self-chat)"
-            }`,
+            `[whatsapp] bağlandı ✔  hesap=${normalizeJid(selfJid)}${
+              sock.user?.lid ? `/${normalizeJid(sock.user.lid)}` : ""
+            }  kontrol sohbeti=${cfg.controlJid ? normalizeJid(cfg.controlJid) : "kendine mesaj (self-chat)"}`,
           );
-          void control; // yalnızca log; gerçek kapı mesaj anında selfJid ile hesaplanır
         }
         if (connection === "close") {
           connected = false;
@@ -216,18 +219,36 @@ export async function startWhatsappBridge(): Promise<void> {
 
       sock.ev.on("messages.upsert", async (up: any) => {
         try {
-          // Yalnızca canlı gelen mesajlar; ilk bağlantıdaki geçmiş senkronunu atla.
-          if (up.type !== "notify") return;
+          // NOT: type'a göre eleme YAPMIYORUZ. Kendine (self-chat) yazdığın mesaj
+          // köprüye giden-mesaj senkronu olarak gelir ve çoğu zaman type "append"
+          // olur; "notify" filtresi bunları yutardı. Geçmiş senkronunu zaman
+          // damgasıyla ayıklıyoruz (readyAtSec'ten eski mesajları atla).
           const selfJid = sock.user?.id;
+          const selfLid = sock.user?.lid;
           for (const m of up.messages ?? []) {
             const id: string | undefined = m.key?.id;
             const remoteJid: string | undefined = m.key?.remoteJid;
+            const ts = Number(m.messageTimestamp ?? 0);
+            const isControl =
+              isControlChat(remoteJid, cfg.controlJid, selfJid) ||
+              (!cfg.controlJid && isControlChat(remoteJid, cfg.controlJid, selfLid));
+
+            if (debug) {
+              console.log(
+                `[whatsapp] upsert type=${up.type} from=${remoteJid} fromMe=${m.key?.fromMe} ts=${ts} kontrol=${isControl} metin=${JSON.stringify(
+                  (extractMessageText(m.message) ?? "").slice(0, 40),
+                )}`,
+              );
+            }
+
             // Kendi gönderdiğimiz cevabın echo'su → atla (döngü koruması).
             if (id && sentIds.has(id)) {
               sentIds.delete(id);
               continue;
             }
-            if (!isControlChat(remoteJid, cfg.controlJid, selfJid)) continue;
+            if (!isControl) continue;
+            // Bağlantı öncesi (geçmiş) mesajları atla; ts yoksa canlı say.
+            if (readyAtSec && ts && ts < readyAtSec - 5) continue;
             const text = extractMessageText(m.message);
             if (!text) continue;
 
@@ -235,6 +256,7 @@ export async function startWhatsappBridge(): Promise<void> {
             const sent = await sock.sendMessage(remoteJid, { text: reply.message });
             const sentId: string | undefined = sent?.key?.id;
             if (sentId) sentIds.add(sentId);
+            if (debug) console.log(`[whatsapp] cevap gönderildi → ${remoteJid}`);
           }
         } catch (error) {
           console.error("[whatsapp] mesaj işlenemedi:", error);
