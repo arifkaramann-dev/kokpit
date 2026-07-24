@@ -42,6 +42,8 @@ services:
         sync: false # Oturum klasörü; kalıcılık için diske bağla (aşağıdaki disk bloğunu aç), ör. /data/wa-auth
       - key: WHATSAPP_CONTROL_JID
         sync: false # Boş → "kendine mesaj" kontrol yüzeyi; doldurursa o sohbet kontrol olur (opsiyonel)
+      - key: WHATSAPP_DEBUG
+        sync: false # "1" → gelen her mesaj için loga teşhis satırı (cevap gelmiyorsa aç). Normalde boş.
     # WhatsApp oturumunun deploy'lar arası kalıcı olması için disk gerekir (ücretli plan).
     # Free planda dosya sistemi geçicidir → her yeniden başlatmada QR tekrar okutulur.
     # Kalıcı istiyorsan planı yükselt ve aşağıyı aç, WHATSAPP_AUTH_DIR=/data/wa-auth yap:
