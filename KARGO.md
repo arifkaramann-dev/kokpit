@@ -1,10 +1,10 @@
 # Kargo Entegrasyonu — Geliver
 
 Kendi mağaza / elden siparişlerinin kargosu **Geliver** (geliver.io) üzerinden
-otomatikleşir: sipariş kartından tek tıkla gönderi açılır, en uygun fiyatlı
-teklif satın alınır, **takip numarası siparişe otomatik işlenir** ve etiket
-açılır. (Pazaryeri siparişleri bunun DIŞINDA — onların kargosu pazaryeri
-anlaşmalı kargosuyla yürür.)
+yürür: sipariş kartından gönderi açılır, **kargo firmalarının teklifleri fiyatıyla
+listelenir, sen hangisini istersen seçersin**, seçilen firmadan etiket alınır ve
+**takip numarası siparişe otomatik işlenir**. (Pazaryeri siparişleri bunun DIŞINDA
+— onların kargosu pazaryeri anlaşmalı kargosuyla yürür.)
 
 ## Benden istenenler (senin yapacakların, ~10 dakika)
 
@@ -41,18 +41,23 @@ gerçek etiketler alınmaya başlar.
 
 ## Nasıl kullanılır (kurulum sonrası)
 
-1. Sipariş Panosu → siparişin **⋯** menüsü → **"Geliver gönderisi"**.
-2. Onay verince: gönderi açılır → en ucuz teklif otomatik satın alınır →
-   takip no siparişe yazılır, etiket linki yeni sekmede açılır.
-3. Teklif satın alma herhangi bir sebeple başarısız olursa gönderi yine
-   oluşur; etiketi https://app.geliver.io panelinden alabilirsin (uygulama
-   bunu mesajla söyler).
+1. Sipariş Panosu → siparişin **⋯** menüsü → **"Geliver gönderisi (teklif seç)"**.
+2. Gönderi açılır ve **kargo firmalarının teklifleri fiyatıyla listelenir** (en
+   ucuz üstte, "En ucuz" etiketiyle işaretli). İstediğin firmaya tıkla.
+3. Seçtiğin teklif satın alınır → takip no siparişe yazılır, etiket linki yeni
+   sekmede açılır.
+4. Satın alma herhangi bir sebeple başarısız olursa gönderi yine oluşur;
+   etiketi https://app.geliver.io panelinden alabilirsin (uygulama söyler).
+
+> Not: Sipariş **teslimat adresi + telefon** içermeli (Geliver alıcı adresi ister).
+> WhatsApp'tan sadece isimle açılan siparişlerde önce adres/telefon eklenmeli.
 
 ## Teknik not (benim tarafım)
 
 - API: `https://api.geliver.io/api/v1` · Kimlik: `Authorization: Bearer <token>`
-- Akış: `POST /shipments` (gönderi + teklifler) → en ucuz teklif `POST /transactions`
-  ile satın alınır → yanıttan takip no + etiket URL alınır (resmi Geliver SDK akışı).
+- Akış: `POST /shipments` (gönderi + teklifler) → teklifler kullanıcıya listelenir,
+  seçilen teklif `POST /transactions` ile satın alınır → takip no + etiket URL alınır.
+  Uçlar: `kargo.createShipment` (teklifleri döndürür), `kargo.buyOffer` (seçileni alır).
 - Desi → paket ölçüsü: desi×3000'ün küp kökü kenar (cm), ağırlık = desi (kg).
 - İlgili kod: `server/kargo.ts` (adaptör), `server/routers.ts` → `kargo.createShipment`,
   sipariş kartı menüsü `client/src/pages/Orders.tsx`.

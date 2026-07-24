@@ -6,9 +6,10 @@ import { ENV } from "./_core/env";
  * Birincil sağlayıcı: **Geliver** (geliver.io — patron zaten kullanıyor).
  * API: https://docs.geliver.io · Temel: https://api.geliver.io/api/v1
  * Kimlik: `Authorization: Bearer <GELIVER_API_TOKEN>` (app.geliver.io/apitokens).
- * Akış: POST /shipments (gönderi + teklifler) → en ucuz teklif POST /transactions
- * ile satın alınır → yanıtta takip no + etiket URL'si döner. Teklif satın alma
- * başarısız olursa gönderi yine oluşur; etiket Geliver panelinden alınabilir.
+ * Akış (iki adım): POST /shipments (gönderi + teklifler) → teklifler KULLANICIYA
+ * gösterilir, kullanıcı kargo firmasını SEÇER → seçilen teklif POST /transactions
+ * ile satın alınır → yanıtta takip no + etiket URL'si döner. (Otomatik "en ucuz"
+ * DEĞİL; tercih kullanıcıda.) Satın alma başarısızsa gönderi yine oluşur.
  *
  * GELIVER_TEST_MODE=1 iken gönderiler test modunda açılır (ücret yansımaz) —
  * ilk kurulum doğrulaması bu modda yapılır. Kurulum rehberi: KARGO.md.
@@ -71,12 +72,67 @@ export type ShipmentResult = {
   reason?: string;
 };
 
-type GeliverOffer = { id?: string; ID?: string; totalAmount?: string | number; amount?: string | number; providerServiceCode?: string };
+type GeliverOffer = {
+  id?: string;
+  ID?: string;
+  totalAmount?: string | number;
+  amount?: string | number;
+  price?: string | number;
+  currency?: string;
+  currencyCode?: string;
+  provider?: string;
+  providerCode?: string;
+  providerName?: string;
+  providerServiceName?: string;
+  serviceName?: string;
+  providerServiceCode?: string;
+  estimatedDeliveryDate?: string;
+  estimatedDeliveryTime?: string;
+  deliveryTime?: string;
+};
+
+/** Kullanıcının seçebilmesi için sadeleştirilmiş teklif (kargo firması + fiyat). */
+export type ShipmentOffer = {
+  id: string;
+  carrier: string; // firma/servis adı (görünen)
+  amount: number;
+  currency: string;
+  estDays: string | null;
+};
+
+export type ShipmentQuote = {
+  created: boolean;
+  provider: string | null;
+  shipmentId: string | null;
+  offers: ShipmentOffer[];
+  reason?: string;
+};
 
 /** Yanıt sarmalayıcısını açar ({data: ...} ya da düz nesne). */
 function unwrap(json: unknown): Record<string, unknown> {
   const j = json as Record<string, unknown> | null;
   return ((j?.data ?? j) ?? {}) as Record<string, unknown>;
+}
+
+/** Ham Geliver tekliflerini görünür tekliflere çevirir (en ucuzdan pahalıya sıralı). */
+export function parseGeliverOffers(raw: unknown): ShipmentOffer[] {
+  const list = Array.isArray(raw) ? (raw as GeliverOffer[]) : [];
+  return list
+    .map(o => {
+      const carrier =
+        (o.providerServiceName || o.serviceName || o.providerName || o.provider || o.providerCode || o.providerServiceCode || "Kargo")
+          .toString()
+          .trim();
+      return {
+        id: String(o.id ?? o.ID ?? ""),
+        carrier,
+        amount: parseFloat(String(o.totalAmount ?? o.amount ?? o.price ?? "")),
+        currency: (o.currency ?? o.currencyCode ?? "TRY").toString(),
+        estDays: (o.estimatedDeliveryDate ?? o.estimatedDeliveryTime ?? o.deliveryTime ?? null) as string | null,
+      };
+    })
+    .filter(o => o.id && Number.isFinite(o.amount))
+    .sort((a, b) => a.amount - b.amount);
 }
 
 async function geliverFetch(path: string, init?: RequestInit): Promise<{ ok: boolean; status: number; json: unknown; text: string }> {
@@ -99,8 +155,12 @@ async function geliverFetch(path: string, init?: RequestInit): Promise<{ ok: boo
   return { ok: res.ok, status: res.status, json, text: text.slice(0, 500) };
 }
 
-/** Geliver'de gönderi oluşturur, en ucuz teklifi satın almayı dener. */
-async function createGeliverShipment(input: ShipmentInput): Promise<ShipmentResult> {
+/**
+ * Geliver'de gönderi oluşturur ve teklifleri (kargo firması + fiyat) döndürür —
+ * SATIN ALMAZ. Kullanıcı hangi firmayı istediğini seçer, sonra buyShipmentOffer
+ * çağrılır. Böylece "her zaman en ucuz" yerine tercih kullanıcıda kalır.
+ */
+async function createGeliverShipment(input: ShipmentInput): Promise<ShipmentQuote> {
   const edge = desiToEdgeCm(input.desi ?? 1);
   const body: Record<string, unknown> = {
     // Test modunda gerçek etiket satın alınmaz; kurulum doğrulaması içindir.
@@ -128,70 +188,68 @@ async function createGeliverShipment(input: ShipmentInput): Promise<ShipmentResu
     return {
       created: false,
       provider: "geliver",
-      trackingNumber: null,
-      trackingUrl: null,
-      labelUrl: null,
+      shipmentId: null,
+      offers: [],
       reason: `Geliver gönderi oluşturulamadı (${created.status}): ${created.text}`,
     };
   }
   const ship = unwrap(created.json);
   const shipmentId = String(ship.id ?? ship.ID ?? "") || null;
-  const offers = (ship.offers ?? ship.priceOffers ?? []) as GeliverOffer[];
+  const offers = parseGeliverOffers(ship.offers ?? ship.priceOffers ?? ship.rates ?? []);
 
-  // En ucuz teklifi seç ve satın al; olmazsa gönderi panelde hazır bekler.
-  const priced = (Array.isArray(offers) ? offers : [])
-    .map(o => ({ id: String(o.id ?? o.ID ?? ""), amount: parseFloat(String(o.totalAmount ?? o.amount ?? "")) }))
-    .filter(o => o.id && Number.isFinite(o.amount))
-    .sort((a, b) => a.amount - b.amount);
-
-  if (priced.length > 0) {
-    const buy = await geliverFetch("/transactions", {
-      method: "POST",
-      body: JSON.stringify({ offerID: priced[0].id }),
-    });
-    if (buy.ok) {
-      const tx = unwrap(buy.json);
-      const shipment = unwrap(tx.shipment ?? tx);
-      const trackingNumber =
-        String(shipment.trackingNumber ?? shipment.barcode ?? tx.trackingNumber ?? "") || null;
-      const labelUrl = String(shipment.labelURL ?? shipment.labelUrl ?? tx.labelURL ?? "") || null;
-      const trackingUrl = String(shipment.trackingUrl ?? shipment.trackingURL ?? "") || null;
-      return { created: true, provider: "geliver", trackingNumber, trackingUrl, labelUrl, shipmentId };
-    }
+  if (offers.length === 0) {
     return {
       created: true,
+      provider: "geliver",
+      shipmentId,
+      offers: [],
+      reason: "Gönderi oluştu ama fiyat teklifi dönmedi (gönderici adresi/desi kontrol edilebilir). Etiket Geliver panelinden alınabilir.",
+    };
+  }
+  return { created: true, provider: "geliver", shipmentId, offers };
+}
+
+/** Seçilen teklifi satın alır → takip no + etiket URL döner. */
+async function buyGeliverOffer(offerId: string): Promise<ShipmentResult> {
+  const buy = await geliverFetch("/transactions", { method: "POST", body: JSON.stringify({ offerID: offerId }) });
+  if (!buy.ok) {
+    return {
+      created: false,
       provider: "geliver",
       trackingNumber: null,
       trackingUrl: null,
       labelUrl: null,
-      shipmentId,
-      reason: `Gönderi oluştu ama teklif satın alınamadı (${buy.status}): ${buy.text} — etiketi Geliver panelinden alabilirsin (app.geliver.io).`,
+      reason: `Teklif satın alınamadı (${buy.status}): ${buy.text} — etiketi Geliver panelinden alabilirsin (app.geliver.io).`,
     };
   }
-
-  return {
-    created: true,
-    provider: "geliver",
-    trackingNumber: null,
-    trackingUrl: null,
-    labelUrl: null,
-    shipmentId,
-    reason: "Gönderi oluştu; fiyat teklifi dönmedi (gönderici adresi/desi kontrol edilebilir). Etiket Geliver panelinden alınabilir.",
-  };
+  const tx = unwrap(buy.json);
+  const shipment = unwrap(tx.shipment ?? tx);
+  const trackingNumber = String(shipment.trackingNumber ?? shipment.barcode ?? tx.trackingNumber ?? "") || null;
+  const labelUrl = String(shipment.labelURL ?? shipment.labelUrl ?? tx.labelURL ?? "") || null;
+  const trackingUrl = String(shipment.trackingUrl ?? shipment.trackingURL ?? "") || null;
+  return { created: true, provider: "geliver", trackingNumber, trackingUrl, labelUrl };
 }
 
 /**
- * Gönderi oluşturur. Yapılandırma yoksa created:false döner (akış bozulmaz);
- * anahtar gelince aynı çağrı gerçek gönderiye döner.
+ * Gönderi açıp TEKLİFLERİ döndürür (satın almaz). Yapılandırma yoksa created:false
+ * döner (akış bozulmaz). Kullanıcı teklif seçince buyShipmentOffer çağrılır.
  */
-export async function createShipment(input: ShipmentInput): Promise<ShipmentResult> {
+export async function openShipment(input: ShipmentInput): Promise<ShipmentQuote> {
   if (isGeliverConfigured()) {
     return createGeliverShipment(input);
   }
   if (!isKargoConfigured()) {
-    return { created: false, provider: null, trackingNumber: null, trackingUrl: null, labelUrl: null, reason: "Kargo entegrasyonu yapılandırılmamış (manuel gönderim). Kurulum: KARGO.md (Geliver)." };
+    return { created: false, provider: null, shipmentId: null, offers: [], reason: "Kargo entegrasyonu yapılandırılmamış (manuel gönderim). Kurulum: KARGO.md (Geliver)." };
   }
   // Jenerik sağlayıcı adaptörü henüz bağlanmadı; payload hazır.
   buildShipmentPayload(input);
-  return { created: false, provider: ENV.kargoProvider, trackingNumber: null, trackingUrl: null, labelUrl: null, reason: `Sağlayıcı adaptörü (${ENV.kargoProvider}) henüz canlı bağlanmadı — payload hazır` };
+  return { created: false, provider: ENV.kargoProvider, shipmentId: null, offers: [], reason: `Sağlayıcı adaptörü (${ENV.kargoProvider}) henüz canlı bağlanmadı — payload hazır` };
+}
+
+/** Kullanıcının seçtiği teklifi satın alır. */
+export async function buyShipmentOffer(offerId: string): Promise<ShipmentResult> {
+  if (!isGeliverConfigured()) {
+    return { created: false, provider: null, trackingNumber: null, trackingUrl: null, labelUrl: null, reason: "Kargo entegrasyonu yapılandırılmamış." };
+  }
+  return buyGeliverOffer(offerId);
 }

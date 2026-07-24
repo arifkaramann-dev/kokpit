@@ -92,6 +92,9 @@ type OrderRow = {
 
 type ItemRow = { productName: string; quantity: string; unitPrice: string };
 
+/** Geliver'den dönen tek bir kargo teklifi (firma + fiyat). */
+type ShipmentOfferRow = { id: string; carrier: string; amount: number; currency: string; estDays: string | null };
+
 /** Pazaryeri kanalları: durumları senkronla otomatik yönetilir, elle taşınmaz. */
 const MARKETPLACE_CHANNELS = new Set(["trendyol", "hepsiburada", "pazaryeri"]);
 function isAutoOrder(o: OrderRow): boolean {
@@ -214,6 +217,9 @@ export default function Orders() {
   const { data: customersList } = trpc.customers.list.useQuery();
   const { data: mpStatus } = trpc.orders.marketplaceStatus.useQuery();
   const { data: kargoCfg } = trpc.kargo.configured.useQuery();
+  // Geliver teklif seçimi: gönderi açılınca dönen teklifler burada tutulur,
+  // kullanıcı hangi kargo firmasını istediğini seçer.
+  const [offerDialog, setOfferDialog] = useState<{ order: OrderRow; offers: ShipmentOfferRow[] } | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editOrder, setEditOrder] = useState<OrderRow | null>(null);
   const [form, setForm] = useState(emptyForm);
@@ -475,22 +481,50 @@ export default function Orders() {
     }
   }
 
-  // Geliver gönderisi: kendi mağaza/elden siparişine kargo kaydı açar, en ucuz
-  // teklifi satın alır; takip no siparişe işlenir, etiket varsa yeni sekmede açılır.
+  // Geliver gönderisi — 1. adım: gönderi açar ve teklifleri getirir (SATIN ALMAZ).
+  // Teklifler gelince kullanıcı hangi kargo firmasını istediğini seçer.
+  const [pendingShipmentOrder, setPendingShipmentOrder] = useState<OrderRow | null>(null);
   const createShipmentMut = trpc.kargo.createShipment.useMutation({
-    onSuccess: r => {
-      utils.orders.list.invalidate();
-      if (r.created && r.trackingNumber) {
-        toast.success(`Geliver gönderisi hazır — takip no: ${r.trackingNumber}`);
-        if (r.labelUrl) window.open(r.labelUrl, "_blank");
+    onSuccess: (r, vars) => {
+      toast.dismiss("geliver-quote");
+      const order = pendingShipmentOrder && pendingShipmentOrder.id === vars.orderId ? pendingShipmentOrder : null;
+      setPendingShipmentOrder(null);
+      if (r.created && r.offers.length > 0 && order) {
+        setOfferDialog({ order, offers: r.offers as ShipmentOfferRow[] });
       } else if (r.created) {
-        toast.info(r.reason ?? "Gönderi oluştu — etiket Geliver panelinden alınabilir", { duration: 10000 });
+        toast.info(r.reason ?? "Gönderi oluştu ama teklif dönmedi — etiket Geliver panelinden alınabilir", { duration: 10000 });
       } else {
         toast.error(r.reason ?? "Gönderi oluşturulamadı", { duration: 10000 });
       }
     },
+    onError: e => {
+      toast.dismiss("geliver-quote");
+      setPendingShipmentOrder(null);
+      toast.error(e.message, { duration: 8000 });
+    },
+  });
+
+  // 2. adım: seçilen teklifi satın al → takip no siparişe işlenir, etiket açılır.
+  const buyOfferMut = trpc.kargo.buyOffer.useMutation({
+    onSuccess: r => {
+      utils.orders.list.invalidate();
+      setOfferDialog(null);
+      if (r.created && r.trackingNumber) {
+        toast.success(`Gönderi hazır — takip no: ${r.trackingNumber}`);
+        if (r.labelUrl) window.open(r.labelUrl, "_blank");
+      } else {
+        toast.error(r.reason ?? "Teklif satın alınamadı", { duration: 10000 });
+      }
+    },
     onError: e => toast.error(e.message, { duration: 8000 }),
   });
+
+  // Gönderi başlat: hangi sipariş için teklif istendiğini hatırla, sonra teklifleri getir.
+  function startShipment(order: OrderRow) {
+    setPendingShipmentOrder(order);
+    toast.loading("Kargo teklifleri alınıyor…", { id: "geliver-quote" });
+    createShipmentMut.mutate({ orderId: order.id });
+  }
 
   // Sipariş içeriği dökümü (kalem kalem): tek veya toplu; kalemler tek sorguda
   // çekilir, sipariş başına bir A4 "toplama fişi" olarak yazdırılır/PDF olur.
@@ -1346,7 +1380,7 @@ export default function Orders() {
                     onShippingLabel={handleShippingLabel}
                     onPrintContents={o => handlePrintContents([o])}
                     kargoEnabled={Boolean(kargoCfg?.kargo)}
-                    onCreateShipment={o => createShipmentMut.mutate({ orderId: o.id })}
+                    onCreateShipment={startShipment}
                     onTogglePaid={handleTogglePaid}
                     onAdvance={handleAdvance}
                     onSetCancelled={handleSetCancelled}
@@ -1371,7 +1405,7 @@ export default function Orders() {
                 onShippingLabel={handleShippingLabel}
                 onPrintContents={o => handlePrintContents([o])}
                 kargoEnabled={Boolean(kargoCfg?.kargo)}
-                onCreateShipment={o => createShipmentMut.mutate({ orderId: o.id })}
+                onCreateShipment={startShipment}
                 onTogglePaid={handleTogglePaid}
                 onAdvance={handleAdvance}
                 onSetCancelled={handleSetCancelled}
@@ -1390,6 +1424,43 @@ export default function Orders() {
       )}
 
       <OrderDetailDialog order={detailOrder} onClose={() => setDetailOrder(null)} />
+
+      {/* Geliver kargo teklif seçimi: en ucuzu otomatik almak yerine kullanıcı seçer. */}
+      <Dialog open={!!offerDialog} onOpenChange={o => !o && setOfferDialog(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Kargo firması seç</DialogTitle>
+          </DialogHeader>
+          {offerDialog && (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                {offerDialog.order.orderNo} · {offerDialog.order.customerName} — hangi kargoyla gönderelim?
+              </p>
+              <div className="max-h-80 space-y-2 overflow-y-auto">
+                {offerDialog.offers.map((o, i) => (
+                  <button
+                    key={o.id}
+                    onClick={() => buyOfferMut.mutate({ orderId: offerDialog.order.id, offerId: o.id })}
+                    disabled={buyOfferMut.isPending}
+                    className="flex w-full items-center justify-between rounded-lg border p-3 text-left transition-colors hover:bg-muted disabled:opacity-50"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Truck className="h-4 w-4 shrink-0 text-sky-600" />
+                      <span>
+                        <span className="font-medium">{o.carrier}</span>
+                        {o.estDays && <span className="block text-xs text-muted-foreground">Tahmini teslim: {o.estDays}</span>}
+                        {i === 0 && <span className="block text-xs text-emerald-600">En ucuz</span>}
+                      </span>
+                    </span>
+                    <span className="font-semibold tabular-nums">{formatTL(o.amount)}</span>
+                  </button>
+                ))}
+              </div>
+              {buyOfferMut.isPending && <p className="text-xs text-muted-foreground">Seçilen teklif satın alınıyor…</p>}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1630,19 +1701,8 @@ function RowActions({
             <Truck className="mr-2 h-4 w-4" /> Kargo etiketi
           </DropdownMenuItem>
           {kargoEnabled && !auto && (
-            <DropdownMenuItem
-              onSelect={async () => {
-                if (
-                  await confirm({
-                    title: "Geliver gönderisi oluştur",
-                    description: `${order.orderNo} için Geliver'de kargo kaydı açılıp en uygun teklif satın alınsın mı? (Test modu açıksa ücret yansımaz.)`,
-                    confirmText: "Gönderi Oluştur",
-                  })
-                )
-                  onCreateShipment(order);
-              }}
-            >
-              <Truck className="mr-2 h-4 w-4 text-sky-600" /> Geliver gönderisi
+            <DropdownMenuItem onSelect={() => onCreateShipment(order)}>
+              <Truck className="mr-2 h-4 w-4 text-sky-600" /> Geliver gönderisi (teklif seç)
             </DropdownMenuItem>
           )}
           <DropdownMenuItem onClick={() => onPrintContents(order)}>
