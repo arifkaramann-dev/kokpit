@@ -409,11 +409,20 @@ export const kargoRouter = router({
     .mutation(async ({ input }) => {
       const order = await db.getOrder(input.orderId);
       if (!order) throw new TRPCError({ code: "NOT_FOUND", message: "Sipariş bulunamadı" });
+      // Geliver adres boşken "E1129 Adres boş" (400) döner; kullanıcıya anlaşılır
+      // uyarı verip boşuna API isteği atmayalım. Adres siparişte tutulur.
+      const address = (order.customerAddress ?? "").trim();
+      if (!address) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Bu siparişte teslimat adresi yok. Siparişi düzenleyip teslimat adresini (ve telefonu) girin, sonra kargo gönderisi oluşturun.",
+        });
+      }
       return openShipment({
         orderNo: order.orderNo,
         recipientName: order.customerName,
         phone: order.customerPhone ?? "",
-        address: order.customerAddress ?? "",
+        address,
         desi: input.desi,
       });
     }),

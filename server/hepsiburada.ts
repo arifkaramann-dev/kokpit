@@ -213,9 +213,17 @@ export function mapHbPackage(pkg: HbPackageRaw): MappedOrder | null {
   return mapHbOrder(packageToOrderRaw(pkg));
 }
 
-/** HB paketlerini sayfalı çeker (gerçek sipariş birimi). Yanıt düz dizi olabilir. */
-async function fetchPackagesPage(offset: number): Promise<HbPackageRaw[]> {
-  const url = new URL(`${HB_API_BASE}/packages/merchantid/${ENV.hepsiburadaMerchantId}`);
+/**
+ * HB paketlerini sayfalı çeker (gerçek sipariş birimi). Yanıt düz dizi olabilir.
+ * `kind`:
+ *  - "open"    → /packages ucu: kargoya verilmemiş (işlem bekleyen) paketler.
+ *  - "shipped" → /packages/.../shipped ucu: kargoya VERİLEN paketler. Kargolanan
+ *    paket "open" listesinden DÜŞTÜĞÜ için, /shipped çekilmezse kargolanan sipariş
+ *    panoda "Yeni"de takılıp kalır (bilinen HB davranışı).
+ */
+async function fetchPackagesPage(offset: number, kind: "open" | "shipped" = "open"): Promise<HbPackageRaw[]> {
+  const suffix = kind === "shipped" ? "/shipped" : "";
+  const url = new URL(`${HB_API_BASE}/packages/merchantid/${ENV.hepsiburadaMerchantId}${suffix}`);
   url.searchParams.set("offset", String(offset));
   url.searchParams.set("limit", String(PAGE_SIZE));
 
@@ -383,61 +391,87 @@ export async function syncHepsiburadaOrders() {
   let imported = 0;
   let updated = 0;
   let skipped = 0;
-  // Aynı sipariş sayfalar arasında tekrar gelebilir; tek çekimde bir kez ekle.
+  // Aynı sipariş sayfalar arasında (ve iki uç arasında) tekrar gelebilir; bir kez işle.
   const seen = new Set<string>();
 
-  for (let page = 0; page < MAX_PAGES; page++) {
-    const packages = await fetchPackagesPage(page * PAGE_SIZE);
-    if (packages.length === 0) break;
-
-    for (const pkg of packages) {
-      const mapped = mapHbPackage(pkg);
-      if (!mapped) {
-        // İptal/iade: içe alınmış sipariş varsa iptal et (stok iadesi otomatik).
-        const rawNo = pkg.packageNumber ?? pkg.id ?? pkg.items?.[0]?.orderNumber;
-        if (rawNo) {
-          const cancelledNo = `HB-${rawNo}`;
-          if (!seen.has(cancelledNo)) {
-            seen.add(cancelledNo);
-            const existing = await db.getOrderByOrderNo(cancelledNo);
-            if (existing && existing.status !== "cancelled") {
-              await db.updateOrder(existing.id, { status: "cancelled" });
-              updated++;
-            }
+  /**
+   * Bir paketi panoya işler: yeni ise ekler, varsa durumu YALNIZ ileri akıtır.
+   * `shipped=true` → paket /shipped ucundan geldi (kesin kargolandı): HB paket
+   * statüsü eksik/geç gelse bile durum en az "Kargoya Hazır" sayılır, sipariş
+   * "Yeni"de takılmaz.
+   */
+  async function processPackage(pkg: HbPackageRaw, shipped: boolean) {
+    const mapped = mapHbPackage(pkg);
+    if (!mapped) {
+      // İptal/iade: içe alınmış sipariş varsa iptal et (stok iadesi otomatik).
+      const rawNo = pkg.packageNumber ?? pkg.id ?? pkg.items?.[0]?.orderNumber;
+      if (rawNo) {
+        const cancelledNo = `HB-${rawNo}`;
+        if (!seen.has(cancelledNo)) {
+          seen.add(cancelledNo);
+          const existing = await db.getOrderByOrderNo(cancelledNo);
+          if (existing && existing.status !== "cancelled") {
+            await db.updateOrder(existing.id, { status: "cancelled" });
+            updated++;
           }
         }
-        continue;
       }
-
-      if (seen.has(mapped.orderNo)) {
-        skipped++;
-        continue;
-      }
-      seen.add(mapped.orderNo);
-
-      const existing = await db.getOrderByOrderNo(mapped.orderNo);
-      if (existing) {
-        // Hepsiburada siparişin kaynağıdır: durum (Shipped→Hazır, Delivered→
-        // Tamamlandı) senkronda otomatik akıtılır; ama yalnızca İLERİ —
-        // elle "Üretimde"ye alınan sipariş geri "Yeni"ye basılmaz.
-        if (shouldSyncOrderStatus(existing.status, mapped.status)) {
-          await db.updateOrder(existing.id, { status: mapped.status } as never);
-          updated++;
-        } else {
-          skipped++;
-        }
-        continue;
-      }
-
-      const { items, ...order } = mapped;
-      const insertId = await db.createOrder(order as never);
-      if (items.length > 0) {
-        await db.replaceOrderItems(Number(insertId), toItemRows(items));
-      }
-      imported++;
+      return;
     }
 
+    // Kargoya verilen paket en az "Kargoya Hazır"dır (Delivered ise done kalır).
+    if (shipped && (mapped.status === "new" || mapped.status === "production")) {
+      mapped.status = "ready";
+    }
+
+    if (seen.has(mapped.orderNo)) {
+      skipped++;
+      return;
+    }
+    seen.add(mapped.orderNo);
+
+    const existing = await db.getOrderByOrderNo(mapped.orderNo);
+    if (existing) {
+      // Hepsiburada siparişin kaynağıdır: durum (Shipped→Hazır, Delivered→
+      // Tamamlandı) senkronda otomatik akıtılır; ama yalnızca İLERİ —
+      // elle "Üretimde"ye alınan sipariş geri "Yeni"ye basılmaz.
+      if (shouldSyncOrderStatus(existing.status, mapped.status)) {
+        await db.updateOrder(existing.id, { status: mapped.status } as never);
+        updated++;
+      } else {
+        skipped++;
+      }
+      return;
+    }
+
+    const { items, ...order } = mapped;
+    const insertId = await db.createOrder(order as never);
+    if (items.length > 0) {
+      await db.replaceOrderItems(Number(insertId), toItemRows(items));
+    }
+    imported++;
+  }
+
+  // 1) İşlem bekleyen paketler (fulfillment kuyruğu).
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const packages = await fetchPackagesPage(page * PAGE_SIZE, "open");
+    if (packages.length === 0) break;
+    for (const pkg of packages) await processPackage(pkg, false);
     if (packages.length < PAGE_SIZE) break;
+  }
+
+  // 2) Kargoya verilen paketler → sipariş "Kargoya Hazır"a taşınır. Bu uç
+  //    çekilmezse kargolanan sipariş "open" listesinden düştüğü için panoda
+  //    "Yeni"de kalırdı. /shipped bazı hesaplarda kapalıysa ana senkronu bozmaz.
+  try {
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const packages = await fetchPackagesPage(page * PAGE_SIZE, "shipped");
+      if (packages.length === 0) break;
+      for (const pkg of packages) await processPackage(pkg, true);
+      if (packages.length < PAGE_SIZE) break;
+    }
+  } catch (err) {
+    console.warn("Hepsiburada /shipped senkronu atlandı:", err instanceof Error ? err.message : err);
   }
 
   return { imported, updated, skipped };
