@@ -33,15 +33,15 @@ buradan yapılabilir. Müşteri bu sohbeti görmez.
 4. Telefonunda: **WhatsApp > Ayarlar > Bağlı Cihazlar > Cihaz Bağla** → QR'ı okut.
 5. Sayfa **"Bağlandı ✔"** dediğinde hazırdır. Kendine bir komut yazıp dene.
 
-## Kalıcılık (önemli)
+## Kalıcılık
 
-Köprü, giriş oturumunu `WHATSAPP_AUTH_DIR` klasöründe tutar. Render **free planda
-dosya sistemi geçicidir** → her yeniden başlatma/deploy'da QR'ı tekrar okutman
-gerekir. Kalıcı olması için:
+Köprü giriş oturumunu **veritabanına** yazar (`whatsappAuth` tablosu — deploy'da
+otomatik oluşturulur). Böylece Render free planda dosya sistemi geçici olsa bile
+**QR'ı yalnızca bir kez** okutman yeterlidir; yeniden başlatma/deploy/uyku sonrası
+oturum DB'den geri yüklenir. Ekstra disk/ücretli plan gerekmez.
 
-- Planı diskli bir plana yükselt,
-- `render.yaml`'daki `disk:` bloğunu aç (mountPath `/data`),
-- `WHATSAPP_AUTH_DIR=/data/wa-auth` yap.
+Telefondan "Bağlı Cihazlar"dan bağlantıyı kaldırırsan oturum otomatik temizlenir
+ve bir sonraki açılışta yeni QR istenir.
 
 ## Güvenlik ve risk
 
