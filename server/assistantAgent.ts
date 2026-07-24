@@ -5,6 +5,7 @@ import {
   actionAddPurchaseInvoice,
   actionAddTasks,
   actionCompleteTasks,
+  actionCreateCustomer,
   actionCreateOrder,
   actionSetOrderStatus,
   actionStockMove,
@@ -247,6 +248,51 @@ const TOOLS: ToolDef[] = [
       return `${args.kind === "sale" ? "Elden satış" : "Sipariş"}${str(args.customerName) ? ` — ${str(args.customerName)}` : ""}: ${items}`;
     },
   },
+  {
+    name: "cari_olustur",
+    description:
+      "Yeni müşteri (cari) kartı açar veya mevcut kartın bilgilerini tamamlar: ad + fatura/muhasebe bilgileri (vergi dairesi, VKN/TCKN, e-fatura durumu), adres, telefon, e-posta. Kullanıcı 'cari oluştur / müşteri kartı aç / vergi dairesi-VKN ekle' dediğinde bunu kullan. Aynı isimde kayıt varsa yenisini açmaz, verilen alanları günceller. eInvoice: mükellefse 'efatura', değilse 'earsiv', bilinmiyorsa boş bırak.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        name: { type: "string", description: "Müşteri/firma adı (zorunlu)" },
+        taxOffice: { type: "string", description: "Vergi dairesi (örn. Setbaşı V.D.)" },
+        taxNumber: { type: "string", description: "VKN (10 hane) veya TCKN (11 hane) — sadece rakam" },
+        eInvoice: { type: "string", enum: ["bilinmiyor", "efatura", "earsiv"] },
+        address: { type: "string" },
+        city: { type: "string" },
+        phone: { type: "string" },
+        email: { type: "string" },
+        notes: { type: "string" },
+      },
+      required: ["name"],
+    },
+    safety: "onayli",
+    run: async args =>
+      (
+        await actionCreateCustomer({
+          name: str(args.name),
+          phone: str(args.phone) || undefined,
+          email: str(args.email) || undefined,
+          address: str(args.address) || undefined,
+          city: str(args.city) || undefined,
+          taxOffice: str(args.taxOffice) || undefined,
+          taxNumber: str(args.taxNumber) || undefined,
+          eInvoice: (["bilinmiyor", "efatura", "earsiv"].includes(str(args.eInvoice))
+            ? (str(args.eInvoice) as "bilinmiyor" | "efatura" | "earsiv")
+            : undefined),
+          notes: str(args.notes) || undefined,
+        })
+      ).message,
+    describe: args => {
+      const detail = [
+        str(args.taxOffice) && `V.D. ${str(args.taxOffice)}`,
+        str(args.taxNumber) && `VKN/TCKN ${str(args.taxNumber).replace(/\D/g, "")}`,
+        str(args.eInvoice) === "efatura" ? "e-Fatura" : str(args.eInvoice) === "earsiv" ? "e-Arşiv" : "",
+      ].filter(Boolean);
+      return `Cari kartı: ${str(args.name)}${detail.length ? ` (${detail.join(", ")})` : ""}`;
+    },
+  },
 ];
 
 const toolMap = new Map(TOOLS.map(t => [t.name, t]));
@@ -256,6 +302,7 @@ const SYSTEM_PROMPT = [
   "İşletme verisi gereken HER soruda önce isletme_ozeti aracını çağır; rakamları oradan al, uydurma.",
   "Yazma araçları onay katmanından geçer: aracı normal şekilde çağır, sistem onayı kullanıcıya sorar. Aynı mesajda birden fazla iş varsa sırayla hepsini yap.",
   "Kesin emin olmadığın müşteri/ürün adlarını olduğu gibi araca ver — eşleştirmeyi sistem yapar.",
+  "Müşteri kartı (cari) açabilir, vergi dairesi / VKN-TCKN / e-fatura durumu / adres gibi fatura bilgilerini cari_olustur ile kaydedebilirsin — 'bende böyle bir araç yok' deme.",
   "Para, adet ve tarihleri Türk formatında yaz (1.250,50 TL gibi). Bilmediğin şeyi bilmediğini söyle.",
 ].join("\n");
 

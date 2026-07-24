@@ -64,6 +64,9 @@ const customerInput = z.object({
   email: z.string().nullable().optional(),
   address: z.string().nullable().optional(),
   city: z.string().nullable().optional(),
+  taxOffice: z.string().nullable().optional(),
+  taxNumber: z.string().nullable().optional(),
+  eInvoice: z.enum(["bilinmiyor", "efatura", "earsiv"]).optional(),
   notes: z.string().nullable().optional(),
 });
 

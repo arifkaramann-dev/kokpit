@@ -351,6 +351,88 @@ export async function actionAddCollection(input: {
   return { message };
 }
 
+const EINVOICE_LABELS: Record<string, string> = {
+  bilinmiyor: "bilinmiyor",
+  efatura: "e-Fatura mükellefi",
+  earsiv: "e-Arşiv (mükellef değil)",
+};
+
+/**
+ * VKN/TCKN normalize + doğrulama: rakam dışını atar, boşsa undefined döner,
+ * 10 (VKN) veya 11 (TCKN) hane değilse hata fırlatır.
+ */
+export function normalizeTaxNumber(raw: string | null | undefined): string | undefined {
+  const digits = (raw ?? "").replace(/\D/g, "");
+  if (!digits) return undefined;
+  if (digits.length !== 10 && digits.length !== 11) {
+    throw new Error(`VKN/TCKN 10 (VKN) veya 11 (TCKN) haneli olmalı; "${raw}" ${digits.length} haneli görünüyor.`);
+  }
+  return digits;
+}
+
+/**
+ * Yeni cari (müşteri) kartı açar: ad + fatura/muhasebe bilgileri
+ * (vergi dairesi, VKN/TCKN, e-fatura durumu, adres). Aynı isimde kayıt
+ * varsa yenisini açmaz, mevcut kartı verilen alanlarla günceller — böylece
+ * "cari oluştur" ile "bilgilerini tamamla" aynı araçla yapılır.
+ */
+export async function actionCreateCustomer(input: {
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
+  city?: string | null;
+  taxOffice?: string | null;
+  taxNumber?: string | null;
+  eInvoice?: "bilinmiyor" | "efatura" | "earsiv" | null;
+  notes?: string | null;
+}): Promise<{ message: string }> {
+  const name = input.name?.trim();
+  if (!name) throw new Error("Cari adını anlayamadım, müşteri/firma adını söyler misin?");
+
+  const taxNumber = normalizeTaxNumber(input.taxNumber);
+
+  // Yalnızca verilen (undefined olmayan) alanları yaz — mevcut kaydı ezmemek için.
+  const fields: Record<string, unknown> = {};
+  if (input.phone != null) fields.phone = input.phone.trim() || null;
+  if (input.email != null) fields.email = input.email.trim() || null;
+  if (input.address != null) fields.address = input.address.trim() || null;
+  if (input.city != null) fields.city = input.city.trim() || null;
+  if (input.taxOffice != null) fields.taxOffice = input.taxOffice.trim() || null;
+  if (taxNumber != null) fields.taxNumber = taxNumber;
+  if (input.eInvoice) fields.eInvoice = input.eInvoice;
+  if (input.notes != null) fields.notes = input.notes.trim() || null;
+
+  const existing = (await db.listCustomers()).find(
+    c => c.name.trim().toLocaleLowerCase("tr-TR") === name.toLocaleLowerCase("tr-TR"),
+  );
+
+  const summarize = (mode: "açıldı" | "güncellendi") => {
+    const parts = [`Cari ${mode}: ${name} ✅`];
+    const detail = [
+      input.taxOffice?.trim() && `Vergi dairesi: ${input.taxOffice.trim()}`,
+      taxNumber && `VKN/TCKN: ${taxNumber}`,
+      input.eInvoice && `e-Fatura: ${EINVOICE_LABELS[input.eInvoice]}`,
+      (input.address?.trim() || undefined) && `Adres: ${input.address!.trim()}`,
+      input.phone?.trim() && `Telefon: ${input.phone.trim()}`,
+    ].filter(Boolean);
+    if (detail.length) parts.push(detail.join("\n"));
+    parts.push("(Müşteriler sayfasında görünür, faturaya taşınır.)");
+    return parts.join("\n");
+  };
+
+  if (existing) {
+    if (Object.keys(fields).length === 0) {
+      return { message: `"${name}" zaten kayıtlı. Eklemek istediğin bir bilgi (vergi dairesi, VKN/TCKN, adres…) varsa söyle.` };
+    }
+    await db.updateCustomer(existing.id, fields as never);
+    return { message: summarize("güncellendi") };
+  }
+
+  await db.createCustomer({ name, ...fields } as never);
+  return { message: summarize("açıldı") };
+}
+
 /** Komutu çözer ve uygular; kullanıcıya dönecek Türkçe mesajı döndürür. */
 export async function executeAssistantCommand(transcript: string): Promise<{ message: string }> {
   const cmd = await parseVoiceCommand(transcript);

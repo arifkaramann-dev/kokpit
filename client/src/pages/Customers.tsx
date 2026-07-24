@@ -10,14 +10,23 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatTL } from "@/lib/format";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { trpc } from "@/lib/trpc";
-import { Contact, Mail, MapPin, MessageCircle, Pencil, Phone, Plus, Search, ShoppingBag, Trash2 } from "lucide-react";
+import { Contact, FileText, Mail, MapPin, MessageCircle, Pencil, Phone, Plus, Search, ShoppingBag, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+
+type EInvoice = "bilinmiyor" | "efatura" | "earsiv";
 
 type CustomerRow = {
   id: number;
@@ -26,10 +35,29 @@ type CustomerRow = {
   email: string | null;
   address: string | null;
   city: string | null;
+  taxOffice: string | null;
+  taxNumber: string | null;
+  eInvoice: EInvoice | null;
   notes: string | null;
 };
 
-const emptyForm = { name: "", phone: "", email: "", address: "", city: "", notes: "" };
+const emptyForm = {
+  name: "",
+  phone: "",
+  email: "",
+  address: "",
+  city: "",
+  taxOffice: "",
+  taxNumber: "",
+  eInvoice: "bilinmiyor" as EInvoice,
+  notes: "",
+};
+
+const E_INVOICE_LABELS: Record<EInvoice, string> = {
+  bilinmiyor: "Bilinmiyor",
+  efatura: "e-Fatura mükellefi",
+  earsiv: "e-Arşiv",
+};
 
 const ORDER_STATUS_TR: Record<string, string> = {
   new: "Yeni",
@@ -165,6 +193,9 @@ export default function Customers() {
       email: c.email ?? "",
       address: c.address ?? "",
       city: c.city ?? "",
+      taxOffice: c.taxOffice ?? "",
+      taxNumber: c.taxNumber ?? "",
+      eInvoice: c.eInvoice ?? "bilinmiyor",
       notes: c.notes ?? "",
     });
     setDialogOpen(true);
@@ -181,6 +212,9 @@ export default function Customers() {
       email: form.email || null,
       address: form.address || null,
       city: form.city || null,
+      taxOffice: form.taxOffice || null,
+      taxNumber: form.taxNumber || null,
+      eInvoice: form.eInvoice,
       notes: form.notes || null,
     };
     if (editing) updateCustomer.mutate({ id: editing.id, data: payload });
@@ -290,6 +324,19 @@ export default function Customers() {
                 <p className="flex items-start gap-1.5 text-muted-foreground">
                   <MapPin className="h-3 w-3 mt-0.5 shrink-0" /> <span className="line-clamp-2">{c.address}</span>
                 </p>
+              )}
+              {(c.taxNumber || c.taxOffice) && (
+                <p className="flex items-center gap-1.5 text-muted-foreground">
+                  <FileText className="h-3 w-3 shrink-0" />
+                  <span className="truncate">
+                    {[c.taxOffice, c.taxNumber].filter(Boolean).join(" · ")}
+                  </span>
+                </p>
+              )}
+              {c.eInvoice && c.eInvoice !== "bilinmiyor" && (
+                <span className="inline-flex items-center rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
+                  {E_INVOICE_LABELS[c.eInvoice]}
+                </span>
               )}
             </div>
             {(() => {
@@ -595,6 +642,38 @@ export default function Customers() {
                 value={form.email}
                 onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
               />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Vergi Dairesi</Label>
+                <Input
+                  value={form.taxOffice}
+                  onChange={e => setForm(f => ({ ...f, taxOffice: e.target.value }))}
+                  placeholder="Örn. Setbaşı V.D."
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>VKN / TCKN</Label>
+                <Input
+                  value={form.taxNumber}
+                  onChange={e => setForm(f => ({ ...f, taxNumber: e.target.value.replace(/\D/g, "").slice(0, 11) }))}
+                  inputMode="numeric"
+                  placeholder="10 veya 11 hane"
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>e-Fatura Durumu</Label>
+              <Select value={form.eInvoice} onValueChange={v => setForm(f => ({ ...f, eInvoice: v as EInvoice }))}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="bilinmiyor">Bilinmiyor</SelectItem>
+                  <SelectItem value="efatura">e-Fatura mükellefi</SelectItem>
+                  <SelectItem value="earsiv">e-Arşiv (mükellef değil)</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-1.5">
               <Label>Adres</Label>
