@@ -37,6 +37,8 @@ import {
   productMovements,
   productSeries,
   InsertProductSeries,
+  productGenerations,
+  InsertProductGeneration,
   productionRuns,
   purchaseItems,
   purchases,
@@ -2035,6 +2037,62 @@ export async function updateProductSeries(id: number, data: Partial<InsertProduc
 export async function deleteProductSeries(id: number) {
   const db = await requireDb();
   await db.delete(productSeries).where(eq(productSeries.id, id));
+}
+
+/**
+ * Ürün motoru v2: bir seriye ait projelerin sayısından sıra no üretir.
+ * Kod = prefix + (mevcut sayı + 1) 4 hane sıfırla dolgulu. Örn. CND0042.
+ * Sıra no seri bazında değil, o prefixle üretilmiş tüm devProjects sayısından
+ * hesaplanır — böylece aynı seride kod tekrarı olmaz.
+ */
+export async function getNextSeriesCode(prefix: string) {
+  const db = await requireDb();
+  const clean = prefix.trim().toUpperCase();
+  const [row] = await db
+    .select({ n: sql<number>`COUNT(*)` })
+    .from(devProjects)
+    .where(sql`${devProjects.autoCode} LIKE ${clean + "%"}`);
+  const next = Number(row?.n ?? 0) + 1;
+  return `${clean}${String(next).padStart(4, "0")}`;
+}
+
+/* ------------------------- Ürün Motoru v2 — Ürünleştirme çıktıları ------------------------- */
+
+export async function listProductGenerations(projectId: number) {
+  const db = await requireDb();
+  return db
+    .select()
+    .from(productGenerations)
+    .where(eq(productGenerations.projectId, projectId))
+    .orderBy(productGenerations.id);
+}
+
+export async function getProductGeneration(id: number) {
+  const db = await requireDb();
+  const rows = await db.select().from(productGenerations).where(eq(productGenerations.id, id)).limit(1);
+  return rows[0] ?? null;
+}
+
+export async function createProductGeneration(data: InsertProductGeneration) {
+  const db = await requireDb();
+  const [r] = await db.insert(productGenerations).values(data);
+  return Number(r.insertId);
+}
+
+export async function updateProductGeneration(id: number, data: Partial<InsertProductGeneration>) {
+  const db = await requireDb();
+  await db.update(productGenerations).set(data).where(eq(productGenerations.id, id));
+}
+
+export async function deleteProductGeneration(id: number) {
+  const db = await requireDb();
+  await db.delete(productGenerations).where(eq(productGenerations.id, id));
+}
+
+/** Bir proje ürünleştirilmeden önce eski varyant kayıtlarını temizler (yeniden üretim). */
+export async function deleteProductGenerationsByProject(projectId: number) {
+  const db = await requireDb();
+  await db.delete(productGenerations).where(eq(productGenerations.projectId, projectId));
 }
 
 /**

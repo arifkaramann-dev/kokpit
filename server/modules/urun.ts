@@ -69,6 +69,10 @@ const materialInput = z.object({
   unitCost: z.number().min(0).default(0),
   supplierId: z.number().nullable().optional(),
   notes: z.string().nullable().optional(),
+  // Ürün motoru v2: kalite seviyesi, birim fiyat ve tedarikçi adı.
+  tier: z.enum(["premium", "mid", "eco"]).nullable().optional(),
+  pricePerUnit: z.number().min(0).nullable().optional(),
+  supplier: z.string().nullable().optional(),
 });
 
 const productInput = z.object({
@@ -178,6 +182,15 @@ const productSeriesInput = z.object({
   longDescription: z.string().nullable().optional(),
   applicationText: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
+  // Ürün motoru v2: kod ön eki, ambalaj/yüzey şablonları, kılavuz/etiket şablonları.
+  prefix: z.string().max(10).nullable().optional(),
+  packagingOptions: z
+    .array(z.object({ label: z.string(), value: z.string() }))
+    .nullable()
+    .optional(),
+  applicationSurfaces: z.array(z.string()).nullable().optional(),
+  guideTemplate: z.string().nullable().optional(),
+  labelTemplate: z.string().nullable().optional(),
 });
 
 /** products tablosundaki decimal alanlar (mutation girişinde stringe çevrilir). */
@@ -207,12 +220,12 @@ export const materialsRouter = router({
     return { suggestions, summary: summarizeReorder(suggestions) };
   }),
   create: protectedProcedure.input(materialInput).mutation(({ input }) =>
-    db.createMaterial(toDecimalFields(input, ["stockQty", "criticalQty", "unitCost"]) as never),
+    db.createMaterial(toDecimalFields(input, ["stockQty", "criticalQty", "unitCost", "pricePerUnit"]) as never),
   ),
   update: protectedProcedure
     .input(z.object({ id: z.number(), data: materialInput.partial() }))
     .mutation(({ input }) =>
-      db.updateMaterial(input.id, toDecimalFields(input.data, ["stockQty", "criticalQty", "unitCost"]) as never),
+      db.updateMaterial(input.id, toDecimalFields(input.data, ["stockQty", "criticalQty", "unitCost", "pricePerUnit"]) as never),
     ),
   delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteMaterial(input.id)),
   adjustStock: protectedProcedure
@@ -1133,6 +1146,89 @@ export const formulaRouter = router({
 // Ürün serileri: seri bazlı kâr oranı, KDV ve hazır açıklama şablonları.
 export const seriesRouter = router({
   list: protectedProcedure.query(() => db.listProductSeries()),
+  // Ürün motoru v2: prefix + ambalaj seçenekleri + uygulanabilir yüzeyleri
+  // normalize edip döndürür (JSON alanlar güvenli parse edilir). Adım 1'deki
+  // seri dropdown'u ve yüzey/ambalaj çoklu seçimleri bunu okur.
+  getSeriesWithDetails: protectedProcedure.query(async () => {
+    const rows = await db.listProductSeries();
+    const asArray = (v: unknown): unknown[] => {
+      if (Array.isArray(v)) return v;
+      if (typeof v === "string" && v.trim()) {
+        try {
+          const p = JSON.parse(v);
+          return Array.isArray(p) ? p : [];
+        } catch {
+          return [];
+        }
+      }
+      return [];
+    };
+    return rows.map(s => ({
+      id: s.id,
+      name: s.name,
+      prefix: (s.prefix ?? "").trim() || null,
+      profitMargin: s.profitMargin,
+      vatRate: s.vatRate,
+      category: s.category,
+      packagingOptions: asArray(s.packagingOptions) as { label: string; value: string }[],
+      applicationSurfaces: asArray(s.applicationSurfaces) as string[],
+      guideTemplate: s.guideTemplate ?? null,
+      labelTemplate: s.labelTemplate ?? null,
+    }));
+  }),
+  // Otomatik ürün/renk kodu üretir: prefix + 4 haneli sıra no (örn. CND0042).
+  // seriesId verilirse serinin prefix'i kullanılır; doğrudan prefix de verilebilir.
+  getNextCode: protectedProcedure
+    .input(z.object({ seriesId: z.number().optional(), prefix: z.string().optional() }))
+    .query(async ({ input }) => {
+      let prefix = input.prefix?.trim() ?? "";
+      if (!prefix && input.seriesId) {
+        const all = await db.listProductSeries();
+        const s = all.find(x => x.id === input.seriesId);
+        prefix = (s?.prefix ?? "").trim();
+      }
+      if (!prefix) {
+        return { code: null, prefix: null };
+      }
+      const code = await db.getNextSeriesCode(prefix);
+      return { code, prefix: prefix.toUpperCase() };
+    }),
+  // Bir projenin tüm varyant çıktılarını Excel için satır matrisine çevirir.
+  // Client (xlsx) bu matrisi .xlsx dosyasına yazar (mevcut ProductImport paritesi).
+  exportToExcel: protectedProcedure
+    .input(z.object({ projectId: z.number() }))
+    .query(async ({ input }) => {
+      const gens = await db.listProductGenerations(input.projectId);
+      const header = [
+        "Varyant Kodu",
+        "Ambalaj",
+        "Durum",
+        "Trendyol Başlık",
+        "Trendyol Açıklama",
+        "Hepsiburada Başlık",
+        "Hepsiburada Açıklama",
+        "Etiket İçeriği",
+        "Kullanım Kılavuzu",
+        "Uygulama Notları",
+        "Önerilen Fiyat",
+        "Maliyet",
+      ];
+      const rows = gens.map(g => [
+        g.variantCode,
+        g.packaging,
+        g.status,
+        g.trendyolTitle ?? "",
+        g.trendyolDescription ?? "",
+        g.hepsiburadaTitle ?? "",
+        g.hepsiburadaDescription ?? "",
+        g.labelContent ?? "",
+        g.guideContent ?? "",
+        g.applicationNotes ?? "",
+        parseFloat(String(g.suggestedPrice)) || 0,
+        parseFloat(String(g.costPrice)) || 0,
+      ]);
+      return { matrix: [header, ...rows] };
+    }),
   create: protectedProcedure.input(productSeriesInput).mutation(async ({ input }) => {
     const existing = await db.getProductSeriesByName(input.name);
     if (existing) throw new TRPCError({ code: "BAD_REQUEST", message: "Bu isimde bir seri zaten var." });

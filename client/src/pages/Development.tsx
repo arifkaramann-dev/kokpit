@@ -292,6 +292,11 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const { data, isLoading } = trpc.dev.get.useQuery({ id });
   const { data: materials } = trpc.materials.list.useQuery();
   const { data: settings } = trpc.settings.get.useQuery();
+  // Ürün motoru v2: seri şablonları (prefix, ambalaj, yüzey) Adım 1'i besler.
+  const { data: seriesDetails } = trpc.series.getSeriesWithDetails.useQuery();
+  // Adım 1'de seçilen seri + yüzey + ambalaj (çoklu seçim) yerel durumu.
+  const [selectedSurfaces, setSelectedSurfaces] = useState<string[]>([]);
+  const [selectedPackaging, setSelectedPackaging] = useState<string[]>([]);
   const [step, setStep] = useState<number | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
   const [trialDialogOpen, setTrialDialogOpen] = useState(false);
@@ -329,6 +334,21 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
         shippingCost: project.shippingCost,
         salePrice: project.salePrice,
       });
+      // JSON alanları güvenli parse et (dizi ya da JSON string olabilir).
+      const parseArr = (v: unknown): string[] => {
+        if (Array.isArray(v)) return v.map(String);
+        if (typeof v === "string" && v.trim()) {
+          try {
+            const p = JSON.parse(v);
+            return Array.isArray(p) ? p.map(String) : [];
+          } catch {
+            return [];
+          }
+        }
+        return [];
+      };
+      setSelectedSurfaces(parseArr(project.targetSurfaces));
+      setSelectedPackaging(parseArr(project.packagingSelection));
     }
   }, [project]);
 
@@ -412,6 +432,25 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
     },
     onError: e => toast.error(e.message),
   });
+
+  // Ürün motoru v2: bu projenin varyant çıktıları (Adım 5'te üretilir).
+  const { data: generations } = trpc.dev.generations.useQuery({ projectId: id });
+  const generateContent = trpc.dev.generateProductContent.useMutation({
+    onSuccess: r => {
+      utils.dev.generations.invalidate({ projectId: id });
+      toast.success(`${r.count} varyant için içerik üretildi 🎉`);
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  // Seçili serinin şablon detayı (prefix, ambalaj, yüzeyler).
+  const selectedSeries = (seriesDetails ?? []).find(s => s.name === form.series) ?? null;
+  // Otomatik ürün kodu önizlemesi: proje kaydı varsa onu, yoksa seriden hesaplananı göster.
+  const { data: nextCode } = trpc.series.getNextCode.useQuery(
+    { prefix: selectedSeries?.prefix ?? undefined },
+    { enabled: !!selectedSeries?.prefix && !project?.autoCode },
+  );
+  const autoCodePreview = project?.autoCode || nextCode?.code || null;
 
   if (isLoading || !project) {
     return <p className="text-sm text-muted-foreground">Yükleniyor...</p>;
@@ -526,21 +565,148 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
         })}
       </div>
 
-      {/* 1: Tanım */}
+      {/* 1: Tanım — Ürün motoru v2: seri dropdown + otomatik kod + yüzey/ambalaj seçimi */}
       {currentStep === 1 && (
-        <Card className="p-5 space-y-3">
+        <Card className="p-5 space-y-4">
           <p className="text-sm text-muted-foreground">
             Neyi geliştirdiğinizi tanımlayın — bu bilgiler ürünleşince otomatik taşınır.
           </p>
           {field("name", "Çalışma Adı *", "Örn. Gece Mavisi Metalik")}
-          {field("targetUse", "Hedef Kullanım / Yüzey", "Örn. Ahşap mobilya, iç mekan")}
-          <div className="grid grid-cols-2 gap-3">
-            {field("series", "Seri", "Örn. Meteor")}
-            {field("colorCode", "Renk Kodu", "Örn. M1130")}
+
+          {/* Seri: serbest metin yerine kayıtlı serilerden seçim (prefix ile) */}
+          <div className="space-y-1.5">
+            <Label>Seri *</Label>
+            <Select
+              value={form.series || ""}
+              onValueChange={v =>
+                setForm(f => ({ ...f, series: v }))
+              }
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Seri seçin" />
+              </SelectTrigger>
+              <SelectContent>
+                {(seriesDetails ?? []).map(s => (
+                  <SelectItem key={s.id} value={s.name}>
+                    {s.name}
+                    {s.prefix ? ` (${s.prefix})` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {(seriesDetails ?? []).length === 0 && (
+              <p className="text-xs text-amber-600">
+                Önce "Şablonlar → Seriler" sayfasından seri (prefix, ambalaj, yüzey) tanımlayın.
+              </p>
+            )}
+            {selectedSeries && !selectedSeries.prefix && (
+              <p className="text-xs text-amber-600">
+                Bu serinin prefix'i tanımlı değil — otomatik kod üretmek için Şablonlar'dan prefix ekleyin.
+              </p>
+            )}
           </div>
+
+          {/* Renk Kodu: otomatik üretilir, düzenlenemez */}
+          <div className="space-y-1.5">
+            <Label>Renk / Ürün Kodu (otomatik)</Label>
+            <Input value={autoCodePreview ?? "Seri seçilince oluşur"} disabled readOnly />
+            <p className="text-[11px] text-muted-foreground">
+              Kod otomatik üretilir: seri prefix'i + 4 haneli sıra no (örn. CND0042). Elle değiştirilemez.
+            </p>
+          </div>
+
+          {/* Hedef Yüzey: serinin şablonundan çoklu seçim */}
+          <div className="space-y-1.5">
+            <Label>Hedef Yüzey / Kullanım</Label>
+            {selectedSeries && selectedSeries.applicationSurfaces.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {selectedSeries.applicationSurfaces.map(surf => {
+                  const active = selectedSurfaces.includes(surf);
+                  return (
+                    <button
+                      key={surf}
+                      type="button"
+                      onClick={() =>
+                        setSelectedSurfaces(prev =>
+                          active ? prev.filter(x => x !== surf) : [...prev, surf],
+                        )
+                      }
+                      className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                        active
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-muted text-muted-foreground border-transparent hover:text-foreground"
+                      }`}
+                    >
+                      {surf}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Seri seçin — uygulanabilir yüzeyler seri şablonundan gelir.
+              </p>
+            )}
+          </div>
+
+          {/* Ambalaj Seçimi: serinin şablonundan çoklu seçim */}
+          <div className="space-y-1.5">
+            <Label>Ambalaj Boyutları (üretilecek varyantlar)</Label>
+            {selectedSeries && selectedSeries.packagingOptions.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {selectedSeries.packagingOptions.map(opt => {
+                  const active = selectedPackaging.includes(opt.value);
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() =>
+                        setSelectedPackaging(prev =>
+                          active ? prev.filter(x => x !== opt.value) : [...prev, opt.value],
+                        )
+                      }
+                      className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                        active
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-muted text-muted-foreground border-transparent hover:text-foreground"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Seri seçin — ambalaj seçenekleri seri şablonundan gelir.
+              </p>
+            )}
+          </div>
+
           {field("colorHex", "Renk (hex)", "#1a2b5c")}
           <div className="flex justify-end">
-            <Button onClick={() => saveFields(["name", "targetUse", "series", "colorCode", "colorHex"], 2)}>
+            <Button
+              onClick={() => {
+                if (!form.name?.trim()) return toast.error("Çalışma adı gerekli");
+                if (!form.series) return toast.error("Seri seçin");
+                const payload: Record<string, unknown> = {
+                  name: form.name.trim(),
+                  series: form.series,
+                  colorHex: form.colorHex?.trim() || null,
+                  targetUse: selectedSurfaces.join(", ") || form.targetUse?.trim() || null,
+                  targetSurfaces: selectedSurfaces,
+                  packagingSelection: selectedPackaging,
+                };
+                // Otomatik kod: yalnız henüz atanmadıysa hesaplanan kodu kaydet.
+                if (!project?.autoCode && autoCodePreview) {
+                  payload.autoCode = autoCodePreview;
+                  payload.colorCode = autoCodePreview;
+                }
+                if ((project?.currentStep ?? 1) < 2 && !isDone) payload.currentStep = 2;
+                updateProject.mutate({ id, data: payload as never });
+                setStep(2);
+              }}
+            >
               Kaydet ve Devam <ArrowRight className="h-4 w-4 ml-1" />
             </Button>
           </div>
@@ -860,30 +1026,75 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
               <p className="font-semibold">Özet — her şey hazır mı?</p>
               <div className="text-sm space-y-1.5">
                 <SummaryRow ok={!!project.name} label={`Ad: ${project.name}`} />
-                <SummaryRow ok={!!project.targetUse} label={`Kullanım: ${project.targetUse || "—"}`} />
+                <SummaryRow ok={!!autoCodePreview} label={`Ürün kodu: ${autoCodePreview || "—"}`} />
                 <SummaryRow
                   ok={!!chosen}
                   label={chosen ? `Seçili reçete: Deneme #${chosen.trialNo} (${chosen.items.length} hammadde)` : "Seçili reçete yok"}
                 />
-                <SummaryRow ok={!!project.dryingTime || !!project.applicationNotes} label="Test notları" />
+                <SummaryRow
+                  ok={selectedPackaging.length > 0}
+                  label={
+                    selectedPackaging.length > 0
+                      ? `Ambalaj varyantları: ${selectedPackaging.join(", ")}`
+                      : "Ambalaj seçilmedi (1. adımdan seçin)"
+                  }
+                />
                 <SummaryRow
                   ok={parseFloat(project.salePrice) > 0}
                   label={`Satış fiyatı: ${formatTL(project.salePrice)} (marj %${margin.toFixed(1)})`}
                 />
               </div>
+
               <p className="text-sm text-muted-foreground">
-                "Ürünü Oluştur" dediğinizde ürün; formülü, fiyatı, rengi ve açıklamasıyla birlikte
-                Ürünler, Formül Defteri ve Maliyet sayfalarında kullanıma hazır olur.
+                "Varyantları Oluştur" dediğinizde seçili reçete ve her ambalaj için;
+                Trendyol/Hepsiburada başlık-açıklamaları, etiket, uygulama kılavuzu ve
+                fiyat önerisi otomatik üretilir.
               </p>
+
+              {/* Üretilmiş varyantlar varsa listele */}
+              {generations && generations.length > 0 && (
+                <div className="rounded-lg border p-3 space-y-2 bg-muted/30">
+                  <p className="text-sm font-medium">
+                    {generations.length} varyant hazır
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {generations.map(g => (
+                      <Badge key={g.id} variant="secondary" className="gap-1">
+                        <Package className="h-3 w-3" />
+                        {g.variantCode} · {g.packaging}
+                      </Badge>
+                    ))}
+                  </div>
+                  <Button
+                    size="sm"
+                    className="mt-1"
+                    onClick={() => setLocation(`/urun-ciktisi/${id}`)}
+                  >
+                    <ArrowRight className="h-4 w-4 mr-1" /> Ürün Çıktılarını Aç
+                  </Button>
+                </div>
+              )}
+
               <div className="flex justify-between">
                 <Button variant="outline" onClick={() => setStep(4)}>
                   <ArrowLeft className="h-4 w-4 mr-1" /> Geri
                 </Button>
                 <Button
-                  disabled={convert.isPending || !chosen}
-                  onClick={() => convert.mutate({ id })}
+                  disabled={
+                    generateContent.isPending ||
+                    !chosen ||
+                    selectedPackaging.length === 0
+                  }
+                  onClick={() =>
+                    generateContent.mutate({ projectId: id, packaging: selectedPackaging })
+                  }
                 >
-                  <Package className="h-4 w-4 mr-1" /> Ürünü Oluştur
+                  <Package className="h-4 w-4 mr-1" />
+                  {generateContent.isPending
+                    ? "Varyantlar oluşturuluyor..."
+                    : generations && generations.length > 0
+                      ? "Yeniden Oluştur"
+                      : "Varyantları Oluştur"}
                 </Button>
               </div>
             </>
