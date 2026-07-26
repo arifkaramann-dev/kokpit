@@ -107,20 +107,45 @@ export default function ProductOutput() {
 
   async function runEnrichment(ids: number[]) {
     if (ids.length === 0) return;
-    setEnrichProgress({ done: 0, total: ids.length });
+    const total = ids.length;
+    setEnrichProgress({ done: 0, total });
+    let done = 0;
     let failed = 0;
-    for (let i = 0; i < ids.length; i++) {
-      try {
-        await utils.client.dev.enrichVariant.mutate({ generationId: ids[i] });
-      } catch {
-        failed++;
+
+    // Aynı anda en fazla CONCURRENCY varyantı işle (85 varyant tek tek yerine
+    // paralel işlenince çok daha hızlı biter). Bir işçi (worker) sıradaki
+    // varyantı alıp işler, bitince bir sonrakini alır.
+    const CONCURRENCY = 5;
+    let cursor = 0;
+    async function worker() {
+      while (cursor < ids.length) {
+        const myIndex = cursor++;
+        try {
+          await utils.client.dev.enrichVariant.mutate({ generationId: ids[myIndex] });
+        } catch {
+          failed++;
+        }
+        done++;
+        setEnrichProgress({ done, total });
       }
-      setEnrichProgress({ done: i + 1, total: ids.length });
-      await utils.dev.generations.invalidate({ projectId: id });
     }
-    setEnrichProgress(null);
+    // İlerlemeyi periyodik olarak ekrana yansıt (her varyant sonrası invalidate
+    // yerine, aşırı istek olmasın diye aralıklı yenile).
+    const refresher = setInterval(() => {
+      void utils.dev.generations.invalidate({ projectId: id });
+    }, 2500);
+    try {
+      await Promise.all(
+        Array.from({ length: Math.min(CONCURRENCY, ids.length) }, () => worker()),
+      );
+    } finally {
+      clearInterval(refresher);
+      await utils.dev.generations.invalidate({ projectId: id });
+      setEnrichProgress(null);
+    }
+
     if (failed === 0) toast.success("AI metinleri hazır 🎉");
-    else toast.warning(`${ids.length - failed} varyant hazır, ${failed} varyant başarısız — 'AI ile Yenile' ile tekrar deneyin.`);
+    else toast.warning(`${total - failed} varyant hazır, ${failed} varyant başarısız — 'AI Metinleri Yeniden Üret' ile tekrar deneyin.`);
   }
 
   // İlk yüklemede bekleyen (generating) varyantları otomatik zenginleştir.

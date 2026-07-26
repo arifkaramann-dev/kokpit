@@ -700,6 +700,11 @@ export const devRouter = router({
       const autoCode = project.autoCode || project.colorCode || "";
       const created: number[] = [];
 
+      // Yeniden üretimde mükerrer varyant oluşmaması için önce bu projenin
+      // eski varyant kayıtlarını temizle. (Aksi halde her "Yeniden Oluştur"
+      // aynı kodları tekrar ekliyordu; 85 yerine 99/170 varyant çıkıyordu.)
+      await db.deleteProductGenerationsByProject(input.projectId);
+
       // Renk × Ambalaj matrisi: her renk için her ambalaj bir varyant.
       for (const color of effectiveColors) {
         const colorLabel = color?.label ?? "";
