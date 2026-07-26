@@ -211,6 +211,13 @@
       "when": 1785089538695,
       "tag": "0029_wealthy_lady_bullseye",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "5",
+      "when": 1785090937617,
+      "tag": "0030_dashing_tyrannus",
+      "breakpoints": true
     }
   ]
 }

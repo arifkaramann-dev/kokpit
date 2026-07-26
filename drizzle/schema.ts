@@ -500,6 +500,10 @@ export const productGenerations = mysqlTable(
     // Varyantın rengi (etiket/değeri) ve hex kodu. Renksiz varyantlarda boş.
     color: varchar("color", { length: 64 }),
     colorHex: varchar("colorHex", { length: 16 }),
+    // AI üretilmiş görseller (isteğe bağlı, Ürün Çıktıları ekranından üretilir).
+    beforeAfterImageUrl: text("beforeAfterImageUrl"),
+    packagingImageUrl: text("packagingImageUrl"),
+    marketingImageUrl: text("marketingImageUrl"),
     status: mysqlEnum("status", ["generating", "ready", "listed", "error"]).notNull().default("ready"),
     trendyolTitle: varchar("trendyolTitle", { length: 255 }),
     trendyolDescription: mediumtext("trendyolDescription"),

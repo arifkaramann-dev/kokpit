@@ -262,6 +262,51 @@ export const devRouter = router({
     .input(z.object({ id: z.number() }))
     .mutation(({ input }) => db.deleteProductGeneration(input.id)),
 
+  // AI görsel üretimi: bir varyant için before/after, ambalaj ve pazarlama görseli üretir.
+  // Ürün Çıktıları ekranından tetiklenir, S3'e yüklenir, URL'ler generation kaydına yazılır.
+  generateVariantImages: protectedProcedure
+    .input(z.object({ generationId: z.number() }))
+    .mutation(async ({ input }) => {
+      const gen = await db.getProductGeneration(input.generationId);
+      if (!gen) throw new TRPCError({ code: "NOT_FOUND", message: "Varyant bulunamadı" });
+      const project = await db.getDevProject(gen.projectId);
+      if (!project) throw new TRPCError({ code: "NOT_FOUND", message: "Proje bulunamadı" });
+
+      // Temel ürün bilgisi prompt'a gömülür.
+      const baseName = project.name || "boya";
+      const colorDesc = gen.color ? `${gen.color} renk` : "renk";
+      const packagingDesc = gen.packaging || "ambalaj";
+      const seriesInfo = project.series ? `, ${project.series} serisi` : "";
+      const useInfo = project.targetUse ? `, ${project.targetUse}` : "";
+
+      // 1) Before/After: çizikli/soluk yüzey → o renge boyanmış temiz yüzey.
+      const beforeAfterPrompt = `Before/after karşılaştırma görseli: Sol tarafta eski soluk/çizikli yüzey, sağ tarafta ${colorDesc}${gen.colorHex ? ` (${gen.colorHex})` : ""} ile boyanmış parlak temiz yüzey. ${baseName}${seriesInfo}${useInfo}. Profesyonel diptik görsel, temiz stüdyo ışıklandırma, gerçekçi doku.`;
+
+      // 2) Ambalaj: o renk etiketli ürün şişesi/kutusu.
+      const packagingPrompt = `Profesyonel e-ticaret ürün fotoğrafı: ${baseName} ${colorDesc}${gen.colorHex ? ` (${gen.colorHex} ton)` : ""}, ${packagingDesc} ambalajında${seriesInfo}${useInfo}. Temiz beyaz stüdyo arka planı, yumuşak gölgeler, yüksek çözünürlük, gerçekçi. Türk oto rötuş/hobi boya markası Art of Colour ürünü.`;
+
+      // 3) Pazarlama: sosyal medya kartı, üzerinde başlık/slogan, o renk vurgusu.
+      const marketingPrompt = `Sosyal medya pazarlama görseli (Instagram/Facebook post): ${baseName} ${colorDesc}${gen.colorHex ? ` (${gen.colorHex} renk tonu)` : ""}, ${packagingDesc}${seriesInfo}. Dikkat çekici düzen, modern tipografi, marka adı "Art of Colour", slogan "Renklerle Yaşam Veriyoruz", profesyonel grafik tasarım, renk harmonisi. 1080x1080 kare format.`;
+
+      const [beforeAfter, packaging, marketing] = await Promise.all([
+        generateImage({ prompt: beforeAfterPrompt }),
+        generateImage({ prompt: packagingPrompt }),
+        generateImage({ prompt: marketingPrompt }),
+      ]);
+
+      await db.updateProductGeneration(input.generationId, {
+        beforeAfterImageUrl: beforeAfter.url ?? null,
+        packagingImageUrl: packaging.url ?? null,
+        marketingImageUrl: marketing.url ?? null,
+      } as never);
+
+      return {
+        beforeAfterImageUrl: beforeAfter.url,
+        packagingImageUrl: packaging.url,
+        marketingImageUrl: marketing.url,
+      };
+    }),
+
   // Adım 5 "Ürünleştir" ana aksiyonu: her seçili ambalaj için bir varyant kaydı
   // açar ve AI ile pazaryeri metinleri, etiket içeriği, kullanım kılavuzu ve
   // uygulama notlarını tek onayla üretir. Şablon (seri) + AI birlikte kullanılır.
