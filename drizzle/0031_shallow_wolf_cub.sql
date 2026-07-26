@@ -1,0 +1,1 @@
+ALTER TABLE `productGenerations` ADD `productId` int;
