@@ -84,6 +84,11 @@ const devProjectInput = z.object({
   autoCode: z.string().nullable().optional(),
   targetSurfaces: z.array(z.string()).nullable().optional(),
   packagingSelection: z.array(z.string()).nullable().optional(),
+  // Seçilen renkler: {label, value, hex?} — varyantlar Renk × Ambalaj üretilir.
+  colorSelection: z
+    .array(z.object({ label: z.string(), value: z.string(), hex: z.string().nullable().optional() }))
+    .nullable()
+    .optional(),
 });
 
 const devTrialItemInput = z.object({
@@ -266,6 +271,10 @@ export const devRouter = router({
         projectId: z.number(),
         // İstemci Adım 1'de seçmediyse burada da ambalaj listesi geçebilir.
         packaging: z.array(z.string()).optional(),
+        // Aynı şekilde renk listesi de burada geçilebilir (aksi halde projeden okunur).
+        colors: z
+          .array(z.object({ label: z.string(), value: z.string(), hex: z.string().nullable().optional() }))
+          .optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -305,6 +314,45 @@ export const devRouter = router({
       const surfaces = parseArr(project.targetSurfaces);
       const seriesRec = project.series ? await db.getProductSeriesByName(project.series) : null;
 
+      // Renk listesi: istemciden gelen > projedeki colorSelection. Boşsa tek bir
+      // "renksiz" varyant üretilir (eski davranışla uyumlu). {label,value,hex}.
+      type ColorOpt = { label: string; value: string; hex?: string | null };
+      const parseColors = (v: unknown): ColorOpt[] => {
+        let arr: unknown[] = [];
+        if (Array.isArray(v)) arr = v;
+        else if (typeof v === "string" && v.trim()) {
+          try {
+            const p = JSON.parse(v);
+            if (Array.isArray(p)) arr = p;
+          } catch {
+            arr = [];
+          }
+        }
+        return arr
+          .map(x => {
+            if (x && typeof x === "object") {
+              const o = x as Record<string, unknown>;
+              const value = String(o.value ?? o.label ?? "").trim();
+              if (!value) return null;
+              return {
+                label: String(o.label ?? o.value ?? "").trim() || value,
+                value,
+                hex: o.hex != null ? String(o.hex) : null,
+              } as ColorOpt;
+            }
+            const s = String(x).trim();
+            return s ? ({ label: s, value: s, hex: null } as ColorOpt) : null;
+          })
+          .filter((x): x is ColorOpt => !!x);
+      };
+      const colorList = input.colors?.length ? input.colors : parseColors(project.colorSelection);
+      // Renk seçilmemişse projedeki tek renk (varsa) ya da renksiz tek varyant.
+      const effectiveColors: (ColorOpt | null)[] = colorList.length
+        ? colorList
+        : project.colorCode || project.colorHex
+          ? [{ label: project.colorCode || "Renk", value: project.colorCode || "", hex: project.colorHex }]
+          : [null];
+
       // Maliyet: seçili reçete hammadde maliyeti + ambalaj maliyeti.
       const materialCost = chosenItems.reduce(
         (sum, item) =>
@@ -318,40 +366,62 @@ export const devRouter = router({
       const projectPrice = parseFloat(String(project.salePrice)) || 0;
 
       // Şablon değişkenlerini doldurur: {{renk}}, {{seri}}, {{ambalaj}}.
-      const fillTemplate = (tpl: string | null | undefined, packaging: string) =>
+      // Renk, o an işlenen varyantın rengidir (yoksa projedeki tek renk/ad).
+      const fillTemplate = (tpl: string | null | undefined, packaging: string, colorLabel: string) =>
         (tpl ?? "")
-          .replaceAll("{{renk}}", project.colorCode || project.name)
+          .replaceAll("{{renk}}", colorLabel || project.colorCode || project.name)
           .replaceAll("{{seri}}", project.series || "")
           .replaceAll("{{ambalaj}}", packaging);
+
+      // Kod dostu bir renk parçası üretir (boşlukları -, büyük harf).
+      const codeSlug = (s: string) =>
+        s
+          .trim()
+          .toUpperCase()
+          .replace(/\s+/g, "-")
+          .replace(/[^A-Z0-9-]/g, "");
 
       const autoCode = project.autoCode || project.colorCode || "";
       const created: number[] = [];
 
-      for (const packaging of packagingList) {
-        const variantCode = autoCode ? `${autoCode}-${packaging}` : `${project.name}-${packaging}`;
+      // Renk × Ambalaj matrisi: her renk için her ambalaj bir varyant.
+      for (const color of effectiveColors) {
+        const colorLabel = color?.label ?? "";
+        const colorValue = color?.value ?? "";
+        const colorHex = color?.hex ?? null;
+        const colorSeg = codeSlug(colorValue || colorLabel);
 
-        // Bu varyant için önerilen fiyat: projede fiyat girildiyse onu baz al,
-        // yoksa maliyet + seri kârı ile hesapla.
-        const suggestedPrice = projectPrice
-          ? projectPrice
-          : computePrice({ materialCost, packagingCost, shippingCost: 0, profitMargin, vatRate }).salePrice;
+        for (const packaging of packagingList) {
+          // Varyant kodu: autoCode-RENK-ambalaj (renk yoksa autoCode-ambalaj).
+          const base = autoCode || project.name;
+          const variantCode = [base, colorSeg || null, packaging].filter(Boolean).join("-");
 
-        // Şablon tabanlı taban içerik (AI erişilemezse de dolu kalsın).
-        const baseGuide =
-          fillTemplate(seriesRec?.guideTemplate, packaging) ||
-          project.usageGuide ||
-          "";
-        const baseLabel =
-          fillTemplate(seriesRec?.labelTemplate, packaging) ||
-          project.labelText ||
-          "";
+          // Bu varyant için önerilen fiyat: projede fiyat girildiyse onu baz al,
+          // yoksa maliyet + seri kârı ile hesapla.
+          const suggestedPrice = projectPrice
+            ? projectPrice
+            : computePrice({ materialCost, packagingCost, shippingCost: 0, profitMargin, vatRate }).salePrice;
 
-        // AI ile zenginleştir: tüm alanları tek JSON çıktıda üret.
-        const systemPrompt = `Sen Art of Colour markasının e-ticaret içerik motorusun. Art of Colour Türkiye'de otomotiv rötuş boyaları, bukalemun efekt boyalar, airbrush, sedefli (Vivid), transparan (Candy) boyalar, vernik ve astar üretir. Türkçe, doğru sektörel terimlerle (bazkat, 1K/2K, örtücülük, opaklık, vernik) yaz. Abartılı/yanıltıcı iddia, sahte yorum veya uydurma istatistik ekleme. SADECE geçerli JSON döndür, başka metin yazma.`;
+          // Şablon tabanlı taban içerik (AI erişilemezse de dolu kalsın).
+          const baseGuide =
+            fillTemplate(seriesRec?.guideTemplate, packaging, colorLabel) ||
+            project.usageGuide ||
+            "";
+          const baseLabel =
+            fillTemplate(seriesRec?.labelTemplate, packaging, colorLabel) ||
+            project.labelText ||
+            "";
 
-        const userPrompt = `Ürün: ${project.name}
+          // AI ile zenginleştir: tüm alanları tek JSON çıktıda üret.
+          const systemPrompt = `Sen Art of Colour markasının e-ticaret içerik motorusun. Art of Colour Türkiye'de otomotiv rötuş boyaları, bukalemun efekt boyalar, airbrush, sedefli (Vivid), transparan (Candy) boyalar, vernik ve astar üretir. Türkçe, doğru sektörel terimlerle (bazkat, 1K/2K, örtücülük, opaklık, vernik) yaz. Abartılı/yanıltıcı iddia, sahte yorum veya uydurma istatistik ekleme. SADECE geçerli JSON döndür, başka metin yazma.`;
+
+          const colorLine = colorLabel
+            ? `Renk: ${colorLabel}${colorValue && colorValue !== colorLabel ? " (" + colorValue + ")" : ""}${colorHex ? " " + colorHex : ""}`
+            : `Renk kodu: ${project.colorCode || "-"}`;
+
+          const userPrompt = `Ürün: ${project.name}
 Seri: ${project.series || "-"}
-Renk kodu: ${project.colorCode || "-"}
+${colorLine}
 Ambalaj/Hacim: ${packaging}
 Hedef yüzeyler: ${surfaces.length ? surfaces.join(", ") : (project.targetUse || "-")}
 Uygulama notu: ${project.applicationNotes || "-"}
@@ -360,52 +430,55 @@ Test notları: ${project.testNotes || "-"}
 Etiket şablonu (varsa taban al): ${baseLabel || "-"}
 Kılavuz şablonu (varsa taban al): ${baseGuide || "-"}
 
-Aşağıdaki JSON şemasına birebir uy (alanları Türkçe doldur):
+Aşağıdaki JSON şemasına birebir uy (alanları Türkçe doldur, başlık ve açıklamada rengi belirt):
 {
   "trendyolTitle": "en fazla 100 karakter, SEO uyumlu başlık",
   "trendyolDescription": "en fazla 2000 karakter, SEO uyumlu ürün açıklaması",
   "hepsiburadaTitle": "en fazla 80 karakter başlık",
   "hepsiburadaDescription": "en fazla 1500 karakter açıklama",
-  "labelContent": "Etiket metni: Ürün adı, Seri, Renk kodu, Hacim (${packaging}), İçindekiler, Uyarılar, Kısa kullanım talimatı, Üretici: [Üretici bilgisi]",
+  "labelContent": "Etiket metni: Ürün adı, Seri, ${colorLabel ? "Renk (" + colorLabel + ")" : "Renk kodu"}, Hacim (${packaging}), İçindekiler, Uyarılar, Kısa kullanım talimatı, Üretici: [Üretici bilgisi]",
   "guideContent": "Adım adım kullanım kılavuzu",
   "applicationNotes": "Her hedef yüzey için ayrı paragraf${surfaces.length ? " (" + surfaces.join(", ") + ")" : ""}"
 }`;
 
-        let ai: Record<string, string> = {};
-        try {
-          const response = await invokeLLM({
-            messages: [
-              { role: "system", content: systemPrompt },
-              { role: "user", content: userPrompt },
-            ],
-          });
-          const raw = response.choices[0]?.message?.content;
-          const text = typeof raw === "string" ? raw : "";
-          const parsed = extractJson(text);
-          if (parsed && typeof parsed === "object") ai = parsed as Record<string, string>;
-        } catch {
-          // AI erişilemezse şablon tabanlı içerikle devam edilir (aşağıdaki fallback).
-          ai = {};
-        }
+          let ai: Record<string, string> = {};
+          try {
+            const response = await invokeLLM({
+              messages: [
+                { role: "system", content: systemPrompt },
+                { role: "user", content: userPrompt },
+              ],
+            });
+            const raw = response.choices[0]?.message?.content;
+            const text = typeof raw === "string" ? raw : "";
+            const parsed = extractJson(text);
+            if (parsed && typeof parsed === "object") ai = parsed as Record<string, string>;
+          } catch {
+            // AI erişilemezse şablon tabanlı içerikle devam edilir (aşağıdaki fallback).
+            ai = {};
+          }
 
-        const clip = (s: string | undefined, max: number) => (s ? String(s).slice(0, max) : "");
-        const fallbackTitle = `${project.name}${project.series ? " " + project.series : ""} ${packaging}`.trim();
-        const genId = await db.createProductGeneration({
-          projectId: input.projectId,
-          variantCode,
-          packaging,
-          status: "ready",
-          trendyolTitle: clip(ai.trendyolTitle || fallbackTitle, 100),
-          trendyolDescription: clip(ai.trendyolDescription || project.description || "", 2000),
-          hepsiburadaTitle: clip(ai.hepsiburadaTitle || fallbackTitle, 80),
-          hepsiburadaDescription: clip(ai.hepsiburadaDescription || project.description || "", 1500),
-          labelContent: ai.labelContent || baseLabel || null,
-          guideContent: ai.guideContent || baseGuide || null,
-          applicationNotes: ai.applicationNotes || project.applicationNotes || null,
-          suggestedPrice: String(suggestedPrice),
-          costPrice: String(costPrice),
-        } as never);
-        created.push(genId);
+          const clip = (s: string | undefined, max: number) => (s ? String(s).slice(0, max) : "");
+          const fallbackTitle = `${project.name}${project.series ? " " + project.series : ""}${colorLabel ? " " + colorLabel : ""} ${packaging}`.trim();
+          const genId = await db.createProductGeneration({
+            projectId: input.projectId,
+            variantCode,
+            packaging,
+            color: colorLabel || null,
+            colorHex: colorHex || null,
+            status: "ready",
+            trendyolTitle: clip(ai.trendyolTitle || fallbackTitle, 100),
+            trendyolDescription: clip(ai.trendyolDescription || project.description || "", 2000),
+            hepsiburadaTitle: clip(ai.hepsiburadaTitle || fallbackTitle, 80),
+            hepsiburadaDescription: clip(ai.hepsiburadaDescription || project.description || "", 1500),
+            labelContent: ai.labelContent || baseLabel || null,
+            guideContent: ai.guideContent || baseGuide || null,
+            applicationNotes: ai.applicationNotes || project.applicationNotes || null,
+            suggestedPrice: String(suggestedPrice),
+            costPrice: String(costPrice),
+          } as never);
+          created.push(genId);
+        }
       }
 
       return { created, count: created.length };
