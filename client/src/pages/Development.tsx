@@ -470,7 +470,9 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const generateContent = trpc.dev.generateProductContent.useMutation({
     onSuccess: r => {
       utils.dev.generations.invalidate({ projectId: id });
-      toast.success(`${r.count} varyant için içerik üretildi 🎉`);
+      toast.success(
+        `${r.count} varyant oluşturuldu. AI metinleri "Ürün Çıktılarını Aç" ekranında hazırlanıyor 🎉`,
+      );
     },
     onError: e => toast.error(e.message),
   });

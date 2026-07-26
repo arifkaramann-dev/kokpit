@@ -108,6 +108,148 @@ const campaignInput = z.object({
   status: z.enum(["planned", "active", "done"]).default("planned"),
 });
 
+// ---------------------------------------------------------------------------
+// Varyant içerik üretimi yardımcıları
+// ---------------------------------------------------------------------------
+// Bir alandaki değeri güvenle string dizisine çevirir (dizi veya JSON metni).
+function parseStrArray(v: unknown): string[] {
+  if (Array.isArray(v)) return v.map(String);
+  if (typeof v === "string" && v.trim()) {
+    try {
+      const p = JSON.parse(v);
+      return Array.isArray(p) ? p.map(String) : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+// Tek bir varyant için AI içeriğini üretir. Başarısızlıkta (JSON parse/erişim
+// hatası) bir kez daha dener, yine olmazsa null döner. Böylece çağıran taraf
+// şablon içeriğini koruyabilir.
+type VariantAIOpts = {
+  packaging: string;
+  colorLabel: string;
+  colorValue: string;
+  colorHex: string | null;
+  baseLabel: string;
+  baseGuide: string;
+};
+async function generateVariantAIContent(
+  project: Awaited<ReturnType<typeof db.getDevProject>>,
+  seriesRec: Awaited<ReturnType<typeof db.getProductSeriesByName>> | null,
+  surfaces: string[],
+  opts: VariantAIOpts,
+): Promise<Record<string, string> | null> {
+  if (!project) return null;
+  const { packaging, colorLabel, colorValue, colorHex, baseLabel, baseGuide } = opts;
+
+  const systemPrompt = `Sen Art of Colour markasının e-ticaret içerik motorusun. Art of Colour Türkiye'de otomotiv rötuş boyaları, bukalemun efekt boyalar, airbrush, sedefli (Vivid), transparan (Candy) boyalar, vernik ve astar üretir. Türkçe, doğru sektörel terimlerle (bazkat, 1K/2K, örtücülük, opaklık, vernik) yaz. Abartılı/yanıltıcı iddia, sahte yorum veya uydurma istatistik ekleme. SADECE geçerli JSON döndür, başka metin yazma.`;
+
+  const colorLine = colorLabel
+    ? `Renk: ${colorLabel}${colorValue && colorValue !== colorLabel ? " (" + colorValue + ")" : ""}${colorHex ? " " + colorHex : ""}`
+    : `Renk kodu: ${project.colorCode || "-"}`;
+
+  const userPrompt = `Ürün: ${project.name}
+Seri: ${project.series || "-"}
+${colorLine}
+Ambalaj/Hacim: ${packaging}
+Hedef yüzeyler: ${surfaces.length ? surfaces.join(", ") : (project.targetUse || "-")}
+Uygulama notu: ${project.applicationNotes || "-"}
+Kuruma: ${project.dryingTime || "-"} | Kat: ${project.coats || "-"}
+Test notları: ${project.testNotes || "-"}
+Etiket şablonu (varsa taban al): ${baseLabel || "-"}
+Kılavuz şablonu (varsa taban al): ${baseGuide || "-"}
+
+Aşağıdaki JSON şemasına birebir uy (alanları Türkçe doldur, başlık ve açıklamada rengi belirt):
+{
+  "trendyolTitle": "en fazla 100 karakter, SEO uyumlu başlık",
+  "trendyolDescription": "en fazla 2000 karakter, SEO uyumlu ürün açıklaması",
+  "hepsiburadaTitle": "en fazla 80 karakter başlık",
+  "hepsiburadaDescription": "en fazla 1500 karakter açıklama",
+  "labelContent": "Etiket metni: Ürün adı, Seri, ${colorLabel ? "Renk (" + colorLabel + ")" : "Renk kodu"}, Hacim (${packaging}), İçindekiler, Uyarılar, Kısa kullanım talimatı, Üretici: [Üretici bilgisi]",
+  "guideContent": "Adım adım kullanım kılavuzu",
+  "applicationNotes": "Her hedef yüzey için ayrı paragraf${surfaces.length ? " (" + surfaces.join(", ") + ")" : ""}"
+}`;
+
+  // İki deneme: geçici hatalarda / bozuk JSON'da bir kez daha dene.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const response = await invokeLLM({
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      });
+      const raw = response.choices[0]?.message?.content;
+      const text = typeof raw === "string" ? raw : "";
+      const parsed = extractJson(text);
+      if (parsed && typeof parsed === "object" && Object.keys(parsed).length > 0) {
+        return parsed as Record<string, string>;
+      }
+    } catch {
+      // sıradaki denemeye geç
+    }
+  }
+  return null;
+}
+
+// AI erişilemese/başarısız olsa bile dolu kalması için şablon tabanlı içerik
+// üretir. Böylece hiçbir varyant boş açıklama ile kalmaz.
+function templateVariantContent(
+  project: NonNullable<Awaited<ReturnType<typeof db.getDevProject>>>,
+  surfaces: string[],
+  opts: VariantAIOpts,
+): Record<string, string> {
+  const { packaging, colorLabel, baseLabel, baseGuide } = opts;
+  const seriesPart = project.series ? ` ${project.series}` : "";
+  const colorPart = colorLabel ? ` ${colorLabel}` : "";
+  const title = `Art of Colour ${project.name}${seriesPart}${colorPart} ${packaging}`.replace(/\s+/g, " ").trim();
+  const surfLine = surfaces.length ? surfaces.join(", ") : (project.targetUse || "çeşitli yüzeyler");
+  const desc = [
+    `${title} — Art of Colour kalitesiyle profesyonel sonuçlar için geliştirilmiştir.`,
+    project.description || "",
+    "",
+    "ÖZELLİKLER",
+    `- Renk: ${colorLabel || project.colorCode || "-"}`,
+    project.series ? `- Seri: ${project.series}` : "",
+    `- Ambalaj/Hacim: ${packaging}`,
+    `- Uygun yüzeyler: ${surfLine}`,
+    project.dryingTime ? `- Kuruma süresi: ${project.dryingTime}` : "",
+    project.coats ? `- Önerilen kat sayısı: ${project.coats}` : "",
+    project.applicationNotes ? `\nUYGULAMA\n${project.applicationNotes}` : "",
+  ]
+    .filter(l => l !== null && l !== undefined)
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  const guide =
+    baseGuide ||
+    project.usageGuide ||
+    `1) Uygulama yüzeyini temizleyin, yağ ve tozdan arındırın.
+2) Ürünü uygulamadan önce iyice çalkalayın.
+3) İnce ve düzgün katlar halinde uygulayın (${project.coats || "2-3"} kat önerilir).
+4) Katlar arasında ${project.dryingTime || "yeterli kuruma süresi"} bekleyin.
+5) Gerekirse son kat olarak vernik uygulayın.`;
+  const labelText =
+    baseLabel ||
+    `${project.name}${project.series ? " · " + project.series : ""}${colorLabel ? " · " + colorLabel : ""} · ${packaging}
+İçindekiler ve uyarılar için ürün etiketine bakınız.
+Üretici: Art of Colour`;
+  return {
+    trendyolTitle: title,
+    trendyolDescription: desc,
+    hepsiburadaTitle: title,
+    hepsiburadaDescription: desc,
+    labelContent: labelText,
+    guideContent: guide,
+    applicationNotes: project.applicationNotes || `${surfLine} yüzeylerinde kullanıma uygundur.`,
+  };
+}
+
+const clipStr = (s: string | undefined | null, max: number) => (s ? String(s).slice(0, max) : "");
+
 
 
 export const devRouter = router({
@@ -586,68 +728,33 @@ export const devRouter = router({
             project.labelText ||
             "";
 
-          // AI ile zenginleştir: tüm alanları tek JSON çıktıda üret.
-          const systemPrompt = `Sen Art of Colour markasının e-ticaret içerik motorusun. Art of Colour Türkiye'de otomotiv rötuş boyaları, bukalemun efekt boyalar, airbrush, sedefli (Vivid), transparan (Candy) boyalar, vernik ve astar üretir. Türkçe, doğru sektörel terimlerle (bazkat, 1K/2K, örtücülük, opaklık, vernik) yaz. Abartılı/yanıltıcı iddia, sahte yorum veya uydurma istatistik ekleme. SADECE geçerli JSON döndür, başka metin yazma.`;
-
-          const colorLine = colorLabel
-            ? `Renk: ${colorLabel}${colorValue && colorValue !== colorLabel ? " (" + colorValue + ")" : ""}${colorHex ? " " + colorHex : ""}`
-            : `Renk kodu: ${project.colorCode || "-"}`;
-
-          const userPrompt = `Ürün: ${project.name}
-Seri: ${project.series || "-"}
-${colorLine}
-Ambalaj/Hacim: ${packaging}
-Hedef yüzeyler: ${surfaces.length ? surfaces.join(", ") : (project.targetUse || "-")}
-Uygulama notu: ${project.applicationNotes || "-"}
-Kuruma: ${project.dryingTime || "-"} | Kat: ${project.coats || "-"}
-Test notları: ${project.testNotes || "-"}
-Etiket şablonu (varsa taban al): ${baseLabel || "-"}
-Kılavuz şablonu (varsa taban al): ${baseGuide || "-"}
-
-Aşağıdaki JSON şemasına birebir uy (alanları Türkçe doldur, başlık ve açıklamada rengi belirt):
-{
-  "trendyolTitle": "en fazla 100 karakter, SEO uyumlu başlık",
-  "trendyolDescription": "en fazla 2000 karakter, SEO uyumlu ürün açıklaması",
-  "hepsiburadaTitle": "en fazla 80 karakter başlık",
-  "hepsiburadaDescription": "en fazla 1500 karakter açıklama",
-  "labelContent": "Etiket metni: Ürün adı, Seri, ${colorLabel ? "Renk (" + colorLabel + ")" : "Renk kodu"}, Hacim (${packaging}), İçindekiler, Uyarılar, Kısa kullanım talimatı, Üretici: [Üretici bilgisi]",
-  "guideContent": "Adım adım kullanım kılavuzu",
-  "applicationNotes": "Her hedef yüzey için ayrı paragraf${surfaces.length ? " (" + surfaces.join(", ") + ")" : ""}"
-}`;
-
-          let ai: Record<string, string> = {};
-          try {
-            const response = await invokeLLM({
-              messages: [
-                { role: "system", content: systemPrompt },
-                { role: "user", content: userPrompt },
-              ],
-            });
-            const raw = response.choices[0]?.message?.content;
-            const text = typeof raw === "string" ? raw : "";
-            const parsed = extractJson(text);
-            if (parsed && typeof parsed === "object") ai = parsed as Record<string, string>;
-          } catch {
-            // AI erişilemezse şablon tabanlı içerikle devam edilir (aşağıdaki fallback).
-            ai = {};
-          }
-
-          const clip = (s: string | undefined, max: number) => (s ? String(s).slice(0, max) : "");
-          const fallbackTitle = `${project.name}${project.series ? " " + project.series : ""}${colorLabel ? " " + colorLabel : ""} ${packaging}`.trim();
+          // Varyantı HEMEN, şablon tabanlı dolu içerikle oluştur (LLM çağrısı
+          // YOK). Böylece 14+ varyantta bile istek anında döner; gateway
+          // timeout ("unexpected token") yaşanmaz ve hiçbir varyant boş
+          // açıklamayla kalmaz. AI ile zenginleştirme sonradan varyant başına
+          // ayrı ayrı yapılır (enrichVariant), status "generating" bunu işaret eder.
+          const tpl = templateVariantContent(project, surfaces, {
+            packaging,
+            colorLabel,
+            colorValue,
+            colorHex,
+            baseLabel,
+            baseGuide,
+          });
           const genId = await db.createProductGeneration({
             projectId: input.projectId,
             variantCode,
             packaging,
             color: colorLabel || null,
             colorHex: colorHex || null,
-            status: "ready",
-            trendyolTitle: clip(ai.trendyolTitle || fallbackTitle, 100),
-            trendyolDescription: clip(ai.trendyolDescription || project.description || "", 2000),
-            hepsiburadaTitle: clip(ai.hepsiburadaTitle || fallbackTitle, 80),
-            hepsiburadaDescription: clip(ai.hepsiburadaDescription || project.description || "", 1500),
-            labelContent: ai.labelContent || baseLabel || null,
-            guideContent: ai.guideContent || baseGuide || null,
-            applicationNotes: ai.applicationNotes || project.applicationNotes || null,
+            status: "generating", // AI zenginleştirmesi bekliyor
+            trendyolTitle: clipStr(tpl.trendyolTitle, 100),
+            trendyolDescription: clipStr(tpl.trendyolDescription, 2000),
+            hepsiburadaTitle: clipStr(tpl.hepsiburadaTitle, 80),
+            hepsiburadaDescription: clipStr(tpl.hepsiburadaDescription, 1500),
+            labelContent: tpl.labelContent || null,
+            guideContent: tpl.guideContent || null,
+            applicationNotes: tpl.applicationNotes || null,
             suggestedPrice: String(suggestedPrice),
             costPrice: String(costPrice),
           } as never);
@@ -656,6 +763,54 @@ Aşağıdaki JSON şemasına birebir uy (alanları Türkçe doldur, başlık ve 
       }
 
       return { created, count: created.length };
+    }),
+
+  // Tek bir varyantın AI içeriğini üretir/yeniler. Ürün Çıktıları ekranı, yeni
+  // üretilen varyantları (status "generating") tek tek bu uçla zenginleştirir;
+  // her çağrı ayrı bir HTTP isteği olduğundan timeout ve toplu hata riski olmaz.
+  // Başarısızlıkta şablon içeriği korunur, status "error" olur (yeniden denenebilir).
+  enrichVariant: protectedProcedure
+    .input(z.object({ generationId: z.number() }))
+    .mutation(async ({ input }) => {
+      const gen = await db.getProductGeneration(input.generationId);
+      if (!gen) throw new TRPCError({ code: "NOT_FOUND", message: "Varyant bulunamadı" });
+      const project = await db.getDevProject(gen.projectId);
+      if (!project) throw new TRPCError({ code: "NOT_FOUND", message: "Proje bulunamadı" });
+
+      const surfaces = parseStrArray(project.targetSurfaces);
+      const seriesRec = project.series ? await db.getProductSeriesByName(project.series) : null;
+
+      const ai = await generateVariantAIContent(project, seriesRec, surfaces, {
+        packaging: gen.packaging,
+        colorLabel: gen.color ?? "",
+        colorValue: gen.color ?? "",
+        colorHex: gen.colorHex ?? null,
+        baseLabel: gen.labelContent ?? "",
+        baseGuide: gen.guideContent ?? "",
+      });
+
+      if (!ai) {
+        // AI başarısız: mevcut (şablon) içeriği koru, hatayı işaretle.
+        await db.updateProductGeneration(input.generationId, { status: "error" } as never);
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "AI içerik üretilemedi. 'AI ile Yenile' ile tekrar deneyebilirsiniz.",
+        });
+      }
+
+      // Yalnızca AI'nin doldurduğu alanları güncelle; boş dönenlerde mevcut
+      // (şablon) içerik korunur.
+      const patch: Record<string, unknown> = { status: "ready" };
+      if (ai.trendyolTitle) patch.trendyolTitle = clipStr(ai.trendyolTitle, 100);
+      if (ai.trendyolDescription) patch.trendyolDescription = clipStr(ai.trendyolDescription, 2000);
+      if (ai.hepsiburadaTitle) patch.hepsiburadaTitle = clipStr(ai.hepsiburadaTitle, 80);
+      if (ai.hepsiburadaDescription) patch.hepsiburadaDescription = clipStr(ai.hepsiburadaDescription, 1500);
+      if (ai.labelContent) patch.labelContent = ai.labelContent;
+      if (ai.guideContent) patch.guideContent = ai.guideContent;
+      if (ai.applicationNotes) patch.applicationNotes = ai.applicationNotes;
+
+      await db.updateProductGeneration(input.generationId, patch as never);
+      return { ok: true, generationId: input.generationId };
     }),
 });
 
