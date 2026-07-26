@@ -14,20 +14,23 @@ import { formatTL } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
 import { useConfirm } from "@/components/ConfirmDialog";
 import {
+  AlertTriangle,
   ArrowLeft,
   CheckCircle2,
   Copy,
   Download,
   FileSpreadsheet,
   FileText,
+  Loader2,
   Package,
   PackagePlus,
+  RefreshCw,
   Save,
   Sparkles,
   Store,
   Trash2,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useRoute } from "wouter";
 import { toast } from "sonner";
 import type { inferRouterOutputs } from "@trpc/server";
@@ -91,6 +94,44 @@ export default function ProductOutput() {
     const grp = colorGroups.find(gr => gr.key === key);
     if (grp && grp.gens.length) setActive(String(grp.gens[0].id));
   }
+
+  // ---- AI içerik zenginleştirme (varyant başına, sırayla) ----
+  // Yeni üretilen varyantlar status "generating" ile gelir; her biri ayrı bir
+  // istekle zenginleştirilir. Böylece tek dev istek yerine küçük istekler olur
+  // (timeout/"unexpected token" yaşanmaz) ve hatalar tek varyanta izole kalır.
+  const enrichStarted = useRef(false);
+  const [enrichProgress, setEnrichProgress] = useState<{ done: number; total: number } | null>(null);
+
+  const pendingCount = (generations ?? []).filter(g => g.status === "generating").length;
+  const errorCount = (generations ?? []).filter(g => g.status === "error").length;
+
+  async function runEnrichment(ids: number[]) {
+    if (ids.length === 0) return;
+    setEnrichProgress({ done: 0, total: ids.length });
+    let failed = 0;
+    for (let i = 0; i < ids.length; i++) {
+      try {
+        await utils.client.dev.enrichVariant.mutate({ generationId: ids[i] });
+      } catch {
+        failed++;
+      }
+      setEnrichProgress({ done: i + 1, total: ids.length });
+      await utils.dev.generations.invalidate({ projectId: id });
+    }
+    setEnrichProgress(null);
+    if (failed === 0) toast.success("AI metinleri hazır 🎉");
+    else toast.warning(`${ids.length - failed} varyant hazır, ${failed} varyant başarısız — 'AI ile Yenile' ile tekrar deneyin.`);
+  }
+
+  // İlk yüklemede bekleyen (generating) varyantları otomatik zenginleştir.
+  useEffect(() => {
+    if (!generations || generations.length === 0 || enrichStarted.current) return;
+    const pending = generations.filter(g => g.status === "generating").map(g => g.id);
+    if (pending.length === 0) return;
+    enrichStarted.current = true;
+    void runEnrichment(pending);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [generations]);
 
   // Ürünlere aktarım durumu.
   const publishedCount = (generations ?? []).filter(g => g.productId).length;
@@ -188,6 +229,57 @@ export default function ProductOutput() {
         </Card>
       )}
 
+      {/* AI içerik durumu bandı */}
+      {generations && generations.length > 0 && enrichProgress && (
+        <Card className="border-primary/30 bg-primary/5">
+          <CardContent className="flex items-center gap-3 py-4">
+            <Loader2 className="h-6 w-6 animate-spin text-primary shrink-0" />
+            <div className="flex-1 space-y-1.5">
+              <p className="text-sm font-medium">
+                AI metinleri hazırlanıyor… {enrichProgress.done}/{enrichProgress.total}
+              </p>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-primary/15">
+                <div
+                  className="h-full bg-primary transition-all"
+                  style={{
+                    width: `${Math.round((enrichProgress.done / Math.max(enrichProgress.total, 1)) * 100)}%`,
+                  }}
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* AI hata / yeniden deneme bandı */}
+      {generations && generations.length > 0 && !enrichProgress && (errorCount > 0 || pendingCount > 0) && (
+        <Card className="border-amber-300 bg-amber-50">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="h-6 w-6 text-amber-500 shrink-0" />
+              <p className="text-sm">
+                {errorCount > 0
+                  ? `${errorCount} varyant için AI metni üretilemedi (şablon metin kullanılıyor).`
+                  : `${pendingCount} varyant henüz AI ile zenginleştirilmedi.`}
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                runEnrichment(
+                  (generations ?? [])
+                    .filter(g => g.status === "generating" || g.status === "error")
+                    .map(g => g.id),
+                )
+              }
+            >
+              <RefreshCw className="h-4 w-4 mr-1" /> AI Metinleri Yeniden Üret
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Ürünlere aktarım kartı */}
       {generations && generations.length > 0 && (
         <Card className="border-primary/30 bg-primary/5">
@@ -266,6 +358,12 @@ export default function ProductOutput() {
                 <TabsTrigger key={g.id} value={String(g.id)} className="gap-1">
                   <Package className="h-3 w-3" />
                   {g.packaging}
+                  {g.status === "generating" && (
+                    <Loader2 className="ml-0.5 h-3 w-3 animate-spin text-primary" />
+                  )}
+                  {g.status === "error" && (
+                    <AlertTriangle className="ml-0.5 h-3 w-3 text-amber-500" />
+                  )}
                   {g.productId && (
                     <CheckCircle2 className="ml-0.5 h-3 w-3 text-emerald-500" />
                   )}
@@ -352,6 +450,15 @@ function VariantEditor({
   const generateImages = trpc.dev.generateVariantImages.useMutation({
     onSuccess: () => {
       toast.success("Görseller üretildi 🎨");
+      utils.dev.generations.invalidate();
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  // Bu varyantın AI metnini tek başına yeniden üret.
+  const enrichOne = trpc.dev.enrichVariant.useMutation({
+    onSuccess: () => {
+      toast.success("AI metni güncellendi ✨");
       utils.dev.generations.invalidate();
     },
     onError: e => toast.error(e.message),
@@ -447,20 +554,45 @@ function VariantEditor({
             </Badge>
           )}
           <Badge variant="outline">{gen.packaging}</Badge>
+          {gen.status === "generating" && (
+            <Badge variant="secondary" className="gap-1">
+              <Loader2 className="h-3 w-3 animate-spin" /> AI hazırlanıyor
+            </Badge>
+          )}
+          {gen.status === "error" && (
+            <Badge className="gap-1 bg-amber-500 hover:bg-amber-500">
+              <AlertTriangle className="h-3 w-3" /> AI başarısız — şablon metin
+            </Badge>
+          )}
           {gen.productId && (
             <Badge className="gap-1 bg-emerald-500 hover:bg-emerald-500">
               <CheckCircle2 className="h-3 w-3" /> Ürüne aktarıldı
             </Badge>
           )}
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-destructive"
-          onClick={onDeleted}
-        >
-          <Trash2 className="h-4 w-4 mr-1" /> Sil
-        </Button>
+        <div className="flex items-center gap-1.5">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => enrichOne.mutate({ generationId: gen.id })}
+            disabled={enrichOne.isPending || gen.status === "generating"}
+          >
+            {enrichOne.isPending ? (
+              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+            ) : (
+              <Sparkles className="h-4 w-4 mr-1" />
+            )}
+            AI ile Yenile
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-destructive"
+            onClick={onDeleted}
+          >
+            <Trash2 className="h-4 w-4 mr-1" /> Sil
+          </Button>
+        </div>
       </div>
 
       {/* Trendyol */}
