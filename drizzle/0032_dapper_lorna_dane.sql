@@ -1,0 +1,1 @@
+ALTER TABLE `productSeries` ADD `faqContent` mediumtext;

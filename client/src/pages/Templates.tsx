@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
-import { LibraryBig, Pencil, Plus, Trash2 } from "lucide-react";
+import { LibraryBig, Loader2, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -215,6 +215,7 @@ const emptySeriesForm = {
   shortDescription: "",
   longDescription: "",
   applicationText: "",
+  faqContent: "",
   // Ürün motoru v2 alanları
   prefix: "",
   packagingOptions: "", // her satır bir ambalaj (örn. 50ml)
@@ -256,6 +257,21 @@ function SeriesManager() {
     onSuccess: () => invalidate(),
     onError: e => toast.error(e.message),
   });
+  // Seri bazlı AI içerik üretimi: tek çağrıda kısa/uzun açıklama, uygulama ve SSS.
+  const generateContent = trpc.series.generateContent.useMutation({
+    onSuccess: r => {
+      setForm(f => ({
+        ...f,
+        shortDescription: r.shortDescription ?? f.shortDescription,
+        longDescription: r.longDescription ?? f.longDescription,
+        applicationText: r.applicationText ?? f.applicationText,
+        faqContent: r.faqContent ?? f.faqContent,
+      }));
+      invalidate();
+      toast.success("AI içerik üretildi — gözden geçirip kaydedebilirsiniz 🎉");
+    },
+    onError: e => toast.error(e.message),
+  });
 
   function submit() {
     if (!form.name.trim()) return toast.error("Seri adı gerekli");
@@ -288,6 +304,7 @@ function SeriesManager() {
       shortDescription: form.shortDescription || null,
       longDescription: form.longDescription || null,
       applicationText: form.applicationText || null,
+      faqContent: form.faqContent || null,
       // Ürün motoru v2: kod ön eki, ambalaj/yüzey ve şablonlar.
       prefix: form.prefix.trim().toUpperCase() || null,
       packagingOptions: packaging.length ? packaging : null,
@@ -389,6 +406,7 @@ function SeriesManager() {
                     shortDescription: s.shortDescription ?? "",
                     longDescription: s.longDescription ?? "",
                     applicationText: s.applicationText ?? "",
+                    faqContent: (s as { faqContent?: string | null }).faqContent ?? "",
                     prefix: (s as { prefix?: string | null }).prefix ?? "",
                     packagingOptions: pkgLines,
                     applicationSurfaces: surfLines,
@@ -471,13 +489,44 @@ function SeriesManager() {
                 />
               </div>
             </div>
+            {/* Seri bazlı AI içerik üretimi. İçerik seri bazlıdır; varyantlar
+                (renk/gramaj) bu metinleri paylaşır — varyant başına AI çağrısı yok. */}
+            <div className="rounded-lg border bg-primary/5 p-3 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium flex items-center gap-1.5">
+                  <Sparkles className="h-4 w-4 text-primary" /> AI ile içerik üret
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Kısa/uzun açıklama, uygulama metni ve SSS'yi tek seferde üretir. Varyantlar bu metinleri devralır.
+                </p>
+              </div>
+              <Button
+                size="sm"
+                disabled={!editingId || generateContent.isPending}
+                onClick={() => editingId && generateContent.mutate({ id: editingId })}
+                title={editingId ? "" : "Önce seriyi kaydedin"}
+              >
+                {generateContent.isPending ? (
+                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4 mr-1" />
+                )}
+                AI ile Üret
+              </Button>
+            </div>
+            {!editingId && (
+              <p className="text-xs text-muted-foreground -mt-1">
+                AI üretimi için önce seriyi kaydedin, sonra düzenleyerek "AI ile Üret" deyin.
+              </p>
+            )}
+
             <div className="space-y-1.5">
               <Label>Kısa Açıklama</Label>
               <Textarea
                 rows={2}
                 value={form.shortDescription}
                 onChange={e => setForm(f => ({ ...f, shortDescription: e.target.value }))}
-                placeholder="Bu serinin ürünlerine önerilecek kısa açıklama"
+                placeholder="Web sitesinde ürünün yanında görünen kısa tanıtım metni"
               />
             </div>
             <div className="space-y-1.5">
@@ -496,6 +545,15 @@ function SeriesManager() {
                 value={form.applicationText}
                 onChange={e => setForm(f => ({ ...f, applicationText: e.target.value }))}
                 placeholder="Bu serinin ürünlerine önerilecek uygulama talimatı"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>SSS / Blog</Label>
+              <Textarea
+                rows={5}
+                value={form.faqContent}
+                onChange={e => setForm(f => ({ ...f, faqContent: e.target.value }))}
+                placeholder="Uygulama ve ürün hakkında sıkça sorulan sorular — web sitesinde kullanılır (seri bazlı)"
               />
             </div>
 

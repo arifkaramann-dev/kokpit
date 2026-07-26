@@ -471,7 +471,7 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
     onSuccess: r => {
       utils.dev.generations.invalidate({ projectId: id });
       toast.success(
-        `${r.count} varyant oluşturuldu. AI metinleri "Ürün Çıktılarını Aç" ekranında hazırlanıyor 🎉`,
+        `${r.count} varyant hazır — açıklamalar seriden devralındı. "Ürün Çıktılarını Aç" ile gözden geçirin 🎉`,
       );
     },
     onError: e => toast.error(e.message),
