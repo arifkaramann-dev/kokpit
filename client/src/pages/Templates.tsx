@@ -215,6 +215,12 @@ const emptySeriesForm = {
   shortDescription: "",
   longDescription: "",
   applicationText: "",
+  // Ürün motoru v2 alanları
+  prefix: "",
+  packagingOptions: "", // her satır bir ambalaj (örn. 50ml)
+  applicationSurfaces: "", // her satır bir yüzey (örn. Araç)
+  guideTemplate: "",
+  labelTemplate: "",
 };
 
 /**
@@ -252,6 +258,15 @@ function SeriesManager() {
 
   function submit() {
     if (!form.name.trim()) return toast.error("Seri adı gerekli");
+    // Satır bazlı metni temiz bir diziye çevirir (boş satırları atar).
+    const toLines = (v: string): string[] =>
+      v
+        .split(/[\n,]/)
+        .map(x => x.trim())
+        .filter(Boolean);
+    const surfaces = toLines(form.applicationSurfaces);
+    // Ambalaj: her satır hem label hem value (örn. "50ml").
+    const packaging = toLines(form.packagingOptions).map(x => ({ label: x, value: x }));
     const payload = {
       name: form.name.trim(),
       profitMargin: parseFloat(form.profitMargin.replace(",", ".")) || 0,
@@ -260,6 +275,12 @@ function SeriesManager() {
       shortDescription: form.shortDescription || null,
       longDescription: form.longDescription || null,
       applicationText: form.applicationText || null,
+      // Ürün motoru v2: kod ön eki, ambalaj/yüzey ve şablonlar.
+      prefix: form.prefix.trim().toUpperCase() || null,
+      packagingOptions: packaging.length ? packaging : null,
+      applicationSurfaces: surfaces.length ? surfaces : null,
+      guideTemplate: form.guideTemplate || null,
+      labelTemplate: form.labelTemplate || null,
     };
     if (editingId) update.mutate({ id: editingId, data: payload });
     else create.mutate(payload);
@@ -313,6 +334,29 @@ function SeriesManager() {
                 className="h-7 w-7"
                 onClick={() => {
                   setEditingId(s.id);
+                  // JSON alanları düzenlenebilir satır metnine çevir.
+                  const arr = (v: unknown): unknown[] => {
+                    if (Array.isArray(v)) return v;
+                    if (typeof v === "string" && v.trim()) {
+                      try {
+                        const p = JSON.parse(v);
+                        return Array.isArray(p) ? p : [];
+                      } catch {
+                        return [];
+                      }
+                    }
+                    return [];
+                  };
+                  const pkgLines = arr((s as { packagingOptions?: unknown }).packagingOptions)
+                    .map(x =>
+                      x && typeof x === "object" && "value" in x
+                        ? String((x as { value: unknown }).value)
+                        : String(x),
+                    )
+                    .join("\n");
+                  const surfLines = arr((s as { applicationSurfaces?: unknown }).applicationSurfaces)
+                    .map(String)
+                    .join("\n");
                   setForm({
                     name: s.name,
                     profitMargin: String(parseFloat(String(s.profitMargin)) || 0),
@@ -321,6 +365,11 @@ function SeriesManager() {
                     shortDescription: s.shortDescription ?? "",
                     longDescription: s.longDescription ?? "",
                     applicationText: s.applicationText ?? "",
+                    prefix: (s as { prefix?: string | null }).prefix ?? "",
+                    packagingOptions: pkgLines,
+                    applicationSurfaces: surfLines,
+                    guideTemplate: (s as { guideTemplate?: string | null }).guideTemplate ?? "",
+                    labelTemplate: (s as { labelTemplate?: string | null }).labelTemplate ?? "",
                   });
                   setOpen(true);
                 }}
@@ -363,6 +412,18 @@ function SeriesManager() {
                   placeholder="Boya, Sprey, Yardımcı Ürünler"
                 />
               </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Kod Ön Eki (prefix)</Label>
+              <Input
+                value={form.prefix}
+                maxLength={10}
+                onChange={e => setForm(f => ({ ...f, prefix: e.target.value.toUpperCase() }))}
+                placeholder="Örn. CND (otomatik ürün kodu: CND0042)"
+              />
+              <p className="text-xs text-muted-foreground">
+                Geliştirme sihirbazı bu ön ek + 4 haneli sıra no ile otomatik ürün kodu üretir.
+              </p>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
@@ -411,6 +472,54 @@ function SeriesManager() {
                 onChange={e => setForm(f => ({ ...f, applicationText: e.target.value }))}
                 placeholder="Bu serinin ürünlerine önerilecek uygulama talimatı"
               />
+            </div>
+
+            <div className="rounded-lg border border-dashed p-3 space-y-3">
+              <p className="text-xs font-medium text-primary">Ürün Motoru v2 — Şablonlar</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Ambalaj Boyutları</Label>
+                  <Textarea
+                    rows={4}
+                    value={form.packagingOptions}
+                    onChange={e => setForm(f => ({ ...f, packagingOptions: e.target.value }))}
+                    placeholder={"Her satıra bir ambalaj:\n50ml\n100ml\n250ml"}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Geliştirme sihirbazında üretilecek varyantlar bu listeden seçilir.
+                  </p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Uygulanabilir Yüzeyler</Label>
+                  <Textarea
+                    rows={4}
+                    value={form.applicationSurfaces}
+                    onChange={e => setForm(f => ({ ...f, applicationSurfaces: e.target.value }))}
+                    placeholder={"Her satıra bir yüzey:\nAraç\n3D Baskı\nAhşap"}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    "Hedef Yüzey / Kullanım" seçenekleri buradan gelir.
+                  </p>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Kullanım Kılavuzu Şablonu</Label>
+                <Textarea
+                  rows={3}
+                  value={form.guideTemplate}
+                  onChange={e => setForm(f => ({ ...f, guideTemplate: e.target.value }))}
+                  placeholder="Değişkenler: {{renk}}, {{seri}}, {{ambalaj}}"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Etiket İçerik Şablonu</Label>
+                <Textarea
+                  rows={3}
+                  value={form.labelTemplate}
+                  onChange={e => setForm(f => ({ ...f, labelTemplate: e.target.value }))}
+                  placeholder="Değişkenler: {{renk}}, {{seri}}, {{ambalaj}}"
+                />
+              </div>
             </div>
           </div>
           <DialogFooter>
