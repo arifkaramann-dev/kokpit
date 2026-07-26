@@ -19,8 +19,10 @@ import {
   Download,
   FileSpreadsheet,
   FileText,
+  Image,
   Package,
   Save,
+  Sparkles,
   Store,
   Trash2,
 } from "lucide-react";
@@ -237,6 +239,14 @@ function VariantEditor({
     onSuccess: () => {
       toast.success("Varyant kaydedildi");
       onSaved();
+    },
+  });
+
+  const utils = trpc.useUtils();
+  const generateImages = trpc.dev.generateVariantImages.useMutation({
+    onSuccess: () => {
+      toast.success("Görseller üretildi 🎨");
+      utils.dev.generations.invalidate();
     },
     onError: e => toast.error(e.message),
   });
@@ -457,6 +467,68 @@ function VariantEditor({
               <Input value={formatTL(gen.costPrice)} disabled readOnly />
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* AI Görseller */}
+      <Card>
+        <CardHeader className="pb-2 flex-row items-center justify-between">
+          <CardTitle className="text-base">AI Görseller</CardTitle>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => generateImages.mutate({ generationId: gen.id })}
+            disabled={generateImages.isPending}
+          >
+            <Sparkles className="h-4 w-4 mr-1" />
+            {generateImages.isPending ? "Üretiliyor…" : "Görselleri Üret"}
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {!gen.beforeAfterImageUrl && !gen.packagingImageUrl && !gen.marketingImageUrl ? (
+            <p className="text-sm text-muted-foreground text-center py-4">
+              Henüz görsel üretilmedi. "Görselleri Üret" butonu ile bu varyant için before/after, ambalaj ve pazarlama görselleri üretebilirsiniz.
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {gen.beforeAfterImageUrl && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground">Before/After</p>
+                  <a href={gen.beforeAfterImageUrl} target="_blank" rel="noopener noreferrer">
+                    <img
+                      src={gen.beforeAfterImageUrl}
+                      alt="Before/After"
+                      className="rounded-lg border w-full h-auto hover:opacity-90 transition-opacity cursor-pointer"
+                    />
+                  </a>
+                </div>
+              )}
+              {gen.packagingImageUrl && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground">Ambalaj</p>
+                  <a href={gen.packagingImageUrl} target="_blank" rel="noopener noreferrer">
+                    <img
+                      src={gen.packagingImageUrl}
+                      alt="Ambalaj"
+                      className="rounded-lg border w-full h-auto hover:opacity-90 transition-opacity cursor-pointer"
+                    />
+                  </a>
+                </div>
+              )}
+              {gen.marketingImageUrl && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground">Pazarlama</p>
+                  <a href={gen.marketingImageUrl} target="_blank" rel="noopener noreferrer">
+                    <img
+                      src={gen.marketingImageUrl}
+                      alt="Pazarlama"
+                      className="rounded-lg border w-full h-auto hover:opacity-90 transition-opacity cursor-pointer"
+                    />
+                  </a>
+                </div>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
 
