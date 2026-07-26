@@ -307,6 +307,135 @@ export const devRouter = router({
       };
     }),
 
+  // Varyant çıktılarını (productGenerations) ana Ürünler tablosuna aktarır:
+  // TEK bir ana (parent) ürün + her varyant için o ana ürünün altında türev (child) ürün.
+  // Böylece varyantlar ayrı ayrı ürün değil, tek ürünün varyantları olarak listelenir.
+  // Zaten aktarılmış varyantlar (productId dolu) atlanır — mükerrer kayıt olmaz.
+  publishToProducts: protectedProcedure
+    .input(z.object({ projectId: z.number() }))
+    .mutation(async ({ input }) => {
+      const project = await db.getDevProject(input.projectId);
+      if (!project) throw new TRPCError({ code: "NOT_FOUND", message: "Proje bulunamadı" });
+
+      const gens = await db.listProductGenerations(input.projectId);
+      if (!gens.length) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Aktarılacak varyant yok. Önce varyantları oluşturun." });
+      }
+
+      const chosenItems = (await db.getChosenDevTrialItems(input.projectId)) ?? [];
+      const seriesRec = project.series ? await db.getProductSeriesByName(project.series) : null;
+
+      // 1) Ana (parent) ürünü bul ya da oluştur. Proje daha önce ürüne dönüştürüldüyse
+      //    (project.productId) ve o ürün bir ana ürünse onu kullan; yoksa yeni ana ürün aç.
+      let parentId: number | null = null;
+      if (project.productId) {
+        const existing = await db.getProduct(project.productId);
+        if (existing && !existing.parentId) parentId = existing.id;
+      }
+      if (!parentId) {
+        const descriptionParts = [
+          project.targetUse ? `Kullanım alanı: ${project.targetUse}` : null,
+          project.applicationNotes ? `Uygulama: ${project.applicationNotes}` : null,
+          project.dryingTime ? `Kuruma süresi: ${project.dryingTime}` : null,
+          project.coats ? `Önerilen kat sayısı: ${project.coats}` : null,
+        ].filter(Boolean);
+        const newParentId = await db.createProduct({
+          name: project.name,
+          series: project.series,
+          colorCode: project.colorCode,
+          colorHex: project.colorHex,
+          surfaceType: project.targetUse,
+          description: project.description || descriptionParts.join("\n") || null,
+          status: "taslak",
+          salePrice: String(parseFloat(String(project.salePrice)) || 0),
+          packagingCost: project.packagingCost,
+          shippingCost: project.shippingCost,
+          sku: suggestSku(project.name, "ANA"),
+          category: seriesRec?.category ?? null,
+          profitMargin: seriesRec?.profitMargin ?? null,
+          vatRate: seriesRec?.vatRate ?? null,
+          shortDescription: seriesRec?.shortDescription ?? null,
+          longDescription: seriesRec?.longDescription ?? null,
+          applicationText: seriesRec?.applicationText ?? null,
+        } as never);
+        parentId = Number(newParentId);
+        // Ana ürünün reçetesi de seçili denemeden kopyalanır.
+        for (const item of chosenItems) {
+          await db.addFormulaItem(parentId, item.materialId, parseFloat(item.qty), item.note ?? undefined);
+        }
+        await db.updateDevProject(input.projectId, { productId: parentId });
+      }
+
+      // Mevcut SKU'larla çakışmayı önlemek için tekil SKU üretici.
+      const existingSkus = new Set(
+        (await db.listProducts()).map(p => p.sku?.trim()).filter((s): s is string => !!s),
+      );
+      const uniqueSku = (base: string) => {
+        let candidate = base;
+        for (let i = 2; existingSkus.has(candidate); i++) candidate = `${base}-${i}`;
+        existingSkus.add(candidate);
+        return candidate;
+      };
+
+      const parent = await db.getProduct(parentId);
+      let created = 0;
+      let updated = 0;
+      let skipped = 0;
+
+      // 2) Her varyant çıktısı için türev (child) ürün oluştur ya da güncelle.
+      for (const g of gens) {
+        // AI metinlerini ürün alanlarına eşle.
+        const images = [g.packagingImageUrl, g.beforeAfterImageUrl, g.marketingImageUrl].filter(Boolean) as string[];
+        const variantData = {
+          parentId,
+          name: buildSaleTitle(project.name, null, g.packaging, g.color ?? null, null),
+          series: project.series,
+          colorCode: g.color ?? project.colorCode,
+          colorHex: g.colorHex ?? project.colorHex,
+          surfaceType: project.targetUse,
+          packaging: g.packaging,
+          description: g.trendyolDescription || parent?.description || null,
+          shortDescription: g.trendyolTitle || seriesRec?.shortDescription || null,
+          longDescription: g.hepsiburadaDescription || seriesRec?.longDescription || null,
+          applicationText: g.applicationNotes || seriesRec?.applicationText || null,
+          labelText: g.labelContent ?? null,
+          usageGuide: g.guideContent ?? null,
+          salePrice: String(parseFloat(String(g.suggestedPrice)) || parseFloat(String(project.salePrice)) || 0),
+          packagingCost: project.packagingCost,
+          shippingCost: project.shippingCost,
+          category: seriesRec?.category ?? null,
+          profitMargin: seriesRec?.profitMargin ?? null,
+          vatRate: seriesRec?.vatRate ?? null,
+          imageUrls: images.length ? JSON.stringify(images) : null,
+          mockupUrl: g.packagingImageUrl ?? null,
+        };
+
+        if (g.productId) {
+          // Zaten aktarılmış — mevcut türev ürünü güncelle (fiyat/metin/görsel değişmiş olabilir).
+          const existingVariant = await db.getProduct(g.productId);
+          if (existingVariant) {
+            await db.updateProduct(g.productId, variantData as never);
+            updated++;
+            continue;
+          }
+          // Ürün silinmişse yeniden oluştur (aşağı düşer).
+        }
+
+        const variantId = await db.createProduct({
+          ...variantData,
+          sku: uniqueSku(g.variantCode || suggestSku(project.name, g.packaging)),
+        } as never);
+        // Reçeteyi türev ürüne kopyala (maliyet analizi boş kalmasın).
+        for (const item of chosenItems) {
+          await db.addFormulaItem(Number(variantId), item.materialId, parseFloat(item.qty), item.note ?? undefined);
+        }
+        await db.updateProductGeneration(g.id, { productId: Number(variantId), status: "listed" } as never);
+        created++;
+      }
+
+      return { parentId, created, updated, skipped, total: gens.length };
+    }),
+
   // Adım 5 "Ürünleştir" ana aksiyonu: her seçili ambalaj için bir varyant kaydı
   // açar ve AI ile pazaryeri metinleri, etiket içeriği, kullanım kılavuzu ve
   // uygulama notlarını tek onayla üretir. Şablon (seri) + AI birlikte kullanılır.

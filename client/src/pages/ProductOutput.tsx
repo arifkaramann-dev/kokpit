@@ -15,18 +15,19 @@ import { trpc } from "@/lib/trpc";
 import { useConfirm } from "@/components/ConfirmDialog";
 import {
   ArrowLeft,
+  CheckCircle2,
   Copy,
   Download,
   FileSpreadsheet,
   FileText,
-  Image,
   Package,
+  PackagePlus,
   Save,
   Sparkles,
   Store,
   Trash2,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation, useRoute } from "wouter";
 import { toast } from "sonner";
 import type { inferRouterOutputs } from "@trpc/server";
@@ -60,11 +61,52 @@ export default function ProductOutput() {
   const chosen = (data?.trials ?? []).find(t => t.isChosen === 1) ?? null;
 
   const [active, setActive] = useState<string>("");
+
+  // Varyantları renge göre grupla (1. seviye sekme = renk, 2. seviye = ambalaj).
+  const colorGroups = useMemo(() => {
+    const map = new Map<string, { key: string; label: string; hex: string | null; gens: Gen[] }>();
+    for (const g of generations ?? []) {
+      const key = g.color ?? "__none__";
+      if (!map.has(key)) {
+        map.set(key, { key, label: g.color ?? "Renksiz", hex: g.colorHex ?? null, gens: [] });
+      }
+      map.get(key)!.gens.push(g);
+    }
+    return Array.from(map.values());
+  }, [generations]);
+
+  // Aktif varyanttan aktif rengi türet; yoksa ilk grup.
+  const activeGen = (generations ?? []).find(g => String(g.id) === active) ?? null;
+  const activeColorKey = activeGen ? (activeGen.color ?? "__none__") : (colorGroups[0]?.key ?? "");
+  const activeGroup = colorGroups.find(gr => gr.key === activeColorKey) ?? colorGroups[0] ?? null;
+
   useEffect(() => {
     if (generations && generations.length > 0 && !active) {
       setActive(String(generations[0].id));
     }
   }, [generations, active]);
+
+  // Aktif renk grubu içindeki ilk varyanta geçiş (renk sekmesi değişince).
+  function selectColor(key: string) {
+    const grp = colorGroups.find(gr => gr.key === key);
+    if (grp && grp.gens.length) setActive(String(grp.gens[0].id));
+  }
+
+  // Ürünlere aktarım durumu.
+  const publishedCount = (generations ?? []).filter(g => g.productId).length;
+  const totalCount = generations?.length ?? 0;
+  const publishToProducts = trpc.dev.publishToProducts.useMutation({
+    onSuccess: r => {
+      const parts: string[] = [];
+      if (r.created) parts.push(`${r.created} yeni varyant`);
+      if (r.updated) parts.push(`${r.updated} güncellendi`);
+      toast.success(
+        `Ürünlere aktarıldı${parts.length ? " — " + parts.join(", ") : ""} 🎉`,
+      );
+      utils.dev.generations.invalidate({ projectId: id });
+    },
+    onError: e => toast.error(e.message),
+  });
 
   async function exportExcel() {
     try {
@@ -146,47 +188,111 @@ export default function ProductOutput() {
         </Card>
       )}
 
+      {/* Ürünlere aktarım kartı */}
       {generations && generations.length > 0 && (
-        <Tabs value={active} onValueChange={setActive}>
-          <TabsList className="flex-wrap h-auto">
-            {generations.map(g => (
-              <TabsTrigger key={g.id} value={String(g.id)} className="gap-1">
-                {g.colorHex && (
-                  <span
-                    className="inline-block h-2.5 w-2.5 rounded-full border"
-                    style={{ backgroundColor: g.colorHex }}
-                  />
-                )}
-                {g.color ? `${g.color} · ` : ""}
-                {g.packaging}
-                {g.status === "listed" && (
-                  <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
-                    listelendi
-                  </Badge>
-                )}
-              </TabsTrigger>
+        <Card className="border-primary/30 bg-primary/5">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+            <div className="flex items-center gap-3">
+              {publishedCount === totalCount ? (
+                <CheckCircle2 className="h-8 w-8 text-emerald-500 shrink-0" />
+              ) : (
+                <PackagePlus className="h-8 w-8 text-primary shrink-0" />
+              )}
+              <div className="space-y-0.5">
+                <p className="font-semibold">
+                  {publishedCount === totalCount
+                    ? "Tüm varyantlar ürünlere aktarıldı"
+                    : "Varyantları ürünlere aktarın"}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {publishedCount > 0
+                    ? `${publishedCount}/${totalCount} varyant aktarıldı. `
+                    : ""}
+                  Varyantlar ayrı ürün değil, <span className="font-medium">"{project.name}"</span> ana ürününün altında tek çatı altında listelenir.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {publishedCount > 0 && (
+                <Button variant="outline" size="sm" onClick={() => setLocation("/urunler")}>
+                  <Store className="h-4 w-4 mr-1" /> Ürünleri Gör
+                </Button>
+              )}
+              <Button
+                size="sm"
+                onClick={() => publishToProducts.mutate({ projectId: id })}
+                disabled={publishToProducts.isPending}
+              >
+                <PackagePlus className="h-4 w-4 mr-1" />
+                {publishToProducts.isPending
+                  ? "Aktarılıyor…"
+                  : publishedCount > 0
+                    ? "Güncelle / Yenilerini Aktar"
+                    : "Ürünlere Aktar"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {generations && generations.length > 0 && activeGroup && (
+        <div className="space-y-3">
+          {/* 1. seviye: Renk sekmeleri */}
+          {colorGroups.length > 1 && (
+            <Tabs value={activeColorKey} onValueChange={selectColor}>
+              <TabsList className="flex-wrap h-auto">
+                {colorGroups.map(grp => (
+                  <TabsTrigger key={grp.key} value={grp.key} className="gap-1.5">
+                    {grp.hex && (
+                      <span
+                        className="inline-block h-3 w-3 rounded-full border"
+                        style={{ backgroundColor: grp.hex }}
+                      />
+                    )}
+                    {grp.label}
+                    <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+                      {grp.gens.length}
+                    </Badge>
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+          )}
+
+          {/* 2. seviye: seçili rengin ambalaj sekmeleri */}
+          <Tabs value={active} onValueChange={setActive}>
+            <TabsList className="flex-wrap h-auto">
+              {activeGroup.gens.map(g => (
+                <TabsTrigger key={g.id} value={String(g.id)} className="gap-1">
+                  <Package className="h-3 w-3" />
+                  {g.packaging}
+                  {g.productId && (
+                    <CheckCircle2 className="ml-0.5 h-3 w-3 text-emerald-500" />
+                  )}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+            {activeGroup.gens.map(g => (
+              <TabsContent key={g.id} value={String(g.id)}>
+                <VariantEditor
+                  gen={g}
+                  onSaved={() => utils.dev.generations.invalidate({ projectId: id })}
+                  onDeleted={async () => {
+                    const ok = await confirm({
+                      title: "Varyant silinsin mi?",
+                      description: `${g.variantCode} · ${g.packaging} çıktısı kalıcı olarak silinecek.`,
+                    });
+                    if (!ok) return;
+                    await utils.client.dev.deleteGeneration.mutate({ id: g.id });
+                    toast.success("Varyant silindi");
+                    setActive("");
+                    utils.dev.generations.invalidate({ projectId: id });
+                  }}
+                />
+              </TabsContent>
             ))}
-          </TabsList>
-          {generations.map(g => (
-            <TabsContent key={g.id} value={String(g.id)}>
-              <VariantEditor
-                gen={g}
-                onSaved={() => utils.dev.generations.invalidate({ projectId: id })}
-                onDeleted={async () => {
-                  const ok = await confirm({
-                    title: "Varyant silinsin mi?",
-                    description: `${g.variantCode} · ${g.packaging} çıktısı kalıcı olarak silinecek.`,
-                  });
-                  if (!ok) return;
-                  await utils.client.dev.deleteGeneration.mutate({ id: g.id });
-                  toast.success("Varyant silindi");
-                  setActive("");
-                  utils.dev.generations.invalidate({ projectId: id });
-                }}
-              />
-            </TabsContent>
-          ))}
-        </Tabs>
+          </Tabs>
+        </div>
       )}
     </div>
   );
@@ -341,6 +447,11 @@ function VariantEditor({
             </Badge>
           )}
           <Badge variant="outline">{gen.packaging}</Badge>
+          {gen.productId && (
+            <Badge className="gap-1 bg-emerald-500 hover:bg-emerald-500">
+              <CheckCircle2 className="h-3 w-3" /> Ürüne aktarıldı
+            </Badge>
+          )}
         </div>
         <Button
           variant="ghost"

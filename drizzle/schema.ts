@@ -504,6 +504,8 @@ export const productGenerations = mysqlTable(
     beforeAfterImageUrl: text("beforeAfterImageUrl"),
     packagingImageUrl: text("packagingImageUrl"),
     marketingImageUrl: text("marketingImageUrl"),
+    // Ürünlere aktarıldığında oluşturulan türev (varyant) ürünün ID'si. Boşsa henüz aktarılmamış.
+    productId: int("productId"),
     status: mysqlEnum("status", ["generating", "ready", "listed", "error"]).notNull().default("ready"),
     trendyolTitle: varchar("trendyolTitle", { length: 255 }),
     trendyolDescription: mediumtext("trendyolDescription"),

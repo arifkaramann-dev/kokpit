@@ -218,6 +218,13 @@
       "when": 1785090937617,
       "tag": "0030_dashing_tyrannus",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "5",
+      "when": 1785091800015,
+      "tag": "0031_shallow_wolf_cub",
+      "breakpoints": true
     }
   ]
 }
