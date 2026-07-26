@@ -219,6 +219,7 @@ const emptySeriesForm = {
   prefix: "",
   packagingOptions: "", // her satır bir ambalaj (örn. 50ml)
   applicationSurfaces: "", // her satır bir yüzey (örn. Araç)
+  colorOptions: "", // her satır bir renk (örn. Mavi #1a2b5c)
   guideTemplate: "",
   labelTemplate: "",
 };
@@ -267,6 +268,18 @@ function SeriesManager() {
     const surfaces = toLines(form.applicationSurfaces);
     // Ambalaj: her satır hem label hem value (örn. "50ml").
     const packaging = toLines(form.packagingOptions).map(x => ({ label: x, value: x }));
+    // Renk: her satır "Etiket #hex" (hex opsiyonel). value = etiketten üretilir.
+    const colors = form.colorOptions
+      .split("\n")
+      .map(l => l.trim())
+      .filter(Boolean)
+      .map(line => {
+        const hexMatch = line.match(/#([0-9a-fA-F]{3,8})\b/);
+        const hex = hexMatch ? hexMatch[0] : null;
+        const label = line.replace(/#([0-9a-fA-F]{3,8})\b/, "").trim() || line;
+        const value = label.toUpperCase().replace(/\s+/g, "-").replace(/[^A-Z0-9-]/g, "");
+        return { label, value: value || label, hex };
+      });
     const payload = {
       name: form.name.trim(),
       profitMargin: parseFloat(form.profitMargin.replace(",", ".")) || 0,
@@ -279,6 +292,7 @@ function SeriesManager() {
       prefix: form.prefix.trim().toUpperCase() || null,
       packagingOptions: packaging.length ? packaging : null,
       applicationSurfaces: surfaces.length ? surfaces : null,
+      colorOptions: colors.length ? colors : null,
       guideTemplate: form.guideTemplate || null,
       labelTemplate: form.labelTemplate || null,
     };
@@ -357,6 +371,16 @@ function SeriesManager() {
                   const surfLines = arr((s as { applicationSurfaces?: unknown }).applicationSurfaces)
                     .map(String)
                     .join("\n");
+                  const colorLines = arr((s as { colorOptions?: unknown }).colorOptions)
+                    .map(x => {
+                      if (x && typeof x === "object") {
+                        const o = x as { label?: unknown; value?: unknown; hex?: unknown };
+                        const lbl = String(o.label ?? o.value ?? "");
+                        return o.hex ? `${lbl} ${String(o.hex)}` : lbl;
+                      }
+                      return String(x);
+                    })
+                    .join("\n");
                   setForm({
                     name: s.name,
                     profitMargin: String(parseFloat(String(s.profitMargin)) || 0),
@@ -368,6 +392,7 @@ function SeriesManager() {
                     prefix: (s as { prefix?: string | null }).prefix ?? "",
                     packagingOptions: pkgLines,
                     applicationSurfaces: surfLines,
+                    colorOptions: colorLines,
                     guideTemplate: (s as { guideTemplate?: string | null }).guideTemplate ?? "",
                     labelTemplate: (s as { labelTemplate?: string | null }).labelTemplate ?? "",
                   });
@@ -501,6 +526,19 @@ function SeriesManager() {
                     "Hedef Yüzey / Kullanım" seçenekleri buradan gelir.
                   </p>
                 </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Renk Seçenekleri</Label>
+                <Textarea
+                  rows={4}
+                  value={form.colorOptions}
+                  onChange={e => setForm(f => ({ ...f, colorOptions: e.target.value }))}
+                  placeholder={"Her satıra bir renk (hex opsiyonel):\nMavi #1a2b5c\nKırmızı #d32f2f\nYeşil"}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Varyantlar <b>Renk × Ambalaj</b> matrisi olarak üretilir. Örn. 3 renk × 2 ambalaj = 6 varyant.
+                  Renk yazmazsanız yalnızca ambalaja göre üretilir.
+                </p>
               </div>
               <div className="space-y-1.5">
                 <Label>Kullanım Kılavuzu Şablonu</Label>

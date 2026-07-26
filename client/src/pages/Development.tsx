@@ -294,9 +294,11 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const { data: settings } = trpc.settings.get.useQuery();
   // Ürün motoru v2: seri şablonları (prefix, ambalaj, yüzey) Adım 1'i besler.
   const { data: seriesDetails } = trpc.series.getSeriesWithDetails.useQuery();
-  // Adım 1'de seçilen seri + yüzey + ambalaj (çoklu seçim) yerel durumu.
+  // Adım 1'de seçilen seri + yüzey + ambalaj + renk (çoklu seçim) yerel durumu.
   const [selectedSurfaces, setSelectedSurfaces] = useState<string[]>([]);
   const [selectedPackaging, setSelectedPackaging] = useState<string[]>([]);
+  type ColorOpt = { label: string; value: string; hex?: string | null };
+  const [selectedColors, setSelectedColors] = useState<ColorOpt[]>([]);
   const [step, setStep] = useState<number | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
   const [trialDialogOpen, setTrialDialogOpen] = useState(false);
@@ -349,6 +351,36 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
       };
       setSelectedSurfaces(parseArr(project.targetSurfaces));
       setSelectedPackaging(parseArr(project.packagingSelection));
+      // Renk seçimi: [{label,value,hex}] nesne dizisi olarak parse edilir.
+      const parseColors = (v: unknown): ColorOpt[] => {
+        let a: unknown[] = [];
+        if (Array.isArray(v)) a = v;
+        else if (typeof v === "string" && v.trim()) {
+          try {
+            const p = JSON.parse(v);
+            if (Array.isArray(p)) a = p;
+          } catch {
+            a = [];
+          }
+        }
+        return a
+          .map(x => {
+            if (x && typeof x === "object") {
+              const o = x as Record<string, unknown>;
+              const value = String(o.value ?? o.label ?? "").trim();
+              if (!value) return null;
+              return {
+                label: String(o.label ?? o.value ?? "").trim() || value,
+                value,
+                hex: o.hex != null ? String(o.hex) : null,
+              } as ColorOpt;
+            }
+            const s = String(x).trim();
+            return s ? ({ label: s, value: s, hex: null } as ColorOpt) : null;
+          })
+          .filter((x): x is ColorOpt => !!x);
+      };
+      setSelectedColors(parseColors(project.colorSelection));
     }
   }, [project]);
 
@@ -683,7 +715,58 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
             )}
           </div>
 
-          {field("colorHex", "Renk (hex)", "#1a2b5c")}
+          {/* Renk Seçimi: serinin şablonundan çoklu seçim → Renk × Ambalaj matrisi */}
+          <div className="space-y-1.5">
+            <Label>Renkler (üretilecek varyantlar)</Label>
+            {selectedSeries && selectedSeries.colorOptions.length > 0 ? (
+              <>
+                <div className="flex flex-wrap gap-2">
+                  {selectedSeries.colorOptions.map(opt => {
+                    const active = selectedColors.some(c => c.value === opt.value);
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() =>
+                          setSelectedColors(prev =>
+                            active
+                              ? prev.filter(c => c.value !== opt.value)
+                              : [...prev, { label: opt.label, value: opt.value, hex: opt.hex ?? null }],
+                          )
+                        }
+                        className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                          active
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "bg-muted text-muted-foreground border-transparent hover:text-foreground"
+                        }`}
+                      >
+                        {opt.hex && (
+                          <span
+                            className="h-3 w-3 rounded-full border border-black/10"
+                            style={{ backgroundColor: opt.hex }}
+                          />
+                        )}
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Varyant sayısı = seçili renk × seçili ambalaj
+                  {selectedColors.length > 0 && selectedPackaging.length > 0
+                    ? ` = ${selectedColors.length} × ${selectedPackaging.length} = ${selectedColors.length * selectedPackaging.length} varyant`
+                    : ""}
+                </p>
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Bu seride renk tanımlı değil — renk eklemek için Şablonlar'dan seriye renk ekleyin. (Renksiz
+                de üretebilirsiniz; o zaman yalnız ambalaja göre varyant oluşur.)
+              </p>
+            )}
+          </div>
+
+          {field("colorHex", "Renk (hex) — tekil / renk listesi yoksa", "#1a2b5c")}
           <div className="flex justify-end">
             <Button
               onClick={() => {
@@ -696,6 +779,7 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
                   targetUse: selectedSurfaces.join(", ") || form.targetUse?.trim() || null,
                   targetSurfaces: selectedSurfaces,
                   packagingSelection: selectedPackaging,
+                  colorSelection: selectedColors,
                 };
                 // Otomatik kod: yalnız henüz atanmadıysa hesaplanan kodu kaydet.
                 if (!project?.autoCode && autoCodePreview) {
@@ -1040,13 +1124,23 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
                   }
                 />
                 <SummaryRow
+                  ok
+                  label={
+                    selectedColors.length > 0
+                      ? `Renk varyantları: ${selectedColors.map(c => c.label).join(", ")}`
+                      : "Renk seçilmedi (renksiz üretilecek)"
+                  }
+                />
+                <SummaryRow
                   ok={parseFloat(project.salePrice) > 0}
                   label={`Satış fiyatı: ${formatTL(project.salePrice)} (marj %${margin.toFixed(1)})`}
                 />
               </div>
 
               <p className="text-sm text-muted-foreground">
-                "Varyantları Oluştur" dediğinizde seçili reçete ve her ambalaj için;
+                {selectedColors.length > 0
+                  ? `"Varyantları Oluştur" dediğinizde her renk × her ambalaj için (${selectedColors.length} renk × ${selectedPackaging.length} ambalaj = ${selectedColors.length * selectedPackaging.length} varyant); `
+                  : `"Varyantları Oluştur" dediğinizde seçili reçete ve her ambalaj için; `}
                 Trendyol/Hepsiburada başlık-açıklamaları, etiket, uygulama kılavuzu ve
                 fiyat önerisi otomatik üretilir.
               </p>
@@ -1060,8 +1154,16 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
                   <div className="flex flex-wrap gap-1.5">
                     {generations.map(g => (
                       <Badge key={g.id} variant="secondary" className="gap-1">
-                        <Package className="h-3 w-3" />
-                        {g.variantCode} · {g.packaging}
+                        {g.colorHex ? (
+                          <span
+                            className="inline-block h-3 w-3 rounded-full border"
+                            style={{ backgroundColor: g.colorHex }}
+                          />
+                        ) : (
+                          <Package className="h-3 w-3" />
+                        )}
+                        {g.variantCode}
+                        {g.color ? ` · ${g.color}` : ""} · {g.packaging}
                       </Badge>
                     ))}
                   </div>
@@ -1086,7 +1188,11 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
                     selectedPackaging.length === 0
                   }
                   onClick={() =>
-                    generateContent.mutate({ projectId: id, packaging: selectedPackaging })
+                    generateContent.mutate({
+                      projectId: id,
+                      packaging: selectedPackaging,
+                      colors: selectedColors.length > 0 ? selectedColors : undefined,
+                    })
                   }
                 >
                   <Package className="h-4 w-4 mr-1" />

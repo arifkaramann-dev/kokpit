@@ -102,6 +102,10 @@ export const productSeries = mysqlTable("productSeries", {
   // Uygulanabilir yüzeyler: ["Araç","3D Baskı","Rapala","Ahşap"...] — hedef
   // yüzey seçimi bu şablondan gelir (serbest metin yerine).
   applicationSurfaces: json("applicationSurfaces"),
+  // Renk seçenekleri: [{label:"Mavi", value:"MAVI", hex:"#1a2b5c"}, ...] —
+  // geliştirme projesinde bu listeden hangi renklerin üretileceği seçilir.
+  // Varyantlar Renk × Ambalaj matrisi olarak üretilir.
+  colorOptions: json("colorOptions"),
   // Kullanım kılavuzu şablonu. Değişkenler: {{renk}}, {{seri}}, {{ambalaj}}.
   guideTemplate: text("guideTemplate"),
   // Etiket içerik şablonu (aynı değişkenler desteklenir).
@@ -421,6 +425,9 @@ export const devProjects = mysqlTable("devProjects", {
   targetSurfaces: json("targetSurfaces"),
   // Bu proje için seçilen ambalaj boyutları (serinin packagingOptions alt kümesi).
   packagingSelection: json("packagingSelection"),
+  // Bu proje için seçilen renkler (serinin colorOptions alt kümesi).
+  // [{label:"Mavi", value:"MAVI", hex:"#1a2b5c"}, ...] biçiminde tutulur.
+  colorSelection: json("colorSelection"),
   status: mysqlEnum("status", ["active", "done", "archived"]).notNull().default("active"),
   currentStep: int("currentStep").notNull().default(1),
   applicationNotes: text("applicationNotes"),
@@ -487,9 +494,12 @@ export const productGenerations = mysqlTable(
     id: int("id").autoincrement().primaryKey(),
     companyId: int("companyId").notNull().default(1),
     projectId: int("projectId").notNull(),
-    // Varyant kodu: proje autoCode + ambalaj (örn. CND0042-100ml).
-    variantCode: varchar("variantCode", { length: 80 }).notNull(),
+    // Varyant kodu: proje autoCode + renk + ambalaj (örn. CND0042-MAVI-100ml).
+    variantCode: varchar("variantCode", { length: 120 }).notNull(),
     packaging: varchar("packaging", { length: 64 }).notNull(),
+    // Varyantın rengi (etiket/değeri) ve hex kodu. Renksiz varyantlarda boş.
+    color: varchar("color", { length: 64 }),
+    colorHex: varchar("colorHex", { length: 16 }),
     status: mysqlEnum("status", ["generating", "ready", "listed", "error"]).notNull().default("ready"),
     trendyolTitle: varchar("trendyolTitle", { length: 255 }),
     trendyolDescription: mediumtext("trendyolDescription"),

@@ -149,6 +149,13 @@ export default function ProductOutput() {
           <TabsList className="flex-wrap h-auto">
             {generations.map(g => (
               <TabsTrigger key={g.id} value={String(g.id)} className="gap-1">
+                {g.colorHex && (
+                  <span
+                    className="inline-block h-2.5 w-2.5 rounded-full border"
+                    style={{ backgroundColor: g.colorHex }}
+                  />
+                )}
+                {g.color ? `${g.color} · ` : ""}
                 {g.packaging}
                 {g.status === "listed" && (
                   <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
@@ -312,6 +319,17 @@ function VariantEditor({
           <Badge className="gap-1">
             <Package className="h-3 w-3" /> {gen.variantCode}
           </Badge>
+          {gen.color && (
+            <Badge variant="outline" className="gap-1">
+              {gen.colorHex && (
+                <span
+                  className="inline-block h-2.5 w-2.5 rounded-full border"
+                  style={{ backgroundColor: gen.colorHex }}
+                />
+              )}
+              {gen.color}
+            </Badge>
+          )}
           <Badge variant="outline">{gen.packaging}</Badge>
         </div>
         <Button

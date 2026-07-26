@@ -189,6 +189,11 @@ const productSeriesInput = z.object({
     .nullable()
     .optional(),
   applicationSurfaces: z.array(z.string()).nullable().optional(),
+  // Renk seçenekleri: {label, value, hex?} — varyantlar Renk × Ambalaj üretilir.
+  colorOptions: z
+    .array(z.object({ label: z.string(), value: z.string(), hex: z.string().nullable().optional() }))
+    .nullable()
+    .optional(),
   guideTemplate: z.string().nullable().optional(),
   labelTemplate: z.string().nullable().optional(),
 });
@@ -1172,6 +1177,7 @@ export const seriesRouter = router({
       category: s.category,
       packagingOptions: asArray(s.packagingOptions) as { label: string; value: string }[],
       applicationSurfaces: asArray(s.applicationSurfaces) as string[],
+      colorOptions: asArray(s.colorOptions) as { label: string; value: string; hex?: string | null }[],
       guideTemplate: s.guideTemplate ?? null,
       labelTemplate: s.labelTemplate ?? null,
     }));
@@ -1201,6 +1207,7 @@ export const seriesRouter = router({
       const gens = await db.listProductGenerations(input.projectId);
       const header = [
         "Varyant Kodu",
+        "Renk",
         "Ambalaj",
         "Durum",
         "Trendyol Başlık",
@@ -1215,6 +1222,7 @@ export const seriesRouter = router({
       ];
       const rows = gens.map(g => [
         g.variantCode,
+        g.color ?? "",
         g.packaging,
         g.status,
         g.trendyolTitle ?? "",
