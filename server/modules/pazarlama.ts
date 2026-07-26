@@ -80,6 +80,10 @@ const devProjectInput = z.object({
   currentStep: z.number().min(1).max(5).optional(),
   status: z.enum(["active", "done", "archived"]).optional(),
   notes: z.string().nullable().optional(),
+  // Ürün motoru v2: otomatik kod, seçilen yüzeyler ve ambalaj boyutları.
+  autoCode: z.string().nullable().optional(),
+  targetSurfaces: z.array(z.string()).nullable().optional(),
+  packagingSelection: z.array(z.string()).nullable().optional(),
 });
 
 const devTrialItemInput = z.object({
@@ -218,6 +222,193 @@ export const devRouter = router({
         productId: Number(productId),
       });
       return { productId: Number(productId) };
+    }),
+
+  /* ---------------- Ürün motoru v2: Ürünleştirme çıktıları ---------------- */
+
+  // Bir projenin üretilmiş varyant çıktılarını (productGenerations) listeler.
+  generations: protectedProcedure
+    .input(z.object({ projectId: z.number() }))
+    .query(({ input }) => db.listProductGenerations(input.projectId)),
+
+  // Tek bir varyant çıktısını düzenleyip kaydeder (kullanıcı AI metnini elle düzeltir).
+  updateGeneration: protectedProcedure
+    .input(
+      z.object({
+        id: z.number(),
+        data: z.object({
+          trendyolTitle: z.string().nullable().optional(),
+          trendyolDescription: z.string().nullable().optional(),
+          hepsiburadaTitle: z.string().nullable().optional(),
+          hepsiburadaDescription: z.string().nullable().optional(),
+          labelContent: z.string().nullable().optional(),
+          guideContent: z.string().nullable().optional(),
+          applicationNotes: z.string().nullable().optional(),
+          suggestedPrice: z.number().min(0).optional(),
+          status: z.enum(["generating", "ready", "listed", "error"]).optional(),
+        }),
+      }),
+    )
+    .mutation(({ input }) =>
+      db.updateProductGeneration(input.id, toDecimalFields(input.data, ["suggestedPrice"]) as never),
+    ),
+
+  deleteGeneration: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(({ input }) => db.deleteProductGeneration(input.id)),
+
+  // Adım 5 "Ürünleştir" ana aksiyonu: her seçili ambalaj için bir varyant kaydı
+  // açar ve AI ile pazaryeri metinleri, etiket içeriği, kullanım kılavuzu ve
+  // uygulama notlarını tek onayla üretir. Şablon (seri) + AI birlikte kullanılır.
+  generateProductContent: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.number(),
+        // İstemci Adım 1'de seçmediyse burada da ambalaj listesi geçebilir.
+        packaging: z.array(z.string()).optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const project = await db.getDevProject(input.projectId);
+      if (!project) throw new TRPCError({ code: "NOT_FOUND", message: "Proje bulunamadı" });
+
+      // 1) Seçili reçete kontrolü.
+      const chosenItems = await db.getChosenDevTrialItems(input.projectId);
+      if (!chosenItems || chosenItems.length === 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Önce 2. adımda bir reçeteyi ⭐ ile 'Seçili Reçete' yapın.",
+        });
+      }
+
+      // 2) Ambalaj seçimi kontrolü (Adım 1'de seçilmiş olmalı).
+      const parseArr = (v: unknown): string[] => {
+        if (Array.isArray(v)) return v.map(String);
+        if (typeof v === "string" && v.trim()) {
+          try {
+            const p = JSON.parse(v);
+            return Array.isArray(p) ? p.map(String) : [];
+          } catch {
+            return [];
+          }
+        }
+        return [];
+      };
+      const packagingList = input.packaging?.length ? input.packaging : parseArr(project.packagingSelection);
+      if (packagingList.length === 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Önce 1. adımda en az bir ambalaj boyutu seçin.",
+        });
+      }
+
+      const surfaces = parseArr(project.targetSurfaces);
+      const seriesRec = project.series ? await db.getProductSeriesByName(project.series) : null;
+
+      // Maliyet: seçili reçete hammadde maliyeti + ambalaj maliyeti.
+      const materialCost = chosenItems.reduce(
+        (sum, item) =>
+          sum + (parseFloat(String(item.qty)) || 0) * (parseFloat(String(item.unitCost ?? 0)) || 0),
+        0,
+      );
+      const packagingCost = parseFloat(String(project.packagingCost)) || 0;
+      const costPrice = +(materialCost + packagingCost).toFixed(2);
+      const profitMargin = seriesRec ? parseFloat(String(seriesRec.profitMargin)) || 35 : 35;
+      const vatRate = seriesRec ? parseFloat(String(seriesRec.vatRate)) || 20 : 20;
+      const projectPrice = parseFloat(String(project.salePrice)) || 0;
+
+      // Şablon değişkenlerini doldurur: {{renk}}, {{seri}}, {{ambalaj}}.
+      const fillTemplate = (tpl: string | null | undefined, packaging: string) =>
+        (tpl ?? "")
+          .replaceAll("{{renk}}", project.colorCode || project.name)
+          .replaceAll("{{seri}}", project.series || "")
+          .replaceAll("{{ambalaj}}", packaging);
+
+      const autoCode = project.autoCode || project.colorCode || "";
+      const created: number[] = [];
+
+      for (const packaging of packagingList) {
+        const variantCode = autoCode ? `${autoCode}-${packaging}` : `${project.name}-${packaging}`;
+
+        // Bu varyant için önerilen fiyat: projede fiyat girildiyse onu baz al,
+        // yoksa maliyet + seri kârı ile hesapla.
+        const suggestedPrice = projectPrice
+          ? projectPrice
+          : computePrice({ materialCost, packagingCost, shippingCost: 0, profitMargin, vatRate }).salePrice;
+
+        // Şablon tabanlı taban içerik (AI erişilemezse de dolu kalsın).
+        const baseGuide =
+          fillTemplate(seriesRec?.guideTemplate, packaging) ||
+          project.usageGuide ||
+          "";
+        const baseLabel =
+          fillTemplate(seriesRec?.labelTemplate, packaging) ||
+          project.labelText ||
+          "";
+
+        // AI ile zenginleştir: tüm alanları tek JSON çıktıda üret.
+        const systemPrompt = `Sen Art of Colour markasının e-ticaret içerik motorusun. Art of Colour Türkiye'de otomotiv rötuş boyaları, bukalemun efekt boyalar, airbrush, sedefli (Vivid), transparan (Candy) boyalar, vernik ve astar üretir. Türkçe, doğru sektörel terimlerle (bazkat, 1K/2K, örtücülük, opaklık, vernik) yaz. Abartılı/yanıltıcı iddia, sahte yorum veya uydurma istatistik ekleme. SADECE geçerli JSON döndür, başka metin yazma.`;
+
+        const userPrompt = `Ürün: ${project.name}
+Seri: ${project.series || "-"}
+Renk kodu: ${project.colorCode || "-"}
+Ambalaj/Hacim: ${packaging}
+Hedef yüzeyler: ${surfaces.length ? surfaces.join(", ") : (project.targetUse || "-")}
+Uygulama notu: ${project.applicationNotes || "-"}
+Kuruma: ${project.dryingTime || "-"} | Kat: ${project.coats || "-"}
+Test notları: ${project.testNotes || "-"}
+Etiket şablonu (varsa taban al): ${baseLabel || "-"}
+Kılavuz şablonu (varsa taban al): ${baseGuide || "-"}
+
+Aşağıdaki JSON şemasına birebir uy (alanları Türkçe doldur):
+{
+  "trendyolTitle": "en fazla 100 karakter, SEO uyumlu başlık",
+  "trendyolDescription": "en fazla 2000 karakter, SEO uyumlu ürün açıklaması",
+  "hepsiburadaTitle": "en fazla 80 karakter başlık",
+  "hepsiburadaDescription": "en fazla 1500 karakter açıklama",
+  "labelContent": "Etiket metni: Ürün adı, Seri, Renk kodu, Hacim (${packaging}), İçindekiler, Uyarılar, Kısa kullanım talimatı, Üretici: [Üretici bilgisi]",
+  "guideContent": "Adım adım kullanım kılavuzu",
+  "applicationNotes": "Her hedef yüzey için ayrı paragraf${surfaces.length ? " (" + surfaces.join(", ") + ")" : ""}"
+}`;
+
+        let ai: Record<string, string> = {};
+        try {
+          const response = await invokeLLM({
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userPrompt },
+            ],
+          });
+          const raw = response.choices[0]?.message?.content;
+          const text = typeof raw === "string" ? raw : "";
+          const parsed = extractJson(text);
+          if (parsed && typeof parsed === "object") ai = parsed as Record<string, string>;
+        } catch {
+          // AI erişilemezse şablon tabanlı içerikle devam edilir (aşağıdaki fallback).
+          ai = {};
+        }
+
+        const clip = (s: string | undefined, max: number) => (s ? String(s).slice(0, max) : "");
+        const fallbackTitle = `${project.name}${project.series ? " " + project.series : ""} ${packaging}`.trim();
+        const genId = await db.createProductGeneration({
+          projectId: input.projectId,
+          variantCode,
+          packaging,
+          status: "ready",
+          trendyolTitle: clip(ai.trendyolTitle || fallbackTitle, 100),
+          trendyolDescription: clip(ai.trendyolDescription || project.description || "", 2000),
+          hepsiburadaTitle: clip(ai.hepsiburadaTitle || fallbackTitle, 80),
+          hepsiburadaDescription: clip(ai.hepsiburadaDescription || project.description || "", 1500),
+          labelContent: ai.labelContent || baseLabel || null,
+          guideContent: ai.guideContent || baseGuide || null,
+          applicationNotes: ai.applicationNotes || project.applicationNotes || null,
+          suggestedPrice: String(suggestedPrice),
+          costPrice: String(costPrice),
+        } as never);
+        created.push(genId);
+      }
+
+      return { created, count: created.length };
     }),
 });
 

@@ -11,6 +11,7 @@ import Crm from "@/pages/Crm";
 import Customers from "@/pages/Customers";
 import Expenses from "@/pages/Expenses";
 import Development from "@/pages/Development";
+import ProductOutput from "@/pages/ProductOutput";
 import Formulas from "@/pages/Formulas";
 import Home from "@/pages/Home";
 import Ledgers from "@/pages/Ledgers";
@@ -58,6 +59,7 @@ function AdminApp() {
         <Route path={"/urun/:id"} component={ProductDetail} />
         <Route path={"/sorular"} component={Questions} />
         <Route path={"/gelistirme"} component={Development} />
+        <Route path={"/urun-ciktisi/:id"} component={ProductOutput} />
         <Route path={"/formuller"} component={Formulas} />
         <Route path={"/uretim"} component={Production} />
         {/* Maliyet & Kâr hesaplayıcısı Fiyat Motoru'na sekme olarak taşındı; eski bağlantılar kırılmasın. */}

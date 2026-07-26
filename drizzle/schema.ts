@@ -2,6 +2,7 @@ import {
   decimal,
   index,
   int,
+  json,
   mediumtext,
   mysqlEnum,
   mysqlTable,
@@ -43,6 +44,13 @@ export const materials = mysqlTable("materials", {
   criticalQty: decimal("criticalQty", { precision: 12, scale: 3 }).notNull().default("0"),
   unitCost: decimal("unitCost", { precision: 12, scale: 4 }).notNull().default("0"),
   supplierId: int("supplierId"),
+  // Ürün motoru v2: hammadde kalite seviyesi (premium / orta / eko) — reçete
+  // önerisi ve maliyet katmanlandırması için. Serbest metin yerine sabit set.
+  tier: varchar("tier", { length: 20 }),
+  // Birim başı fiyat (unitCost'tan daha hassas 4 ondalık) — reçete/varyant maliyeti.
+  pricePerUnit: decimal("pricePerUnit", { precision: 10, scale: 4 }),
+  // Tedarikçi adı (serbest metin; supplierId ilişkiye bağlı kalırken bu hızlı gösterim).
+  supplier: varchar("supplier", { length: 100 }),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -85,6 +93,19 @@ export const productSeries = mysqlTable("productSeries", {
   shortDescription: mediumtext("shortDescription"),
   longDescription: mediumtext("longDescription"),
   applicationText: mediumtext("applicationText"),
+  // Ürün motoru v2: otomatik renk/ürün kodu ön eki. Örn. CANDY → "CND",
+  // AIRBRUSH → "ARB". Kod = prefix + 4 haneli sıra no (CND0042).
+  prefix: varchar("prefix", { length: 10 }),
+  // Ambalaj seçenekleri: [{label:"50ml", value:"50ml"}, ...] — geliştirme
+  // projesinde bu listeden hangi boyutlarda üretileceği seçilir.
+  packagingOptions: json("packagingOptions"),
+  // Uygulanabilir yüzeyler: ["Araç","3D Baskı","Rapala","Ahşap"...] — hedef
+  // yüzey seçimi bu şablondan gelir (serbest metin yerine).
+  applicationSurfaces: json("applicationSurfaces"),
+  // Kullanım kılavuzu şablonu. Değişkenler: {{renk}}, {{seri}}, {{ambalaj}}.
+  guideTemplate: text("guideTemplate"),
+  // Etiket içerik şablonu (aynı değişkenler desteklenir).
+  labelTemplate: text("labelTemplate"),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -394,6 +415,12 @@ export const devProjects = mysqlTable("devProjects", {
   series: varchar("series", { length: 128 }),
   colorCode: varchar("colorCode", { length: 64 }),
   colorHex: varchar("colorHex", { length: 16 }),
+  // Ürün motoru v2: seri prefix + sıra no ile otomatik üretilen ürün kodu (örn. CND0042).
+  autoCode: varchar("autoCode", { length: 50 }),
+  // Bu proje için seçilen hedef yüzeyler (serinin applicationSurfaces alt kümesi).
+  targetSurfaces: json("targetSurfaces"),
+  // Bu proje için seçilen ambalaj boyutları (serinin packagingOptions alt kümesi).
+  packagingSelection: json("packagingSelection"),
   status: mysqlEnum("status", ["active", "done", "archived"]).notNull().default("active"),
   currentStep: int("currentStep").notNull().default(1),
   applicationNotes: text("applicationNotes"),
@@ -447,6 +474,40 @@ export const devTrialItems = mysqlTable("devTrialItems", {
 
 export type DevTrialItem = typeof devTrialItems.$inferSelect;
 export type InsertDevTrialItem = typeof devTrialItems.$inferInsert;
+
+/**
+ * Ürün motoru v2 — Ürünleştirme (Adım 5) onay akışının çıktıları.
+ * Her seçili ambalaj için bir varyant kaydı açılır; AI ile üretilen pazaryeri
+ * başlık/açıklamaları, etiket metni, kullanım kılavuzu ve uygulama notları burada
+ * tutulur. Kullanıcı düzenleyip kaydedebilir, ardından Excel/pazaryeri aktarımı yapılır.
+ */
+export const productGenerations = mysqlTable(
+  "productGenerations",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    projectId: int("projectId").notNull(),
+    // Varyant kodu: proje autoCode + ambalaj (örn. CND0042-100ml).
+    variantCode: varchar("variantCode", { length: 80 }).notNull(),
+    packaging: varchar("packaging", { length: 64 }).notNull(),
+    status: mysqlEnum("status", ["generating", "ready", "listed", "error"]).notNull().default("ready"),
+    trendyolTitle: varchar("trendyolTitle", { length: 255 }),
+    trendyolDescription: mediumtext("trendyolDescription"),
+    hepsiburadaTitle: varchar("hepsiburadaTitle", { length: 255 }),
+    hepsiburadaDescription: mediumtext("hepsiburadaDescription"),
+    labelContent: text("labelContent"),
+    guideContent: text("guideContent"),
+    applicationNotes: text("applicationNotes"),
+    suggestedPrice: decimal("suggestedPrice", { precision: 12, scale: 2 }).notNull().default("0"),
+    costPrice: decimal("costPrice", { precision: 12, scale: 2 }).notNull().default("0"),
+    generatedAt: timestamp("generatedAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  t => [index("productGenerations_projectId_idx").on(t.projectId)],
+);
+
+export type ProductGeneration = typeof productGenerations.$inferSelect;
+export type InsertProductGeneration = typeof productGenerations.$inferInsert;
 
 /**
  * Tedarikçiler.
