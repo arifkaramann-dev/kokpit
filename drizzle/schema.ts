@@ -93,6 +93,9 @@ export const productSeries = mysqlTable("productSeries", {
   shortDescription: mediumtext("shortDescription"),
   longDescription: mediumtext("longDescription"),
   applicationText: mediumtext("applicationText"),
+  // Seri bazlı SSS / blog metni (web sitesinde ürünün altında kullanılır).
+  // Ürün bazlı değil seri bazlıdır; varyantlarda sadece renk/gramaj değişir.
+  faqContent: mediumtext("faqContent"),
   // Ürün motoru v2: otomatik renk/ürün kodu ön eki. Örn. CANDY → "CND",
   // AIRBRUSH → "ARB". Kod = prefix + 4 haneli sıra no (CND0042).
   prefix: varchar("prefix", { length: 10 }),

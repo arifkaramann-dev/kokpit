@@ -723,7 +723,7 @@ export const devRouter = router({
             ? projectPrice
             : computePrice({ materialCost, packagingCost, shippingCost: 0, profitMargin, vatRate }).salePrice;
 
-          // Şablon tabanlı taban içerik (AI erişilemezse de dolu kalsın).
+          // Şablon tabanlı taban içerik (kılavuz/etiket şablonları).
           const baseGuide =
             fillTemplate(seriesRec?.guideTemplate, packaging, colorLabel) ||
             project.usageGuide ||
@@ -733,11 +733,14 @@ export const devRouter = router({
             project.labelText ||
             "";
 
-          // Varyantı HEMEN, şablon tabanlı dolu içerikle oluştur (LLM çağrısı
-          // YOK). Böylece 14+ varyantta bile istek anında döner; gateway
-          // timeout ("unexpected token") yaşanmaz ve hiçbir varyant boş
-          // açıklamayla kalmaz. AI ile zenginleştirme sonradan varyant başına
-          // ayrı ayrı yapılır (enrichVariant), status "generating" bunu işaret eder.
+          // İçerik SERİDEN devralınır (Plan A). Kısa/uzun açıklama, uygulama ve
+          // SSS seri bazlıdır; varyantta yalnızca renk/gramaj değişir. Böylece
+          // varyant başına AI çağrısı YOK — 85 varyant bile anında hazır olur ve
+          // gateway timeout ("unexpected token") tamamen ortadan kalkar.
+          // Seride içerik yoksa şablon tabanlı içeriğe düşer (dolu kalsın).
+          const seriesLong = fillTemplate(seriesRec?.longDescription, packaging, colorLabel).trim();
+          const seriesApp = fillTemplate(seriesRec?.applicationText, packaging, colorLabel).trim();
+
           const tpl = templateVariantContent(project, surfaces, {
             packaging,
             colorLabel,
@@ -746,20 +749,29 @@ export const devRouter = router({
             baseLabel,
             baseGuide,
           });
+
+          // Başlık: her varyantta renk+gramaj değişir (SEO). Açıklama: seriden
+          // gelen uzun açıklama + uygulama metni (yoksa şablon açıklaması).
+          const title = tpl.trendyolTitle;
+          const longBody = [seriesLong, seriesApp].filter(Boolean).join("\n\n");
+          const description = longBody || tpl.trendyolDescription;
+          const appNotes = seriesApp || tpl.applicationNotes || null;
+
           const genId = await db.createProductGeneration({
             projectId: input.projectId,
             variantCode,
             packaging,
             color: colorLabel || null,
             colorHex: colorHex || null,
-            status: "generating", // AI zenginleştirmesi bekliyor
-            trendyolTitle: clipStr(tpl.trendyolTitle, 100),
-            trendyolDescription: clipStr(tpl.trendyolDescription, 2000),
-            hepsiburadaTitle: clipStr(tpl.hepsiburadaTitle, 80),
-            hepsiburadaDescription: clipStr(tpl.hepsiburadaDescription, 1500),
+            // İçerik seriden hazır geldiği için varyant doğrudan "ready".
+            status: "ready",
+            trendyolTitle: clipStr(title, 100),
+            trendyolDescription: clipStr(description, 2000),
+            hepsiburadaTitle: clipStr(title, 80),
+            hepsiburadaDescription: clipStr(description, 1500),
             labelContent: tpl.labelContent || null,
             guideContent: tpl.guideContent || null,
-            applicationNotes: tpl.applicationNotes || null,
+            applicationNotes: appNotes,
             suggestedPrice: String(suggestedPrice),
             costPrice: String(costPrice),
           } as never);

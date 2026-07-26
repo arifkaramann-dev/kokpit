@@ -181,6 +181,7 @@ const productSeriesInput = z.object({
   shortDescription: z.string().nullable().optional(),
   longDescription: z.string().nullable().optional(),
   applicationText: z.string().nullable().optional(),
+  faqContent: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
   // Ürün motoru v2: kod ön eki, ambalaj/yüzey şablonları, kılavuz/etiket şablonları.
   prefix: z.string().max(10).nullable().optional(),
@@ -1180,6 +1181,10 @@ export const seriesRouter = router({
       colorOptions: asArray(s.colorOptions) as { label: string; value: string; hex?: string | null }[],
       guideTemplate: s.guideTemplate ?? null,
       labelTemplate: s.labelTemplate ?? null,
+      shortDescription: s.shortDescription ?? null,
+      longDescription: s.longDescription ?? null,
+      applicationText: s.applicationText ?? null,
+      faqContent: (s as { faqContent?: string | null }).faqContent ?? null,
     }));
   }),
   // Otomatik ürün/renk kodu üretir: prefix + 4 haneli sıra no (örn. CND0042).
@@ -1236,6 +1241,87 @@ export const seriesRouter = router({
         parseFloat(String(g.costPrice)) || 0,
       ]);
       return { matrix: [header, ...rows] };
+    }),
+  // Seri bazlı içerik üretimi: TEK LLM çağrısında kısa açıklama, uzun açıklama,
+  // uygulama metni ve SSS/blog üretir. İçerik seri bazlıdır — varyantlarda
+  // sadece renk/gramaj değişir, bu metinler tüm varyantlarca paylaşılır.
+  // Böylece varyant başına ayrı AI çağrısı (85+) tamamen ortadan kalkar.
+  generateContent: protectedProcedure
+    .input(z.object({ id: z.number(), extraInstructions: z.string().nullable().optional() }))
+    .mutation(async ({ input }) => {
+      const all = await db.listProductSeries();
+      const series = all.find(s => s.id === input.id);
+      if (!series) throw new TRPCError({ code: "NOT_FOUND", message: "Seri bulunamadı" });
+
+      const asArray = (v: unknown): unknown[] => {
+        if (Array.isArray(v)) return v;
+        if (typeof v === "string" && v.trim()) {
+          try {
+            const p = JSON.parse(v);
+            return Array.isArray(p) ? p : [];
+          } catch {
+            return [];
+          }
+        }
+        return [];
+      };
+      const surfaces = (asArray(series.applicationSurfaces) as unknown[]).map(String);
+      const packaging = (asArray(series.packagingOptions) as { label?: string; value?: string }[])
+        .map(p => p?.label || p?.value)
+        .filter(Boolean);
+      const colors = (asArray(series.colorOptions) as { label?: string }[])
+        .map(c => c?.label)
+        .filter(Boolean);
+
+      const systemPrompt = `Sen Art of Colour markasının web içerik yazarısın. Art of Colour; oto rötuş boyaları, renk değiştiren efekt boyalar (METEOR), sedefli boyalar (VİVİD), transparan boyalar (CANDY), vernik (GLOSS), astarlar (PRİMER/PRIME X), RAL kodlu spreyler ve airbrush boyaları üreten bir Türk boya markasıdır.
+Görevin: verilen ürün SERİSİ için web sitesinde kullanılacak içerik üretmek. İçerik SERİ bazlıdır; tek tek renk/gramaj varyantı için değil, tüm seri için geçerli olmalı. Renk ve gramaj gibi varyanta özel detayları metne gömme — bunun yerine {{renk}} ve {{ambalaj}} yer tutucularını gerektiğinde kullanabilirsin (opsiyonel). Türkçe yaz, sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, örtücülük). Abartılı/yanıltıcı iddia veya uydurma istatistik yazma.
+YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şey yazma:
+{
+"shortDescription": "1-2 cümlelik kısa açıklama — web sitesinde ürünün yanında görünen vurucu tanıtım metni (düz metin)",
+"longDescription": "Ürün hakkında detaylı bilgi: giriş paragrafı + madde işaretli özellikler + kullanım alanları. HTML formatında (<p>, <ul>, <li>, <strong>)",
+"applicationText": "Adım adım uygulama/kullanım metni: yüzey hazırlığı, çalkalama, kat sayısı, katlar arası bekleme, kuruma süreleri, vernik. HTML formatında",
+"faqContent": "Sıkça Sorulan Sorular — blog tarzı, uygulama ve ürün hakkında en az 5 soru-cevap. HTML formatında (<h3> soru, <p> cevap)"
+}`;
+      const userPrompt = [
+        `Seri: ${series.name}`,
+        series.category ? `Kategori: ${series.category}` : null,
+        colors.length ? `Renk seçenekleri: ${colors.join(", ")}` : null,
+        packaging.length ? `Ambalaj/hacim seçenekleri: ${packaging.join(", ")}` : null,
+        surfaces.length ? `Uygulanabilir yüzeyler: ${surfaces.join(", ")}` : null,
+        series.notes ? `Notlar: ${series.notes}` : null,
+        input.extraInstructions ? `Ek yönergeler: ${input.extraInstructions}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n");
+
+      let parsed: Record<string, unknown> | null = null;
+      for (let attempt = 0; attempt < 2 && !parsed; attempt++) {
+        try {
+          const response = await invokeLLM({
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userPrompt },
+            ],
+          });
+          const raw = response.choices[0]?.message?.content;
+          const p = extractJson(typeof raw === "string" ? raw : "");
+          if (p && typeof p === "object" && Object.keys(p).length > 0) parsed = p;
+        } catch {
+          // sıradaki denemeye geç
+        }
+      }
+      if (!parsed) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "AI içerik üretemedi, lütfen tekrar deneyin." });
+      }
+      const str = (k: string) => (typeof parsed![k] === "string" ? (parsed![k] as string) : null);
+      const patch = {
+        shortDescription: str("shortDescription"),
+        longDescription: str("longDescription"),
+        applicationText: str("applicationText"),
+        faqContent: str("faqContent"),
+      };
+      await db.updateProductSeries(input.id, patch as never);
+      return patch;
     }),
   create: protectedProcedure.input(productSeriesInput).mutation(async ({ input }) => {
     const existing = await db.getProductSeriesByName(input.name);
