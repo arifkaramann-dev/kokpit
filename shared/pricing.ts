@@ -579,3 +579,26 @@ export function matchPriceRows(products: MatchableProduct[], rows: CsvPriceRow[]
   }
   return { matches, unmatched };
 }
+
+/**
+ * Basit kâr hesabı: indirimli net fiyat − (hammadde + ambalaj + kargo).
+ *
+ * Ürün kartındaki `marginOf` ile karıştırılmamalı: bu fonksiyon kargoyu da
+ * maliyete katar ve indirimi fiyattan düşer; hızlı "bu fiyata satsam ne
+ * kalır" hesabıdır. Kanal komisyonu ve KDV için `calcChannelProfit` kullanılır.
+ *
+ * Kaldırılan Maliyet sayfasından taşındı — testi olan saf mantık kaybolmasın.
+ */
+export function calcProfit(input: {
+  salePrice: number;
+  discountPercent: number;
+  materialCost: number;
+  packagingCost: number;
+  shippingCost: number;
+}) {
+  const netPrice = input.salePrice * (1 - input.discountPercent / 100);
+  const totalCost = input.materialCost + input.packagingCost + input.shippingCost;
+  const profit = netPrice - totalCost;
+  const margin = netPrice > 0 ? (profit / netPrice) * 100 : 0;
+  return { netPrice, totalCost, profit, margin };
+}

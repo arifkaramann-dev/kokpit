@@ -161,6 +161,29 @@ export default function ProductOutput() {
   // Ürünlere aktarım durumu.
   const publishedCount = (generations ?? []).filter(g => g.productId).length;
   const totalCount = generations?.length ?? 0;
+  // v3 kataloğuna aktarım. Eski `publishToProducts` `products` tablosuna
+  // yazıyordu; haftalık geliştirme işi yeni katalogda görünmeyen ürünler
+  // üretiyordu.
+  const importToCatalog = trpc.katalog.importFromDevProject.useMutation({
+    onSuccess: r => {
+      if (r.dryRun) {
+        toast.info(
+          `${r.willCreate} ürün katalogda açılacak` +
+            (r.problems.length ? ` · ${r.problems.length} sorun: ${r.problems[0]}` : ""),
+          { duration: 10000 },
+        );
+        return;
+      }
+      utils.katalog.invalidate();
+      toast.success(
+        `${r.created} master ürün ve ilanı katalogda açıldı` +
+          (r.problems.length ? ` · ${r.problems.length} varyant atlandı` : ""),
+        { duration: 10000 },
+      );
+    },
+    onError: e => toast.error(e.message, { duration: 10000 }),
+  });
+
   const publishToProducts = trpc.dev.publishToProducts.useMutation({
     onSuccess: r => {
       const parts: string[] = [];
@@ -335,6 +358,21 @@ export default function ProductOutput() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={importToCatalog.isPending}
+                onClick={() => importToCatalog.mutate({ projectId: id, dryRun: true })}
+              >
+                Katalogda Aç (önizle)
+              </Button>
+              <Button
+                size="sm"
+                disabled={importToCatalog.isPending}
+                onClick={() => importToCatalog.mutate({ projectId: id, dryRun: false })}
+              >
+                <PackagePlus className="mr-1 h-4 w-4" /> Kataloğa Aktar
+              </Button>
               {publishedCount > 0 && (
                 <Button variant="outline" size="sm" onClick={() => setLocation("/urunler")}>
                   <Store className="h-4 w-4 mr-1" /> Ürünleri Gör

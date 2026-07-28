@@ -41,7 +41,7 @@ import {
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Link } from "wouter";
-import type { ProductRow } from "./Products";
+import type { ProductRow } from "@/types/product";
 
 /**
  * Üretim sayfası — dört bölüm:

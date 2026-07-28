@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc";
-import { Loader2, Play, Store, Upload } from "lucide-react";
+import { Loader2, Play, Send, Store, Upload } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -55,6 +55,41 @@ export default function Publish() {
       toast.success(`${r.published} ilan kanala açıldı — senkron kuyruğuna girdi`, { duration: 8000 });
     },
     onError: e => toast.error(e.message, { duration: 10000 }),
+  });
+
+  const { data: status } = trpc.katalog.syncStatus.useQuery();
+  const [cardProblems, setCardProblems] = useState<string[]>([]);
+
+  const syncNow = trpc.katalog.syncChannel.useMutation({
+    onSuccess: r => {
+      utils.katalog.invalidate();
+      if (r.error) return toast.error(r.error, { duration: 9000 });
+      toast.success(
+        `${r.sent} yayın gönderildi` +
+          (r.failed > 0 ? ` · ${r.failed} hata` : "") +
+          (r.skipped > 0 ? ` · ${r.skipped} atlandı` : ""),
+        { duration: 9000 },
+      );
+    },
+    onError: e => toast.error(e.message, { duration: 9000 }),
+  });
+
+  const pushCards = trpc.katalog.pushCardsToTrendyol.useMutation({
+    onSuccess: r => {
+      setCardProblems(r.problems);
+      utils.katalog.invalidate();
+      if (r.dryRun) {
+        toast.info(`${r.willSend} kart gönderilecek${r.problems.length ? ` · ${r.problems.length} sorun` : ""}`, {
+          duration: 9000,
+        });
+        return;
+      }
+      toast.success(
+        `${r.sent} kart gönderildi${r.batchRequestId ? ` (parti: ${r.batchRequestId})` : ""}`,
+        { duration: 12000 },
+      );
+    },
+    onError: e => toast.error(e.message, { duration: 12000 }),
   });
 
   const setCategory = trpc.katalog.setChannelCategory.useMutation({
@@ -105,6 +140,7 @@ export default function Publish() {
       <Tabs defaultValue="yayin">
         <TabsList>
           <TabsTrigger value="yayin">Yayınla</TabsTrigger>
+          <TabsTrigger value="gonder">Pazaryerine Gönder</TabsTrigger>
           <TabsTrigger value="kategori">Kategori Eşlemesi</TabsTrigger>
         </TabsList>
 
@@ -212,6 +248,111 @@ export default function Publish() {
               )}
             </Card>
           )}
+        </TabsContent>
+
+        {/* Gönderim: stok/fiyat senkronu ve sıfırdan ürün kartı açma */}
+        <TabsContent value="gonder" className="space-y-3 pt-3">
+          <Card className="space-y-3 p-5">
+            <p className="font-semibold">Stok &amp; fiyat gönderimi</p>
+            <p className="text-sm text-muted-foreground">
+              Kapasite veya fiyat değişen yayınlar kuyruğa girer. Zamanlayıcı 30 dakikada bir
+              boşaltır; buradan elle de tetikleyebilirsiniz. Hata alan satır kuyrukta kalır ve
+              yeniden denenir.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="outline"
+                disabled={syncNow.isPending || !activeChannel}
+                onClick={() => syncNow.mutate({ channelId: activeChannel, dryRun: true })}
+              >
+                <Play className="mr-1 h-4 w-4" /> Önce Göster
+              </Button>
+              <Button
+                disabled={syncNow.isPending || !activeChannel}
+                onClick={() => syncNow.mutate({ channelId: activeChannel, dryRun: false })}
+              >
+                {syncNow.isPending ? (
+                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="mr-1 h-4 w-4" />
+                )}
+                Şimdi Gönder
+              </Button>
+              {(status ?? [])
+                .filter(s => s.channelId === activeChannel && s.kirli + s.hata > 0)
+                .map(s => (
+                  <span key={s.channelId} className="flex items-center gap-1.5 text-xs">
+                    {s.kirli > 0 && <Badge variant="secondary">{s.kirli} bekliyor</Badge>}
+                    {s.hata > 0 && (
+                      <Badge className="bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300">
+                        {s.hata} hata
+                      </Badge>
+                    )}
+                  </span>
+                ))}
+            </div>
+          </Card>
+
+          <Card className="space-y-3 p-5">
+            <p className="font-semibold">Trendyol&apos;da ürün kartı aç</p>
+            <p className="text-sm text-muted-foreground">
+              Sıfırdan ilan açar (stok/fiyat güncellemesinden farklı). Aynı ürün ailesinin
+              kalemleri tek ilan altında varyant olarak toplanır. Sonuç asenkron gelir.
+            </p>
+            <label className="flex w-fit cursor-pointer items-center gap-2 text-sm">
+              <Checkbox
+                checked={includeUnbuildable}
+                onCheckedChange={c => setIncludeUnbuildable(c === true)}
+              />
+              Üretilemeyenleri de gönder
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                disabled={pushCards.isPending || !activeChannel}
+                onClick={() =>
+                  pushCards.mutate({
+                    channelId: activeChannel,
+                    seriesIds: Array.from(selectedSeries),
+                    includeUnbuildable,
+                    dryRun: true,
+                  })
+                }
+              >
+                <Play className="mr-1 h-4 w-4" /> Önce Göster
+              </Button>
+              <Button
+                disabled={pushCards.isPending || !activeChannel}
+                onClick={() =>
+                  pushCards.mutate({
+                    channelId: activeChannel,
+                    seriesIds: Array.from(selectedSeries),
+                    includeUnbuildable,
+                    dryRun: false,
+                  })
+                }
+              >
+                {pushCards.isPending ? (
+                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                ) : (
+                  <Upload className="mr-1 h-4 w-4" />
+                )}
+                Kartları Gönder
+              </Button>
+            </div>
+            {cardProblems.length > 0 && (
+              <div className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs dark:border-amber-800 dark:bg-amber-950/40">
+                <p className="font-medium text-amber-800 dark:text-amber-300">
+                  {cardProblems.length} kalem gönderilemedi:
+                </p>
+                {cardProblems.slice(0, 8).map((p, i) => (
+                  <p key={i} className="text-muted-foreground">
+                    {p}
+                  </p>
+                ))}
+              </div>
+            )}
+          </Card>
         </TabsContent>
 
         <TabsContent value="kategori" className="space-y-3 pt-3">

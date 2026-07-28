@@ -44,6 +44,9 @@ export default function Home() {
   const { data, isLoading } = trpc.dashboard.summary.useQuery();
   const [periodDays, setPeriodDays] = useState(30);
   const { data: period } = trpc.dashboard.periodStats.useQuery({ days: periodDays });
+  // Katalog v3 durumu — ana ekran eski `products` sayıyordu, yeni sistemin
+  // durumu (üretilemeyen ürün, senkron kuyruğu, darboğaz) görünmüyordu.
+  const { data: katalog } = trpc.katalog.cockpit.useQuery();
 
   const statusMap = new Map((data?.statusCounts ?? []).map(s => [s.status, Number(s.count)]));
   const activeOrders =
@@ -55,6 +58,34 @@ export default function Home() {
   const actions: { label: string; count: string; path: string; tone: "rose" | "amber" | "blue" }[] = [];
   const newOrders = statusMap.get("new") ?? 0;
   if (newOrders > 0) actions.push({ label: "yeni sipariş bekliyor", count: String(newOrders), path: "/siparisler", tone: "blue" });
+  if ((katalog?.uretilemeyen ?? 0) > 0)
+    actions.push({
+      label: "ürün üretilemiyor (hammadde eksik)",
+      count: String(katalog?.uretilemeyen),
+      path: "/katalog",
+      tone: "rose",
+    });
+  if ((katalog?.senkronBekleyen ?? 0) > 0)
+    actions.push({
+      label: "yayın pazaryerine gönderilmeyi bekliyor",
+      count: String(katalog?.senkronBekleyen),
+      path: "/fiyat",
+      tone: "amber",
+    });
+  if ((katalog?.recetesiz ?? 0) > 0)
+    actions.push({
+      label: "ürünün reçetesi yok",
+      count: String(katalog?.recetesiz),
+      path: "/recete",
+      tone: "amber",
+    });
+  if ((katalog?.receteDongusu ?? 0) > 0)
+    actions.push({
+      label: "reçete döngüsü — kapasite hesaplanamıyor",
+      count: String(katalog?.receteDongusu),
+      path: "/recete",
+      tone: "rose",
+    });
   if ((data?.newQuestions ?? 0) > 0)
     actions.push({ label: "soru cevap bekliyor", count: String(data?.newQuestions), path: "/sorular", tone: "amber" });
   if ((data?.productionQueue ?? 0) > 0)
