@@ -260,6 +260,13 @@
       "when": 1785279864634,
       "tag": "0036_naive_mach_iv",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "5",
+      "when": 1785281574972,
+      "tag": "0037_wealthy_tarot",
+      "breakpoints": true
     }
   ]
 }

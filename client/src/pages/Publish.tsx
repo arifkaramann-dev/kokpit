@@ -1,3 +1,4 @@
+import AttributeMapping from "@/components/AttributeMapping";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -142,6 +143,7 @@ export default function Publish() {
           <TabsTrigger value="yayin">Yayınla</TabsTrigger>
           <TabsTrigger value="gonder">Pazaryerine Gönder</TabsTrigger>
           <TabsTrigger value="kategori">Kategori Eşlemesi</TabsTrigger>
+          <TabsTrigger value="ozellik">Özellik Eşlemesi</TabsTrigger>
         </TabsList>
 
         <TabsContent value="yayin" className="space-y-3 pt-3">
@@ -399,6 +401,10 @@ export default function Publish() {
             Trendyol kategori kimliklerini Ayarlar sayfasındaki kategori arama aracından
             bulabilirsiniz.
           </Card>
+        </TabsContent>
+
+        <TabsContent value="ozellik" className="pt-3">
+          <AttributeMapping channelId={activeChannel} />
         </TabsContent>
       </Tabs>
     </div>

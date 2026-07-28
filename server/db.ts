@@ -68,6 +68,9 @@ import {
   masterProducts,
   listings,
   listingImages,
+  masterImages,
+  channelAttributes,
+  channelAttributeValues,
   materialReservations,
   salesChannels,
   channelListings,
@@ -2754,6 +2757,122 @@ export async function deleteDimension(kind: DimensionTable, id: number) {
 export async function listListingImages() {
   const db = await requireDb();
   return db.select().from(listingImages);
+}
+
+/* ---- Görseller: master → ilan mirası ------------------------------------ */
+
+export async function listMasterImages(masterId?: number) {
+  const db = await requireDb();
+  const q = db.select().from(masterImages);
+  return masterId ? q.where(eq(masterImages.masterId, masterId)) : q;
+}
+
+export async function addMasterImage(input: { masterId: number; url: string; role?: string | null }) {
+  const db = await requireDb();
+  const [row] = await db
+    .select({ n: sql<number>`COALESCE(MAX(sortOrder), -1)` })
+    .from(masterImages)
+    .where(eq(masterImages.masterId, input.masterId));
+  await db.insert(masterImages).values({
+    masterId: input.masterId,
+    url: input.url,
+    role: input.role ?? null,
+    sortOrder: Number(row?.n ?? -1) + 1,
+  });
+}
+
+export async function deleteMasterImage(id: number) {
+  const db = await requireDb();
+  await db.delete(masterImages).where(eq(masterImages.id, id));
+}
+
+/* ---- Pazaryeri özellik eşlemesi ----------------------------------------- */
+
+export async function listChannelAttributes(channelId?: number) {
+  const db = await requireDb();
+  const q = db.select().from(channelAttributes);
+  return channelId ? q.where(eq(channelAttributes.channelId, channelId)) : q;
+}
+
+/**
+ * Özellik tanımını ekler/günceller. UNIQUE(kanal, kategori, özellik) sayesinde
+ * "yeniden içe aktar" mükerrer satır açmaz; kullanıcının seçtiği `source`
+ * korunur — pazaryerinden gelen tahmin onu ezmemelidir.
+ */
+export async function upsertChannelAttribute(input: {
+  channelId: number;
+  categoryId: string;
+  attributeId: number;
+  attributeName?: string | null;
+  source?: "renk" | "ambalaj" | "form" | "seri" | "hacim" | "sabit";
+  constantValueId?: number | null;
+  constantText?: string | null;
+  isRequired?: boolean;
+  /** true ise mevcut satırın kaynağı korunur (içe aktarma modu). */
+  keepSource?: boolean;
+}) {
+  const db = await requireDb();
+  const values = {
+    channelId: input.channelId,
+    categoryId: input.categoryId,
+    attributeId: input.attributeId,
+    attributeName: input.attributeName ?? null,
+    source: input.source ?? ("sabit" as const),
+    constantValueId: input.constantValueId ?? null,
+    constantText: input.constantText ?? null,
+    isRequired: input.isRequired === false ? 0 : 1,
+  };
+  const update: Record<string, unknown> = {
+    attributeName: values.attributeName,
+    isRequired: values.isRequired,
+  };
+  if (!input.keepSource) {
+    update.source = values.source;
+    update.constantValueId = values.constantValueId;
+    update.constantText = values.constantText;
+  }
+  await db.insert(channelAttributes).values(values).onDuplicateKeyUpdate({ set: update });
+}
+
+export async function deleteChannelAttribute(id: number) {
+  const db = await requireDb();
+  await db.delete(channelAttributes).where(eq(channelAttributes.id, id));
+}
+
+export async function listChannelAttributeValues(channelId?: number) {
+  const db = await requireDb();
+  const q = db.select().from(channelAttributeValues);
+  return channelId ? q.where(eq(channelAttributeValues.channelId, channelId)) : q;
+}
+
+export async function upsertChannelAttributeValue(input: {
+  channelId: number;
+  attributeId: number;
+  dimensionKind: "renk" | "ambalaj" | "form" | "seri";
+  dimensionId: number;
+  attributeValueId?: number | null;
+  attributeText?: string | null;
+}) {
+  const db = await requireDb();
+  const values = {
+    channelId: input.channelId,
+    attributeId: input.attributeId,
+    dimensionKind: input.dimensionKind,
+    dimensionId: input.dimensionId,
+    attributeValueId: input.attributeValueId ?? null,
+    attributeText: input.attributeText ?? null,
+  };
+  await db
+    .insert(channelAttributeValues)
+    .values(values)
+    .onDuplicateKeyUpdate({
+      set: { attributeValueId: values.attributeValueId, attributeText: values.attributeText },
+    });
+}
+
+export async function deleteChannelAttributeValue(id: number) {
+  const db = await requireDb();
+  await db.delete(channelAttributeValues).where(eq(channelAttributeValues.id, id));
 }
 
 /* ---- Hammadde rezervasyon defteri --------------------------------------- */

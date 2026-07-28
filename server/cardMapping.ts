@@ -10,7 +10,17 @@
  * paylaşır → Trendyol'da tek ilan, varyant seçicili. v3'te gruplama
  * anahtarı `channelListings.groupKey`; boşsa master'ın temel kodu kullanılır
  * (aynı rengin farklı ambalajları doğal olarak gruplanır).
+ *
+ * Zorunlu özellikler (Renk, Hacim, Ürün Tipi) artık kategori başına sabit
+ * listeden değil, master'ın küp koordinatından türetilir — bkz.
+ * `masterFields.ts`. Sabit liste geriye dönük uyum için yedekte durur.
  */
+
+import {
+  buildAttributes,
+  type ChannelAttributeDef,
+  type ChannelAttributeValueMap,
+} from "./masterFields";
 
 const num = (v: unknown, fallback = 0): number => {
   const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
@@ -26,8 +36,15 @@ export type CardMaster = {
   discountPercent: number;
   buildableQty: number;
   virtualStockCap: number;
+  /** Çözülmüş lojistik değerleri (master → ambalaj → hacimden tahmin). */
   desi: number | null;
   vatRate: number | null;
+  // Küp koordinatı — zorunlu özellikler buradan türetilir.
+  seriesId: number;
+  colorId: number;
+  familyId: number;
+  packagingId: number;
+  volumeMl: number | null;
 };
 
 export type CardListing = {
@@ -55,7 +72,10 @@ export type CardChannelListing = {
 export type CardSettings = {
   brandId: number;
   cargoCompanyId: number;
-  /** Kategori kimliği → zorunlu özellik listesi. */
+  /**
+   * Kategori kimliği → sabit özellik listesi. Küp eşlemesi tanımlanmamış
+   * kategoriler için yedek; tanımlıysa eşleme kazanır.
+   */
   attributeDefaults: Record<string, { attributeId: number; attributeValueId?: number; customAttributeValue?: string }[]>;
 };
 
@@ -95,6 +115,10 @@ export function mapToTrendyolCards(input: {
   listings: CardListing[];
   masters: CardMaster[];
   settings: CardSettings;
+  /** Kategori kimliği → küp eksenine bağlı özellik tanımları. */
+  attributeDefs?: Record<string, ChannelAttributeDef[]>;
+  /** Boyut kimliği → pazaryeri değer kimliği köprüsü. */
+  attributeValues?: ChannelAttributeValueMap[];
   /** Kapasitesi 0 olanı da gönder (ilan açılsın, stok 0 gitsin). */
   includeUnbuildable?: boolean;
 }): CardMappingResult {
@@ -145,10 +169,27 @@ export function mapToTrendyolCards(input: {
       problems.push(`${label}: üretilemiyor (hammadde/kapasite yok)`);
       continue;
     }
-    const attributes = input.settings.attributeDefaults[String(categoryId)];
-    if (!attributes) {
-      problems.push(`${label}: "${categoryId}" kategorisi için zorunlu özellikler tanımlanmamış`);
-      continue;
+    // Özellikler önce küp eşlemesinden; tanımlı değilse eski sabit listeden.
+    const defs = input.attributeDefs?.[String(categoryId)] ?? [];
+    let attributes: unknown[];
+    if (defs.length > 0) {
+      const built = buildAttributes({
+        definitions: defs,
+        values: input.attributeValues ?? [],
+        master,
+      });
+      if (built.missing.length > 0) {
+        problems.push(`${label}: ${built.missing.join(" · ")}`);
+        continue;
+      }
+      attributes = built.attributes;
+    } else {
+      const fallback = input.settings.attributeDefaults[String(categoryId)];
+      if (!fallback) {
+        problems.push(`${label}: "${categoryId}" kategorisi için zorunlu özellikler tanımlanmamış`);
+        continue;
+      }
+      attributes = fallback;
     }
 
     const discount = cl.price > 0 ? cl.discountPercent : master.discountPercent;

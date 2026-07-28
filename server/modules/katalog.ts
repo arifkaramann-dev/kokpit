@@ -31,11 +31,22 @@ import {
   resolveListingContent,
   type ContentBlockLike,
 } from "../listingContent";
+import {
+  guessSource,
+  resolveImages,
+  resolveLogistics,
+  type ChannelAttributeDef,
+  type ImageRow,
+} from "../masterFields";
 import { masterHealth, rollupBySeries } from "../masterHealth";
 import { planProduction, resolveOrderLines } from "../productionPlan";
 import { planPublications, summarizeSkips } from "../publishPlan";
 import { GENERIC_USE_CASE_CODE, seedCatalogDimensions } from "../seedCatalog";
-import { parseCardSettings, pushTrendyolProductCards } from "../trendyolProducts";
+import {
+  fetchTrendyolCategoryAttributes,
+  parseCardSettings,
+  pushTrendyolProductCards,
+} from "../trendyolProducts";
 
 /** productSeries JSON alanındaki {label,value} veya düz metin dizisini çözer. */
 function parseStringArray(value: unknown): string[] {
@@ -1190,6 +1201,7 @@ export const katalogRouter = router({
         db.listProductFamilies(),
         db.listListingImages(),
       ]);
+    const masterImages = await db.listMasterImages();
     const data = await loadCapacityInputs();
 
     const costs = computeMasterCosts({
@@ -1209,6 +1221,12 @@ export const katalogRouter = router({
     for (const img of listingImages as { listingId: number }[]) {
       imageCount.set(img.listingId, (imageCount.get(img.listingId) ?? 0) + 1);
     }
+    // Master görselleri ilanlara miras kalır; "görsel yok" uyarısı bunu
+    // saymazsa görseli master'da olan ürün eksik görünürdü.
+    const masterImageCount = new Map<number, number>();
+    for (const img of masterImages as { masterId: number }[]) {
+      masterImageCount.set(img.masterId, (masterImageCount.get(img.masterId) ?? 0) + 1);
+    }
 
     const healthListings = (listings as Record<string, unknown>[]).map(l => ({
       id: l.id as number,
@@ -1218,7 +1236,8 @@ export const katalogRouter = router({
       shortDescription: (l.shortDescription as string | null) ?? null,
       longDescription: (l.longDescription as string | null) ?? null,
       status: l.status as "taslak" | "aktif" | "arsiv",
-      imageCount: imageCount.get(l.id as number) ?? 0,
+      imageCount:
+        (imageCount.get(l.id as number) ?? 0) || (masterImageCount.get(l.masterId as number) ?? 0),
     }));
     const healthChannels = (channelListings as Record<string, unknown>[]).map(c => ({
       listingId: c.listingId as number,
@@ -1450,8 +1469,33 @@ export const katalogRouter = router({
       const usedUseCases = new Set((listings as { useCaseId: number }[]).map(l => l.useCaseId));
 
       const colorById = new Map((colors as { id: number; name: string; hex: string | null }[]).map(c => [c.id, c]));
+      const packagingRow = (packagings as Record<string, unknown>[]).find(
+        p => p.id === master.packagingId,
+      );
+      // Pazaryerine giden desi/ağırlık/KDV: master → ambalaj → hacimden tahmin.
+      // Nereden geldiği de dönülür ki "neden 1 desi?" ekranda cevaplanabilsin.
+      const logistics = resolveLogistics({
+        master: {
+          desi: master.desi != null ? num(master.desi) : null,
+          weightG: master.weightG != null ? num(master.weightG) : null,
+        },
+        packaging: packagingRow
+          ? {
+              volumeMl: packagingRow.volumeMl != null ? num(packagingRow.volumeMl) : null,
+              weightG: packagingRow.weightG != null ? num(packagingRow.weightG) : null,
+              desi: packagingRow.desi != null ? num(packagingRow.desi) : null,
+            }
+          : null,
+        series: (() => {
+          const s = (series as Record<string, unknown>[]).find(s => s.id === master.seriesId);
+          return s ? { vatRate: s.vatRate != null ? num(s.vatRate) : null } : null;
+        })(),
+      });
+
       return {
         master,
+        logistics,
+        images: await db.listMasterImages(input.masterId),
         identity: {
           series: (series as { id: number; name: string }[]).find(s => s.id === master.seriesId)?.name ?? null,
           family: (families as { id: number; name: string }[]).find(f => f.id === master.familyId)?.name ?? null,
@@ -1595,6 +1639,212 @@ export const katalogRouter = router({
     .input(z.object({ dryRun: z.boolean().default(false) }))
     .mutation(({ input }) => syncAllChannels({ dryRun: input.dryRun })),
 
+  /* ---- Master görselleri: ilanlar devralır ------------------------------ */
+
+  masterImages: protectedProcedure
+    .input(z.object({ masterId: z.number().optional() }).default({}))
+    .query(({ input }) => db.listMasterImages(input.masterId)),
+
+  addMasterImage: protectedProcedure
+    .input(
+      z.object({
+        masterId: z.number(),
+        url: z.string().url("Geçerli bir görsel adresi girin"),
+        role: z.string().max(32).nullish(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      await db.addMasterImage(input);
+      return { ok: true };
+    }),
+
+  deleteMasterImage: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      await db.deleteMasterImage(input.id);
+      return { ok: true };
+    }),
+
+  /* ---- Pazaryeri özellikleri: master'ın küpünden ------------------------ */
+
+  channelAttributes: protectedProcedure
+    .input(z.object({ channelId: z.number() }))
+    .query(({ input }) => db.listChannelAttributes(input.channelId)),
+
+  saveChannelAttribute: protectedProcedure
+    .input(
+      z.object({
+        channelId: z.number(),
+        categoryId: z.string().min(1),
+        attributeId: z.number(),
+        attributeName: z.string().max(160).nullish(),
+        source: z.enum(["renk", "ambalaj", "form", "seri", "hacim", "sabit"]),
+        constantValueId: z.number().nullish(),
+        constantText: z.string().max(255).nullish(),
+        isRequired: z.boolean().default(true),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      await db.upsertChannelAttribute(input);
+      return { ok: true };
+    }),
+
+  deleteChannelAttribute: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      await db.deleteChannelAttribute(input.id);
+      return { ok: true };
+    }),
+
+  /**
+   * Kategorinin zorunlu özelliklerini Trendyol'dan çeker ve tanım olarak
+   * kaydeder. `source` ada bakılarak tahmin edilir (Renk → renk ekseni);
+   * tahmin yalnız YENİ satırda uygulanır — kullanıcının seçtiği kaynak
+   * yeniden içe aktarmada ezilmez.
+   */
+  importChannelAttributes: protectedProcedure
+    .input(z.object({ channelId: z.number(), categoryId: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      const categoryId = Number(input.categoryId);
+      if (!categoryId) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Kategori kimliği sayı olmalı" });
+      }
+      let raw: unknown;
+      try {
+        raw = await fetchTrendyolCategoryAttributes(categoryId);
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: error instanceof Error ? error.message : "Kategori özellikleri alınamadı",
+        });
+      }
+      const rows = ((raw as Record<string, unknown>)?.categoryAttributes ?? []) as Record<
+        string,
+        unknown
+      >[];
+      const existing = (await db.listChannelAttributes(input.channelId)) as Record<string, unknown>[];
+      const known = new Set(
+        existing
+          .filter(e => String(e.categoryId) === input.categoryId)
+          .map(e => e.attributeId as number),
+      );
+
+      let added = 0;
+      let updated = 0;
+      for (const row of rows) {
+        const attr = (row.attribute ?? {}) as Record<string, unknown>;
+        const attributeId = Number(attr.id ?? 0);
+        if (!attributeId) continue;
+        const attributeName = String(attr.name ?? "");
+        const isNew = !known.has(attributeId);
+        await db.upsertChannelAttribute({
+          channelId: input.channelId,
+          categoryId: input.categoryId,
+          attributeId,
+          attributeName,
+          source: guessSource(attributeName),
+          isRequired: Boolean(row.required),
+          // Mevcut satırda kullanıcının seçimi korunur.
+          keepSource: !isNew,
+        });
+        if (isNew) added += 1;
+        else updated += 1;
+      }
+      return { added, updated, total: rows.length };
+    }),
+
+  channelAttributeValues: protectedProcedure
+    .input(z.object({ channelId: z.number() }))
+    .query(({ input }) => db.listChannelAttributeValues(input.channelId)),
+
+  saveChannelAttributeValue: protectedProcedure
+    .input(
+      z.object({
+        channelId: z.number(),
+        attributeId: z.number(),
+        dimensionKind: z.enum(["renk", "ambalaj", "form", "seri"]),
+        dimensionId: z.number(),
+        attributeValueId: z.number().nullish(),
+        attributeText: z.string().max(255).nullish(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      if (!input.attributeValueId && !input.attributeText?.trim()) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Değer kimliği ya da metin girin — boş eşleme kartı düşürür",
+        });
+      }
+      await db.upsertChannelAttributeValue(input);
+      return { ok: true };
+    }),
+
+  deleteChannelAttributeValue: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      await db.deleteChannelAttributeValue(input.id);
+      return { ok: true };
+    }),
+
+  /**
+   * Eşleme karnesi: hangi özellik hangi boyut değerinde boş kalmış.
+   *
+   * Kart açma anında "eşleme yok" hatası almak yerine önceden görülür;
+   * ekran doğrudan doldurulacak listeyi verir.
+   */
+  attributeCoverage: protectedProcedure
+    .input(z.object({ channelId: z.number() }))
+    .query(async ({ input }) => {
+      const [defs, values, colors, packagings, families, series] = await Promise.all([
+        db.listChannelAttributes(input.channelId),
+        db.listChannelAttributeValues(input.channelId),
+        db.listColors(),
+        db.listPackagings(),
+        db.listProductFamilies(),
+        db.listProductSeries(),
+      ]);
+      const mapped = new Set(
+        (values as Record<string, unknown>[]).map(
+          v => `${v.attributeId}|${v.dimensionKind}|${v.dimensionId}`,
+        ),
+      );
+      const dimensionRows = (kind: string): { id: number; name: string }[] => {
+        const src =
+          kind === "renk"
+            ? colors
+            : kind === "ambalaj"
+              ? packagings
+              : kind === "form"
+                ? families
+                : series;
+        return (src as Record<string, unknown>[]).map(r => ({
+          id: r.id as number,
+          name: String(r.name ?? ""),
+        }));
+      };
+
+      return (defs as Record<string, unknown>[])
+        .filter(d => d.source !== "sabit" && d.source !== "hacim")
+        .map(d => {
+          const kind = String(d.source);
+          const rows = dimensionRows(kind);
+          const missing = rows.filter(
+            r => !mapped.has(`${d.attributeId}|${kind}|${r.id}`),
+          );
+          return {
+            id: d.id as number,
+            categoryId: String(d.categoryId ?? ""),
+            attributeId: d.attributeId as number,
+            attributeName: (d.attributeName as string | null) ?? null,
+            source: kind,
+            isRequired: Number(d.isRequired ?? 1) === 1,
+            total: rows.length,
+            mapped: rows.length - missing.length,
+            missing: missing.slice(0, 50),
+          };
+        });
+    }),
+
   /**
    * Trendyol'da SIFIRDAN ürün kartı açar. Eski uç erişilemez hale gelen
    * ProductDetail sayfasında kalmıştı; mantık v3 nesnelerine taşındı.
@@ -1618,16 +1868,69 @@ export const katalogRouter = router({
         });
       }
 
-      const [channelListings, listings, masters, images] = await Promise.all([
+      const [
+        channelListings,
+        listings,
+        masters,
+        images,
+        mImages,
+        packagings,
+        series,
+        attrDefs,
+        attrValues,
+      ] = await Promise.all([
         db.listChannelListings(),
         db.listListings(),
         db.listMasterProducts(),
         db.listListingImages(),
+        db.listMasterImages(),
+        db.listPackagings(),
+        db.listProductSeries(),
+        db.listChannelAttributes(input.channelId),
+        db.listChannelAttributeValues(input.channelId),
       ]);
 
-      const imagesByListing = new Map<number, string[]>();
-      for (const img of images as { listingId: number; url: string }[]) {
-        imagesByListing.set(img.listingId, [...(imagesByListing.get(img.listingId) ?? []), img.url]);
+      const imagesByListing = new Map<number, ImageRow[]>();
+      for (const img of images as { listingId: number; url: string; sortOrder: number }[]) {
+        const row = { url: img.url, sortOrder: Number(img.sortOrder ?? 0) };
+        imagesByListing.set(img.listingId, [...(imagesByListing.get(img.listingId) ?? []), row]);
+      }
+      const imagesByMaster = new Map<number, ImageRow[]>();
+      for (const img of mImages as { masterId: number; url: string; sortOrder: number }[]) {
+        const row = { url: img.url, sortOrder: Number(img.sortOrder ?? 0) };
+        imagesByMaster.set(img.masterId, [...(imagesByMaster.get(img.masterId) ?? []), row]);
+      }
+
+      const packagingById = new Map(
+        (packagings as Record<string, unknown>[]).map(p => [
+          p.id as number,
+          {
+            volumeMl: p.volumeMl != null ? num(p.volumeMl) : null,
+            weightG: p.weightG != null ? num(p.weightG) : null,
+            desi: p.desi != null ? num(p.desi) : null,
+          },
+        ]),
+      );
+      const seriesById = new Map(
+        (series as Record<string, unknown>[]).map(s => [
+          s.id as number,
+          { vatRate: s.vatRate != null ? num(s.vatRate) : null },
+        ]),
+      );
+
+      // Özellik tanımları kategori başına gruplanır — eşleme yoksa harita boş
+      // kalır ve eski sabit liste devreye girer.
+      const defsByCategory: Record<string, ChannelAttributeDef[]> = {};
+      for (const a of attrDefs as Record<string, unknown>[]) {
+        const key = String(a.categoryId ?? "");
+        (defsByCategory[key] ??= []).push({
+          attributeId: a.attributeId as number,
+          attributeName: (a.attributeName as string | null) ?? null,
+          source: a.source as ChannelAttributeDef["source"],
+          constantValueId: (a.constantValueId as number | null) ?? null,
+          constantText: (a.constantText as string | null) ?? null,
+          isRequired: Number(a.isRequired ?? 1) === 1,
+        });
       }
 
       const wantedSeries = input.seriesIds.length ? new Set(input.seriesIds) : null;
@@ -1657,21 +1960,50 @@ export const katalogRouter = router({
           title: String(l.title ?? ""),
           shortDescription: (l.shortDescription as string | null) ?? null,
           longDescription: (l.longDescription as string | null) ?? null,
-          imageUrls: imagesByListing.get(l.id as number) ?? [],
+          // İlanın kendi görseli yoksa master'ınki devralınır.
+          imageUrls: resolveImages({
+            listingImages: imagesByListing.get(l.id as number) ?? [],
+            masterImages: imagesByMaster.get(l.masterId as number) ?? [],
+            limit: 8,
+          }),
         })),
-        masters: masterRows.map(m => ({
-          id: m.id as number,
-          baseCode: (m.baseCode as string | null) ?? null,
-          internalSku: String(m.internalSku ?? ""),
-          status: m.status as "taslak" | "aktif" | "arsiv",
-          basePrice: num(m.basePrice),
-          discountPercent: num(m.discountPercent),
-          buildableQty: Number(m.buildableQty ?? 0),
-          virtualStockCap: Number(m.virtualStockCap ?? 10),
-          desi: m.desi != null ? num(m.desi) : null,
-          vatRate: m.vatRate != null ? num(m.vatRate) : null,
-        })),
+        masters: masterRows.map(m => {
+          const packaging = packagingById.get(m.packagingId as number) ?? null;
+          const logistics = resolveLogistics({
+            master: {
+              desi: m.desi != null ? num(m.desi) : null,
+              weightG: m.weightG != null ? num(m.weightG) : null,
+            },
+            packaging,
+            series: seriesById.get(m.seriesId as number) ?? null,
+          });
+          return {
+            id: m.id as number,
+            baseCode: (m.baseCode as string | null) ?? null,
+            internalSku: String(m.internalSku ?? ""),
+            status: m.status as "taslak" | "aktif" | "arsiv",
+            basePrice: num(m.basePrice),
+            discountPercent: num(m.discountPercent),
+            buildableQty: Number(m.buildableQty ?? 0),
+            virtualStockCap: Number(m.virtualStockCap ?? 10),
+            desi: logistics.desi,
+            vatRate: logistics.vatRate,
+            seriesId: m.seriesId as number,
+            colorId: m.colorId as number,
+            familyId: m.familyId as number,
+            packagingId: m.packagingId as number,
+            volumeMl: packaging?.volumeMl ?? null,
+          };
+        }),
         settings: cfg.value as never,
+        attributeDefs: defsByCategory,
+        attributeValues: (attrValues as Record<string, unknown>[]).map(v => ({
+          attributeId: v.attributeId as number,
+          dimensionKind: v.dimensionKind as "renk" | "ambalaj" | "form" | "seri",
+          dimensionId: v.dimensionId as number,
+          attributeValueId: (v.attributeValueId as number | null) ?? null,
+          attributeText: (v.attributeText as string | null) ?? null,
+        })),
         includeUnbuildable: input.includeUnbuildable,
       });
 

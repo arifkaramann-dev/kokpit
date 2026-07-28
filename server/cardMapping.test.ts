@@ -17,6 +17,11 @@ const master = (p: Partial<CardMaster> = {}): CardMaster => ({
   virtualStockCap: 10,
   desi: 1,
   vatRate: 20,
+  seriesId: 1,
+  colorId: 12,
+  familyId: 3,
+  packagingId: 7,
+  volumeMl: 100,
   ...p,
 });
 
@@ -126,6 +131,76 @@ describe("mapToTrendyolCards", () => {
   });
 });
 
+describe("mapToTrendyolCards — özellikler master'dan", () => {
+  const defs = {
+    "1234": [
+      {
+        attributeId: 47,
+        attributeName: "Renk",
+        source: "renk" as const,
+        constantValueId: null,
+        constantText: null,
+        isRequired: true,
+      },
+      {
+        attributeId: 70,
+        attributeName: "Hacim",
+        source: "hacim" as const,
+        constantValueId: null,
+        constantText: null,
+        isRequired: true,
+      },
+    ],
+  };
+  const values = [
+    {
+      attributeId: 47,
+      dimensionKind: "renk" as const,
+      dimensionId: 12,
+      attributeValueId: 4521,
+      attributeText: null,
+    },
+    {
+      attributeId: 47,
+      dimensionKind: "renk" as const,
+      dimensionId: 13,
+      attributeValueId: 4600,
+      attributeText: null,
+    },
+  ];
+
+  it("küp eşlemesi varsa sabit listeyi ezer", () => {
+    const { items, problems } = mapToTrendyolCards({
+      ...base,
+      channelListings: [cl()],
+      attributeDefs: defs,
+      attributeValues: values,
+    });
+    expect(problems).toEqual([]);
+    expect(items[0].attributes).toEqual([
+      { attributeId: 47, attributeValueId: 4521 },
+      { attributeId: 70, customAttributeValue: "100 ml" },
+    ]);
+  });
+
+  it("farklı renkteki master farklı özellik değeri alır", () => {
+    const { items } = mapToTrendyolCards({
+      ...base,
+      masters: [master({ colorId: 13 })],
+      channelListings: [cl()],
+      attributeDefs: defs,
+      attributeValues: values,
+    });
+    expect(items[0].attributes).toContainEqual({ attributeId: 47, attributeValueId: 4600 });
+  });
+
+  it("eşleme tanımlı değilse eski sabit liste kullanılır", () => {
+    const { items, problems } = mapToTrendyolCards({ ...base, channelListings: [cl()] });
+    expect(problems).toEqual([]);
+    expect(items[0].attributes).toEqual([{ attributeId: 5, attributeValueId: 9 }]);
+  });
+});
+
 describe("mapToTrendyolCards — eksikler adıyla bildirilir", () => {
   const cases: [string, Parameters<typeof mapToTrendyolCards>[0], string][] = [
     [
@@ -181,6 +256,28 @@ describe("mapToTrendyolCards — eksikler adıyla bildirilir", () => {
       expect(problems[0]).toContain(expected);
     });
   }
+
+  it("küp eşlemesi eksikse kalem adıyla bildirilir — yanlış renk gitmez", () => {
+    const { items, problems } = mapToTrendyolCards({
+      ...base,
+      channelListings: [cl()],
+      attributeDefs: {
+        "1234": [
+          {
+            attributeId: 47,
+            attributeName: "Renk",
+            source: "renk",
+            constantValueId: null,
+            constantText: null,
+            isRequired: true,
+          },
+        ],
+      },
+      attributeValues: [],
+    });
+    expect(items).toHaveLength(0);
+    expect(problems[0]).toContain("Renk");
+  });
 
   it("includeUnbuildable ile üretilemeyen de gönderilir", () => {
     const { items } = mapToTrendyolCards({
