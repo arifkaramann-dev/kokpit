@@ -8,6 +8,7 @@ import Assistant from "@/pages/Assistant";
 import Campaigns from "@/pages/Campaigns";
 import Briefing from "@/pages/Briefing";
 import Catalog from "@/pages/Catalog";
+import ContentBlocks from "@/pages/ContentBlocks";
 import Definitions from "@/pages/Definitions";
 import Cheques from "@/pages/Cheques";
 import Crm from "@/pages/Crm";
@@ -66,6 +67,7 @@ function AdminApp() {
         </Route>
         <Route path={"/brifing"} component={Briefing} />
         <Route path={"/katalog"} component={Catalog} />
+        <Route path={"/icerik"} component={ContentBlocks} />
         <Route path={"/tanimlar"} component={Definitions} />
         <Route path={"/recete"} component={Recipes} />
         <Route path={"/urun-aktar"} component={ProductImport} />

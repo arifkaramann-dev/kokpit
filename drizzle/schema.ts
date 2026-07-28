@@ -1436,3 +1436,47 @@ export const materialReservations = mysqlTable(
 
 export type MaterialReservation = typeof materialReservations.$inferSelect;
 export type InsertMaterialReservation = typeof materialReservations.$inferInsert;
+
+/**
+ * İlan içerik blokları — seri × kullanım alanı başına BİR KEZ üretilir.
+ *
+ * İçerik seriye ve kullanım alanına göre değişir; renge göre değişen tek şey
+ * metinde geçen renk adıdır. Bu yüzden AI varyant başına değil BLOK başına
+ * çağrılır: 9 seri × 7 kullanım alanı = 63 çağrı binlerce ilanı doldurur.
+ *
+ * Eski akış varyant başına çağırıyordu (85 varyant = 85 çağrı) ve gateway
+ * timeout'a giriyordu; "seriden devral" moduna geçilmesinin sebebi buydu.
+ * Blok yaklaşımı o dersi kalıcı hale getirir.
+ *
+ * familyId dolu ise o forma özel blok (airbrush ile spreyin uygulama metni
+ * farklıdır); boş ise serinin tüm formlarına uyar. En özel blok kazanır.
+ */
+export const contentBlocks = mysqlTable(
+  "contentBlocks",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    seriesId: int("seriesId").notNull(),
+    useCaseId: int("useCaseId").notNull(),
+    familyId: int("familyId"),
+    // Metinlerde {{renk}} {{ambalaj}} {{seri}} {{form}} {{kullanim}} kullanılır;
+    // ilan üretilirken o ilanın koordinatıyla doldurulur.
+    shortDescription: mediumtext("shortDescription"),
+    longDescription: mediumtext("longDescription"),
+    applicationText: mediumtext("applicationText"),
+    labelText: text("labelText"),
+    features: text("features"),
+    titlePattern: varchar("titlePattern", { length: 255 }),
+    source: mysqlEnum("source", ["sablon", "ai", "elle"]).notNull().default("sablon"),
+    generatedAt: timestamp("generatedAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  t => [
+    unique("contentBlocks_coord_uq").on(t.companyId, t.seriesId, t.useCaseId, t.familyId),
+    index("contentBlocks_series_idx").on(t.seriesId),
+  ],
+);
+
+export type ContentBlock = typeof contentBlocks.$inferSelect;
+export type InsertContentBlock = typeof contentBlocks.$inferInsert;
