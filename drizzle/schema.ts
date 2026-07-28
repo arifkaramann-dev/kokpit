@@ -1508,3 +1508,103 @@ export const useCaseChannelCategories = mysqlTable(
 );
 
 export type UseCaseChannelCategory = typeof useCaseChannelCategories.$inferSelect;
+
+/**
+ * Master görselleri — ilanlar devralır.
+ *
+ * Pazaryeri ürün kartı görselsiz açılamaz. Görseli ilan başına yüklemek
+ * gereksiz tekrar olurdu: aynı fiziksel şişenin fotoğrafı "3D Baskı Boyası"
+ * ilanında da "Rapala Boyası" ilanında da aynıdır. Master'a bir kez eklenir,
+ * ilan kendi görseli yoksa buradan devralır.
+ *
+ * URL saklanır, base64 DEĞİL — pazaryerine link gönderilir ve veritabanı
+ * görsel deposuna dönüşmez.
+ */
+export const masterImages = mysqlTable(
+  "masterImages",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    masterId: int("masterId").notNull(),
+    url: varchar("url", { length: 1024 }).notNull(),
+    role: varchar("role", { length: 32 }),
+    sortOrder: int("sortOrder").notNull().default(0),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  t => [index("masterImages_master_idx").on(t.masterId)],
+);
+
+export type MasterImage = typeof masterImages.$inferSelect;
+
+/**
+ * Pazaryeri kategori özelliği tanımı.
+ *
+ * Trendyol/HB kategori başına zorunlu özellik ister (Renk, Hacim, Ürün Tipi…).
+ * Bunlar bugün ayarlarda kategori başına SABİT bir liste olarak duruyordu;
+ * yani her ürüne aynı renk gidiyordu.
+ *
+ * Oysa master'ın küp koordinatı zaten bu bilgidir: renk ekseni = Renk
+ * özelliği, ambalaj hacmi = Hacim özelliği, form = Ürün Tipi. `source` hangi
+ * eksenden besleneceğini söyler; böylece özellik ürün başına DOĞRU değerle
+ * gider ve elle girilmez.
+ */
+export const channelAttributes = mysqlTable(
+  "channelAttributes",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    channelId: int("channelId").notNull(),
+    categoryId: varchar("categoryId", { length: 64 }).notNull(),
+    attributeId: int("attributeId").notNull(),
+    attributeName: varchar("attributeName", { length: 160 }),
+    // Hangi eksenden beslenecek. "sabit" tüm ürünlerde aynı değeri gönderir.
+    source: mysqlEnum("source", ["renk", "ambalaj", "form", "seri", "hacim", "sabit"])
+      .notNull()
+      .default("sabit"),
+    /** source="sabit" ise gönderilecek değer kimliği. */
+    constantValueId: int("constantValueId"),
+    /** Değer kimliği yerine serbest metin kabul eden özellikler için. */
+    constantText: varchar("constantText", { length: 255 }),
+    isRequired: tinyint("isRequired").notNull().default(1),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  t => [
+    unique("channelAttributes_uq").on(t.channelId, t.categoryId, t.attributeId),
+    index("channelAttributes_cat_idx").on(t.channelId, t.categoryId),
+  ],
+);
+
+export type ChannelAttribute = typeof channelAttributes.$inferSelect;
+
+/**
+ * Boyut değeri → pazaryeri özellik değeri eşlemesi.
+ *
+ * "Candy Red" bizde renk kimliği 12; Trendyol'da Renk özelliğinin "Kırmızı"
+ * değeri 4521. Bu tablo o köprüyü kurar. Eşleme yoksa özellik gönderilemez
+ * ve kalem adıyla bildirilir — yanlış değer göndermektense atlamak doğru.
+ */
+export const channelAttributeValues = mysqlTable(
+  "channelAttributeValues",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    channelId: int("channelId").notNull(),
+    attributeId: int("attributeId").notNull(),
+    dimensionKind: mysqlEnum("dimensionKind", ["renk", "ambalaj", "form", "seri"]).notNull(),
+    dimensionId: int("dimensionId").notNull(),
+    attributeValueId: int("attributeValueId"),
+    attributeText: varchar("attributeText", { length: 255 }),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  t => [
+    unique("channelAttributeValues_uq").on(
+      t.channelId,
+      t.attributeId,
+      t.dimensionKind,
+      t.dimensionId,
+    ),
+  ],
+);
+
+export type ChannelAttributeValue = typeof channelAttributeValues.$inferSelect;

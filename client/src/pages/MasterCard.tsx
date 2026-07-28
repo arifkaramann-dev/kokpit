@@ -101,6 +101,7 @@ export default function MasterCard() {
           <TabsTrigger value="kunye">Künye</TabsTrigger>
           <TabsTrigger value="recete">Reçete</TabsTrigger>
           <TabsTrigger value="kapasite">Kapasite</TabsTrigger>
+          <TabsTrigger value="gorsel">Görsel</TabsTrigger>
           <TabsTrigger value="ilanlar">İlanlar</TabsTrigger>
           <TabsTrigger value="fiyat">Fiyat</TabsTrigger>
         </TabsList>
@@ -125,6 +126,31 @@ export default function MasterCard() {
             <Field label="Ürün kodu" value={master.internalSku} mono />
             <Field label="GTIN" value={master.gtin} mono />
           </Card>
+
+          {/* Kargo/vergi alanları pazaryerine buradan gider; boşsa ambalajdan
+              ya da hacimden türetilir — hangisi olduğu görünür kalır. */}
+          <Card className="mt-3 grid grid-cols-2 gap-4 p-5 md:grid-cols-3">
+            <Field
+              label="Desi"
+              value={`${data.logistics.desi}`}
+              hint={SOURCE_HINT[data.logistics.desiSource]}
+            />
+            <Field
+              label="Ağırlık"
+              value={`${data.logistics.weightG} g`}
+              hint={SOURCE_HINT[data.logistics.weightSource]}
+            />
+            <Field
+              label="KDV"
+              value={`%${data.logistics.vatRate}`}
+              hint={data.logistics.vatSource === "seri" ? "seriden" : "varsayılan"}
+            />
+          </Card>
+        </TabsContent>
+
+        {/* Görsel — ilanlar buradan devralır */}
+        <TabsContent value="gorsel" className="space-y-3 pt-3">
+          <MasterImages masterId={masterId} images={data.images} />
         </TabsContent>
 
         {/* Reçete — içerik */}
@@ -502,11 +528,13 @@ function Field({
   value,
   mono,
   hex,
+  hint,
 }: {
   label: string;
   value: string | null | undefined;
   mono?: boolean;
   hex?: string | null;
+  hint?: string;
 }) {
   return (
     <div className="space-y-0.5">
@@ -517,6 +545,100 @@ function Field({
         )}
         {value || <span className="text-muted-foreground">—</span>}
       </p>
+      {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
     </div>
+  );
+}
+
+/** Lojistik değerinin kaynağı — "neden bu değer?" sorusunun cevabı. */
+const SOURCE_HINT: Record<string, string> = {
+  master: "ürüne özel girilmiş",
+  ambalaj: "ambalajdan",
+  hacimden: "hacimden tahmin",
+};
+
+/**
+ * Master görselleri. İlanın kendi görseli yoksa pazaryerine bunlar gider —
+ * aynı şişenin fotoğrafını her ilana ayrı yüklemek 6 kat iş demekti.
+ */
+function MasterImages({
+  masterId,
+  images,
+}: {
+  masterId: number;
+  images: { id: number; url: string; role: string | null; sortOrder: number }[];
+}) {
+  const utils = trpc.useUtils();
+  const [url, setUrl] = useState("");
+
+  const add = trpc.katalog.addMasterImage.useMutation({
+    onSuccess: () => {
+      setUrl("");
+      utils.katalog.masterCard.invalidate();
+      toast.success("Görsel eklendi");
+    },
+    onError: e => toast.error(e.message),
+  });
+  const remove = trpc.katalog.deleteMasterImage.useMutation({
+    onSuccess: () => {
+      utils.katalog.masterCard.invalidate();
+      toast.success("Görsel kaldırıldı");
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  const sorted = [...images].sort((a, b) => a.sortOrder - b.sortOrder);
+
+  return (
+    <>
+      <Card className="p-4 text-sm text-muted-foreground">
+        Pazaryeri kartı görselsiz açılamaz. Buraya eklenen görselleri bu ürünün{" "}
+        <strong className="text-foreground">tüm ilanları devralır</strong>; bir ilana özel görsel
+        gerekirse ilan kendi görselini kullanır. İlk görsel kapak olur.
+      </Card>
+
+      <Card className="flex flex-wrap items-end gap-2 p-4">
+        <div className="min-w-64 flex-1 space-y-1.5">
+          <Label>Görsel adresi</Label>
+          <Input
+            value={url}
+            onChange={e => setUrl(e.target.value)}
+            placeholder="https://…/urun.jpg"
+            className="text-xs"
+          />
+        </div>
+        <Button
+          disabled={!url.trim() || add.isPending}
+          onClick={() => add.mutate({ masterId, url: url.trim() })}
+        >
+          Ekle
+        </Button>
+      </Card>
+
+      {sorted.length === 0 ? (
+        <Card className="p-6 text-center text-sm text-muted-foreground">
+          Görsel yok — bu ürünün kartı pazaryerinde açılamaz.
+        </Card>
+      ) : (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          {sorted.map((img, i) => (
+            <Card key={img.id} className="space-y-2 overflow-hidden p-2">
+              <img
+                src={img.url}
+                alt=""
+                className="h-32 w-full rounded bg-muted object-contain"
+                loading="lazy"
+              />
+              <div className="flex items-center justify-between gap-2">
+                <Badge variant={i === 0 ? "default" : "outline"}>{i === 0 ? "Kapak" : i + 1}</Badge>
+                <Button size="sm" variant="ghost" onClick={() => remove.mutate({ id: img.id })}>
+                  Kaldır
+                </Button>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </>
   );
 }
