@@ -21,6 +21,7 @@ import {
 import { buildChannelBarcode, buildChannelSku } from "../catalogCodes";
 import { cubeKey, planListings, planMasters, type Readiness } from "../catalogPlan";
 import { planFormulaBindings, type MatchableFormula } from "../formulaMatch";
+import { planProduction, resolveOrderLines } from "../productionPlan";
 import { GENERIC_USE_CASE_CODE, seedCatalogDimensions } from "../seedCatalog";
 
 const num = (v: unknown): number => {
@@ -118,6 +119,78 @@ export const katalogRouter = router({
    * hammadde kayıtları). Idempotent — tekrar çalıştırmak zarar vermez.
    */
   seedDimensions: protectedProcedure.mutation(() => seedCatalogDimensions()),
+
+  /**
+   * Boyut ekleme/düzenleme — Tanımlar sayfası. Renk, ambalaj, form ve kullanım
+   * alanı artık TEK kaynak; eskiden aynı sözlük hem Şablonlar'da hem burada
+   * duruyor ve senkron olmuyordu.
+   */
+  saveDimension: protectedProcedure
+    .input(
+      z.object({
+        kind: z.enum(["colors", "families", "packagings", "useCases"]),
+        id: z.number().nullable().optional(),
+        code: z.string().min(1),
+        name: z.string().min(1),
+        // Renk
+        hex: z.string().nullable().optional(),
+        finish: z.enum(["duz", "metalik", "sedef", "candy", "neon", "seffaf"]).optional(),
+        seriesId: z.number().nullable().optional(),
+        // Ambalaj
+        volumeMl: z.number().min(0).optional(),
+        materialId: z.number().nullable().optional(),
+        // Form / ambalaj SKU eki
+        skuSegment: z.string().nullable().optional(),
+        // Kullanım alanı
+        titlePattern: z.string().nullable().optional(),
+        sortOrder: z.number().optional(),
+        isActive: z.boolean().optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const { kind, id, ...rest } = input;
+      const data: Record<string, unknown> = { code: rest.code.trim(), name: rest.name.trim() };
+      if (rest.sortOrder !== undefined) data.sortOrder = rest.sortOrder;
+      if (rest.isActive !== undefined) data.isActive = rest.isActive ? 1 : 0;
+      if (kind === "colors") {
+        data.hex = rest.hex ?? null;
+        if (rest.finish) data.finish = rest.finish;
+        data.seriesId = rest.seriesId ?? null;
+      }
+      if (kind === "packagings") {
+        if (rest.volumeMl !== undefined) data.volumeMl = String(rest.volumeMl);
+        data.materialId = rest.materialId ?? null;
+        data.skuSegment = rest.skuSegment ?? null;
+      }
+      if (kind === "families") data.skuSegment = rest.skuSegment ?? null;
+      if (kind === "useCases") data.titlePattern = rest.titlePattern ?? null;
+
+      if (id) {
+        await db.updateDimension(kind, id, data);
+        return { id };
+      }
+      return { id: await db.createDimension(kind, data) };
+    }),
+
+  /** Kullanımdaki boyut silinemez — küp koordinatını öksüz bırakırdı. */
+  deleteDimension: protectedProcedure
+    .input(
+      z.object({
+        kind: z.enum(["colors", "families", "packagings", "useCases"]),
+        id: z.number(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const used = await db.countDimensionUsage(input.kind, input.id);
+      if (used > 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Bu tanım ${used} kayıtta kullanılıyor — önce onları değiştirin. Silmek yerine "pasif" yapabilirsiniz.`,
+        });
+      }
+      await db.deleteDimension(input.kind, input.id);
+      return { ok: true };
+    }),
 
   seriesCompatibility: protectedProcedure
     .input(
@@ -716,6 +789,134 @@ export const katalogRouter = router({
         bound: plan.bindings.length,
         willBind: plan.bindings.length,
         unmatched: plan.unmatched.length,
+      };
+    }),
+
+  /* ---- Üretim brifingi -------------------------------------------------- */
+
+  /**
+   * "Bu siparişler için ne üreteceğim, neyim eksik?"
+   *
+   * Bugün sipariş gelince sistem hiçbir şey söylemiyor; içerik dökümü yalnız
+   * ad ve adet basıyor. Bu uç sipariş satırlarını master'a bağlar, çok
+   * seviyeli reçeteden malzeme ihtiyacını patlatır ve eksikleri listeler.
+   */
+  briefing: protectedProcedure
+    .input(
+      z.object({
+        // Boş ise açık siparişler (yeni + üretimde) alınır.
+        orderIds: z.array(z.number()).default([]),
+      }),
+    )
+    .query(async ({ input }) => {
+      const [orders, listings, channelListings, colors, packagings, series, families] =
+        await Promise.all([
+          db.listOrders(),
+          db.listListings(),
+          db.listChannelListings(),
+          db.listColors(),
+          db.listPackagings(),
+          db.listProductSeries(),
+          db.listProductFamilies(),
+        ]);
+
+      const openOrders = (orders as { id: number; orderNo: string; status: string; customerName: string }[]).filter(
+        o => (input.orderIds.length ? input.orderIds.includes(o.id) : o.status === "new" || o.status === "production"),
+      );
+      if (openOrders.length === 0) {
+        return {
+          orders: [],
+          lines: [],
+          demand: [],
+          plan: { needs: [], shortages: [], steps: [], missingFormula: [], canProduce: true },
+          unmatched: [],
+        };
+      }
+
+      const items = await db.listOrderItemsBulk(openOrders.map(o => o.id));
+
+      // Çözümleme için ilan başlıkları + pazaryeri kodları.
+      const refsByListing = new Map<number, string[]>();
+      for (const c of channelListings as { listingId: number; channelSku: string; channelBarcode: string }[]) {
+        refsByListing.set(c.listingId, [
+          ...(refsByListing.get(c.listingId) ?? []),
+          c.channelSku,
+          c.channelBarcode,
+        ]);
+      }
+      const resolvable = (listings as { id: number; masterId: number; title: string }[]).map(l => ({
+        masterId: l.masterId,
+        listingId: l.id,
+        title: l.title,
+        channelRefs: refsByListing.get(l.id) ?? [],
+      }));
+
+      const resolved = resolveOrderLines(
+        (items as { id: number; orderId: number; productName: string; quantity: string }[]).map(i => ({
+          id: i.id,
+          orderId: i.orderId,
+          productName: i.productName,
+          quantity: num(i.quantity),
+        })),
+        resolvable,
+      );
+
+      // Master başına toplam talep.
+      const demandMap = new Map<number, number>();
+      for (const r of resolved) {
+        if (r.masterId == null) continue;
+        demandMap.set(r.masterId, (demandMap.get(r.masterId) ?? 0) + r.line.quantity);
+      }
+
+      const data = await loadCapacityInputs();
+      const plan = planProduction({
+        demand: Array.from(demandMap.entries()).map(([masterId, qty]) => ({ masterId, qty })),
+        masters: data.masters.map(m => ({ ...m, formulaScale: num(m.formulaScale) })),
+        formulas: data.formulas,
+        packagings: data.packagings,
+        materials: data.materials,
+      });
+
+      // Üretim listesi: renk ve ambalaj bilgisiyle — bugünkü içerik dökümünde
+      // renk seçeneği bile yoktu, oysa boyada üretilecek şey tam olarak o.
+      const masterById = new Map(data.rawMasters.map(m => [m.id as number, m]));
+      const colorById = new Map((colors as { id: number; name: string; hex: string | null }[]).map(c => [c.id, c]));
+      const packById = new Map((packagings as { id: number; name: string }[]).map(p => [p.id, p]));
+      const seriesById = new Map((series as { id: number; name: string }[]).map(s => [s.id, s]));
+      const familyById = new Map((families as { id: number; name: string }[]).map(f => [f.id, f]));
+
+      const demand = Array.from(demandMap.entries()).map(([masterId, qty]) => {
+        const m = masterById.get(masterId);
+        const color = m ? colorById.get(m.colorId as number) : undefined;
+        return {
+          masterId,
+          qty,
+          internalSku: (m?.internalSku as string) ?? "",
+          series: m ? (seriesById.get(m.seriesId as number)?.name ?? null) : null,
+          family: m ? (familyById.get(m.familyId as number)?.name ?? null) : null,
+          packaging: m ? (packById.get(m.packagingId as number)?.name ?? null) : null,
+          colorName: color?.name ?? null,
+          colorHex: color?.hex ?? null,
+          readiness: (m?.readiness as string) ?? "konsantre",
+          buildable: Number(m?.buildableQty ?? 0),
+        };
+      });
+
+      return {
+        orders: openOrders.map(o => ({ id: o.id, orderNo: o.orderNo, customerName: o.customerName, status: o.status })),
+        lines: resolved.map(r => ({
+          id: r.line.id,
+          orderId: r.line.orderId,
+          productName: r.line.productName,
+          quantity: r.line.quantity,
+          masterId: r.masterId,
+          via: r.via,
+        })),
+        demand: demand.sort((a, b) => b.qty - a.qty),
+        plan,
+        unmatched: resolved
+          .filter(r => r.masterId == null)
+          .map(r => ({ id: r.line.id, orderId: r.line.orderId, productName: r.line.productName, quantity: r.line.quantity })),
       };
     }),
 

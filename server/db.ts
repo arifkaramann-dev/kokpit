@@ -2688,3 +2688,61 @@ export async function consumeMaterial(materialId: number, qty: number) {
     })
     .where(eq(materials.id, materialId));
 }
+
+/* ---- Boyut düzenleme (Tanımlar sayfası) --------------------------------- */
+
+type DimensionTable = "colors" | "families" | "packagings" | "useCases";
+
+const dimensionTables = {
+  colors,
+  families: productFamilies,
+  packagings,
+  useCases,
+} as const;
+
+export async function updateDimension(
+  kind: DimensionTable,
+  id: number,
+  data: Record<string, unknown>,
+) {
+  const db = await requireDb();
+  const table = dimensionTables[kind];
+  await db.update(table as never).set(data as never).where(eq((table as never as { id: never }).id, id));
+}
+
+export async function createDimension(kind: DimensionTable, data: Record<string, unknown>) {
+  const db = await requireDb();
+  const [r] = await db.insert(dimensionTables[kind] as never).values(data as never);
+  return Number(r.insertId);
+}
+
+/**
+ * Boyut silme — yalnız KULLANILMIYORSA. Master'a bağlı bir rengi silmek
+ * küp koordinatını öksüz bırakır; sessizce bozulmasındansa engellenmeli.
+ */
+export async function countDimensionUsage(kind: DimensionTable, id: number): Promise<number> {
+  const db = await requireDb();
+  const col =
+    kind === "colors"
+      ? masterProducts.colorId
+      : kind === "families"
+        ? masterProducts.familyId
+        : kind === "packagings"
+          ? masterProducts.packagingId
+          : null;
+  if (col === null) {
+    const [row] = await db
+      .select({ n: sql<number>`COUNT(*)` })
+      .from(listings)
+      .where(eq(listings.useCaseId, id));
+    return Number(row?.n ?? 0);
+  }
+  const [row] = await db.select({ n: sql<number>`COUNT(*)` }).from(masterProducts).where(eq(col, id));
+  return Number(row?.n ?? 0);
+}
+
+export async function deleteDimension(kind: DimensionTable, id: number) {
+  const db = await requireDb();
+  const table = dimensionTables[kind];
+  await db.delete(table as never).where(eq((table as never as { id: never }).id, id));
+}

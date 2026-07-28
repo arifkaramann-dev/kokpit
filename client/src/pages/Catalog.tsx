@@ -113,7 +113,7 @@ export default function Catalog() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Katalog (v3)</h1>
+        <h1 className="text-2xl font-bold tracking-tight">Ürünler</h1>
         <p className="text-sm text-muted-foreground">
           Master ürün = fiziksel gerçeklik (stok, reçete, kapasite). İlan = aynı ürünün farklı
           pazarlama açısı. Tek şişe, çok ilan — stok bölünmez.

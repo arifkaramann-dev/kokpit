@@ -69,18 +69,38 @@ import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import LoginForm from "./LoginForm";
 
 const menuGroups = [
+  // Menü kullanım SIKLIĞINA göre dizilir. Sipariş→üret→kargola döngüsü günde
+  // onlarca kez açılır; katalog ve tanımlar haftada/ayda bir. Eskiden hepsi
+  // eşit ağırlıktaydı ve karmaşa hissinin büyük kısmı bundan kaynaklanıyordu.
   {
-    label: "Genel",
+    label: "Günlük",
     items: [
       { icon: LayoutDashboard, label: "Kokpit", path: "/" },
+      { icon: ClipboardList, label: "Sipariş Panosu", path: "/siparisler" },
+      { icon: Factory, label: "Üretim Brifingi", path: "/brifing" },
       { icon: Bot, label: "Asistan", path: "/asistan" },
       { icon: ListChecks, label: "Görevler & Eksikler", path: "/gorevler" },
     ],
   },
   {
+    label: "Ürün",
+    items: [
+      { icon: Package, label: "Ürünler", path: "/katalog" },
+      { icon: FlaskConical, label: "Ürün Geliştirme", path: "/gelistirme" },
+      { icon: BadgePercent, label: "Fiyat & Kâr", path: "/fiyat" },
+    ],
+  },
+  {
+    label: "Üretim Merkezi",
+    items: [
+      { icon: Warehouse, label: "Hammadde & Stok", path: "/stok" },
+      { icon: Beaker, label: "Reçeteler", path: "/recete" },
+      { icon: Factory, label: "Üretim Kayıtları", path: "/uretim" },
+    ],
+  },
+  {
     label: "Satış & Müşteri",
     items: [
-      { icon: ClipboardList, label: "Sipariş Panosu", path: "/siparisler" },
       { icon: Target, label: "Satış Fırsatları", path: "/firsatlar" },
       { icon: FileText, label: "Teklifler", path: "/teklifler" },
       { icon: Contact, label: "Müşteriler", path: "/musteriler" },
@@ -95,41 +115,21 @@ const menuGroups = [
       { icon: TrendingDown, label: "Giderler", path: "/giderler" },
       { icon: Wallet, label: "Kasa & Banka", path: "/kasa" },
       { icon: Scale, label: "Cari Hesaplar", path: "/cari" },
+      { icon: ScrollText, label: "Çek & Senet", path: "/cek-senet" },
+      { icon: Landmark, label: "Banka Mutabakatı", path: "/mutabakat" },
     ],
   },
   {
-    label: "Ürün & Üretim",
-    items: [
-      { icon: Package, label: "Ürünler & Türevler", path: "/urunler" },
-      { icon: Layers, label: "Katalog (v3)", path: "/katalog" },
-      { icon: Beaker, label: "Reçete Defteri (v3)", path: "/recete" },
-      { icon: BadgePercent, label: "Fiyat & Kâr Motoru", path: "/fiyat" },
-      { icon: Factory, label: "Üretim", path: "/uretim" },
-      { icon: Warehouse, label: "Stok & Hammadde", path: "/stok" },
-      { icon: Beaker, label: "Formül Defteri", path: "/formuller" },
-      { icon: FlaskConical, label: "Ürün Geliştirme", path: "/gelistirme" },
-    ],
-  },
-  {
-    label: "Analiz & Ayarlar",
+    label: "Analiz & Tanımlar",
     items: [
       { icon: BarChart3, label: "Satış Analizi", path: "/analiz" },
       { icon: Target, label: "Strateji & Rapor", path: "/strateji" },
-      { icon: Settings2, label: "Ayarlar", path: "/ayarlar" },
-    ],
-  },
-  // Az kullanılan / ileri araçlar — ana grupları sadeleştirmek için altta toplandı
-  // (hepsi ⌘K komut paletinde de aranıp açılabilir). Kullanım arttıkça yukarı taşınır.
-  {
-    label: "Araçlar & Diğer",
-    items: [
+      { icon: LibraryBig, label: "Tanımlar", path: "/tanimlar" },
       { icon: Sparkles, label: "AI Pazarlama", path: "/pazarlama" },
       { icon: CalendarDays, label: "Kampanya Takvimi", path: "/kampanyalar" },
       { icon: Truck, label: "Tedarikçiler", path: "/tedarikciler" },
-      { icon: LibraryBig, label: "Şablonlar & Seriler", path: "/sablonlar" },
       { icon: ArrowLeftRight, label: "İçe / Dışa Aktar", path: "/urun-aktar" },
-      { icon: ScrollText, label: "Çek & Senet", path: "/cek-senet" },
-      { icon: Landmark, label: "Banka Mutabakatı", path: "/mutabakat" },
+      { icon: Settings2, label: "Ayarlar", path: "/ayarlar" },
     ],
   },
 ];
