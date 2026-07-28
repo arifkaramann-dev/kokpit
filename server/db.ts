@@ -66,6 +66,7 @@ import {
   masterProducts,
   listings,
   listingImages,
+  materialReservations,
   salesChannels,
   channelListings,
   InsertColor,
@@ -2751,4 +2752,53 @@ export async function deleteDimension(kind: DimensionTable, id: number) {
 export async function listListingImages() {
   const db = await requireDb();
   return db.select().from(listingImages);
+}
+
+/* ---- Hammadde rezervasyon defteri --------------------------------------- */
+
+export async function listOrderReservations(orderId: number) {
+  const db = await requireDb();
+  return db
+    .select()
+    .from(materialReservations)
+    .where(and(eq(materialReservations.orderId, orderId), eq(materialReservations.state, "rezerve")));
+}
+
+export async function hasActiveReservation(orderId: number): Promise<boolean> {
+  const db = await requireDb();
+  const [row] = await db
+    .select({ n: sql<number>`COUNT(*)` })
+    .from(materialReservations)
+    .where(and(eq(materialReservations.orderId, orderId), eq(materialReservations.state, "rezerve")));
+  return Number(row?.n ?? 0) > 0;
+}
+
+export async function recordReservation(orderId: number, materialId: number, qty: number) {
+  const db = await requireDb();
+  await db.insert(materialReservations).values({ orderId, materialId, qty: String(qty) });
+}
+
+/**
+ * Siparişin açık rezervlerini kapatır ve toplam sayaçları düzeltir.
+ *
+ * `consume` = üretim yapıldı: rezerv düşer VE gerçek stok düşer.
+ * `release` = iptal/iade: yalnız rezerv düşer, stok yerinde kalır.
+ *
+ * Sayaç (materials.reservedQty) satırlardan türetilir; ikisi ayrışmasın diye
+ * kapatma ve sayaç düşümü aynı yerde yapılır.
+ */
+export async function closeOrderReservations(orderId: number, mode: "consume" | "release") {
+  const rows = await listOrderReservations(orderId);
+  if (rows.length === 0) return 0;
+  const db = await requireDb();
+  for (const r of rows) {
+    const qty = parseFloat(String(r.qty)) || 0;
+    if (mode === "consume") await consumeMaterial(r.materialId, qty);
+    else await releaseMaterial(r.materialId, qty);
+  }
+  await db
+    .update(materialReservations)
+    .set({ state: mode === "consume" ? "tuketildi" : "iptal" })
+    .where(and(eq(materialReservations.orderId, orderId), eq(materialReservations.state, "rezerve")));
+  return rows.length;
 }

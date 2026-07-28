@@ -1250,6 +1250,10 @@ export const masterProducts = mysqlTable(
     weightG: decimal("weightG", { precision: 10, scale: 2 }),
     desi: decimal("desi", { precision: 10, scale: 2 }),
     avgCost: decimal("avgCost", { precision: 12, scale: 4 }).notNull().default("0"),
+    // Taban (web) satış fiyatı. Kanal yayınında fiyat girilmezse bu kullanılır;
+    // böylece her kanala ayrı fiyat girmek zorunda kalınmaz.
+    basePrice: decimal("basePrice", { precision: 12, scale: 2 }).notNull().default("0"),
+    discountPercent: decimal("discountPercent", { precision: 5, scale: 2 }).notNull().default("0"),
 
     status: mysqlEnum("status", ["taslak", "aktif", "arsiv"]).notNull().default("taslak"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -1401,3 +1405,34 @@ export const channelListings = mysqlTable(
 
 export type ChannelListing = typeof channelListings.$inferSelect;
 export type InsertChannelListing = typeof channelListings.$inferInsert;
+
+/**
+ * Hammadde rezervasyon defteri.
+ *
+ * Sipariş ile üretim arasındaki günlerde hammadde "boşta" görünmemeli; yoksa
+ * aynı 500 gramlık pigment arka arkaya on siparişe söz verilir. materials
+ * .reservedQty toplam sayacı hızlı okuma içindir — GERÇEK kayıt burasıdır:
+ * iptal geldiğinde tam olarak neyin geri açılacağı ancak satır bazında bilinir.
+ */
+export const materialReservations = mysqlTable(
+  "materialReservations",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    orderId: int("orderId").notNull(),
+    materialId: int("materialId").notNull(),
+    qty: decimal("qty", { precision: 12, scale: 3 }).notNull(),
+    // rezerve = stok ayrıldı · tuketildi = üretim yapıldı, stoktan düştü
+    // iptal = sipariş iptal/iade, rezerv geri açıldı
+    state: mysqlEnum("state", ["rezerve", "tuketildi", "iptal"]).notNull().default("rezerve"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  t => [
+    index("materialReservations_order_idx").on(t.orderId, t.state),
+    index("materialReservations_material_idx").on(t.materialId, t.state),
+  ],
+);
+
+export type MaterialReservation = typeof materialReservations.$inferSelect;
+export type InsertMaterialReservation = typeof materialReservations.$inferInsert;

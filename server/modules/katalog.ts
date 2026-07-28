@@ -854,8 +854,9 @@ export const katalogRouter = router({
       status: c.status as "taslak" | "canli" | "durduruldu",
     }));
 
-    // Fiyat: kanal yayınlarındaki en yüksek fiyat (taban referansı).
+    // Fiyat: master'ın taban fiyatı; kanalda özel fiyat varsa en yükseği.
     const priceByMaster = new Map<number, number>();
+    for (const m of data.rawMasters) priceByMaster.set(m.id as number, num(m.basePrice));
     for (const c of channelListings as { masterId: number; price: string }[]) {
       const p = num(c.price);
       if (p > (priceByMaster.get(c.masterId) ?? 0)) priceByMaster.set(c.masterId, p);
@@ -994,6 +995,60 @@ export const katalogRouter = router({
         openUseCases: (useCases as { id: number; name: string }[]).filter(u => !usedUseCases.has(u.id)),
         channels,
       };
+    }),
+
+  /**
+   * Taban (web) fiyatı. Kanal yayınında fiyat girilmezse bu kullanılır —
+   * her kanala ayrı fiyat girmek zorunda kalınmasın.
+   */
+  setBasePrice: protectedProcedure
+    .input(
+      z.object({
+        masterId: z.number(),
+        basePrice: z.number().min(0).max(1000000),
+        discountPercent: z.number().min(0).max(100).default(0),
+        /** true: fiyatı olmayan kanal yayınlarına da yaz. */
+        applyToChannels: z.boolean().default(false),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      await db.updateMasterProduct(input.masterId, {
+        basePrice: String(input.basePrice),
+        discountPercent: String(input.discountPercent),
+      } as never);
+
+      let updated = 0;
+      if (input.applyToChannels) {
+        const rows = (await db.listChannelListings()) as { id: number; masterId: number; price: string }[];
+        for (const c of rows.filter(c => c.masterId === input.masterId && num(c.price) <= 0)) {
+          // Fiyat değişimi pazaryerine gönderilmeli — kirli işaretlenir.
+          await db.updateChannelListing(c.id, {
+            price: String(input.basePrice),
+            discountPercent: String(input.discountPercent),
+            syncState: "kirli",
+          } as never);
+          updated++;
+        }
+      }
+      return { updated };
+    }),
+
+  /** Kanala özel fiyat — taban fiyattan farklıysa. */
+  setChannelPrice: protectedProcedure
+    .input(
+      z.object({
+        channelListingId: z.number(),
+        price: z.number().min(0).max(1000000),
+        discountPercent: z.number().min(0).max(100).default(0),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      await db.updateChannelListing(input.channelListingId, {
+        price: String(input.price),
+        discountPercent: String(input.discountPercent),
+        syncState: "kirli",
+      } as never);
+      return { ok: true };
     }),
 
   /* ---- Üretim brifingi -------------------------------------------------- */

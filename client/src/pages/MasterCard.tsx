@@ -13,7 +13,11 @@ import {
   Tag,
   TriangleAlert,
 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { useRoute, useLocation } from "wouter";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 /**
  * Ürün kartı — bir master hakkındaki her şey tek yerde.
@@ -29,6 +33,7 @@ import { useRoute, useLocation } from "wouter";
 export default function MasterCard() {
   const [, params] = useRoute("/urun/:id");
   const [, setLocation] = useLocation();
+  const utils = trpc.useUtils();
   const masterId = Number(params?.id ?? 0);
   const { data, isLoading } = trpc.katalog.masterCard.useQuery(
     { masterId },
@@ -276,6 +281,16 @@ export default function MasterCard() {
 
         {/* Fiyat — para */}
         <TabsContent value="fiyat" className="space-y-3 pt-3">
+          <PriceEditor
+            masterId={masterId}
+            basePrice={parseFloat(String(master.basePrice)) || 0}
+            discountPercent={parseFloat(String(master.discountPercent)) || 0}
+            cost={cost?.totalCost ?? 0}
+            onSaved={() => {
+              utils.katalog.masterCard.invalidate({ masterId });
+              utils.katalog.trackList.invalidate();
+            }}
+          />
           <Card className="space-y-3 p-5">
             <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
               <Field label="Hammadde" value={cost ? formatTL(cost.materialCost) : "—"} />
@@ -340,6 +355,117 @@ export default function MasterCard() {
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+/**
+ * Taban fiyat girişi. Kanal fiyatı girilmemişse bu kullanılır — her kanala
+ * ayrı fiyat girmek zorunda kalınmasın diye. Maliyet biliniyorsa kâr ve marj
+ * yazarken canlı gösterilir; fiyatı maliyetin altına yazmak kolayca fark edilir.
+ */
+function PriceEditor({
+  masterId,
+  basePrice,
+  discountPercent,
+  cost,
+  onSaved,
+}: {
+  masterId: number;
+  basePrice: number;
+  discountPercent: number;
+  cost: number;
+  onSaved: () => void;
+}) {
+  const [price, setPrice] = useState(String(basePrice || ""));
+  const [discount, setDiscount] = useState(String(discountPercent || ""));
+  const [applyToChannels, setApplyToChannels] = useState(true);
+
+  useEffect(() => {
+    setPrice(String(basePrice || ""));
+    setDiscount(String(discountPercent || ""));
+  }, [basePrice, discountPercent]);
+
+  const save = trpc.katalog.setBasePrice.useMutation({
+    onSuccess: r => {
+      toast.success(
+        r.updated > 0 ? `Fiyat kaydedildi — ${r.updated} kanal yayını güncellendi` : "Fiyat kaydedildi",
+      );
+      onSaved();
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  const p = parseFloat(price.replace(",", ".")) || 0;
+  const d = parseFloat(discount.replace(",", ".")) || 0;
+  const net = p * (1 - d / 100);
+  const kar = net - cost;
+
+  return (
+    <Card className="space-y-3 p-5">
+      <p className="font-semibold">Taban Fiyat</p>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="space-y-1.5">
+          <Label>Satış fiyatı (₺)</Label>
+          <Input
+            type="number"
+            min="0"
+            step="0.01"
+            value={price}
+            onChange={e => setPrice(e.target.value)}
+            placeholder="0,00"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label>İndirim %</Label>
+          <Input
+            type="number"
+            min="0"
+            max="100"
+            step="0.1"
+            value={discount}
+            onChange={e => setDiscount(e.target.value)}
+            placeholder="0"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-muted-foreground">Net fiyat</Label>
+          <p className="pt-2 font-semibold tabular-nums">{formatTL(net)}</p>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-muted-foreground">Birim kâr</Label>
+          <p
+            className={`pt-2 font-semibold tabular-nums ${
+              cost <= 0 ? "" : kar > 0 ? "text-emerald-600" : "text-rose-600"
+            }`}
+          >
+            {cost > 0 ? `${formatTL(kar)} (%${net > 0 ? ((kar / net) * 100).toFixed(1) : "0"})` : "maliyet yok"}
+          </p>
+        </div>
+      </div>
+      {cost > 0 && p > 0 && kar <= 0 && (
+        <p className="flex items-center gap-1.5 text-sm text-rose-600">
+          <TriangleAlert className="h-4 w-4" /> Bu fiyat maliyetin altında — her satışta zarar edersiniz.
+        </p>
+      )}
+      <label className="flex w-fit cursor-pointer items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={applyToChannels}
+          onChange={e => setApplyToChannels(e.target.checked)}
+          className="h-4 w-4"
+        />
+        Fiyatı olmayan kanal yayınlarına da yaz
+      </label>
+      <Button
+        className="w-fit"
+        disabled={save.isPending}
+        onClick={() =>
+          save.mutate({ masterId, basePrice: p, discountPercent: d, applyToChannels })
+        }
+      >
+        Fiyatı Kaydet
+      </Button>
+    </Card>
   );
 }
 
