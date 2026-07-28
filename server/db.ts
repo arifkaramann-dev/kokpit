@@ -65,6 +65,7 @@ import {
   formulaInputs,
   masterProducts,
   listings,
+  listingImages,
   salesChannels,
   channelListings,
   InsertColor,
@@ -2745,4 +2746,9 @@ export async function deleteDimension(kind: DimensionTable, id: number) {
   const db = await requireDb();
   const table = dimensionTables[kind];
   await db.delete(table as never).where(eq((table as never as { id: never }).id, id));
+}
+
+export async function listListingImages() {
+  const db = await requireDb();
+  return db.select().from(listingImages);
 }

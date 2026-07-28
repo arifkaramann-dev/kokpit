@@ -1,6 +1,8 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { formatTL } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
@@ -15,8 +17,9 @@ import {
   Sparkles,
   Store,
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { useLocation } from "wouter";
 
 /**
  * Katalog v3 — Master / Listing mimarisinin kurulum ve izleme ekranı.
@@ -32,6 +35,10 @@ export default function Catalog() {
   const { data: listings } = trpc.katalog.listings.useQuery();
   const { data: bottlenecks } = trpc.katalog.bottlenecks.useQuery();
   const { data: series } = trpc.series.list.useQuery();
+  const { data: track } = trpc.katalog.trackList.useQuery();
+  const [, setLocation] = useLocation();
+  const [search, setSearch] = useState("");
+  const [onlyProblem, setOnlyProblem] = useState(false);
 
   const [selectedSeries, setSelectedSeries] = useState<Set<number>>(new Set());
   const [withR2u, setWithR2u] = useState(false);
@@ -101,6 +108,19 @@ export default function Catalog() {
   const dimReady = (dims?.colors.length ?? 0) > 0 && (dims?.packagings.length ?? 0) > 0;
   const seriesLinked = new Set((dims?.seriesPackagings ?? []).map(r => r.seriesId));
 
+  // Liste varsayılan olarak EN EKSİK üründen başlar (sunucu skora göre
+  // sıralıyor) — 5.000 satırda "neye bakmalıyım" sorusunun cevabı budur.
+  const filtered = useMemo(() => {
+    const q = search.trim().toLocaleLowerCase("tr");
+    return (track?.rows ?? []).filter(r => {
+      if (onlyProblem && r.health.score >= 100) return false;
+      if (!q) return true;
+      return [r.internalSku, r.colorName, r.series, r.family, r.packaging]
+        .filter(Boolean)
+        .some(v => String(v).toLocaleLowerCase("tr").includes(q));
+    });
+  }, [track, search, onlyProblem]);
+
   function toggleSeries(id: number) {
     setSelectedSeries(prev => {
       const next = new Set(prev);
@@ -133,6 +153,198 @@ export default function Catalog() {
       </div>
 
       {isLoading && <div className="h-32 animate-pulse rounded-xl bg-muted" />}
+
+      <Tabs defaultValue={(masters?.length ?? 0) > 0 ? "liste" : "kurulum"}>
+        <TabsList>
+          <TabsTrigger value="liste">Ürün Listesi</TabsTrigger>
+          <TabsTrigger value="seriler">Seri Takibi</TabsTrigger>
+          <TabsTrigger value="kurulum">Kurulum</TabsTrigger>
+        </TabsList>
+
+        {/* Ürün listesi — takip sütunlarıyla. Eksikler, getiri (maliyet/kâr),
+            hedef pazar (ilan sayısı) ve fırsat (açılmamış kullanım alanı). */}
+        <TabsContent value="liste" className="space-y-3 pt-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Kod, renk, seri, ambalaj ara..."
+              className="max-w-sm"
+            />
+            <Button
+              variant={onlyProblem ? "default" : "outline"}
+              size="sm"
+              onClick={() => setOnlyProblem(v => !v)}
+            >
+              Sadece eksikli
+            </Button>
+            <span className="text-xs text-muted-foreground">{filtered.length} ürün</span>
+          </div>
+
+          {filtered.length === 0 ? (
+            <Card className="p-10 text-center text-sm text-muted-foreground">
+              {(masters?.length ?? 0) === 0
+                ? 'Henüz master ürün yok — "Kurulum" sekmesinden üretin.'
+                : "Aramayla eşleşen ürün yok."}
+            </Card>
+          ) : (
+            <Card className="overflow-hidden p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50 text-xs text-muted-foreground">
+                    <tr>
+                      <th className="p-2 text-left">Ürün</th>
+                      <th className="p-2 text-right">Tamam</th>
+                      <th className="p-2 text-left">Eksik</th>
+                      <th className="p-2 text-right">Üretilebilir</th>
+                      <th className="p-2 text-right">Maliyet</th>
+                      <th className="p-2 text-right">Kâr</th>
+                      <th className="p-2 text-right">İlan</th>
+                      <th className="p-2 text-right">Fırsat</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.map(r => (
+                      <tr
+                        key={r.masterId}
+                        className="cursor-pointer border-t hover:bg-accent/40"
+                        onClick={() => setLocation(`/urun/${r.masterId}`)}
+                      >
+                        <td className="p-2">
+                          <span className="flex items-center gap-2">
+                            <span
+                              className="inline-block h-5 w-5 shrink-0 rounded border shadow-inner"
+                              style={{ backgroundColor: r.colorHex ?? "#ccc" }}
+                            />
+                            <span className="min-w-0">
+                              <span className="block truncate font-medium">
+                                {r.colorName ?? "—"} · {r.family ?? "—"} · {r.packaging ?? "—"}
+                                {r.readiness === "r2u" && (
+                                  <Badge variant="secondary" className="ml-1.5 text-[10px]">r2u</Badge>
+                                )}
+                              </span>
+                              <span className="block font-mono text-[10px] text-muted-foreground">
+                                {r.internalSku}
+                              </span>
+                            </span>
+                          </span>
+                        </td>
+                        <td className="p-2 text-right">
+                          <span
+                            className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                              r.health.score >= 90
+                                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+                                : r.health.score >= 60
+                                  ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+                                  : "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300"
+                            }`}
+                          >
+                            %{r.health.score}
+                          </span>
+                        </td>
+                        <td className="max-w-[220px] p-2 text-xs text-muted-foreground">
+                          <span className="line-clamp-2">
+                            {r.health.missing.length ? r.health.missing.join(" · ") : "—"}
+                          </span>
+                        </td>
+                        <td className="p-2 text-right tabular-nums">
+                          <span className={r.buildable > 0 ? "" : "font-medium text-rose-600"}>
+                            {r.buildable}
+                          </span>
+                        </td>
+                        <td className="p-2 text-right tabular-nums">
+                          {r.cost > 0 ? formatTL(r.cost) : <span className="text-muted-foreground">—</span>}
+                        </td>
+                        <td className="p-2 text-right tabular-nums">
+                          {r.price > 0 ? (
+                            <span className={r.profit > 0 ? "text-emerald-600" : "text-rose-600"}>
+                              {formatTL(r.profit)}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="p-2 text-right tabular-nums">
+                          {r.health.listingCount}
+                          {r.health.liveCount > 0 && (
+                            <span className="text-emerald-600"> ({r.health.liveCount})</span>
+                          )}
+                        </td>
+                        <td className="p-2 text-right">
+                          {r.health.openUseCaseIds.length > 0 ? (
+                            <Badge variant="outline" className="text-[10px]">
+                              +{r.health.openUseCaseIds.length} pazar
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+        </TabsContent>
+
+        {/* Seri takibi — 5.000 satırda tek tek bakmak mümkün değil */}
+        <TabsContent value="seriler" className="space-y-3 pt-3">
+          <Card className="overflow-hidden p-0">
+            <div className="border-b p-4">
+              <p className="font-semibold">Seri Takibi</p>
+              <p className="text-sm text-muted-foreground">
+                En zayıf seri üstte. "İlansız" sütunu açılmamış pazarı, "üretilemeyen" hammadde
+                sorununu gösterir.
+              </p>
+            </div>
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50 text-xs text-muted-foreground">
+                <tr>
+                  <th className="p-2 text-left">Seri</th>
+                  <th className="p-2 text-right">Ürün</th>
+                  <th className="p-2 text-right">Ort. tamamlanma</th>
+                  <th className="p-2 text-right">İlansız</th>
+                  <th className="p-2 text-right">Üretilemeyen</th>
+                  <th className="p-2 text-right">Canlı ilan</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(track?.series ?? []).map(s => (
+                  <tr key={s.seriesId} className="border-t">
+                    <td className="p-2 font-medium">{s.seriesName}</td>
+                    <td className="p-2 text-right tabular-nums">{s.masterCount}</td>
+                    <td className="p-2 text-right tabular-nums">%{s.avgScore}</td>
+                    <td className="p-2 text-right tabular-nums">
+                      {s.withoutListing > 0 ? (
+                        <span className="font-medium text-amber-600">{s.withoutListing}</span>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="p-2 text-right tabular-nums">
+                      {s.notBuildable > 0 ? (
+                        <span className="font-medium text-rose-600">{s.notBuildable}</span>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="p-2 text-right tabular-nums text-emerald-600">{s.liveListings}</td>
+                  </tr>
+                ))}
+                {(track?.series ?? []).length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="p-6 text-center text-sm text-muted-foreground">
+                      Henüz ürün yok.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="kurulum" className="space-y-4 pt-3">
 
       {/* 1 — Boyutlar */}
       <Card className="space-y-3 p-5">
@@ -328,6 +540,8 @@ export default function Catalog() {
           </div>
         </Card>
       )}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
