@@ -60,6 +60,7 @@ import {
   packagings,
   packagingInputs,
   useCases,
+  useCaseChannelCategories,
   seriesPackagings,
   seriesFamilies,
   formulas,
@@ -2844,4 +2845,41 @@ export async function upsertContentBlock(
 export async function deleteContentBlock(id: number) {
   const db = await requireDb();
   await db.delete(contentBlocks).where(eq(contentBlocks.id, id));
+}
+
+/* ---- Kullanım alanı × kanal kategori eşlemesi ---------------------------- */
+
+export async function listUseCaseChannelCategories() {
+  const db = await requireDb();
+  return db.select().from(useCaseChannelCategories);
+}
+
+export async function setUseCaseChannelCategory(
+  useCaseId: number,
+  channelId: number,
+  categoryId: string,
+  categoryName: string | null,
+) {
+  const db = await requireDb();
+  const rows = await db
+    .select({ id: useCaseChannelCategories.id })
+    .from(useCaseChannelCategories)
+    .where(
+      and(
+        eq(useCaseChannelCategories.useCaseId, useCaseId),
+        eq(useCaseChannelCategories.channelId, channelId),
+      ),
+    )
+    .limit(1);
+  if (rows[0]) {
+    await db
+      .update(useCaseChannelCategories)
+      .set({ categoryId, categoryName })
+      .where(eq(useCaseChannelCategories.id, rows[0].id));
+    return rows[0].id;
+  }
+  const [r] = await db
+    .insert(useCaseChannelCategories)
+    .values({ useCaseId, channelId, categoryId, categoryName });
+  return Number(r.insertId);
 }

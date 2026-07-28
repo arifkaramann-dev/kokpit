@@ -31,6 +31,7 @@ import {
 } from "../listingContent";
 import { masterHealth, rollupBySeries } from "../masterHealth";
 import { planProduction, resolveOrderLines } from "../productionPlan";
+import { planPublications, summarizeSkips } from "../publishPlan";
 import { GENERIC_USE_CASE_CODE, seedCatalogDimensions } from "../seedCatalog";
 
 /** productSeries JSON alanındaki {label,value} veya düz metin dizisini çözer. */
@@ -735,6 +736,138 @@ export const katalogRouter = router({
     }),
 
   channelListings: protectedProcedure.query(() => db.listChannelListings()),
+
+  /** Kullanım alanı × kanal → pazaryeri kategorisi. Toplu yayının ön koşulu. */
+  channelCategories: protectedProcedure.query(() => db.listUseCaseChannelCategories()),
+
+  setChannelCategory: protectedProcedure
+    .input(
+      z.object({
+        useCaseId: z.number(),
+        channelId: z.number(),
+        categoryId: z.string().min(1),
+        categoryName: z.string().nullable().optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const id = await db.setUseCaseChannelCategory(
+        input.useCaseId,
+        input.channelId,
+        input.categoryId.trim(),
+        input.categoryName ?? null,
+      );
+      return { id };
+    }),
+
+  /**
+   * Toplu kanal yayını. Tek tek açmak 500 master × 3 ilan × 2 kanal = 3.000
+   * tıklama demekti.
+   *
+   * Kodlar burada bir kez üretilip saklanır; gönderimde yeniden hesaplanmaz.
+   * Mükerrer ilan kilidi (master × kanal × kategori) plan aşamasında önden
+   * yakalanır ki toplu işlem ortasında veritabanı hatasına düşmesin.
+   */
+  bulkPublish: protectedProcedure
+    .input(
+      z.object({
+        channelId: z.number(),
+        seriesIds: z.array(z.number()).default([]),
+        includeUnbuildable: z.boolean().default(false),
+        dryRun: z.boolean().default(true),
+        limit: z.number().min(1).max(3000).default(1000),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const [listings, masters, existing, categories, channels] = await Promise.all([
+        db.listListings(),
+        db.listMasterProducts(),
+        db.listChannelListings(),
+        db.listUseCaseChannelCategories(),
+        db.listSalesChannels(),
+      ]);
+      const channel = (channels as { id: number; code: string }[]).find(c => c.id === input.channelId);
+      if (!channel) throw new TRPCError({ code: "NOT_FOUND", message: "Kanal bulunamadı" });
+
+      const wantedSeries = input.seriesIds.length ? new Set(input.seriesIds) : null;
+      const masterRows = (masters as Record<string, unknown>[]).filter(
+        m => !wantedSeries || wantedSeries.has(m.seriesId as number),
+      );
+      const allowedMasters = new Set(masterRows.map(m => m.id as number));
+
+      const plan = planPublications({
+        listings: (listings as Record<string, unknown>[])
+          .filter(l => allowedMasters.has(l.masterId as number))
+          .map(l => ({
+            id: l.id as number,
+            masterId: l.masterId as number,
+            useCaseId: l.useCaseId as number,
+            status: l.status as "taslak" | "aktif" | "arsiv",
+            // Boş gövdeli ilan pazaryerine gönderilemez.
+            hasContent: !!(
+              (l.shortDescription as string | null)?.trim() ||
+              (l.longDescription as string | null)?.trim()
+            ),
+          })),
+        masters: masterRows.map(m => ({
+          id: m.id as number,
+          status: m.status as "taslak" | "aktif" | "arsiv",
+          basePrice: num(m.basePrice),
+          buildableQty: Number(m.buildableQty ?? 0),
+        })),
+        existing: (existing as Record<string, unknown>[]).map(e => ({
+          listingId: e.listingId as number,
+          masterId: e.masterId as number,
+          channelId: e.channelId as number,
+          channelCategoryId: (e.channelCategoryId as string | null) ?? null,
+        })),
+        channelId: input.channelId,
+        categoryOf: new Map(
+          (categories as { useCaseId: number; channelId: number; categoryId: string }[])
+            .filter(c => c.channelId === input.channelId)
+            .map(c => [c.useCaseId, c.categoryId]),
+        ),
+        includeUnbuildable: input.includeUnbuildable,
+      });
+
+      if (input.dryRun) {
+        return {
+          dryRun: true,
+          willPublish: plan.create.length,
+          published: 0,
+          skipped: summarizeSkips(plan.skip),
+        };
+      }
+      if (plan.create.length > input.limit) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `${plan.create.length} yayın çok fazla (sınır ${input.limit}). Seri seçimini daraltın.`,
+        });
+      }
+
+      let seq = await db.nextChannelSequence();
+      let published = 0;
+      for (const c of plan.create) {
+        await db.createChannelListing({
+          listingId: c.listingId,
+          masterId: c.masterId,
+          channelId: c.channelId,
+          channelSku: buildChannelSku(channel.code, seq),
+          channelBarcode: buildChannelBarcode(seq),
+          channelCategoryId: c.channelCategoryId,
+          price: String(c.price),
+          syncState: "kirli",
+          status: "taslak",
+        } as never);
+        seq++;
+        published++;
+      }
+      return {
+        dryRun: false,
+        willPublish: plan.create.length,
+        published,
+        skipped: summarizeSkips(plan.skip),
+      };
+    }),
 
   /* ---- Kapasite --------------------------------------------------------- */
 
