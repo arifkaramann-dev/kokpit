@@ -61,6 +61,7 @@ import {
   Truck,
   Wallet,
   Warehouse,
+  Layers,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -100,6 +101,7 @@ const menuGroups = [
     label: "Ürün & Üretim",
     items: [
       { icon: Package, label: "Ürünler & Türevler", path: "/urunler" },
+      { icon: Layers, label: "Katalog (v3)", path: "/katalog" },
       { icon: BadgePercent, label: "Fiyat & Kâr Motoru", path: "/fiyat" },
       { icon: Factory, label: "Üretim", path: "/uretim" },
       { icon: Warehouse, label: "Stok & Hammadde", path: "/stok" },
