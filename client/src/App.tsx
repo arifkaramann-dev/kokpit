@@ -22,7 +22,7 @@ import NotFound from "@/pages/NotFound";
 import Orders from "@/pages/Orders";
 import Pricing from "@/pages/Pricing";
 import Production from "@/pages/Production";
-import ProductDetail from "@/pages/ProductDetail";
+import MasterCard from "@/pages/MasterCard";
 import ProductImport from "@/pages/ProductImport";
 import Purchases from "@/pages/Purchases";
 import Questions from "@/pages/Questions";
@@ -69,7 +69,7 @@ function AdminApp() {
         <Route path={"/tanimlar"} component={Definitions} />
         <Route path={"/recete"} component={Recipes} />
         <Route path={"/urun-aktar"} component={ProductImport} />
-        <Route path={"/urun/:id"} component={ProductDetail} />
+        <Route path={"/urun/:id"} component={MasterCard} />
         <Route path={"/sorular"} component={Questions} />
         <Route path={"/gelistirme"} component={Development} />
         <Route path={"/urun-ciktisi/:id"} component={ProductOutput} />

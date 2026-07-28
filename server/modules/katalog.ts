@@ -20,7 +20,9 @@ import {
 } from "../capacity";
 import { buildChannelBarcode, buildChannelSku } from "../catalogCodes";
 import { cubeKey, planListings, planMasters, type Readiness } from "../catalogPlan";
+import { computeMasterCosts, marginOf } from "../costing";
 import { planFormulaBindings, type MatchableFormula } from "../formulaMatch";
+import { masterHealth, rollupBySeries } from "../masterHealth";
 import { planProduction, resolveOrderLines } from "../productionPlan";
 import { GENERIC_USE_CASE_CODE, seedCatalogDimensions } from "../seedCatalog";
 
@@ -789,6 +791,208 @@ export const katalogRouter = router({
         bound: plan.bindings.length,
         willBind: plan.bindings.length,
         unmatched: plan.unmatched.length,
+      };
+    }),
+
+  /* ---- Ürün takibi ------------------------------------------------------ */
+
+  /**
+   * Ürün listesi + takip sütunları: eksikler · getiri (maliyet/marj) ·
+   * hedef pazar (açılmış ilanlar) · pazarlama fırsatı (açılmamış kullanım
+   * alanı ve kanal).
+   *
+   * Tek uçta toplanıyor çünkü hepsi aynı veriden türüyor; ayrı ayrı
+   * sorgulamak aynı tabloları defalarca okumak olurdu.
+   */
+  trackList: protectedProcedure.query(async () => {
+    const [listings, channelListings, useCases, channels, colors, packagings, series, families, listingImages] =
+      await Promise.all([
+        db.listListings(),
+        db.listChannelListings(),
+        db.listUseCases(),
+        db.listSalesChannels(),
+        db.listColors(),
+        db.listPackagings(),
+        db.listProductSeries(),
+        db.listProductFamilies(),
+        db.listListingImages(),
+      ]);
+    const data = await loadCapacityInputs();
+
+    const costs = computeMasterCosts({
+      masters: data.masters,
+      materials: data.rawMaterials.map(m => ({
+        id: m.id as number,
+        name: String(m.name ?? ""),
+        type: (m.type as "hammadde" | "yari_mamul" | "ambalaj" | "masraf") ?? "hammadde",
+        unitCost: (m.unitCost as string) ?? 0,
+      })),
+      formulas: data.formulas,
+      packagings: data.packagings,
+    });
+    const costById = new Map(costs.map(c => [c.masterId, c]));
+
+    const imageCount = new Map<number, number>();
+    for (const img of listingImages as { listingId: number }[]) {
+      imageCount.set(img.listingId, (imageCount.get(img.listingId) ?? 0) + 1);
+    }
+
+    const healthListings = (listings as Record<string, unknown>[]).map(l => ({
+      id: l.id as number,
+      masterId: l.masterId as number,
+      useCaseId: l.useCaseId as number,
+      title: String(l.title ?? ""),
+      shortDescription: (l.shortDescription as string | null) ?? null,
+      longDescription: (l.longDescription as string | null) ?? null,
+      status: l.status as "taslak" | "aktif" | "arsiv",
+      imageCount: imageCount.get(l.id as number) ?? 0,
+    }));
+    const healthChannels = (channelListings as Record<string, unknown>[]).map(c => ({
+      listingId: c.listingId as number,
+      masterId: c.masterId as number,
+      channelId: c.channelId as number,
+      status: c.status as "taslak" | "canli" | "durduruldu",
+    }));
+
+    // Fiyat: kanal yayınlarındaki en yüksek fiyat (taban referansı).
+    const priceByMaster = new Map<number, number>();
+    for (const c of channelListings as { masterId: number; price: string }[]) {
+      const p = num(c.price);
+      if (p > (priceByMaster.get(c.masterId) ?? 0)) priceByMaster.set(c.masterId, p);
+    }
+
+    const allUseCaseIds = (useCases as { id: number }[]).map(u => u.id);
+    const allChannelIds = (channels as { id: number }[]).map(c => c.id);
+    const colorById = new Map((colors as { id: number; name: string; hex: string | null }[]).map(c => [c.id, c]));
+    const packById = new Map((packagings as { id: number; name: string }[]).map(p => [p.id, p]));
+    const seriesById = new Map((series as { id: number; name: string }[]).map(s => [s.id, s]));
+    const familyById = new Map((families as { id: number; name: string }[]).map(f => [f.id, f]));
+
+    const rows = data.rawMasters.map(m => {
+      const masterId = m.id as number;
+      const cost = costById.get(masterId);
+      const price = priceByMaster.get(masterId) ?? 0;
+      const health = masterHealth({
+        master: {
+          id: masterId,
+          formulaId: (m.formulaId as number | null) ?? null,
+          buildableQty: Number(m.buildableQty ?? 0),
+          gtin: (m.gtin as string | null) ?? null,
+          status: m.status as "taslak" | "aktif" | "arsiv",
+        },
+        listings: healthListings,
+        channelListings: healthChannels,
+        allUseCaseIds,
+        allChannelIds,
+        costKnown: (cost?.totalCost ?? 0) > 0 && (cost?.unknownInputs.length ?? 0) === 0,
+        hasPrice: price > 0,
+      });
+      const color = colorById.get(m.colorId as number);
+      return {
+        masterId,
+        internalSku: String(m.internalSku ?? ""),
+        seriesId: m.seriesId as number,
+        series: seriesById.get(m.seriesId as number)?.name ?? null,
+        family: familyById.get(m.familyId as number)?.name ?? null,
+        packaging: packById.get(m.packagingId as number)?.name ?? null,
+        colorName: color?.name ?? null,
+        colorHex: color?.hex ?? null,
+        readiness: String(m.readiness ?? "konsantre"),
+        status: String(m.status ?? "taslak"),
+        buildable: Number(m.buildableQty ?? 0),
+        cost: cost?.totalCost ?? 0,
+        unknownInputs: cost?.unknownInputs ?? [],
+        price,
+        ...marginOf(price, cost?.totalCost ?? 0),
+        health,
+      };
+    });
+
+    return {
+      rows: rows.sort((a, b) => a.health.score - b.health.score),
+      series: rollupBySeries(
+        rows.map(r => ({ seriesId: r.seriesId, health: r.health, buildable: r.buildable })),
+      ).map(s => ({ ...s, seriesName: seriesById.get(s.seriesId)?.name ?? `#${s.seriesId}` })),
+      useCases,
+      channels,
+    };
+  }),
+
+  /** Tek master'ın kartı — künye, reçete, kapasite, ilanlar, fiyat tek yerde. */
+  masterCard: protectedProcedure
+    .input(z.object({ masterId: z.number() }))
+    .query(async ({ input }) => {
+      const master = await db.getMasterProduct(input.masterId);
+      if (!master) throw new TRPCError({ code: "NOT_FOUND", message: "Ürün bulunamadı" });
+
+      const [listings, channelListings, useCases, channels, colors, packagings, series, families, formulas, formulaInputs] =
+        await Promise.all([
+          db.listListingsByMaster(input.masterId),
+          db.listChannelListings(),
+          db.listUseCases(),
+          db.listSalesChannels(),
+          db.listColors(),
+          db.listPackagings(),
+          db.listProductSeries(),
+          db.listProductFamilies(),
+          db.listFormulas(),
+          db.listFormulaInputs(),
+        ]);
+      const data = await loadCapacityInputs();
+      const report = computeCapacity(data);
+      const capacity = report.masters.find(r => r.masterId === input.masterId) ?? null;
+
+      const [cost] = computeMasterCosts({
+        masters: data.masters.filter(m => m.id === input.masterId),
+        materials: data.rawMaterials.map(m => ({
+          id: m.id as number,
+          name: String(m.name ?? ""),
+          type: (m.type as "hammadde" | "yari_mamul" | "ambalaj" | "masraf") ?? "hammadde",
+          unitCost: (m.unitCost as string) ?? 0,
+        })),
+        formulas: data.formulas,
+        packagings: data.packagings,
+      });
+
+      const formula = master.formulaId
+        ? (formulas as Record<string, unknown>[]).find(f => f.id === master.formulaId)
+        : null;
+      const matName = new Map(data.rawMaterials.map(m => [m.id as number, String(m.name ?? "")]));
+      const recipe = formula
+        ? (formulaInputs as { formulaId: number; inputMaterialId: number; qtyPerBase: string }[])
+            .filter(i => i.formulaId === formula.id)
+            .map(i => ({
+              materialId: i.inputMaterialId,
+              name: matName.get(i.inputMaterialId) ?? `#${i.inputMaterialId}`,
+              qtyPerBase: num(i.qtyPerBase),
+              // Bu master için gerçek birim ihtiyaç (ambalaj hacmiyle ölçekli).
+              qtyPerUnit: num(i.qtyPerBase) * num(master.formulaScale),
+            }))
+        : [];
+
+      const myChannels = (channelListings as Record<string, unknown>[]).filter(
+        c => c.masterId === input.masterId,
+      );
+      const usedUseCases = new Set((listings as { useCaseId: number }[]).map(l => l.useCaseId));
+
+      const colorById = new Map((colors as { id: number; name: string; hex: string | null }[]).map(c => [c.id, c]));
+      return {
+        master,
+        identity: {
+          series: (series as { id: number; name: string }[]).find(s => s.id === master.seriesId)?.name ?? null,
+          family: (families as { id: number; name: string }[]).find(f => f.id === master.familyId)?.name ?? null,
+          packaging: (packagings as { id: number; name: string; volumeMl: string }[]).find(p => p.id === master.packagingId) ?? null,
+          color: colorById.get(master.colorId) ?? null,
+        },
+        formula: formula ? { id: formula.id, name: formula.name, baseQty: formula.baseQty, baseUnit: formula.baseUnit } : null,
+        recipe,
+        capacity,
+        cost,
+        listings,
+        channelListings: myChannels,
+        // Pazarlama fırsatı: henüz ilan açılmamış kullanım alanları.
+        openUseCases: (useCases as { id: number; name: string }[]).filter(u => !usedUseCases.has(u.id)),
+        channels,
       };
     }),
 
