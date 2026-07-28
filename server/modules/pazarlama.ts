@@ -11,7 +11,7 @@ import * as db from "../db";
 import { itemsTotal, summarizeItems, toItemRows } from "../orderUtils";
 import { extractInvoice } from "../_core/claude";
 import { executeAssistantCommand, generateOrderNo, generateQuoteNo } from "../assistant";
-import { buildSaleTitle, deriveCombos, parseSetCount, renameVariantTitle } from "../productUtils";
+import { buildSaleTitle, deriveCombos, parseSetCount, planGenerationSync, renameVariantTitle } from "../productUtils";
 import { computePrice, extractJson, parseFeatures, pickReferenceProduct, scoreReference, suggestSku } from "../autofill";
 import { computeReorderSuggestions, summarizeReorder } from "../reorder";
 import { importUrunKayit } from "../importSeed";
@@ -520,6 +520,14 @@ export const devRouter = router({
       };
 
       const parent = await db.getProduct(parentId);
+      // Emniyet ağı: generation kaydı (eski sürümde silinip yeniden açıldığı
+      // için) productId bağını kaybetmiş olabilir. Bu ana ürünün altındaki
+      // türevleri SKU'ya göre de eşleştir ki aynı varyant ikinci kez ürün
+      // olarak açılmasın.
+      const siblingBySku = new Map<string, number>();
+      for (const p of await db.listProducts()) {
+        if (p.parentId === parentId && p.sku?.trim()) siblingBySku.set(p.sku.trim(), p.id);
+      }
       let created = 0;
       let updated = 0;
       let skipped = 0;
@@ -552,11 +560,19 @@ export const devRouter = router({
           mockupUrl: g.packagingImageUrl ?? null,
         };
 
-        if (g.productId) {
-          // Zaten aktarılmış — mevcut türev ürünü güncelle (fiyat/metin/görsel değişmiş olabilir).
-          const existingVariant = await db.getProduct(g.productId);
+        // Bağlı ürün varsa onu, yoksa aynı SKU'lu mevcut türevi güncelle.
+        const linkedId =
+          g.productId ??
+          siblingBySku.get(g.variantCode || suggestSku(project.name, g.packaging)) ??
+          null;
+        if (linkedId) {
+          const existingVariant = await db.getProduct(linkedId);
           if (existingVariant) {
-            await db.updateProduct(g.productId, variantData as never);
+            await db.updateProduct(linkedId, variantData as never);
+            // Kopan bağ yeniden kurulur ki sonraki aktarımlar da güncelleme olsun.
+            if (g.productId !== linkedId) {
+              await db.updateProductGeneration(g.id, { productId: linkedId, status: "listed" } as never);
+            }
             updated++;
             continue;
           }
@@ -573,6 +589,13 @@ export const devRouter = router({
         }
         await db.updateProductGeneration(g.id, { productId: Number(variantId), status: "listed" } as never);
         created++;
+      }
+
+      // Proje artık ürünleşti: liste kartı ve pano "Adım 5/5"te takılı kalmasın.
+      // (Eski `convert` ucu arayüzden çağrılmadığı için status hep "active"
+      // kalıyor, proje bitmiş görünmüyordu.)
+      if (project.status !== "done") {
+        await db.updateDevProject(input.projectId, { status: "done", currentStep: 5 });
       }
 
       return { parentId, created, updated, skipped, total: gens.length };
@@ -699,11 +722,24 @@ export const devRouter = router({
 
       const autoCode = project.autoCode || project.colorCode || "";
       const created: number[] = [];
+      const updated: number[] = [];
 
-      // Yeniden üretimde mükerrer varyant oluşmaması için önce bu projenin
-      // eski varyant kayıtlarını temizle. (Aksi halde her "Yeniden Oluştur"
-      // aynı kodları tekrar ekliyordu; 85 yerine 99/170 varyant çıkıyordu.)
-      await db.deleteProductGenerationsByProject(input.projectId);
+      // Yeniden üretimde varyant kayıtları SİLİNMEZ, varyant koduna göre
+      // güncellenir. Silip yeniden açmak mükerrerliği önlüyordu ama ürünlere
+      // aktarılmış varyantın productId bağını ve üretilmiş görsellerini de
+      // siliyordu; bağ kopunca "Ürünlere Aktar" aynı türevleri ikinci kez
+      // oluşturuyordu (SKU'su -2'li kopyalar). Artık yalnızca matriste artık
+      // yeri olmayan (bayat) kayıtlar silinir.
+      const existingGens = await db.listProductGenerations(input.projectId);
+      const wantedCodes: string[] = [];
+      for (const color of effectiveColors) {
+        const seg = codeSlug(color?.value || color?.label || "");
+        for (const packaging of packagingList) {
+          wantedCodes.push([autoCode || project.name, seg || null, packaging].filter(Boolean).join("-"));
+        }
+      }
+      const { reuse, staleIds } = planGenerationSync(existingGens, wantedCodes);
+      for (const staleId of staleIds) await db.deleteProductGeneration(staleId);
 
       // Renk × Ambalaj matrisi: her renk için her ambalaj bir varyant.
       for (const color of effectiveColors) {
@@ -757,14 +793,12 @@ export const devRouter = router({
           const description = longBody || tpl.trendyolDescription;
           const appNotes = seriesApp || tpl.applicationNotes || null;
 
-          const genId = await db.createProductGeneration({
-            projectId: input.projectId,
-            variantCode,
+          const content = {
             packaging,
             color: colorLabel || null,
             colorHex: colorHex || null,
             // İçerik seriden hazır geldiği için varyant doğrudan "ready".
-            status: "ready",
+            status: "ready" as const,
             trendyolTitle: clipStr(title, 100),
             trendyolDescription: clipStr(description, 2000),
             hepsiburadaTitle: clipStr(title, 80),
@@ -774,12 +808,30 @@ export const devRouter = router({
             applicationNotes: appNotes,
             suggestedPrice: String(suggestedPrice),
             costPrice: String(costPrice),
+          };
+
+          // Var olan varyant: içeriği tazelenir, productId ve görselleri korunur.
+          const existing = reuse.get(variantCode);
+          if (existing) {
+            await db.updateProductGeneration(existing.id, content as never);
+            updated.push(existing.id);
+            continue;
+          }
+          const genId = await db.createProductGeneration({
+            projectId: input.projectId,
+            variantCode,
+            ...content,
           } as never);
           created.push(genId);
         }
       }
 
-      return { created, count: created.length };
+      return {
+        created,
+        updated,
+        removed: staleIds.length,
+        count: created.length + updated.length,
+      };
     }),
 
   // Tek bir varyantın AI içeriğini üretir/yeniler. Ürün Çıktıları ekranı, yeni

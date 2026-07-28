@@ -170,6 +170,11 @@ export default function ProductOutput() {
         `Ürünlere aktarıldı${parts.length ? " — " + parts.join(", ") : ""} 🎉`,
       );
       utils.dev.generations.invalidate({ projectId: id });
+      // Proje "Ürünleşti" olarak işaretlendi + katalog değişti: ilgili
+      // listeler tazelensin (aksi halde ekranda eski durum kalıyordu).
+      utils.dev.get.invalidate({ id });
+      utils.dev.list.invalidate();
+      utils.products.list.invalidate();
     },
     onError: e => toast.error(e.message),
   });

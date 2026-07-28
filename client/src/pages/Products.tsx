@@ -448,9 +448,16 @@ export default function Products() {
   const deriveMany = trpc.products.deriveMany.useMutation({
     onSuccess: r => {
       utils.products.invalidate();
-      toast.success(`${r.count} türev oluşturuldu`);
+      toast.success(
+        r.skipped > 0
+          ? `${r.count} türev oluşturuldu — ${r.skipped} kombinasyon zaten vardı, atlandı`
+          : `${r.count} türev oluşturuldu`,
+      );
       setDeriveFor(null);
       setDeriveTypes(new Set());
+      setDerivePacks(new Set());
+      setDeriveColors(new Set());
+      setDeriveSets(new Set());
     },
     onError: e => toast.error(e.message),
   });

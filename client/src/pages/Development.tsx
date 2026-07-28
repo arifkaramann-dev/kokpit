@@ -470,8 +470,13 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const generateContent = trpc.dev.generateProductContent.useMutation({
     onSuccess: r => {
       utils.dev.generations.invalidate({ projectId: id });
+      const detay = [
+        r.created.length ? `${r.created.length} yeni` : null,
+        r.updated.length ? `${r.updated.length} güncellendi` : null,
+        r.removed ? `${r.removed} kaldırıldı` : null,
+      ].filter(Boolean);
       toast.success(
-        `${r.count} varyant hazır — açıklamalar seriden devralındı. "Ürün Çıktılarını Aç" ile gözden geçirin 🎉`,
+        `${r.count} varyant hazır${detay.length ? ` (${detay.join(", ")})` : ""} — açıklamalar seriden devralındı. "Ürün Çıktılarını Aç" ile gözden geçirin 🎉`,
       );
     },
     onError: e => toast.error(e.message),
@@ -828,8 +833,10 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
             <Card key={t.id} className={`p-4 space-y-2 ${t.isChosen ? "border-primary" : ""}`}>
               <div className="flex items-center gap-2 flex-wrap">
                 <p className="font-semibold">Deneme #{t.trialNo}</p>
-                <span className={`text-xs px-2 py-0.5 rounded-full ${RESULT_LABELS[t.result].cls}`}>
-                  {RESULT_LABELS[t.result].label}
+                <span
+                  className={`text-xs px-2 py-0.5 rounded-full ${(RESULT_LABELS[t.result] ?? RESULT_LABELS.pending).cls}`}
+                >
+                  {(RESULT_LABELS[t.result] ?? RESULT_LABELS.pending).label}
                 </span>
                 {t.isChosen === 1 && (
                   <Badge className="bg-primary/10 text-primary border-primary/20">Seçili Reçete</Badge>
