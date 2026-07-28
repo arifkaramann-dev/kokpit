@@ -1072,25 +1072,86 @@ Türkçe yaz. Sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, o
 // Kendi web mağazası (Tema B) — HERKESE AÇIK uçlar (giriş gerektirmez).
 export const storefrontRouter = router({
   // Vitrin: satışta ve fiyatı olan ürünler (yalnızca gerekli alanlar dışa açılır).
+  /**
+   * Vitrin listesi — ana ürün altında GRUPLANMIŞ.
+   *
+   * İki hata birden düzeltildi:
+   *  1) Filtre yalnız "arsiv"i eliyordu, yani TASLAK ürünler herkese açık
+   *     vitrinde görünüyordu. Artık sadece "satista" olanlar dışa açılır.
+   *  2) Ana ürün ve türevleri aynı düzlemde dönüyordu; parentId dışa hiç
+   *     açılmadığı için vitrin gruplayamıyor, her türev ayrı kart oluyordu.
+   *     Artık grup döner: kart ana üründür, ambalaj/renk seçimi türevlerdir.
+   *
+   * Türevi olan ana ürün kendisi satılmaz (kavramsal kayıttır); türevi
+   * olmayan ana ürün tek seçenekli grup olarak doğrudan satılır.
+   */
   products: publicProcedure.query(async () => {
     const products = await db.listProducts();
-    return products
-      .filter(p => p.status !== "arsiv" && parseFloat(String(p.salePrice)) > 0)
-      .map(p => ({
-        id: p.id,
-        name: p.name,
-        series: p.series,
-        salePrice: parseFloat(String(p.salePrice)) || 0,
-        discountPercent: parseFloat(String(p.discountPercent)) || 0,
-        shortDescription: p.shortDescription,
-        imageUrls: p.imageUrls,
-        mockupUrl: p.mockupUrl,
-        inStock: (p.stockQty ?? 0) > 0,
-      }));
+    const sellable = products.filter(
+      p => p.status === "satista" && parseFloat(String(p.salePrice)) > 0,
+    );
+    const view = (p: (typeof products)[number]) => ({
+      id: p.id,
+      name: p.name,
+      packaging: p.packaging,
+      colorCode: p.colorCode,
+      colorHex: p.colorHex,
+      salePrice: parseFloat(String(p.salePrice)) || 0,
+      discountPercent: parseFloat(String(p.discountPercent)) || 0,
+      inStock: (p.stockQty ?? 0) > 0,
+    });
+    const net = (v: { salePrice: number; discountPercent: number }) =>
+      v.salePrice * (1 - v.discountPercent / 100);
+
+    const childrenOf = new Map<number, typeof sellable>();
+    for (const p of sellable) {
+      if (p.parentId == null) continue;
+      childrenOf.set(p.parentId, [...(childrenOf.get(p.parentId) ?? []), p]);
+    }
+
+    // Ana ürünü satışta olmayan ama türevi satışta olan gruplar da görünmeli;
+    // başlık/görsel için ana ürün kaydı katalogdan okunur.
+    const byId = new Map(products.map(p => [p.id, p]));
+    const groupIds = new Set<number>([
+      ...sellable.filter(p => p.parentId == null).map(p => p.id),
+      ...Array.from(childrenOf.keys()),
+    ]);
+
+    const groups = [];
+    for (const id of Array.from(groupIds)) {
+      const head = byId.get(id);
+      if (!head || head.status === "arsiv") continue;
+      const variants = (childrenOf.get(id) ?? []).map(view);
+      // Türevi yoksa ana ürünün kendisi tek seçenektir.
+      const options =
+        variants.length > 0
+          ? variants
+          : head.status === "satista" && parseFloat(String(head.salePrice)) > 0
+            ? [view(head)]
+            : [];
+      if (options.length === 0) continue;
+
+      const prices = options.map(net);
+      groups.push({
+        id: head.id,
+        name: head.name,
+        series: head.series,
+        shortDescription: head.shortDescription,
+        // Görsel ana üründen, yoksa ilk seçenekten.
+        imageUrls: head.imageUrls ?? byId.get(options[0].id)?.imageUrls ?? null,
+        mockupUrl: head.mockupUrl ?? byId.get(options[0].id)?.mockupUrl ?? null,
+        minPrice: Math.min(...prices),
+        maxPrice: Math.max(...prices),
+        inStock: options.some(o => o.inStock),
+        options,
+      });
+    }
+    return groups.sort((a, b) => a.name.localeCompare(b.name, "tr"));
   }),
   product: publicProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
     const p = await db.getProduct(input.id);
-    if (!p || p.status === "arsiv") throw new TRPCError({ code: "NOT_FOUND", message: "Ürün bulunamadı" });
+    // Taslak ürün de vitrine açılmamalı — kart hazırlanırken müşteriye görünüyordu.
+    if (!p || p.status !== "satista") throw new TRPCError({ code: "NOT_FOUND", message: "Ürün bulunamadı" });
     return {
       id: p.id,
       name: p.name,

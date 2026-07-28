@@ -102,6 +102,7 @@ const menuGroups = [
     items: [
       { icon: Package, label: "Ürünler & Türevler", path: "/urunler" },
       { icon: Layers, label: "Katalog (v3)", path: "/katalog" },
+      { icon: Beaker, label: "Reçete Defteri (v3)", path: "/recete" },
       { icon: BadgePercent, label: "Fiyat & Kâr Motoru", path: "/fiyat" },
       { icon: Factory, label: "Üretim", path: "/uretim" },
       { icon: Warehouse, label: "Stok & Hammadde", path: "/stok" },

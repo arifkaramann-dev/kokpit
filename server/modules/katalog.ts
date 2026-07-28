@@ -20,6 +20,7 @@ import {
 } from "../capacity";
 import { buildChannelBarcode, buildChannelSku } from "../catalogCodes";
 import { cubeKey, planListings, planMasters, type Readiness } from "../catalogPlan";
+import { planFormulaBindings, type MatchableFormula } from "../formulaMatch";
 import { GENERIC_USE_CASE_CODE, seedCatalogDimensions } from "../seedCatalog";
 
 const num = (v: unknown): number => {
@@ -557,5 +558,181 @@ export const katalogRouter = router({
     .mutation(async ({ input }) => {
       for (const i of input.items) await db.releaseMaterial(i.materialId, i.qty);
       return { released: input.items.length };
+    }),
+
+  /* ---- Reçeteler (çok seviyeli BOM) ------------------------------------- */
+
+  /** Reçeteler + girdileri + hangi master'lara bağlı oldukları. */
+  formulas: protectedProcedure.query(async () => {
+    const [formulas, inputs, masters] = await Promise.all([
+      db.listFormulas(),
+      db.listFormulaInputs(),
+      db.listMasterProducts(),
+    ]);
+    type InputRow = { id: number; formulaId: number; inputMaterialId: number; qtyPerBase: string };
+    const byFormula = new Map<number, InputRow[]>();
+    for (const i of inputs as InputRow[]) {
+      byFormula.set(i.formulaId, [...(byFormula.get(i.formulaId) ?? []), i]);
+    }
+    const usage = new Map<number, number>();
+    for (const m of masters as { formulaId: number | null }[]) {
+      if (m.formulaId != null) usage.set(m.formulaId, (usage.get(m.formulaId) ?? 0) + 1);
+    }
+    return formulas.map(f => ({
+      id: f.id,
+      name: f.name,
+      outputType: f.outputType,
+      outputMaterialId: f.outputMaterialId,
+      seriesId: f.seriesId,
+      colorId: f.colorId,
+      familyId: f.familyId,
+      readiness: f.readiness,
+      baseQty: f.baseQty,
+      baseUnit: f.baseUnit,
+      wastePercent: f.wastePercent,
+      notes: f.notes,
+      inputs: byFormula.get(f.id) ?? [],
+      masterCount: usage.get(f.id) ?? 0,
+    }));
+  }),
+
+  saveFormula: protectedProcedure
+    .input(
+      z.object({
+        id: z.number().nullable().optional(),
+        name: z.string().min(1),
+        outputType: z.enum(["yari_mamul", "mamul"]).default("mamul"),
+        outputMaterialId: z.number().nullable().optional(),
+        seriesId: z.number().nullable().optional(),
+        colorId: z.number().nullable().optional(),
+        familyId: z.number().nullable().optional(),
+        readiness: z.enum(["konsantre", "r2u"]).nullable().optional(),
+        baseQty: z.number().positive().default(1000),
+        baseUnit: z.string().default("ml"),
+        wastePercent: z.number().min(0).max(99).default(0),
+        notes: z.string().nullable().optional(),
+        inputs: z
+          .array(
+            z.object({
+              inputMaterialId: z.number(),
+              qtyPerBase: z.number().min(0),
+              note: z.string().nullable().optional(),
+            }),
+          )
+          .default([]),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      if (input.outputType === "yari_mamul" && !input.outputMaterialId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Yarı mamul reçetesi hangi kalemi ürettiğini bildirmeli — çıktı kalemini seçin.",
+        });
+      }
+      // Kendi kendini besleyen reçete BOM'da sonsuz döngü demektir.
+      if (
+        input.outputType === "yari_mamul" &&
+        input.inputs.some(i => i.inputMaterialId === input.outputMaterialId)
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Reçete kendi çıktısını girdi olarak kullanamaz (döngü).",
+        });
+      }
+
+      const payload = {
+        name: input.name.trim(),
+        outputType: input.outputType,
+        outputMaterialId: input.outputType === "yari_mamul" ? input.outputMaterialId : null,
+        seriesId: input.seriesId ?? null,
+        colorId: input.colorId ?? null,
+        familyId: input.familyId ?? null,
+        readiness: input.readiness ?? null,
+        baseQty: String(input.baseQty),
+        baseUnit: input.baseUnit,
+        wastePercent: String(input.wastePercent),
+        notes: input.notes ?? null,
+      };
+
+      const id = input.id
+        ? (await db.updateFormula(input.id, payload as never), input.id)
+        : await db.createFormula(payload as never);
+      await db.setFormulaInputs(id, input.inputs);
+      return { id };
+    }),
+
+  /**
+   * Master'ları koordinatına uyan reçeteye bağlar ve ambalaj hacminden ölçeği
+   * hesaplar. 5.000 master'ı elle bağlamak gerçekçi olmadığı için gerekli;
+   * en özel reçete kazanır (renk bazlı > seri bazlı).
+   */
+  bindFormulas: protectedProcedure
+    .input(z.object({ rebindExisting: z.boolean().default(false), dryRun: z.boolean().default(true) }))
+    .mutation(async ({ input }) => {
+      const [formulas, masters, packagings] = await Promise.all([
+        db.listFormulas(),
+        db.listMasterProducts(),
+        db.listPackagings(),
+      ]);
+      const volumeById = new Map(
+        (packagings as { id: number; volumeMl: string }[]).map(p => [p.id, num(p.volumeMl)]),
+      );
+
+      const plan = planFormulaBindings({
+        masters: (masters as Record<string, unknown>[]).map(m => ({
+          id: m.id as number,
+          seriesId: m.seriesId as number,
+          colorId: m.colorId as number,
+          familyId: m.familyId as number,
+          readiness: m.readiness as Readiness,
+          packagingVolumeMl: volumeById.get(m.packagingId as number) ?? 0,
+          currentFormulaId: (m.formulaId as number | null) ?? null,
+        })),
+        formulas: (formulas as Record<string, unknown>[]).map(
+          (f): MatchableFormula => ({
+            id: f.id as number,
+            outputType: f.outputType as "yari_mamul" | "mamul",
+            seriesId: (f.seriesId as number | null) ?? null,
+            colorId: (f.colorId as number | null) ?? null,
+            familyId: (f.familyId as number | null) ?? null,
+            readiness: (f.readiness as Readiness | null) ?? null,
+            baseQty: num(f.baseQty),
+          }),
+        ),
+        rebindExisting: input.rebindExisting,
+      });
+
+      if (input.dryRun) {
+        return { dryRun: true, bound: 0, willBind: plan.bindings.length, unmatched: plan.unmatched.length };
+      }
+      for (const b of plan.bindings) {
+        await db.updateMasterProduct(b.masterId, {
+          formulaId: b.formulaId,
+          formulaScale: String(b.formulaScale),
+        } as never);
+      }
+      return {
+        dryRun: false,
+        bound: plan.bindings.length,
+        willBind: plan.bindings.length,
+        unmatched: plan.unmatched.length,
+      };
+    }),
+
+  /**
+   * Hammadde tipini değiştirir. Yarı mamuller bugün "hammadde" olarak duruyor
+   * (MİX BOYA, BAZKAT BOYA, baz binder…); tipleri işaretlenmeden çok seviyeli
+   * BOM devreye girmez.
+   */
+  setMaterialType: protectedProcedure
+    .input(
+      z.object({
+        materialId: z.number(),
+        type: z.enum(["hammadde", "yari_mamul", "ambalaj", "masraf"]),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      await db.updateMaterial(input.materialId, { type: input.type } as never);
+      return { ok: true };
     }),
 });
