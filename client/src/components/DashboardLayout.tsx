@@ -86,6 +86,7 @@ const menuGroups = [
     label: "Ürün",
     items: [
       { icon: Package, label: "Ürünler", path: "/katalog" },
+      { icon: FileText, label: "İçerik Blokları", path: "/icerik" },
       { icon: FlaskConical, label: "Ürün Geliştirme", path: "/gelistirme" },
       { icon: BadgePercent, label: "Fiyat & Kâr", path: "/fiyat" },
     ],

@@ -20,11 +20,39 @@ import {
 } from "../capacity";
 import { buildChannelBarcode, buildChannelSku } from "../catalogCodes";
 import { cubeKey, planListings, planMasters, type Readiness } from "../catalogPlan";
+import { generateContentBlock, templateContentBlock } from "../contentAi";
 import { computeMasterCosts, marginOf } from "../costing";
 import { planFormulaBindings, type MatchableFormula } from "../formulaMatch";
+import {
+  pickBlock,
+  planContentBlocks,
+  resolveListingContent,
+  type ContentBlockLike,
+} from "../listingContent";
 import { masterHealth, rollupBySeries } from "../masterHealth";
 import { planProduction, resolveOrderLines } from "../productionPlan";
 import { GENERIC_USE_CASE_CODE, seedCatalogDimensions } from "../seedCatalog";
+
+/** productSeries JSON alanındaki {label,value} veya düz metin dizisini çözer. */
+function parseStringArray(value: unknown): string[] {
+  let arr: unknown[] = [];
+  if (Array.isArray(value)) arr = value;
+  else if (typeof value === "string" && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) arr = parsed;
+    } catch {
+      return [];
+    }
+  }
+  return arr
+    .map(x =>
+      x && typeof x === "object"
+        ? String((x as Record<string, unknown>).label ?? (x as Record<string, unknown>).value ?? "").trim()
+        : String(x).trim(),
+    )
+    .filter(Boolean);
+}
 
 const num = (v: unknown): number => {
   const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
@@ -416,19 +444,228 @@ export const katalogRouter = router({
         };
       }
 
+      // İçerik: blok → seri şablonu zinciriyle çözülür ve ilanın kendi
+      // koordinatıyla kişiselleştirilir. Eskiden buraya yalnız başlık ve slug
+      // yazılıyordu; ilanlar boş gövdeyle açılıyordu.
+      const blocks = (await db.listContentBlocks()) as unknown as ContentBlockLike[];
+      const masterById = new Map(masters.map(m => [m.id as number, m]));
+      const seriesById = new Map(
+        (series as Record<string, unknown>[]).map(s => [s.id as number, s]),
+      );
+      const colorNameById = nameById(colors);
+      const familyNameById = nameById(families);
+      const packagingNameById = nameById(packagings);
+      const useCaseNameById = nameById(useCases);
+
       let created = 0;
+      let withContent = 0;
       for (const l of plan.create) {
+        const m = masterById.get(l.masterId);
+        const s = m ? seriesById.get(m.seriesId as number) : undefined;
+        const vars = {
+          marka: "Artofcolour",
+          seri: s ? String(s.name ?? "") : null,
+          renk: m ? (colorNameById.get(m.colorId as number) ?? null) : null,
+          form: m ? (familyNameById.get(m.familyId as number) ?? null) : null,
+          ambalaj: m ? (packagingNameById.get(m.packagingId as number) ?? null) : null,
+          kullanim: l.isPrimary ? null : (useCaseNameById.get(l.useCaseId) ?? null),
+        };
+        const content = resolveListingContent({
+          block: m
+            ? pickBlock(blocks, {
+                seriesId: m.seriesId as number,
+                useCaseId: l.useCaseId,
+                familyId: m.familyId as number,
+              })
+            : null,
+          series: s
+            ? {
+                shortDescription: (s.shortDescription as string | null) ?? null,
+                longDescription: (s.longDescription as string | null) ?? null,
+                applicationText: (s.applicationText as string | null) ?? null,
+                labelTemplate: (s.labelTemplate as string | null) ?? null,
+              }
+            : null,
+          vars,
+        });
+        if (content.source !== "yok") withContent++;
+
         await db.createListing({
           masterId: l.masterId,
           useCaseId: l.useCaseId,
           title: l.title,
           slug: l.slug,
           isPrimary: l.isPrimary ? 1 : 0,
+          shortDescription: content.shortDescription,
+          longDescription: content.longDescription,
+          applicationText: content.applicationText,
           status: "taslak",
         } as never);
         created++;
       }
-      return { dryRun: false, willCreate: plan.create.length, willUpdate: plan.update.length, created, sample: [] };
+      return {
+        dryRun: false,
+        willCreate: plan.create.length,
+        willUpdate: plan.update.length,
+        created,
+        withContent,
+        sample: [],
+      };
+    }),
+
+  /* ---- İçerik blokları --------------------------------------------------- */
+
+  contentBlocks: protectedProcedure.query(async () => {
+    const [blocks, series, useCases, families] = await Promise.all([
+      db.listContentBlocks(),
+      db.listProductSeries(),
+      db.listUseCases(),
+      db.listProductFamilies(),
+    ]);
+    const sName = new Map((series as { id: number; name: string }[]).map(s => [s.id, s.name]));
+    const uName = new Map((useCases as { id: number; name: string }[]).map(u => [u.id, u.name]));
+    const fName = new Map((families as { id: number; name: string }[]).map(f => [f.id, f.name]));
+    return (blocks as Record<string, unknown>[]).map(b => ({
+      id: b.id as number,
+      seriesId: b.seriesId as number,
+      useCaseId: b.useCaseId as number,
+      familyId: (b.familyId as number | null) ?? null,
+      seriesName: sName.get(b.seriesId as number) ?? "?",
+      useCaseName: uName.get(b.useCaseId as number) ?? "?",
+      familyName: b.familyId != null ? (fName.get(b.familyId as number) ?? "?") : null,
+      shortDescription: (b.shortDescription as string | null) ?? null,
+      longDescription: (b.longDescription as string | null) ?? null,
+      applicationText: (b.applicationText as string | null) ?? null,
+      labelText: (b.labelText as string | null) ?? null,
+      titlePattern: (b.titlePattern as string | null) ?? null,
+      source: b.source as string,
+      generatedAt: b.generatedAt as Date | null,
+    }));
+  }),
+
+  /**
+   * İçerik bloklarını üretir. AI seri × kullanım alanı başına BİR KEZ çağrılır;
+   * metin renk/ambalajdan bağımsız yazdırılıp değişkenle kişiselleştirilir.
+   * Böylece 63 çağrı binlerce ilanı doldurur — eski akış varyant başına
+   * çağırdığı için 85 varyantta timeout'a giriyordu.
+   */
+  generateContentBlocks: protectedProcedure
+    .input(
+      z.object({
+        seriesIds: z.array(z.number()).default([]),
+        regenerate: z.boolean().default(false),
+        perFamily: z.boolean().default(false),
+        useAi: z.boolean().default(true),
+        dryRun: z.boolean().default(true),
+        limit: z.number().min(1).max(200).default(80),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const [masters, blocks, listings, series, useCases, families, sp] = await Promise.all([
+        db.listMasterProducts(),
+        db.listContentBlocks(),
+        db.listListings(),
+        db.listProductSeries(),
+        db.listUseCases(),
+        db.listProductFamilies(),
+        db.listSeriesPackagings(),
+      ]);
+
+      // Hangi master hangi kullanım alanlarında ilanlanmış — blok yalnız
+      // gerçekten kullanılan kombinasyonlar için üretilir, boşa AI çağrılmaz.
+      const useCasesByMaster = new Map<number, Set<number>>();
+      for (const l of listings as { masterId: number; useCaseId: number }[]) {
+        const set = useCasesByMaster.get(l.masterId) ?? new Set<number>();
+        set.add(l.useCaseId);
+        useCasesByMaster.set(l.masterId, set);
+      }
+      const allUseCaseIds = (useCases as { id: number }[]).map(u => u.id);
+      const wantedSeries = input.seriesIds.length ? new Set(input.seriesIds) : null;
+
+      const planInput = (masters as Record<string, unknown>[])
+        .filter(m => !wantedSeries || wantedSeries.has(m.seriesId as number))
+        .map(m => ({
+          seriesId: m.seriesId as number,
+          familyId: m.familyId as number,
+          // İlan açılmamışsa tüm kullanım alanları aday sayılır — içerik önce
+          // hazırlanıp sonra ilan üretmek doğru sıra.
+          useCaseIds: Array.from(useCasesByMaster.get(m.id as number) ?? new Set(allUseCaseIds)),
+        }));
+
+      const todo = planContentBlocks({
+        masters: planInput,
+        existing: blocks as unknown as ContentBlockLike[],
+        regenerate: input.regenerate,
+        perFamily: input.perFamily,
+      });
+
+      if (input.dryRun) {
+        return { dryRun: true, willGenerate: todo.length, generated: 0, aiFailed: 0 };
+      }
+      if (todo.length > input.limit) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `${todo.length} blok çok fazla (sınır ${input.limit}). Seri seçimini daraltın.`,
+        });
+      }
+
+      const sById = new Map((series as Record<string, unknown>[]).map(s => [s.id as number, s]));
+      const uById = new Map((useCases as { id: number; name: string }[]).map(u => [u.id, u]));
+      const fById = new Map((families as { id: number; name: string }[]).map(f => [f.id, f]));
+      const packBySeries = new Map<number, number[]>();
+      for (const r of sp as { seriesId: number; packagingId: number }[]) {
+        packBySeries.set(r.seriesId, [...(packBySeries.get(r.seriesId) ?? []), r.packagingId]);
+      }
+
+      let generated = 0;
+      let aiFailed = 0;
+      for (const t of todo) {
+        const s = sById.get(t.seriesId);
+        const u = uById.get(t.useCaseId);
+        if (!s || !u) continue;
+        const ctx = {
+          seriesName: String(s.name ?? ""),
+          seriesNotes: (s.notes as string | null) ?? null,
+          useCaseName: u.name,
+          familyName: t.familyId != null ? (fById.get(t.familyId)?.name ?? null) : null,
+          surfaces: parseStringArray(s.applicationSurfaces),
+        };
+
+        // AI başarısız olursa şablona düşülür — hiçbir ilan boş kalmasın.
+        const ai = input.useAi ? await generateContentBlock(ctx) : null;
+        if (input.useAi && !ai) aiFailed++;
+        const content = ai ?? templateContentBlock(ctx);
+
+        await db.upsertContentBlock(t, {
+          ...content,
+          source: ai ? "ai" : "sablon",
+          generatedAt: new Date(),
+        });
+        generated++;
+      }
+      return { dryRun: false, willGenerate: todo.length, generated, aiFailed };
+    }),
+
+  saveContentBlock: protectedProcedure
+    .input(
+      z.object({
+        seriesId: z.number(),
+        useCaseId: z.number(),
+        familyId: z.number().nullable().optional(),
+        titlePattern: z.string().nullable().optional(),
+        shortDescription: z.string().nullable().optional(),
+        longDescription: z.string().nullable().optional(),
+        applicationText: z.string().nullable().optional(),
+        labelText: z.string().nullable().optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const { seriesId, useCaseId, familyId, ...content } = input;
+      const id = await db.upsertContentBlock(
+        { seriesId, useCaseId, familyId: familyId ?? null },
+        { ...content, source: "elle" },
+      );
+      return { id };
     }),
 
   listings: protectedProcedure.query(() => db.listListings()),

@@ -55,6 +55,7 @@ import {
   whatsappAuth,
   // Ürün mimarisi v3
   colors,
+  contentBlocks,
   productFamilies,
   packagings,
   packagingInputs,
@@ -2801,4 +2802,46 @@ export async function closeOrderReservations(orderId: number, mode: "consume" | 
     .set({ state: mode === "consume" ? "tuketildi" : "iptal" })
     .where(and(eq(materialReservations.orderId, orderId), eq(materialReservations.state, "rezerve")));
   return rows.length;
+}
+
+/* ---- İçerik blokları ----------------------------------------------------- */
+
+export async function listContentBlocks() {
+  const db = await requireDb();
+  return db.select().from(contentBlocks);
+}
+
+/**
+ * Blok kaydı — koordinat (seri × kullanım alanı × form) tekildir, o yüzden
+ * varsa güncellenir. Böylece "yeniden üret" mükerrer blok açmaz.
+ */
+export async function upsertContentBlock(
+  coord: { seriesId: number; useCaseId: number; familyId: number | null },
+  data: Record<string, unknown>,
+) {
+  const db = await requireDb();
+  const rows = await db
+    .select({ id: contentBlocks.id })
+    .from(contentBlocks)
+    .where(
+      and(
+        eq(contentBlocks.seriesId, coord.seriesId),
+        eq(contentBlocks.useCaseId, coord.useCaseId),
+        coord.familyId === null
+          ? isNull(contentBlocks.familyId)
+          : eq(contentBlocks.familyId, coord.familyId),
+      ),
+    )
+    .limit(1);
+  if (rows[0]) {
+    await db.update(contentBlocks).set(data).where(eq(contentBlocks.id, rows[0].id));
+    return rows[0].id;
+  }
+  const [r] = await db.insert(contentBlocks).values({ ...coord, ...data } as never);
+  return Number(r.insertId);
+}
+
+export async function deleteContentBlock(id: number) {
+  const db = await requireDb();
+  await db.delete(contentBlocks).where(eq(contentBlocks.id, id));
 }
