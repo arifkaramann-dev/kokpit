@@ -1,996 +1,363 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { formatTL, num } from "@/lib/format";
+import { formatTL } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
-import Costs from "./Costs";
-import {
-  calcChannelProfit,
-  channelSlugForProfile,
-  DEFAULT_CHANNEL_PROFILES,
-  effectiveChannelPrice,
-  matchPriceRows,
-  normalizeChannelProfile,
-  parseChannelPrices,
-  parsePriceCsv,
-  suggestPrice,
-  type ChannelProfile,
-  type PriceMatch,
-  type PriceMode,
-  type Rounding,
-} from "@shared/pricing";
-import {
-  AlertTriangle,
-  BadgePercent,
-  Calculator,
-  FileSpreadsheet,
-  Search,
-  Send,
-  Settings2,
-  TrendingDown,
-} from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { AlertTriangle, Loader2, Percent, Play, RefreshCw, Send, TrendingDown } from "lucide-react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import type { ProductRow } from "./Products";
-
-/** Tablo satırı: ürün + hesaplanmış maliyet/kâr değerleri. */
-type PricedRow = {
-  p: ProductRow;
-  materialCost: number;
-  totalCost: number;
-  /** Seçili kanal için geçerli satış fiyatı (kanala özel varsa o, yoksa taban). */
-  effSalePrice: number;
-  effDiscount: number;
-  /** true = bu ürünün seçili kanala özel ayrı fiyatı var. */
-  overridden: boolean;
-  netPrice: number;
-  channelNet: number;
-  channelMargin: number;
-};
-
-const MODE_LABELS: Record<PriceMode, string> = {
-  percent: "% Zam / İndirim",
-  targetMargin: "Hedef Kâr Marjı %",
-  multiplier: "Maliyet × Çarpan",
-  fixed: "Sabit Tutar Ekle (₺)",
-};
-
-const ROUNDING_LABELS: Record<Rounding, string> = {
-  none: "Yuvarlama yok",
-  whole: "Tam sayıya (129 ₺)",
-  ninety: "x,90'a (129,90 ₺)",
-  ninetynine: "x,99'a (129,99 ₺)",
-};
-
-function marginBadge(margin: number, hasPrice: boolean) {
-  if (!hasPrice) return <Badge variant="outline">fiyat yok</Badge>;
-  if (margin < 0) return <Badge variant="destructive">%{margin.toFixed(1)}</Badge>;
-  if (margin < 15)
-    return (
-      <Badge variant="outline" className="border-amber-500 text-amber-600">
-        %{margin.toFixed(1)}
-      </Badge>
-    );
-  return (
-    <Badge variant="outline" className="border-emerald-500 text-emerald-600">
-      %{margin.toFixed(1)}
-    </Badge>
-  );
-}
+import { useLocation } from "wouter";
 
 /**
- * /fiyat artık tek "fiyat gerçeği" sayfası: toplu tablo (Fiyat Motoru) +
- * tekil hesaplayıcı (eski Maliyet & Kâr sayfası) sekmeleri. /maliyet rotası
- * buraya yönlenir; derin bağlantı için ?arac=hesaplayici desteklenir.
+ * Fiyat & Kâr — v3 maliyetiyle.
+ *
+ * Eski sürüm `products.costSummary`'yi okuyordu: tek seviyeli, fire ve ambalaj
+ * hariç. Ürün kartı ise çok seviyeli motoru kullanıyordu; aynı ürün iki
+ * ekranda farklı maliyet gösteriyordu. Artık tek kaynak var.
  */
 export default function Pricing() {
-  const [tab, setTab] = useState(() =>
-    typeof window !== "undefined" && new URLSearchParams(window.location.search).get("arac") === "hesaplayici"
-      ? "hesaplayici"
-      : "tablo",
-  );
-  return (
-    <Tabs value={tab} onValueChange={setTab} className="space-y-4">
-      <TabsList>
-        <TabsTrigger value="tablo">Fiyat Tablosu</TabsTrigger>
-        <TabsTrigger value="hesaplayici">Tekil Hesaplayıcı</TabsTrigger>
-      </TabsList>
-      <TabsContent value="tablo">
-        <PricingTable />
-      </TabsContent>
-      <TabsContent value="hesaplayici">
-        <Costs />
-      </TabsContent>
-    </Tabs>
-  );
-}
-
-function PricingTable() {
   const utils = trpc.useUtils();
-  const { data: products } = trpc.products.list.useQuery();
-  const { data: costSummary } = trpc.products.costSummary.useQuery();
-  const { data: settings } = trpc.settings.get.useQuery();
+  const [, setLocation] = useLocation();
+  const { data: rows, isLoading } = trpc.katalog.priceTable.useQuery();
+  const { data: series } = trpc.series.list.useQuery();
+  const { data: syncStatus } = trpc.katalog.syncStatus.useQuery();
 
-  /* ------------------------- Kanal profilleri (F5) ------------------------- */
-  const profiles = useMemo<ChannelProfile[]>(() => {
-    try {
-      const parsed = JSON.parse(settings?.channelProfiles ?? "");
-      // Eski kayıtlarda ödeme bedeli/stopaj alanları yok — normalize ederek taşı.
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed.map(normalizeChannelProfile);
-    } catch {
-      /* ayar yoksa varsayılanlar */
-    }
-    return DEFAULT_CHANNEL_PROFILES;
-  }, [settings]);
-
-  const [profileIdx, setProfileIdx] = useState(0);
-  const profile = profiles[Math.min(profileIdx, profiles.length - 1)];
-  // Seçili kanal ayrı fiyat tutulan bir pazaryerine mi denk geliyor? (null = taban/web fiyatı)
-  const channelSlug = useMemo(() => channelSlugForProfile(profile), [profile]);
-  // Adet başı işçilik + genel gider (KDV hariç) — ayarlardan; elle değer yoksa
-  // maliyet parametrelerinden otomatik türetilir (15000₺/ay ÷ 150 adet = 100₺).
-  const laborOverhead = num(settings?.unitLaborOverheadEffective ?? settings?.unitLaborOverhead);
-
-  const saveSettings = trpc.settings.save.useMutation({
-    onSuccess: () => {
-      utils.settings.get.invalidate();
-      toast.success("Kanal profilleri kaydedildi");
-      setProfilesOpen(false);
-    },
-    onError: e => toast.error(e.message),
-  });
-
-  /* ------------------------- Filtre & sıralama ------------------------- */
   const [search, setSearch] = useState("");
-  const [seriesFilter, setSeriesFilter] = useState("__all__");
   const [onlyLoss, setOnlyLoss] = useState(false);
-  const [sort, setSort] = useState("marginAsc");
-  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [percent, setPercent] = useState("10");
+  const [bulkSeries, setBulkSeries] = useState<Set<number>>(new Set());
+  const [bulkPreview, setBulkPreview] = useState<number | null>(null);
 
-  const seriesList = useMemo(() => {
-    const set = new Set<string>();
-    for (const p of (products as ProductRow[]) ?? []) if (p.series) set.add(p.series);
-    return Array.from(set).sort();
-  }, [products]);
-
-  const costByProduct = useMemo(() => {
-    const map = new Map<number, number>();
-    for (const r of costSummary ?? []) map.set(r.productId, r.materialCost);
-    return map;
-  }, [costSummary]);
-
-  const rows = useMemo<PricedRow[]>(() => {
-    const list = ((products as ProductRow[]) ?? []).map(p => {
-      const materialCost = costByProduct.get(p.id) ?? 0;
-      const packaging = num(p.packagingCost);
-      const totalCost = materialCost + packaging + num(p.shippingCost);
-      // Seçili kanala özel fiyat varsa onu, yoksa taban (web) fiyatını kullan.
-      const eff = effectiveChannelPrice(
-        { salePrice: num(p.salePrice), discountPercent: num(p.discountPercent) },
-        parseChannelPrices(p.channelPrices),
-        channelSlug,
-      );
-      const netPrice = eff.salePrice * (1 - eff.discountPercent / 100);
-      const mp = calcChannelProfit({
-        salePrice: netPrice,
-        productCost: materialCost + packaging,
-        // Maliyet KDV dahil girilir; kanalın KDV oranıyla indirilecek KDV düşülür.
-        productCostVatPercent: profile.vatPercent,
-        extraCostEx: laborOverhead,
-        profile,
-        shippingOverride: num(p.shippingCost),
-      });
-      return {
-        p,
-        materialCost,
-        totalCost,
-        effSalePrice: eff.salePrice,
-        effDiscount: eff.discountPercent,
-        overridden: eff.overridden,
-        netPrice,
-        channelNet: mp.net,
-        channelMargin: mp.margin,
-      };
-    });
-
-    const q = search.trim().toLocaleLowerCase("tr-TR");
-    const filtered = list.filter(r => {
-      if (seriesFilter !== "__all__" && r.p.series !== seriesFilter) return false;
-      if (onlyLoss && !(r.netPrice > 0 && r.channelNet < 0)) return false;
-      if (!q) return true;
-      return (
-        r.p.name.toLocaleLowerCase("tr-TR").includes(q) ||
-        (r.p.barcode ?? "").toLocaleLowerCase("tr-TR").includes(q) ||
-        (r.p.series ?? "").toLocaleLowerCase("tr-TR").includes(q)
-      );
-    });
-
-    switch (sort) {
-      case "marginAsc":
-        filtered.sort((a, b) => a.channelMargin - b.channelMargin);
-        break;
-      case "marginDesc":
-        filtered.sort((a, b) => b.channelMargin - a.channelMargin);
-        break;
-      case "priceDesc":
-        filtered.sort((a, b) => b.effSalePrice - a.effSalePrice);
-        break;
-      default:
-        filtered.sort((a, b) => a.p.name.localeCompare(b.p.name, "tr-TR"));
-    }
-    return filtered;
-  }, [products, costByProduct, profile, channelSlug, laborOverhead, search, seriesFilter, onlyLoss, sort]);
-
-  const lossCount = useMemo(
-    () => rows.filter(r => r.netPrice > 0 && r.channelNet < 0).length,
-    [rows],
-  );
-  const avgMargin = useMemo(() => {
-    const withPrice = rows.filter(r => r.netPrice > 0);
-    if (withPrice.length === 0) return 0;
-    return withPrice.reduce((s, r) => s + r.channelMargin, 0) / withPrice.length;
-  }, [rows]);
-
-  /** Toplu işlemin hedefi: işaretli satırlar varsa onlar, yoksa filtrelenmiş liste. */
-  const targetRows = useMemo(
-    () => (selected.size > 0 ? rows.filter(r => selected.has(r.p.id)) : rows),
-    [rows, selected],
-  );
-
-  /* ------------------------- Fiyat uygulama ------------------------- */
-  const applyPrices = trpc.products.applyPrices.useMutation({
+  const bulkPrice = trpc.katalog.bulkPrice.useMutation({
     onSuccess: r => {
-      utils.products.invalidate();
-      toast.success(`${r.affected} ürünün fiyatı güncellendi`);
-      setBulkOpen(false);
-      setCsvOpen(false);
-      setPreview(null);
-      setCsvResult(null);
-      setSelected(new Set());
+      if (r.dryRun) {
+        setBulkPreview(r.affected);
+        if (r.affected === 0) toast.info("Fiyatı olan ürün yok.");
+        return;
+      }
+      setBulkPreview(null);
+      utils.katalog.invalidate();
+      toast.success(`${r.updated} ürünün fiyatı güncellendi — senkron kuyruğuna girdi`);
     },
     onError: e => toast.error(e.message),
   });
 
-  // Satır içi fiyat düzenleme: değişen değerler burada tutulur, Enter/odak kaybında kaydedilir.
-  // Kanal bir pazaryerine denk geliyorsa fiyat o kanala özel yazılır (taban değişmez).
-  const [edits, setEdits] = useState<Record<number, string>>({});
-  function commitEdit(id: number, oldPrice: number) {
-    const raw = edits[id];
-    if (raw === undefined) return;
-    const value = parseFloat(raw.replace(",", "."));
-    setEdits(prev => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-    if (!Number.isFinite(value) || value < 0 || +value.toFixed(2) === +oldPrice.toFixed(2)) return;
-    applyPrices.mutate({ updates: [{ id, salePrice: +value.toFixed(2) }], channel: channelSlug });
-  }
-
-  /* ------------------------- Toplu fiyatlama (F2) ------------------------- */
-  const [bulkOpen, setBulkOpen] = useState(false);
-  const [mode, setMode] = useState<PriceMode>("percent");
-  const [modeValue, setModeValue] = useState("10");
-  const [rounding, setRounding] = useState<Rounding>("ninety");
-  const [preview, setPreview] = useState<PriceMatch[] | null>(null);
-  const [skippedCount, setSkippedCount] = useState(0);
-
-  function buildPreview() {
-    const value = parseFloat(modeValue.replace(",", "."));
-    if (!Number.isFinite(value)) return toast.error("Geçerli bir değer girin");
-    const out: PriceMatch[] = [];
-    let skipped = 0;
-    for (const r of targetRows) {
-      const suggested = suggestPrice({
-        currentPrice: r.effSalePrice,
-        totalCost: r.totalCost,
-        mode,
-        value,
-        profile,
-        productCost: r.materialCost + num(r.p.packagingCost),
-        productCostVatPercent: profile.vatPercent,
-        extraCostEx: laborOverhead,
-        shippingOverride: num(r.p.shippingCost),
-        rounding,
-      });
-      if (suggested === null || suggested <= 0) {
-        skipped++;
-        continue;
+  const sync = trpc.katalog.syncAllChannels.useMutation({
+    onSuccess: results => {
+      utils.katalog.invalidate();
+      const sent = results.reduce((s, r) => s + r.sent, 0);
+      const failed = results.reduce((s, r) => s + r.failed, 0);
+      if (sent === 0 && failed === 0) {
+        toast.info("Gönderilecek değişiklik yok ya da kanal yapılandırılmamış.");
+        return;
       }
-      if (+suggested.toFixed(2) === r.effSalePrice) continue;
-      out.push({
-        productId: r.p.id,
-        productName: r.p.name,
-        oldPrice: r.effSalePrice,
-        newPrice: suggested,
-        line: 0,
-      });
-    }
-    if (out.length === 0) {
-      return toast.error(
-        skipped > 0
-          ? `Hiçbir fiyat hesaplanamadı (${skipped} ürün atlandı — maliyet 0 veya hedef marj imkânsız)`
-          : "Değişecek fiyat yok",
+      toast.success(
+        `${sent} yayın gönderildi${failed > 0 ? ` · ${failed} hata (sonraki turda yeniden denenecek)` : ""}`,
+        { duration: 9000 },
       );
-    }
-    setSkippedCount(skipped);
-    setPreview(out);
-  }
+    },
+    onError: e => toast.error(e.message, { duration: 9000 }),
+  });
 
-  /* ------------------------- CSV içe aktarma (F3) ------------------------- */
-  const [csvOpen, setCsvOpen] = useState(false);
-  const [csvResult, setCsvResult] = useState<{
-    matches: PriceMatch[];
-    unmatchedCount: number;
-    errors: string[];
-  } | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  async function handleCsvFile(file: File) {
-    const text = await file.text();
-    const { rows: csvRows, errors } = parsePriceCsv(text);
-    const { matches, unmatched } = matchPriceRows(
-      ((products as ProductRow[]) ?? []).map(p => ({
-        id: p.id,
-        name: p.name,
-        barcode: p.barcode,
-        // Kanal seçiliyse "eski fiyat" o kanalın geçerli fiyatı olsun (fark doğru görünsün).
-        salePrice: String(
-          effectiveChannelPrice(
-            { salePrice: num(p.salePrice), discountPercent: num(p.discountPercent) },
-            parseChannelPrices(p.channelPrices),
-            channelSlug,
-          ).salePrice,
-        ),
-      })),
-      csvRows,
-    );
-    const changed = matches.filter(m => +m.newPrice.toFixed(2) !== +m.oldPrice.toFixed(2));
-    setCsvResult({
-      matches: changed,
-      unmatchedCount: unmatched.length + (matches.length - changed.length),
-      errors,
+  const filtered = useMemo(() => {
+    const q = search.trim().toLocaleLowerCase("tr");
+    return (rows ?? []).filter(r => {
+      if (onlyLoss && !(r.basePrice > 0 && r.profit <= 0)) return false;
+      if (!q) return true;
+      return [r.internalSku, r.colorName, r.series, r.packaging]
+        .filter(Boolean)
+        .some(v => String(v).toLocaleLowerCase("tr").includes(q));
     });
-    if (errors.length > 0 && csvRows.length === 0) toast.error(errors[0]);
-  }
+  }, [rows, search, onlyLoss]);
 
-  /* ------------------------- Pazaryerine gönderme (F4) ------------------------- */
-  const pushTrendyol = trpc.products.pushToTrendyol.useMutation({
-    onSuccess: r => toast.success(`Trendyol'a ${r.sent} ürünün stok/fiyatı gönderildi`, { duration: 8000 }),
-    onError: e => toast.error(e.message, { duration: 8000 }),
-  });
-  const pushHepsiburada = trpc.products.pushToHepsiburada.useMutation({
-    onSuccess: r => toast.success(`Hepsiburada'ya ${r.sent} ürünün stok/fiyatı gönderildi`, { duration: 8000 }),
-    onError: e => toast.error(e.message, { duration: 8000 }),
-  });
-  const pushIds = selected.size > 0 ? Array.from(selected) : undefined;
-
-  /* ------------------------- Profil düzenleme ------------------------- */
-  const [profilesOpen, setProfilesOpen] = useState(false);
-  const [profileDraft, setProfileDraft] = useState<ChannelProfile[]>([]);
-
-  function openProfiles() {
-    setProfileDraft(profiles.map(p => ({ ...p })));
-    setProfilesOpen(true);
-  }
-  function setDraftField(i: number, field: keyof ChannelProfile, value: string) {
-    setProfileDraft(prev =>
-      prev.map((p, idx) => {
-        if (idx !== i) return p;
-        if (field === "kind") {
-          // Tür değişince stopaj yasal varsayılana çekilir (pazaryeri %1, diğerleri 0) — elle değiştirilebilir.
-          const kind = value as ChannelProfile["kind"];
-          return { ...p, kind, stopajPercent: kind === "pazaryeri" ? 1 : 0 };
-        }
-        return { ...p, [field]: field === "name" ? value : parseFloat(value.replace(",", ".")) || 0 };
-      }),
-    );
-  }
-
-  const allChecked = rows.length > 0 && rows.every(r => selected.has(r.p.id));
+  const zarar = (rows ?? []).filter(r => r.basePrice > 0 && r.profit <= 0).length;
+  const fiyatsiz = (rows ?? []).filter(r => r.basePrice <= 0).length;
+  const bekleyen = (syncStatus ?? []).reduce((s, c) => s + c.kirli + c.hata, 0);
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Fiyat &amp; Kâr Motoru</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Fiyat &amp; Kâr</h1>
           <p className="text-sm text-muted-foreground">
-            Tüm ürünlerin maliyeti, kanal bazlı net kârı ve marjı tek tabloda; formülle veya Excel'le toplu güncelle.
+            Maliyet reçeteden türer — çok seviyeli, fire ve ambalaj dahil. Elle girilen bir sayı
+            değil.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={openProfiles}>
-            <Settings2 className="h-4 w-4 mr-1" /> Kanal Profilleri
-          </Button>
-          <Button variant="outline" onClick={() => { setCsvResult(null); setCsvOpen(true); }}>
-            <FileSpreadsheet className="h-4 w-4 mr-1" /> Excel/CSV ile Güncelle
-          </Button>
-          <Button onClick={() => { setPreview(null); setBulkOpen(true); }}>
-            <Calculator className="h-4 w-4 mr-1" /> Toplu Fiyatla
-          </Button>
-        </div>
-      </div>
-
-      {/* Özet kartları */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Card className="p-4">
-          <p className="text-xs text-muted-foreground">Listelenen Ürün</p>
-          <p className="text-xl font-bold">{rows.length}</p>
-        </Card>
-        <Card className="p-4">
-          <p className="text-xs text-muted-foreground">Kanal: {profile?.name}</p>
-          <p className="text-xl font-bold">
-            %{profile?.commissionPercent ?? 0} <span className="text-sm font-normal">komisyon</span>
-          </p>
-        </Card>
-        <Card className="p-4">
-          <p className="text-xs text-muted-foreground">Ortalama Marj</p>
-          <p className={`text-xl font-bold ${avgMargin < 0 ? "text-destructive" : ""}`}>%{avgMargin.toFixed(1)}</p>
-        </Card>
-        <Card className={`p-4 ${lossCount > 0 ? "border-destructive/50" : ""}`}>
-          <p className="text-xs text-muted-foreground flex items-center gap-1">
-            <TrendingDown className="h-3 w-3" /> Zararına Satılan
-          </p>
-          <p className={`text-xl font-bold ${lossCount > 0 ? "text-destructive" : ""}`}>{lossCount}</p>
-        </Card>
-      </div>
-
-      {/* Filtreler */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative">
-          <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-muted-foreground" />
-          <Input
-            className="pl-8 w-56"
-            placeholder="Ürün / barkod ara..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-        </div>
-        <Select value={seriesFilter} onValueChange={setSeriesFilter}>
-          <SelectTrigger className="w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">Tüm seriler</SelectItem>
-            {seriesList.map(s => (
-              <SelectItem key={s} value={s}>
-                {s}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={String(profileIdx)} onValueChange={v => setProfileIdx(Number(v))}>
-          <SelectTrigger className="w-44">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {profiles.map((p, i) => (
-              <SelectItem key={i} value={String(i)}>
-                Kanal: {p.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={sort} onValueChange={setSort}>
-          <SelectTrigger className="w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="marginAsc">Marj (düşük → yüksek)</SelectItem>
-            <SelectItem value="marginDesc">Marj (yüksek → düşük)</SelectItem>
-            <SelectItem value="priceDesc">Fiyat (yüksek → düşük)</SelectItem>
-            <SelectItem value="name">İsme göre</SelectItem>
-          </SelectContent>
-        </Select>
         <Button
-          variant={onlyLoss ? "destructive" : "outline"}
-          size="sm"
-          onClick={() => setOnlyLoss(v => !v)}
+          variant="outline"
+          disabled={sync.isPending || bekleyen === 0}
+          onClick={() => sync.mutate({})}
         >
-          <AlertTriangle className="h-4 w-4 mr-1" /> Sadece zarardakiler
+          {sync.isPending ? (
+            <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+          ) : (
+            <Send className="mr-1 h-4 w-4" />
+          )}
+          Pazaryerine Gönder{bekleyen > 0 ? ` (${bekleyen})` : ""}
         </Button>
-        <div className="ml-auto flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={pushTrendyol.isPending}
-            onClick={() => pushTrendyol.mutate({ ids: pushIds })}
-          >
-            <Send className="h-4 w-4 mr-1" /> Trendyol'a Gönder{selected.size > 0 ? ` (${selected.size})` : ""}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={pushHepsiburada.isPending}
-            onClick={() => pushHepsiburada.mutate({ ids: pushIds })}
-          >
-            <Send className="h-4 w-4 mr-1" /> Hepsiburada'ya Gönder{selected.size > 0 ? ` (${selected.size})` : ""}
-          </Button>
-        </div>
       </div>
 
-      {/* Kanal bazlı fiyat açıklaması */}
-      <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
-        {channelSlug ? (
-          <>
-            <b className="text-foreground">{profile?.name}</b> fiyatlarını düzenliyorsunuz — girdiğiniz satış fiyatı
-            yalnız bu pazaryerine yazılır, web sitesi/taban fiyatı ve diğer kanallar değişmez.
-            <b className="text-primary"> {profile?.name}</b> ilan/senkron gönderiminde bu fiyat kullanılır.
-          </>
-        ) : (
-          <>
-            <b className="text-foreground">Taban (web sitesi) fiyatını</b> düzenliyorsunuz. Trendyol/Hepsiburada için{" "}
-            <b>ayrı fiyat</b> tutmak isterseniz yukarıdaki <b>“Kanal”</b> seçiminden o pazaryerini seçip fiyatı
-            girin; kanal fiyatı yoksa taban fiyat kullanılır.
-          </>
-        )}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Stat label="Ürün" value={String(rows?.length ?? 0)} />
+        <Stat label="Zararına satılan" value={String(zarar)} tone={zarar > 0 ? "bad" : undefined} />
+        <Stat label="Fiyatsız" value={String(fiyatsiz)} tone={fiyatsiz > 0 ? "warn" : undefined} />
+        <Stat
+          label="Gönderim bekleyen"
+          value={String(bekleyen)}
+          tone={bekleyen > 0 ? "warn" : undefined}
+        />
       </div>
 
-      {/* Ana tablo */}
-      <Card className="overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-8">
-                <Checkbox
-                  checked={allChecked}
-                  onCheckedChange={v =>
-                    setSelected(v === true ? new Set(rows.map(r => r.p.id)) : new Set())
-                  }
-                />
-              </TableHead>
-              <TableHead>Ürün</TableHead>
-              <TableHead className="text-right">Stok</TableHead>
-              <TableHead className="text-right">Maliyet</TableHead>
-              <TableHead className="text-right w-32">
-                Satış Fiyatı{channelSlug ? ` · ${profile?.name}` : ""}
-              </TableHead>
-              <TableHead className="text-right">İndirimli Net</TableHead>
-              <TableHead className="text-right">Net Kâr ({profile?.name})</TableHead>
-              <TableHead className="text-right">Marj</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={8} className="text-center text-muted-foreground py-10">
-                  Ürün bulunamadı — filtreleri temizleyin veya Ürünler sayfasından ürün ekleyin.
-                </TableCell>
-              </TableRow>
-            )}
-            {rows.map(r => {
-              const hasPrice = r.effSalePrice > 0;
-              return (
-                <TableRow key={r.p.id} className={r.channelNet < 0 && hasPrice ? "bg-destructive/5" : ""}>
-                  <TableCell>
-                    <Checkbox
-                      checked={selected.has(r.p.id)}
-                      onCheckedChange={v =>
-                        setSelected(prev => {
-                          const next = new Set(prev);
-                          if (v === true) next.add(r.p.id);
-                          else next.delete(r.p.id);
-                          return next;
-                        })
-                      }
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <p className="font-medium leading-tight">{r.p.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {[r.p.series, r.p.barcode].filter(Boolean).join(" · ") || "—"}
-                    </p>
-                  </TableCell>
-                  <TableCell className="text-right">{r.p.stockQty}</TableCell>
-                  <TableCell
-                    className="text-right"
-                    title={`Hammadde ${formatTL(r.materialCost)} + Ambalaj ${formatTL(r.p.packagingCost)} + Kargo ${formatTL(r.p.shippingCost)}`}
-                  >
-                    {formatTL(r.totalCost)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Input
-                      className={`h-8 w-28 text-right ml-auto ${r.overridden ? "border-primary/60" : ""}`}
-                      value={edits[r.p.id] ?? r.effSalePrice.toFixed(2)}
-                      onChange={e => setEdits(prev => ({ ...prev, [r.p.id]: e.target.value }))}
-                      onBlur={() => commitEdit(r.p.id, r.effSalePrice)}
-                      onKeyDown={e => {
-                        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                        if (e.key === "Escape")
-                          setEdits(prev => {
-                            const next = { ...prev };
-                            delete next[r.p.id];
-                            return next;
-                          });
-                      }}
-                    />
-                    {channelSlug && (
-                      <p className="text-[10px] mt-0.5 text-muted-foreground">
-                        {r.overridden ? (
-                          <span className="text-primary">{profile?.name} fiyatı</span>
-                        ) : (
-                          <>taban: {formatTL(num(r.p.salePrice))}</>
-                        )}
-                      </p>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {formatTL(r.netPrice)}
-                    {r.effDiscount > 0 && (
-                      <span className="text-xs text-muted-foreground"> (−%{r.effDiscount})</span>
-                    )}
-                  </TableCell>
-                  <TableCell
-                    className={`text-right font-medium ${r.channelNet < 0 && hasPrice ? "text-destructive" : ""}`}
-                  >
-                    {hasPrice ? formatTL(r.channelNet) : "—"}
-                  </TableCell>
-                  <TableCell className="text-right">{marginBadge(r.channelMargin, hasPrice)}</TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      </Card>
+      <Tabs defaultValue="tablo">
+        <TabsList>
+          <TabsTrigger value="tablo">Fiyat Tablosu</TabsTrigger>
+          <TabsTrigger value="toplu">Toplu Zam / İndirim</TabsTrigger>
+        </TabsList>
 
-      {/* Toplu fiyatlama dialogu (F2) */}
-      <Dialog open={bulkOpen} onOpenChange={setBulkOpen}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <BadgePercent className="h-5 w-5" /> Toplu Fiyatlama
-            </DialogTitle>
-          </DialogHeader>
-          {!preview && (
-            <div className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                Hedef: <b>{targetRows.length}</b> ürün ({selected.size > 0 ? "işaretli satırlar" : "filtrelenmiş liste"}).
-                Hedef marj modu, seçili kanal profilinin (<b>{profile?.name}</b>) tüm kesintilerini
-                (komisyon, ödeme/işlem bedeli, kargo, stopaj, KDV) düşerek hesaplar; marj KDV hariç
-                satışa göredir.
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="space-y-1">
-                  <Label>Yöntem</Label>
-                  <Select value={mode} onValueChange={v => setMode(v as PriceMode)}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(Object.keys(MODE_LABELS) as PriceMode[]).map(m => (
-                        <SelectItem key={m} value={m}>
-                          {MODE_LABELS[m]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <Label>
-                    {mode === "percent" && "Yüzde (− indirim)"}
-                    {mode === "targetMargin" && "Hedef marj %"}
-                    {mode === "multiplier" && "Çarpan"}
-                    {mode === "fixed" && "Tutar ₺ (− indirim)"}
-                  </Label>
-                  <Input value={modeValue} onChange={e => setModeValue(e.target.value)} />
-                </div>
-                <div className="space-y-1">
-                  <Label>Yuvarlama</Label>
-                  <Select value={rounding} onValueChange={v => setRounding(v as Rounding)}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(Object.keys(ROUNDING_LABELS) as Rounding[]).map(r => (
-                        <SelectItem key={r} value={r}>
-                          {ROUNDING_LABELS[r]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+        <TabsContent value="tablo" className="space-y-3 pt-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Kod, renk, seri, ambalaj ara..."
+              className="max-w-sm"
+            />
+            <Button
+              variant={onlyLoss ? "default" : "outline"}
+              size="sm"
+              onClick={() => setOnlyLoss(v => !v)}
+            >
+              <TrendingDown className="mr-1 h-3.5 w-3.5" /> Sadece zarar edenler
+            </Button>
+            <span className="text-xs text-muted-foreground">{filtered.length} ürün</span>
+          </div>
+
+          {isLoading && <div className="h-40 animate-pulse rounded-xl bg-muted" />}
+
+          {!isLoading && filtered.length === 0 && (
+            <Card className="p-10 text-center text-sm text-muted-foreground">
+              {(rows?.length ?? 0) === 0
+                ? "Henüz master ürün yok — Ürünler sayfasından üretin."
+                : "Aramayla eşleşen ürün yok."}
+            </Card>
+          )}
+
+          {filtered.length > 0 && (
+            <Card className="overflow-hidden p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50 text-xs text-muted-foreground">
+                    <tr>
+                      <th className="p-2 text-left">Ürün</th>
+                      <th className="p-2 text-right">Hammadde</th>
+                      <th className="p-2 text-right">Ambalaj</th>
+                      <th className="p-2 text-right">Maliyet</th>
+                      <th className="p-2 text-right">Fiyat</th>
+                      <th className="p-2 text-right">Kâr</th>
+                      <th className="p-2 text-right">Marj</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.map(r => (
+                      <tr
+                        key={r.masterId}
+                        className="cursor-pointer border-t hover:bg-accent/40"
+                        onClick={() => setLocation(`/urun/${r.masterId}`)}
+                      >
+                        <td className="p-2">
+                          <span className="block truncate font-medium">
+                            {r.colorName ?? "—"} · {r.family ?? "—"} · {r.packaging ?? "—"}
+                          </span>
+                          <span className="block font-mono text-[10px] text-muted-foreground">
+                            {r.internalSku}
+                          </span>
+                          {r.unknownInputs.length > 0 && (
+                            <span className="mt-0.5 flex items-center gap-1 text-[10px] text-amber-600">
+                              <AlertTriangle className="h-3 w-3" />
+                              Fiyatsız kalem: {r.unknownInputs.join(", ")}
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-2 text-right tabular-nums text-muted-foreground">
+                          {formatTL(r.materialCost)}
+                        </td>
+                        <td className="p-2 text-right tabular-nums text-muted-foreground">
+                          {formatTL(r.packagingCost)}
+                        </td>
+                        <td className="p-2 text-right font-medium tabular-nums">
+                          {formatTL(r.cost)}
+                        </td>
+                        <td className="p-2 text-right tabular-nums">
+                          {r.basePrice > 0 ? (
+                            formatTL(r.netPrice)
+                          ) : (
+                            <span className="text-amber-600">—</span>
+                          )}
+                        </td>
+                        <td className="p-2 text-right tabular-nums">
+                          {r.basePrice > 0 ? (
+                            <span
+                              className={
+                                r.profit > 0 ? "text-emerald-600" : "font-semibold text-rose-600"
+                              }
+                            >
+                              {formatTL(r.profit)}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="p-2 text-right tabular-nums">
+                          {r.basePrice > 0 ? (
+                            <Badge
+                              variant="outline"
+                              className={
+                                r.marginPercent >= 30
+                                  ? "text-emerald-600"
+                                  : r.marginPercent > 0
+                                    ? "text-amber-600"
+                                    : "text-rose-600"
+                              }
+                            >
+                              %{r.marginPercent}
+                            </Badge>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-              {mode !== "percent" && mode !== "fixed" && (
-                <p className="text-xs text-muted-foreground">
-                  Maliyet = formüldeki hammadde + ambalaj + kargo. Maliyeti 0 olan ürünler atlanır — önce Formül
-                  Defteri'nden reçete girin.
-                </p>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="toplu" className="space-y-3 pt-3">
+          <Card className="space-y-3 p-5">
+            <p className="text-sm text-muted-foreground">
+              Taban fiyatı yüzdeyle değiştirir. Zam için pozitif, indirim için negatif yazın.
+              Güncellenen ürünlerin yayınları senkron kuyruğuna girer.
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {(series ?? []).map(s => (
+                <button
+                  key={s.id}
+                  onClick={() =>
+                    setBulkSeries(prev => {
+                      const next = new Set(prev);
+                      if (next.has(s.id)) next.delete(s.id);
+                      else next.add(s.id);
+                      return next;
+                    })
+                  }
+                  className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                    bulkSeries.has(s.id)
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {s.name}
+                </button>
+              ))}
+              {bulkSeries.size === 0 && (
+                <span className="self-center text-xs text-muted-foreground">
+                  seçim yoksa tüm ürünler
+                </span>
               )}
             </div>
-          )}
-          {preview && (
-            <div className="space-y-2">
-              <p className="text-sm">
-                <b>{preview.length}</b> ürünün fiyatı değişecek
-                {skippedCount > 0 && (
-                  <span className="text-muted-foreground"> · {skippedCount} ürün hesaplanamadığı için atlandı</span>
-                )}
-                :
-              </p>
-              <div className="max-h-72 overflow-y-auto border rounded-md">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Ürün</TableHead>
-                      <TableHead className="text-right">Eski</TableHead>
-                      <TableHead className="text-right">Yeni</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {preview.map(m => (
-                      <TableRow key={m.productId}>
-                        <TableCell className="py-1.5">{m.productName}</TableCell>
-                        <TableCell className="py-1.5 text-right text-muted-foreground line-through">
-                          {formatTL(m.oldPrice)}
-                        </TableCell>
-                        <TableCell
-                          className={`py-1.5 text-right font-medium ${m.newPrice < m.oldPrice ? "text-destructive" : "text-emerald-600"}`}
-                        >
-                          {formatTL(m.newPrice)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="space-y-1.5">
+                <Label>Yüzde (%)</Label>
+                <Input
+                  type="number"
+                  value={percent}
+                  onChange={e => setPercent(e.target.value)}
+                  className="w-32"
+                />
               </div>
-            </div>
-          )}
-          <DialogFooter>
-            {!preview && (
-              <>
-                <Button variant="outline" onClick={() => setBulkOpen(false)}>
-                  Vazgeç
-                </Button>
-                <Button onClick={buildPreview}>Önizle</Button>
-              </>
-            )}
-            {preview && (
-              <>
-                <Button variant="outline" onClick={() => setPreview(null)}>
-                  Geri
-                </Button>
+              <Button
+                variant="outline"
+                disabled={bulkPrice.isPending}
+                onClick={() =>
+                  bulkPrice.mutate({
+                    percent: parseFloat(percent.replace(",", ".")) || 0,
+                    seriesIds: Array.from(bulkSeries),
+                    dryRun: true,
+                  })
+                }
+              >
+                <Play className="mr-1 h-4 w-4" /> Önce Göster
+              </Button>
+              {bulkPreview !== null && bulkPreview > 0 && (
                 <Button
-                  disabled={applyPrices.isPending}
+                  disabled={bulkPrice.isPending}
                   onClick={() =>
-                    applyPrices.mutate({
-                      updates: preview.map(m => ({ id: m.productId, salePrice: m.newPrice })),
-                      channel: channelSlug,
+                    bulkPrice.mutate({
+                      percent: parseFloat(percent.replace(",", ".")) || 0,
+                      seriesIds: Array.from(bulkSeries),
+                      dryRun: false,
                     })
                   }
                 >
-                  {preview.length} Fiyatı Uygula
+                  <Percent className="mr-1 h-4 w-4" /> {bulkPreview} ürüne uygula
                 </Button>
-              </>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Excel/CSV içe aktarma dialogu (F3) */}
-      <Dialog open={csvOpen} onOpenChange={setCsvOpen}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <FileSpreadsheet className="h-5 w-5" /> Excel/CSV ile Fiyat Güncelleme
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Ürünler sayfasındaki "Dışa Aktar" dosyasını Excel'de açıp fiyat sütununu düzenleyin ve CSV olarak
-              kaydedip buraya yükleyin. Gerekli sütunlar: <b>Barkod</b> (veya ID/SKU) ve <b>Satış Fiyatı</b>{" "}
-              (veya "Yeni Fiyat"/"Fiyat"). Eşleşme önce barkodla, sonra ID ile yapılır.
-            </p>
-            <Input
-              ref={fileRef}
-              type="file"
-              accept=".csv,.txt"
-              onChange={e => {
-                const f = e.target.files?.[0];
-                if (f) void handleCsvFile(f);
-              }}
-            />
-            {csvResult && (
-              <div className="space-y-2">
-                <div className="flex flex-wrap gap-2 text-sm">
-                  <Badge variant="outline" className="border-emerald-500 text-emerald-600">
-                    {csvResult.matches.length} fiyat değişecek
-                  </Badge>
-                  {csvResult.unmatchedCount > 0 && (
-                    <Badge variant="outline">{csvResult.unmatchedCount} satır eşleşmedi/değişmedi</Badge>
-                  )}
-                  {csvResult.errors.length > 0 && (
-                    <Badge variant="destructive">{csvResult.errors.length} hatalı satır</Badge>
-                  )}
-                </div>
-                {csvResult.errors.length > 0 && (
-                  <div className="text-xs text-destructive max-h-20 overflow-y-auto space-y-0.5">
-                    {csvResult.errors.slice(0, 10).map((e, i) => (
-                      <p key={i}>{e}</p>
-                    ))}
-                  </div>
-                )}
-                {csvResult.matches.length > 0 && (
-                  <div className="max-h-64 overflow-y-auto border rounded-md">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Ürün</TableHead>
-                          <TableHead className="text-right">Eski</TableHead>
-                          <TableHead className="text-right">Yeni</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {csvResult.matches.map(m => (
-                          <TableRow key={m.productId}>
-                            <TableCell className="py-1.5">{m.productName}</TableCell>
-                            <TableCell className="py-1.5 text-right text-muted-foreground line-through">
-                              {formatTL(m.oldPrice)}
-                            </TableCell>
-                            <TableCell className="py-1.5 text-right font-medium">{formatTL(m.newPrice)}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCsvOpen(false)}>
-              Vazgeç
-            </Button>
-            <Button
-              disabled={!csvResult || csvResult.matches.length === 0 || applyPrices.isPending}
-              onClick={() =>
-                csvResult &&
-                applyPrices.mutate({
-                  updates: csvResult.matches.map(m => ({ id: m.productId, salePrice: m.newPrice })),
-                  channel: channelSlug,
-                })
-              }
-            >
-              {csvResult?.matches.length ?? 0} Fiyatı Uygula
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Kanal profilleri dialogu (F5) */}
-      <Dialog open={profilesOpen} onOpenChange={setProfilesOpen}>
-        <DialogContent className="max-w-5xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Settings2 className="h-5 w-5" /> Kanal Profilleri
-            </DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Net kâr hesabında kullanılan kanal kesintileri. İşlem bedeli ve kargo KDV dahil girilir;
-            kargo 0 ise ürünün kendi kargo maliyeti kullanılır. Stopaj yalnızca pazaryeri satışlarında
-            (%1) uygulanır. POS türü "Banka" ise komisyon BSMV'li olduğu için KDV indirimi yapılmaz.
-          </p>
-          <div className="space-y-2">
-            <div className="grid grid-cols-[1fr_92px_64px_64px_64px_64px_64px_88px_32px] gap-2 text-xs text-muted-foreground px-1">
-              <span>Kanal</span>
-              <span>Tür</span>
-              <span>Kom. %</span>
-              <span>Ödeme %</span>
-              <span>İşlem ₺</span>
-              <span>Stopaj %</span>
-              <span>KDV %</span>
-              <span>Kargo ₺ / POS</span>
-              <span />
+              )}
             </div>
-            {profileDraft.map((p, i) => (
-              <div key={i} className="grid grid-cols-[1fr_92px_64px_64px_64px_64px_64px_88px_32px] gap-2 items-center">
-                <Input value={p.name} onChange={e => setDraftField(i, "name", e.target.value)} />
-                <Select value={p.kind} onValueChange={v => setDraftField(i, "kind", v)}>
-                  <SelectTrigger className="h-9">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="pazaryeri">Pazaryeri</SelectItem>
-                    <SelectItem value="website">Web Sitesi</SelectItem>
-                    <SelectItem value="elden">Elden</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Input value={String(p.commissionPercent)} onChange={e => setDraftField(i, "commissionPercent", e.target.value)} />
-                <Input value={String(p.paymentFeePercent)} onChange={e => setDraftField(i, "paymentFeePercent", e.target.value)} />
-                <Input value={String(p.fixedFee)} onChange={e => setDraftField(i, "fixedFee", e.target.value)} />
-                <Input value={String(p.stopajPercent)} onChange={e => setDraftField(i, "stopajPercent", e.target.value)} />
-                <Input value={String(p.vatPercent)} onChange={e => setDraftField(i, "vatPercent", e.target.value)} />
-                <div className="flex flex-col gap-1">
-                  <Input value={String(p.shippingCost)} onChange={e => setDraftField(i, "shippingCost", e.target.value)} />
-                  {p.kind === "website" && (
-                    <Select
-                      value={p.paymentFeeVatDeductible ? "kurulus" : "banka"}
-                      onValueChange={v => setProfileDraft(prev => prev.map((x, idx) => (idx === i ? { ...x, paymentFeeVatDeductible: v === "kurulus" } : x)))}
-                    >
-                      <SelectTrigger className="h-7 text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="kurulus">Ödeme kuruluşu</SelectItem>
-                        <SelectItem value="banka">Banka POS'u</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  )}
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={() => setProfileDraft(prev => prev.filter((_, idx) => idx !== i))}
-                >
-                  ×
-                </Button>
-              </div>
-            ))}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                setProfileDraft(prev => [
-                  ...prev,
-                  {
-                    name: "Yeni Kanal",
-                    kind: "pazaryeri" as const,
-                    commissionPercent: 0,
-                    paymentFeePercent: 0,
-                    paymentFeeVatDeductible: true,
-                    fixedFee: 0,
-                    stopajPercent: 1,
-                    vatPercent: 20,
-                    shippingCost: 0,
-                  },
-                ])
-              }
-            >
-              + Kanal Ekle
-            </Button>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setProfilesOpen(false)}>
-              Vazgeç
-            </Button>
-            <Button
-              disabled={saveSettings.isPending || profileDraft.length === 0}
-              onClick={() => {
-                setProfileIdx(0);
-                saveSettings.mutate({ channelProfiles: JSON.stringify(profileDraft) });
-              }}
-            >
-              Kaydet
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </Card>
+
+          {(syncStatus ?? []).some(c => c.kirli + c.hata > 0) && (
+            <Card className="space-y-2 p-4">
+              <p className="font-semibold">Senkron kuyruğu</p>
+              {(syncStatus ?? [])
+                .filter(c => c.kirli + c.hata > 0)
+                .map(c => (
+                  <div key={c.channelId} className="flex items-center gap-2 text-sm">
+                    <span className="flex-1">{c.name}</span>
+                    {c.kirli > 0 && <Badge variant="secondary">{c.kirli} bekliyor</Badge>}
+                    {c.hata > 0 && (
+                      <Badge className="bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300">
+                        {c.hata} hata
+                      </Badge>
+                    )}
+                  </div>
+                ))}
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-fit"
+                disabled={sync.isPending}
+                onClick={() => sync.mutate({})}
+              >
+                <RefreshCw className="mr-1 h-3.5 w-3.5" /> Şimdi gönder
+              </Button>
+            </Card>
+          )}
+        </TabsContent>
+      </Tabs>
     </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: "warn" | "bad";
+}) {
+  const cls = tone === "bad" ? "text-rose-600" : tone === "warn" ? "text-amber-600" : "";
+  return (
+    <Card className="p-3">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className={`mt-1 text-lg font-semibold ${cls}`}>{value}</p>
+    </Card>
   );
 }

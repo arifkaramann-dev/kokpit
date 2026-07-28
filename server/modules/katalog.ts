@@ -18,8 +18,10 @@ import {
   type CapacityMaterial,
   type MaterialType,
 } from "../capacity";
-import { buildChannelBarcode, buildChannelSku } from "../catalogCodes";
+import { buildBaseCode, buildChannelBarcode, buildChannelSku, buildInternalSku, buildSlug } from "../catalogCodes";
+import { mapToTrendyolCards } from "../cardMapping";
 import { cubeKey, planListings, planMasters, type Readiness } from "../catalogPlan";
+import { syncAllChannels, syncChannel } from "../channelSyncWorker";
 import { generateContentBlock, templateContentBlock } from "../contentAi";
 import { computeMasterCosts, marginOf } from "../costing";
 import { planFormulaBindings, type MatchableFormula } from "../formulaMatch";
@@ -33,6 +35,7 @@ import { masterHealth, rollupBySeries } from "../masterHealth";
 import { planProduction, resolveOrderLines } from "../productionPlan";
 import { planPublications, summarizeSkips } from "../publishPlan";
 import { GENERIC_USE_CASE_CODE, seedCatalogDimensions } from "../seedCatalog";
+import { parseCardSettings, pushTrendyolProductCards } from "../trendyolProducts";
 
 /** productSeries JSON alanındaki {label,value} veya düz metin dizisini çözer. */
 function parseStringArray(value: unknown): string[] {
@@ -1289,6 +1292,106 @@ export const katalogRouter = router({
     };
   }),
 
+  /**
+   * Fiyat & Kâr tablosu — v3 maliyetiyle.
+   *
+   * Eski Fiyat Motoru `products.costSummary`'yi okuyordu: tek seviyeli, fire
+   * ve ambalaj hariç. Aynı ürün iki ekranda farklı maliyet gösteriyordu.
+   * Tek doğru kaynak `costing.ts`.
+   */
+  priceTable: protectedProcedure.query(async () => {
+    const [colors, packagings, series, families, channelListings] = await Promise.all([
+      db.listColors(),
+      db.listPackagings(),
+      db.listProductSeries(),
+      db.listProductFamilies(),
+      db.listChannelListings(),
+    ]);
+    const data = await loadCapacityInputs();
+    const costs = computeMasterCosts({
+      masters: data.masters,
+      materials: data.rawMaterials.map(m => ({
+        id: m.id as number,
+        name: String(m.name ?? ""),
+        type: (m.type as "hammadde" | "yari_mamul" | "ambalaj" | "masraf") ?? "hammadde",
+        unitCost: (m.unitCost as string) ?? 0,
+      })),
+      formulas: data.formulas,
+      packagings: data.packagings,
+    });
+    const costById = new Map(costs.map(c => [c.masterId, c]));
+
+    const channelPrices = new Map<number, { channelId: number; price: number }[]>();
+    for (const c of channelListings as { masterId: number; channelId: number; price: string }[]) {
+      channelPrices.set(c.masterId, [
+        ...(channelPrices.get(c.masterId) ?? []),
+        { channelId: c.channelId, price: num(c.price) },
+      ]);
+    }
+
+    const nameOf = <T extends { id: number; name: string }>(rows: unknown) =>
+      new Map((rows as T[]).map(r => [r.id, r.name]));
+    const colorName = nameOf(colors);
+    const packName = nameOf(packagings);
+    const seriesName = nameOf(series);
+    const familyName = nameOf(families);
+
+    return data.rawMasters.map(m => {
+      const masterId = m.id as number;
+      const cost = costById.get(masterId);
+      const price = num(m.basePrice);
+      const discount = num(m.discountPercent);
+      const net = price * (1 - discount / 100);
+      return {
+        masterId,
+        internalSku: String(m.internalSku ?? ""),
+        seriesId: m.seriesId as number,
+        series: seriesName.get(m.seriesId as number) ?? null,
+        family: familyName.get(m.familyId as number) ?? null,
+        packaging: packName.get(m.packagingId as number) ?? null,
+        colorName: colorName.get(m.colorId as number) ?? null,
+        status: String(m.status ?? "taslak"),
+        cost: cost?.totalCost ?? 0,
+        materialCost: cost?.materialCost ?? 0,
+        packagingCost: cost?.packagingCost ?? 0,
+        unknownInputs: cost?.unknownInputs ?? [],
+        basePrice: price,
+        discountPercent: discount,
+        netPrice: Math.round(net * 100) / 100,
+        ...marginOf(net, cost?.totalCost ?? 0),
+        channels: channelPrices.get(masterId) ?? [],
+      };
+    });
+  }),
+
+  /** Toplu fiyat güncelleme — yüzdeyle zam/indirim, seri kapsamlı. */
+  bulkPrice: protectedProcedure
+    .input(
+      z.object({
+        percent: z.number().min(-90).max(500),
+        seriesIds: z.array(z.number()).default([]),
+        dryRun: z.boolean().default(true),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const masters = (await db.listMasterProducts()) as Record<string, unknown>[];
+      const wanted = input.seriesIds.length ? new Set(input.seriesIds) : null;
+      const targets = masters.filter(
+        m => (!wanted || wanted.has(m.seriesId as number)) && num(m.basePrice) > 0,
+      );
+      if (input.dryRun) return { dryRun: true, affected: targets.length, updated: 0 };
+
+      let updated = 0;
+      for (const m of targets) {
+        const next = Math.round(num(m.basePrice) * (1 + input.percent / 100) * 100) / 100;
+        await db.updateMasterProduct(m.id as number, { basePrice: String(next) } as never);
+        updated++;
+      }
+      // Fiyat değişimi pazaryerine gitmeli.
+      await db.markChannelListingsDirty(targets.map(m => m.id as number));
+      return { dryRun: false, affected: targets.length, updated };
+    }),
+
   /** Tek master'ın kartı — künye, reçete, kapasite, ilanlar, fiyat tek yerde. */
   masterCard: protectedProcedure
     .input(z.object({ masterId: z.number() }))
@@ -1419,6 +1522,343 @@ export const katalogRouter = router({
         syncState: "kirli",
       } as never);
       return { ok: true };
+    }),
+
+  /**
+   * Kokpit özeti — ana ekran v3'ten habersizdi, `listProducts()` sayıyordu.
+   * Sabah açınca yeni sistemin durumu görünsün.
+   */
+  cockpit: protectedProcedure.query(async () => {
+    const [masters, listings, channelListings, dirty] = await Promise.all([
+      db.listMasterProducts(),
+      db.listListings(),
+      db.listChannelListings(),
+      db.listDirtyChannelListings(),
+    ]);
+    const data = await loadCapacityInputs();
+    const report = computeCapacity(data);
+    const necks = bottleneckReport(report);
+
+    const rows = masters as Record<string, unknown>[];
+    return {
+      masters: rows.length,
+      aktif: rows.filter(m => m.status === "aktif").length,
+      recetesiz: rows.filter(m => m.formulaId == null).length,
+      uretilemeyen: report.masters.filter(m => m.buildable <= 0).length,
+      listings: (listings as unknown[]).length,
+      canliYayin: (channelListings as { status: string }[]).filter(c => c.status === "canli").length,
+      senkronBekleyen: (dirty as unknown[]).length,
+      // En acil alım: kapasitesi tamamen sıfırlanan ürün sayısına göre.
+      darbogazlar: necks.slice(0, 5),
+      receteDongusu: report.cycles.length,
+    };
+  }),
+
+  /* ---- Pazaryeri gönderimi ---------------------------------------------- */
+
+  /** Kirli kuyruğun durumu — kaç yayın gönderim bekliyor. */
+  syncStatus: protectedProcedure.query(async () => {
+    const [dirty, channels] = await Promise.all([
+      db.listDirtyChannelListings(),
+      db.listSalesChannels(),
+    ]);
+    const byChannel = new Map<number, { kirli: number; hata: number }>();
+    for (const d of dirty as { channelId: number; syncState: string }[]) {
+      const row = byChannel.get(d.channelId) ?? { kirli: 0, hata: 0 };
+      if (d.syncState === "hata") row.hata++;
+      else row.kirli++;
+      byChannel.set(d.channelId, row);
+    }
+    return (channels as { id: number; code: string; name: string }[]).map(c => ({
+      channelId: c.id,
+      code: c.code,
+      name: c.name,
+      ...(byChannel.get(c.id) ?? { kirli: 0, hata: 0 }),
+    }));
+  }),
+
+  /**
+   * Stok/fiyat gönderimi — v3 yayınlarından. Eski `pushToTrendyol` ailesi
+   * `products` tablosunu okuyordu; v3'te üretilen hiçbir şey pazaryerine
+   * gitmiyordu. Zincirin son halkası burası.
+   */
+  syncChannel: protectedProcedure
+    .input(z.object({ channelId: z.number(), dryRun: z.boolean().default(false) }))
+    .mutation(async ({ input }) => {
+      const channels = (await db.listSalesChannels()) as { id: number; code: string }[];
+      const channel = channels.find(c => c.id === input.channelId);
+      if (!channel) throw new TRPCError({ code: "NOT_FOUND", message: "Kanal bulunamadı" });
+      return syncChannel(channel.id, channel.code, { dryRun: input.dryRun });
+    }),
+
+  syncAllChannels: protectedProcedure
+    .input(z.object({ dryRun: z.boolean().default(false) }))
+    .mutation(({ input }) => syncAllChannels({ dryRun: input.dryRun })),
+
+  /**
+   * Trendyol'da SIFIRDAN ürün kartı açar. Eski uç erişilemez hale gelen
+   * ProductDetail sayfasında kalmıştı; mantık v3 nesnelerine taşındı.
+   * Sonuç asenkron: batchRequestId ile sorgulanır.
+   */
+  pushCardsToTrendyol: protectedProcedure
+    .input(
+      z.object({
+        channelId: z.number(),
+        seriesIds: z.array(z.number()).default([]),
+        includeUnbuildable: z.boolean().default(false),
+        dryRun: z.boolean().default(true),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const cfg = parseCardSettings(await db.getSettings());
+      if (!cfg.ok) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Trendyol ürün açma ayarları eksik: ${cfg.missing.join(" · ")} (Ayarlar sayfasından girin)`,
+        });
+      }
+
+      const [channelListings, listings, masters, images] = await Promise.all([
+        db.listChannelListings(),
+        db.listListings(),
+        db.listMasterProducts(),
+        db.listListingImages(),
+      ]);
+
+      const imagesByListing = new Map<number, string[]>();
+      for (const img of images as { listingId: number; url: string }[]) {
+        imagesByListing.set(img.listingId, [...(imagesByListing.get(img.listingId) ?? []), img.url]);
+      }
+
+      const wantedSeries = input.seriesIds.length ? new Set(input.seriesIds) : null;
+      const masterRows = (masters as Record<string, unknown>[]).filter(
+        m => !wantedSeries || wantedSeries.has(m.seriesId as number),
+      );
+      const allowed = new Set(masterRows.map(m => m.id as number));
+
+      const { items, problems } = mapToTrendyolCards({
+        channelListings: (channelListings as Record<string, unknown>[])
+          .filter(c => c.channelId === input.channelId && allowed.has(c.masterId as number))
+          .map(c => ({
+            id: c.id as number,
+            listingId: c.listingId as number,
+            masterId: c.masterId as number,
+            channelSku: String(c.channelSku ?? ""),
+            channelBarcode: String(c.channelBarcode ?? ""),
+            channelCategoryId: (c.channelCategoryId as string | null) ?? null,
+            groupKey: (c.groupKey as string | null) ?? null,
+            price: num(c.price),
+            discountPercent: num(c.discountPercent),
+          })),
+        listings: (listings as Record<string, unknown>[]).map(l => ({
+          id: l.id as number,
+          masterId: l.masterId as number,
+          useCaseId: l.useCaseId as number,
+          title: String(l.title ?? ""),
+          shortDescription: (l.shortDescription as string | null) ?? null,
+          longDescription: (l.longDescription as string | null) ?? null,
+          imageUrls: imagesByListing.get(l.id as number) ?? [],
+        })),
+        masters: masterRows.map(m => ({
+          id: m.id as number,
+          baseCode: (m.baseCode as string | null) ?? null,
+          internalSku: String(m.internalSku ?? ""),
+          status: m.status as "taslak" | "aktif" | "arsiv",
+          basePrice: num(m.basePrice),
+          discountPercent: num(m.discountPercent),
+          buildableQty: Number(m.buildableQty ?? 0),
+          virtualStockCap: Number(m.virtualStockCap ?? 10),
+          desi: m.desi != null ? num(m.desi) : null,
+          vatRate: m.vatRate != null ? num(m.vatRate) : null,
+        })),
+        settings: cfg.value as never,
+        includeUnbuildable: input.includeUnbuildable,
+      });
+
+      if (input.dryRun) {
+        return { dryRun: true, willSend: items.length, sent: 0, batchRequestId: null, problems };
+      }
+      if (items.length === 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Gönderilebilir kart yok — ${problems.slice(0, 3).join(" · ")}`,
+        });
+      }
+      try {
+        const result = await pushTrendyolProductCards(items as never);
+        return { dryRun: false, willSend: items.length, ...result, problems };
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: error instanceof Error ? error.message : "Trendyol ürün gönderimi başarısız",
+        });
+      }
+    }),
+
+  /**
+   * Ürün Geliştirme çıktısını v3 kataloğuna aktarır.
+   *
+   * `dev.publishToProducts` eski `products` tablosuna yazıyordu; haftada 2-3
+   * kez yapılan geliştirme işi yeni katalogda görünmeyen ürünler üretiyordu.
+   * Bu uç aynı varyantları master + ilan olarak açar.
+   *
+   * Boyutlar ADA göre eşlenir; eşleşmeyen renk/ambalaj otomatik açılmaz,
+   * bildirilir — sessizce yanlış koordinatta master açmaktansa kullanıcının
+   * Tanımlar'dan eklemesi doğru.
+   */
+  importFromDevProject: protectedProcedure
+    .input(z.object({ projectId: z.number(), dryRun: z.boolean().default(true) }))
+    .mutation(async ({ input }) => {
+      const project = await db.getDevProject(input.projectId);
+      if (!project) throw new TRPCError({ code: "NOT_FOUND", message: "Proje bulunamadı" });
+
+      const [gens, series, colors, packagings, families, useCases, masters] = await Promise.all([
+        db.listProductGenerations(input.projectId),
+        db.listProductSeries(),
+        db.listColors(),
+        db.listPackagings(),
+        db.listProductFamilies(),
+        db.listUseCases(),
+        db.listMasterProducts(),
+      ]);
+      if ((gens as unknown[]).length === 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Aktarılacak varyant yok — önce 5. adımdan varyantları oluşturun.",
+        });
+      }
+
+      const seriesRow = (series as { id: number; name: string; prefix: string | null }[]).find(
+        s => s.name?.trim().toLowerCase() === project.series?.trim().toLowerCase(),
+      );
+      if (!seriesRow) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `"${project.series}" serisi katalogda yok — Şablonlar'dan ekleyin.`,
+        });
+      }
+      const generic = (useCases as { id: number; code: string }[]).find(
+        u => u.code === GENERIC_USE_CASE_CODE,
+      );
+      if (!generic) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "'Genel' kullanım alanı yok — boyutları tohumlayın." });
+      }
+
+      const norm = (s: string) => s.trim().toLocaleLowerCase("tr");
+      const colorByName = new Map(
+        (colors as { id: number; name: string; code: string }[]).flatMap(c => [
+          [norm(c.name), c.id] as const,
+          [norm(c.code), c.id] as const,
+        ]),
+      );
+      const packByName = new Map(
+        (packagings as { id: number; name: string }[]).map(p => [norm(p.name), p.id]),
+      );
+      // Form belirtilmediği için serinin ilk formu kullanılır; geliştirme
+      // projesinde form ekseni yok.
+      const familyId = (families as { id: number }[])[0]?.id;
+      if (!familyId) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Form tanımı yok — boyutları tohumlayın." });
+      }
+
+      const existingCubes = new Set(
+        (masters as Record<string, unknown>[]).map(m =>
+          cubeKey({
+            seriesId: m.seriesId as number,
+            colorId: m.colorId as number,
+            familyId: m.familyId as number,
+            packagingId: m.packagingId as number,
+            readiness: m.readiness as Readiness,
+          }),
+        ),
+      );
+
+      const plan: { generationId: number; colorId: number; packagingId: number; title: string }[] = [];
+      const problems: string[] = [];
+
+      for (const g of gens as Record<string, unknown>[]) {
+        const colorName = String(g.color ?? "").trim();
+        const packName = String(g.packaging ?? "").trim();
+        const colorId = colorName ? colorByName.get(norm(colorName)) : colorByName.get("renksiz / nötr");
+        const packagingId = packByName.get(norm(packName));
+        if (!colorId) {
+          problems.push(`"${colorName || "renksiz"}" rengi Tanımlar'da yok`);
+          continue;
+        }
+        if (!packagingId) {
+          problems.push(`"${packName}" ambalajı Tanımlar'da yok`);
+          continue;
+        }
+        const key = cubeKey({ seriesId: seriesRow.id, colorId, familyId, packagingId, readiness: "konsantre" });
+        if (existingCubes.has(key)) {
+          problems.push(`${colorName} · ${packName} zaten katalogda var`);
+          continue;
+        }
+        existingCubes.add(key);
+        plan.push({
+          generationId: g.id as number,
+          colorId,
+          packagingId,
+          title: String(g.trendyolTitle ?? project.name),
+        });
+      }
+
+      if (input.dryRun) {
+        return { dryRun: true, willCreate: plan.length, created: 0, problems: Array.from(new Set(problems)) };
+      }
+
+      const packVolume = new Map(
+        (packagings as { id: number; volumeMl: string; skuSegment: string | null; code: string }[]).map(p => [
+          p.id,
+          { volume: num(p.volumeMl), segment: p.skuSegment ?? p.code },
+        ]),
+      );
+      const colorCode = new Map((colors as { id: number; code: string }[]).map(c => [c.id, c.code]));
+      const familySegment =
+        (families as { id: number; skuSegment: string | null; code: string }[]).find(f => f.id === familyId) ?? null;
+
+      let created = 0;
+      for (const p of plan) {
+        const gen = (gens as Record<string, unknown>[]).find(g => g.id === p.generationId)!;
+        const baseCode = buildBaseCode({
+          brand: "aoc",
+          seriesPrefix: seriesRow.prefix,
+          colorCode: colorCode.get(p.colorId),
+        });
+        const pack = packVolume.get(p.packagingId);
+        const masterId = await db.createMasterProduct({
+          seriesId: seriesRow.id,
+          colorId: p.colorId,
+          familyId,
+          packagingId: p.packagingId,
+          readiness: "konsantre",
+          baseCode,
+          internalSku: buildInternalSku({
+            baseCode,
+            familySegment: familySegment?.skuSegment ?? familySegment?.code,
+            packagingSegment: pack?.segment,
+          }),
+          formulaScale: String(pack && pack.volume > 0 ? pack.volume / 1000 : 1),
+          basePrice: String(num(gen.suggestedPrice)),
+          status: "taslak",
+        } as never);
+
+        // Geliştirmede üretilen metin doğrudan ilana taşınır — yeniden
+        // yazdırmak hem AI maliyeti hem gözden geçirilmiş içeriğin kaybı olur.
+        await db.createListing({
+          masterId,
+          useCaseId: generic.id,
+          title: p.title.slice(0, 255),
+          slug: buildSlug(p.title),
+          isPrimary: 1,
+          shortDescription: (gen.trendyolTitle as string | null) ?? null,
+          longDescription: (gen.trendyolDescription as string | null) ?? null,
+          applicationText: (gen.applicationNotes as string | null) ?? null,
+          status: "taslak",
+        } as never);
+        created++;
+      }
+      return { dryRun: false, willCreate: plan.length, created, problems: Array.from(new Set(problems)) };
     }),
 
   /* ---- Üretim brifingi -------------------------------------------------- */

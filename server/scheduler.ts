@@ -1,4 +1,5 @@
 import { runCapacityRecompute, runFormulaBinding } from "./catalogJobs";
+import { syncAllChannels } from "./channelSyncWorker";
 import * as db from "./db";
 import { overdueCheques, overdueReceivables } from "./financeUtils";
 import { isHepsiburadaConfigured } from "./hepsiburada";
@@ -147,6 +148,21 @@ async function runCatalogJobs() {
     }
   } catch (error) {
     console.error("[scheduler] kapasite hesabı hatası:", error);
+  }
+  // Kirli kuyruğu boşalt. Kapasiteden SONRA koşar ki aynı turda kirlenen
+  // yayınlar hemen gitsin, bir tur beklemesin.
+  try {
+    const results = await syncAllChannels();
+    for (const r of results) {
+      if (r.sent > 0 || r.failed > 0) {
+        console.log(
+          `[scheduler] ${r.channel}: ${r.sent} gönderildi` +
+            (r.failed > 0 ? `, ${r.failed} hata (sonraki turda yeniden denenecek)` : ""),
+        );
+      }
+    }
+  } catch (error) {
+    console.error("[scheduler] kanal senkron hatası:", error);
   }
 }
 

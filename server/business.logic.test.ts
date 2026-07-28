@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calcProfit } from "../client/src/pages/Costs";
+import { calcProfit } from "../shared/pricing";
 import { ORDER_STATUSES, num } from "../client/src/lib/format";
 
 describe("calcProfit — maliyet ve kar marjı hesabı", () => {

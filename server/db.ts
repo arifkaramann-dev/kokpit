@@ -2883,3 +2883,42 @@ export async function setUseCaseChannelCategory(
     .values({ useCaseId, channelId, categoryId, categoryName });
   return Number(r.insertId);
 }
+
+/* ---- Kanal senkron kuyruğu ----------------------------------------------- */
+
+/** Gönderim bekleyen yayınlar (kirli veya hatalı). */
+export async function listDirtyChannelListings(channelId?: number) {
+  const db = await requireDb();
+  const conds = [inArray(channelListings.syncState, ["kirli", "hata"] as never)];
+  if (channelId) conds.push(eq(channelListings.channelId, channelId));
+  return db.select().from(channelListings).where(and(...conds));
+}
+
+/** Gönderim sonucu — başarıda pushedQty önbelleği tazelenir. */
+export async function markChannelSynced(ids: number[], pushedQty: Map<number, number>) {
+  if (ids.length === 0) return;
+  const db = await requireDb();
+  const now = new Date();
+  for (const id of ids) {
+    await db
+      .update(channelListings)
+      .set({
+        syncState: "temiz",
+        syncedAt: now,
+        pushedQty: pushedQty.get(id) ?? 0,
+        lastError: null,
+        status: "canli",
+      })
+      .where(eq(channelListings.id, id));
+  }
+}
+
+/** Gönderim hatası — satır "hata" kalır ve sonraki turda yeniden denenir. */
+export async function markChannelSyncFailed(ids: number[], message: string) {
+  if (ids.length === 0) return;
+  const db = await requireDb();
+  await db
+    .update(channelListings)
+    .set({ syncState: "hata", lastError: message.slice(0, 500) })
+    .where(inArray(channelListings.id, ids));
+}
