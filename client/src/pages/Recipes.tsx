@@ -178,7 +178,7 @@ export default function Recipes() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Reçete Defteri (v3)</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Reçeteler</h1>
           <p className="text-sm text-muted-foreground">
             Reçete baz hacim için yazılır, ambalaj hacmine göre ölçeklenir — tek reçete tüm
             boyutları besler. Kapasite hesabı buradan beslenir.

@@ -6,14 +6,15 @@ import Accounts from "@/pages/Accounts";
 import Analytics from "@/pages/Analytics";
 import Assistant from "@/pages/Assistant";
 import Campaigns from "@/pages/Campaigns";
+import Briefing from "@/pages/Briefing";
 import Catalog from "@/pages/Catalog";
+import Definitions from "@/pages/Definitions";
 import Cheques from "@/pages/Cheques";
 import Crm from "@/pages/Crm";
 import Customers from "@/pages/Customers";
 import Expenses from "@/pages/Expenses";
 import Development from "@/pages/Development";
 import ProductOutput from "@/pages/ProductOutput";
-import Formulas from "@/pages/Formulas";
 import Home from "@/pages/Home";
 import Ledgers from "@/pages/Ledgers";
 import Marketing from "@/pages/Marketing";
@@ -23,7 +24,6 @@ import Pricing from "@/pages/Pricing";
 import Production from "@/pages/Production";
 import ProductDetail from "@/pages/ProductDetail";
 import ProductImport from "@/pages/ProductImport";
-import Products from "@/pages/Products";
 import Purchases from "@/pages/Purchases";
 import Questions from "@/pages/Questions";
 import Quotes from "@/pages/Quotes";
@@ -56,15 +56,23 @@ function AdminApp() {
         <Route path={"/mutabakat"} component={Reconcile} />
         <Route path={"/stok"} component={Stock} />
         <Route path={"/faturalar"} component={Purchases} />
-        <Route path={"/urunler"} component={Products} />
+        {/* Eski model menüden kaldırıldı; kayıtlı bağlantılar yeni katalog ve
+            reçete defterine yönlendirilir. */}
+        <Route path={"/urunler"}>
+          <Redirect to="/katalog" replace />
+        </Route>
+        <Route path={"/formuller"}>
+          <Redirect to="/recete" replace />
+        </Route>
+        <Route path={"/brifing"} component={Briefing} />
         <Route path={"/katalog"} component={Catalog} />
+        <Route path={"/tanimlar"} component={Definitions} />
         <Route path={"/recete"} component={Recipes} />
         <Route path={"/urun-aktar"} component={ProductImport} />
         <Route path={"/urun/:id"} component={ProductDetail} />
         <Route path={"/sorular"} component={Questions} />
         <Route path={"/gelistirme"} component={Development} />
         <Route path={"/urun-ciktisi/:id"} component={ProductOutput} />
-        <Route path={"/formuller"} component={Formulas} />
         <Route path={"/uretim"} component={Production} />
         {/* Maliyet & Kâr hesaplayıcısı Fiyat Motoru'na sekme olarak taşındı; eski bağlantılar kırılmasın. */}
         <Route path={"/maliyet"}>
