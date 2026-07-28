@@ -1480,3 +1480,31 @@ export const contentBlocks = mysqlTable(
 
 export type ContentBlock = typeof contentBlocks.$inferSelect;
 export type InsertContentBlock = typeof contentBlocks.$inferInsert;
+
+/**
+ * Kullanım alanı × kanal → pazaryeri kategori kimliği.
+ *
+ * Toplu yayının ön koşulu: kategorisiz ilan pazaryerine açılamaz. Ayrıca
+ * mükerrer ilan kilidi kategoriye dayandığı için (bir master, bir kanalda,
+ * bir kategoride tek ilan) eşleme olmadan kilit anlamsızlaşır.
+ *
+ * Aynı kategoriye düşen iki kullanım alanı (örn. PLA ve PETG'nin ikisi de
+ * "3D Baskı Malzemeleri") bilinçli olarak mümkündür — bu durumda toplu yayın
+ * ikincisini atlar ve sebebini bildirir.
+ */
+export const useCaseChannelCategories = mysqlTable(
+  "useCaseChannelCategories",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    useCaseId: int("useCaseId").notNull(),
+    channelId: int("channelId").notNull(),
+    categoryId: varchar("categoryId", { length: 64 }).notNull(),
+    categoryName: varchar("categoryName", { length: 160 }),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  t => [unique("useCaseChannelCategories_uq").on(t.useCaseId, t.channelId)],
+);
+
+export type UseCaseChannelCategory = typeof useCaseChannelCategories.$inferSelect;

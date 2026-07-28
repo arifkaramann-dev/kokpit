@@ -1,0 +1,306 @@
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { trpc } from "@/lib/trpc";
+import { Loader2, Play, Store, Upload } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
+
+/**
+ * Toplu Yayın — ilanları kanala açar.
+ *
+ * Tek tek açmak 500 master × 3 ilan × 2 kanal = 3.000 tıklama demekti.
+ * Üretim adımlarındaki gibi "önce göster / sonra uygula": atlananların
+ * sebebi önden görünür, toplu işlem ortasında sürprize düşülmez.
+ */
+export default function Publish() {
+  const utils = trpc.useUtils();
+  const { data: dims } = trpc.katalog.dimensions.useQuery();
+  const { data: series } = trpc.series.list.useQuery();
+  const { data: categories } = trpc.katalog.channelCategories.useQuery();
+  const { data: published } = trpc.katalog.channelListings.useQuery();
+
+  const [channelId, setChannelId] = useState<string>("");
+  const [selectedSeries, setSelectedSeries] = useState<Set<number>>(new Set());
+  const [includeUnbuildable, setIncludeUnbuildable] = useState(false);
+  const [preview, setPreview] = useState<{
+    willPublish: number;
+    skipped: { reason: string; count: number }[];
+  } | null>(null);
+
+  const channels = dims?.channels ?? [];
+  const useCases = dims?.useCases ?? [];
+  const activeChannel = Number(channelId) || channels[0]?.id || 0;
+
+  const bulk = trpc.katalog.bulkPublish.useMutation({
+    onSuccess: r => {
+      if (r.dryRun) {
+        setPreview({ willPublish: r.willPublish, skipped: r.skipped });
+        if (r.willPublish === 0) toast.info("Yayınlanacak ilan yok — sebepler aşağıda.");
+        return;
+      }
+      setPreview(null);
+      utils.katalog.invalidate();
+      toast.success(`${r.published} ilan kanala açıldı — senkron kuyruğuna girdi`, { duration: 8000 });
+    },
+    onError: e => toast.error(e.message, { duration: 10000 }),
+  });
+
+  const setCategory = trpc.katalog.setChannelCategory.useMutation({
+    onSuccess: () => {
+      utils.katalog.channelCategories.invalidate();
+      toast.success("Kategori eşlendi");
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  const catOf = (useCaseId: number, chId: number) =>
+    (categories ?? []).find(c => c.useCaseId === useCaseId && c.channelId === chId);
+
+  const publishedCount = (published ?? []).filter(p => p.channelId === activeChannel).length;
+  const mappedCount = (categories ?? []).filter(c => c.channelId === activeChannel).length;
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">Toplu Yayın</h1>
+        <p className="text-sm text-muted-foreground">
+          İlanları pazaryeri kanallarına toplu açar. Pazaryeri kodu ve barkodu burada bir kez
+          üretilip saklanır — sonradan yeniden hesaplanmaz.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="space-y-1.5">
+          <Label>Kanal</Label>
+          <Select value={String(activeChannel)} onValueChange={setChannelId}>
+            <SelectTrigger className="w-56">
+              <SelectValue placeholder="Kanal seçin" />
+            </SelectTrigger>
+            <SelectContent>
+              {channels.map(c => (
+                <SelectItem key={c.id} value={String(c.id)}>
+                  {c.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <span className="pb-2 text-xs text-muted-foreground">
+          {publishedCount} yayında · {mappedCount}/{useCases.length} kullanım alanı eşlenmiş
+        </span>
+      </div>
+
+      <Tabs defaultValue="yayin">
+        <TabsList>
+          <TabsTrigger value="yayin">Yayınla</TabsTrigger>
+          <TabsTrigger value="kategori">Kategori Eşlemesi</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="yayin" className="space-y-3 pt-3">
+          <Card className="space-y-3 p-5">
+            <div className="flex flex-wrap gap-1.5">
+              {(series ?? []).map(s => (
+                <button
+                  key={s.id}
+                  onClick={() =>
+                    setSelectedSeries(prev => {
+                      const next = new Set(prev);
+                      if (next.has(s.id)) next.delete(s.id);
+                      else next.add(s.id);
+                      return next;
+                    })
+                  }
+                  className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                    selectedSeries.has(s.id)
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {s.name}
+                </button>
+              ))}
+              {selectedSeries.size === 0 && (
+                <span className="self-center text-xs text-muted-foreground">
+                  seçim yoksa tüm seriler
+                </span>
+              )}
+            </div>
+
+            <label className="flex w-fit cursor-pointer items-center gap-2 text-sm">
+              <Checkbox
+                checked={includeUnbuildable}
+                onCheckedChange={c => setIncludeUnbuildable(c === true)}
+              />
+              Üretilemeyen ürünlerin ilanını da aç
+              <span className="text-xs text-muted-foreground">
+                — stok 0 gider, pazaryeri sıralamasına zarar verebilir
+              </span>
+            </label>
+
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                disabled={bulk.isPending || !activeChannel}
+                onClick={() =>
+                  bulk.mutate({
+                    channelId: activeChannel,
+                    seriesIds: Array.from(selectedSeries),
+                    includeUnbuildable,
+                    dryRun: true,
+                  })
+                }
+              >
+                <Play className="mr-1 h-4 w-4" /> Önce Göster
+              </Button>
+              {preview && preview.willPublish > 0 && (
+                <Button
+                  disabled={bulk.isPending}
+                  onClick={() =>
+                    bulk.mutate({
+                      channelId: activeChannel,
+                      seriesIds: Array.from(selectedSeries),
+                      includeUnbuildable,
+                      dryRun: false,
+                    })
+                  }
+                >
+                  {bulk.isPending ? (
+                    <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Upload className="mr-1 h-4 w-4" />
+                  )}
+                  {preview.willPublish} ilanı yayına al
+                </Button>
+              )}
+            </div>
+          </Card>
+
+          {preview && (
+            <Card className="space-y-3 p-4">
+              <p className="font-semibold">
+                {preview.willPublish} ilan yayına alınacak
+                {preview.skipped.length > 0 && (
+                  <span className="font-normal text-muted-foreground">
+                    {" "}
+                    · {preview.skipped.reduce((s, x) => s + x.count, 0)} atlandı
+                  </span>
+                )}
+              </p>
+              {preview.skipped.length > 0 && (
+                <div className="space-y-1">
+                  {preview.skipped.map(s => (
+                    <div key={s.reason} className="flex items-center gap-2 text-sm">
+                      <Badge variant="outline" className="tabular-nums">
+                        {s.count}
+                      </Badge>
+                      <span className="text-muted-foreground">{s.reason}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="kategori" className="space-y-3 pt-3">
+          <Card className="p-4 text-sm text-muted-foreground">
+            Her kullanım alanı bir pazaryeri kategorisine eşlenmeli — kategorisiz ilan açılamaz.
+            <span className="mt-1 block">
+              Eşleme aynı zamanda <strong className="text-foreground">mükerrer ilan kilidinin</strong>{" "}
+              dayanağı: bir ürün, bir kanalda, bir kategoride tek ilan. İki kullanım alanını aynı
+              kategoriye eşlerseniz ikincisi yayında atlanır.
+            </span>
+          </Card>
+
+          <Card className="overflow-hidden p-0">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50 text-xs text-muted-foreground">
+                <tr>
+                  <th className="p-2 text-left">Kullanım alanı</th>
+                  <th className="p-2 text-left">Kategori kimliği</th>
+                  <th className="p-2 text-left">Kategori adı (not)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {useCases.map(u => (
+                  <CategoryRow
+                    key={u.id}
+                    useCaseName={u.name}
+                    current={catOf(u.id, activeChannel)}
+                    onSave={(categoryId, categoryName) =>
+                      setCategory.mutate({
+                        useCaseId: u.id,
+                        channelId: activeChannel,
+                        categoryId,
+                        categoryName,
+                      })
+                    }
+                  />
+                ))}
+              </tbody>
+            </table>
+          </Card>
+
+          <Card className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
+            <Store className="h-4 w-4 shrink-0" />
+            Trendyol kategori kimliklerini Ayarlar sayfasındaki kategori arama aracından
+            bulabilirsiniz.
+          </Card>
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+function CategoryRow({
+  useCaseName,
+  current,
+  onSave,
+}: {
+  useCaseName: string;
+  current: { categoryId: string; categoryName: string | null } | undefined;
+  onSave: (categoryId: string, categoryName: string | null) => void;
+}) {
+  const [id, setId] = useState(current?.categoryId ?? "");
+  const [name, setName] = useState(current?.categoryName ?? "");
+  const dirty = id !== (current?.categoryId ?? "") || name !== (current?.categoryName ?? "");
+
+  return (
+    <tr className="border-t">
+      <td className="p-2 font-medium">{useCaseName}</td>
+      <td className="p-2">
+        <Input
+          value={id}
+          onChange={e => setId(e.target.value)}
+          placeholder="örn. 1234"
+          className="h-8 w-40 font-mono text-xs"
+        />
+      </td>
+      <td className="flex items-center gap-2 p-2">
+        <Input
+          value={name}
+          onChange={e => setName(e.target.value)}
+          placeholder="3D Baskı Malzemeleri"
+          className="h-8 text-xs"
+        />
+        {dirty && id.trim() && (
+          <Button size="sm" className="h-8" onClick={() => onSave(id.trim(), name.trim() || null)}>
+            Kaydet
+          </Button>
+        )}
+      </td>
+    </tr>
+  );
+}

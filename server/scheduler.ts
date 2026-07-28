@@ -1,3 +1,4 @@
+import { runCapacityRecompute, runFormulaBinding } from "./catalogJobs";
 import * as db from "./db";
 import { overdueCheques, overdueReceivables } from "./financeUtils";
 import { isHepsiburadaConfigured } from "./hepsiburada";
@@ -44,6 +45,10 @@ const KEY_LAST_STOCK = "scheduler.lastStockCheckAt";
 const KEY_LAST_BRIEFING = "scheduler.lastBriefingDate";
 const KEY_LAST_COLLECTION = "scheduler.lastCollectionDate";
 const KEY_LAST_CHEQUE = "scheduler.lastChequeCheckDate";
+const KEY_LAST_CATALOG = "scheduler.lastCatalogJobAt";
+// Kapasite hammadde hareketine bağlı; 30 dk yeterince taze, sürekli hesap
+// gereksiz DB yükü. Reçete bağlama aynı turda koşar (ikisi de idempotent).
+const CATALOG_INTERVAL_MS = 30 * 60 * 1000;
 
 let ticking = false;
 
@@ -55,7 +60,7 @@ export function startScheduler() {
   setInterval(() => {
     void tick();
   }, 60 * 1000);
-  console.log("[scheduler] başladı (sipariş+soru senkron 15dk, stok nöbeti 60dk, brifing 08:00 TR, tahsilat takibi 09:00 TR)");
+  console.log("[scheduler] başladı (sipariş+soru senkron 15dk, stok nöbeti 60dk, katalog 30dk, brifing 08:00 TR, tahsilat takibi 09:00 TR)");
 }
 
 async function tick() {
@@ -104,6 +109,13 @@ async function tick() {
       await db.setSettings({ [KEY_LAST_CHEQUE]: todayTR });
       await runChequeWatch();
     }
+
+    // Katalog otomasyonu: reçete bağlama önce (yeni bağlanan master'ın
+    // kapasitesi aynı turda hesaplansın), sonra kapasite.
+    if (isIntervalDue(num(cfg[KEY_LAST_CATALOG]), now, CATALOG_INTERVAL_MS)) {
+      await db.setSettings({ [KEY_LAST_CATALOG]: String(now) });
+      await runCatalogJobs();
+    }
   } catch (error) {
     // DB yoksa (yerel araç çalıştırma) sessizce geç; diğer hataları logla.
     if (!(error instanceof Error && error.message.includes("Database not available"))) {
@@ -111,6 +123,30 @@ async function tick() {
     }
   } finally {
     ticking = false;
+  }
+}
+
+/**
+ * Katalog işleri. Hata tek işte kalsın diye ayrı ayrı sarılır: reçete
+ * bağlama patlarsa kapasite yine de hesaplanır.
+ */
+async function runCatalogJobs() {
+  try {
+    const bind = await runFormulaBinding();
+    if (bind.bound > 0) console.log(`[scheduler] ${bind.bound} master reçeteye bağlandı`);
+  } catch (error) {
+    console.error("[scheduler] reçete bağlama hatası:", error);
+  }
+  try {
+    const cap = await runCapacityRecompute();
+    if (cap.written > 0 || cap.dirtied > 0) {
+      console.log(
+        `[scheduler] kapasite: ${cap.written} güncellendi, ${cap.dirtied} yayın senkron kuyruğunda` +
+          (cap.cycles > 0 ? `, ${cap.cycles} reçete döngüsü` : ""),
+      );
+    }
+  } catch (error) {
+    console.error("[scheduler] kapasite hesabı hatası:", error);
   }
 }
 
