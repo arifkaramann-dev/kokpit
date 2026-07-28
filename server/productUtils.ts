@@ -74,3 +74,61 @@ export function deriveCombos(
         for (const e of s) combos.push({ use: a, packaging: b, color: d, set: e });
   return combos;
 }
+
+/** Başlık karşılaştırması için normalize eder (boşluk/büyük-küçük harf farkını yok sayar). */
+function normalizeTitle(title: string): string {
+  return title.replace(/\s+/g, " ").trim().toLocaleLowerCase("tr");
+}
+
+/**
+ * "Hızlı Türet" iki kez çalıştırılınca aynı türev tekrar tekrar oluşuyordu
+ * (aynı ad, SKU'ya -2/-3 eklenmiş kopyalar). Kombinasyonları ana ürünün mevcut
+ * türev başlıklarıyla karşılaştırır; zaten var olanları ayırır.
+ */
+export function splitExistingCombos(
+  parentName: string,
+  combos: DeriveCombo[],
+  existingVariantNames: string[]
+): { fresh: DeriveCombo[]; duplicates: DeriveCombo[] } {
+  const seen = new Set(existingVariantNames.map(normalizeTitle));
+  const fresh: DeriveCombo[] = [];
+  const duplicates: DeriveCombo[] = [];
+  for (const combo of combos) {
+    const title = normalizeTitle(
+      buildSaleTitle(parentName, combo.use, combo.packaging, combo.color, combo.set)
+    );
+    // Aynı çalışmada iki kez üretilen kombinasyon da mükerrer sayılır.
+    if (seen.has(title)) duplicates.push(combo);
+    else {
+      seen.add(title);
+      fresh.push(combo);
+    }
+  }
+  return { fresh, duplicates };
+}
+
+/**
+ * "Varyantları Yeniden Oluştur" planı: eski kayıtları silip yenilerini açmak
+ * yerine varyant koduna göre eşleştirir. Böylece ürünlere aktarılmış varyantın
+ * productId bağı ve üretilmiş görselleri korunur (silinip yeniden açılınca bağ
+ * koptuğu için "Ürünlere Aktar" mükerrer türev ürün yaratıyordu).
+ */
+export function planGenerationSync<T extends { id: number; variantCode: string }>(
+  existing: T[],
+  wantedCodes: string[]
+): { reuse: Map<string, T>; staleIds: number[] } {
+  const byCode = new Map<string, T>();
+  const staleIds: number[] = [];
+  for (const row of existing) {
+    // Aynı kod birden fazla kez varsa (eski mükerrer kayıtlar) ilki korunur.
+    if (byCode.has(row.variantCode)) staleIds.push(row.id);
+    else byCode.set(row.variantCode, row);
+  }
+  const wanted = new Set(wantedCodes);
+  const reuse = new Map<string, T>();
+  for (const [code, row] of Array.from(byCode.entries())) {
+    if (wanted.has(code)) reuse.set(code, row);
+    else staleIds.push(row.id);
+  }
+  return { reuse, staleIds };
+}

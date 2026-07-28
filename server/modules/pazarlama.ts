@@ -11,7 +11,7 @@ import * as db from "../db";
 import { itemsTotal, summarizeItems, toItemRows } from "../orderUtils";
 import { extractInvoice } from "../_core/claude";
 import { executeAssistantCommand, generateOrderNo, generateQuoteNo } from "../assistant";
-import { buildSaleTitle, deriveCombos, parseSetCount, renameVariantTitle } from "../productUtils";
+import { buildSaleTitle, deriveCombos, parseSetCount, planGenerationSync, renameVariantTitle } from "../productUtils";
 import { computePrice, extractJson, parseFeatures, pickReferenceProduct, scoreReference, suggestSku } from "../autofill";
 import { computeReorderSuggestions, summarizeReorder } from "../reorder";
 import { importUrunKayit } from "../importSeed";
@@ -520,6 +520,14 @@ export const devRouter = router({
       };
 
       const parent = await db.getProduct(parentId);
+      // Emniyet ağı: generation kaydı (eski sürümde silinip yeniden açıldığı
+      // için) productId bağını kaybetmiş olabilir. Bu ana ürünün altındaki
+      // türevleri SKU'ya göre de eşleştir ki aynı varyant ikinci kez ürün
+      // olarak açılmasın.
+      const siblingBySku = new Map<string, number>();
+      for (const p of await db.listProducts()) {
+        if (p.parentId === parentId && p.sku?.trim()) siblingBySku.set(p.sku.trim(), p.id);
+      }
       let created = 0;
       let updated = 0;
       let skipped = 0;
@@ -552,11 +560,19 @@ export const devRouter = router({
           mockupUrl: g.packagingImageUrl ?? null,
         };
 
-        if (g.productId) {
-          // Zaten aktarılmış — mevcut türev ürünü güncelle (fiyat/metin/görsel değişmiş olabilir).
-          const existingVariant = await db.getProduct(g.productId);
+        // Bağlı ürün varsa onu, yoksa aynı SKU'lu mevcut türevi güncelle.
+        const linkedId =
+          g.productId ??
+          siblingBySku.get(g.variantCode || suggestSku(project.name, g.packaging)) ??
+          null;
+        if (linkedId) {
+          const existingVariant = await db.getProduct(linkedId);
           if (existingVariant) {
-            await db.updateProduct(g.productId, variantData as never);
+            await db.updateProduct(linkedId, variantData as never);
+            // Kopan bağ yeniden kurulur ki sonraki aktarımlar da güncelleme olsun.
+            if (g.productId !== linkedId) {
+              await db.updateProductGeneration(g.id, { productId: linkedId, status: "listed" } as never);
+            }
             updated++;
             continue;
           }
@@ -573,6 +589,13 @@ export const devRouter = router({
         }
         await db.updateProductGeneration(g.id, { productId: Number(variantId), status: "listed" } as never);
         created++;
+      }
+
+      // Proje artık ürünleşti: liste kartı ve pano "Adım 5/5"te takılı kalmasın.
+      // (Eski `convert` ucu arayüzden çağrılmadığı için status hep "active"
+      // kalıyor, proje bitmiş görünmüyordu.)
+      if (project.status !== "done") {
+        await db.updateDevProject(input.projectId, { status: "done", currentStep: 5 });
       }
 
       return { parentId, created, updated, skipped, total: gens.length };
@@ -699,11 +722,24 @@ export const devRouter = router({
 
       const autoCode = project.autoCode || project.colorCode || "";
       const created: number[] = [];
+      const updated: number[] = [];
 
-      // Yeniden üretimde mükerrer varyant oluşmaması için önce bu projenin
-      // eski varyant kayıtlarını temizle. (Aksi halde her "Yeniden Oluştur"
-      // aynı kodları tekrar ekliyordu; 85 yerine 99/170 varyant çıkıyordu.)
-      await db.deleteProductGenerationsByProject(input.projectId);
+      // Yeniden üretimde varyant kayıtları SİLİNMEZ, varyant koduna göre
+      // güncellenir. Silip yeniden açmak mükerrerliği önlüyordu ama ürünlere
+      // aktarılmış varyantın productId bağını ve üretilmiş görsellerini de
+      // siliyordu; bağ kopunca "Ürünlere Aktar" aynı türevleri ikinci kez
+      // oluşturuyordu (SKU'su -2'li kopyalar). Artık yalnızca matriste artık
+      // yeri olmayan (bayat) kayıtlar silinir.
+      const existingGens = await db.listProductGenerations(input.projectId);
+      const wantedCodes: string[] = [];
+      for (const color of effectiveColors) {
+        const seg = codeSlug(color?.value || color?.label || "");
+        for (const packaging of packagingList) {
+          wantedCodes.push([autoCode || project.name, seg || null, packaging].filter(Boolean).join("-"));
+        }
+      }
+      const { reuse, staleIds } = planGenerationSync(existingGens, wantedCodes);
+      for (const staleId of staleIds) await db.deleteProductGeneration(staleId);
 
       // Renk × Ambalaj matrisi: her renk için her ambalaj bir varyant.
       for (const color of effectiveColors) {
@@ -757,14 +793,12 @@ export const devRouter = router({
           const description = longBody || tpl.trendyolDescription;
           const appNotes = seriesApp || tpl.applicationNotes || null;
 
-          const genId = await db.createProductGeneration({
-            projectId: input.projectId,
-            variantCode,
+          const content = {
             packaging,
             color: colorLabel || null,
             colorHex: colorHex || null,
             // İçerik seriden hazır geldiği için varyant doğrudan "ready".
-            status: "ready",
+            status: "ready" as const,
             trendyolTitle: clipStr(title, 100),
             trendyolDescription: clipStr(description, 2000),
             hepsiburadaTitle: clipStr(title, 80),
@@ -774,12 +808,30 @@ export const devRouter = router({
             applicationNotes: appNotes,
             suggestedPrice: String(suggestedPrice),
             costPrice: String(costPrice),
+          };
+
+          // Var olan varyant: içeriği tazelenir, productId ve görselleri korunur.
+          const existing = reuse.get(variantCode);
+          if (existing) {
+            await db.updateProductGeneration(existing.id, content as never);
+            updated.push(existing.id);
+            continue;
+          }
+          const genId = await db.createProductGeneration({
+            projectId: input.projectId,
+            variantCode,
+            ...content,
           } as never);
           created.push(genId);
         }
       }
 
-      return { created, count: created.length };
+      return {
+        created,
+        updated,
+        removed: staleIds.length,
+        count: created.length + updated.length,
+      };
     }),
 
   // Tek bir varyantın AI içeriğini üretir/yeniler. Ürün Çıktıları ekranı, yeni
@@ -1020,25 +1072,86 @@ Türkçe yaz. Sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, o
 // Kendi web mağazası (Tema B) — HERKESE AÇIK uçlar (giriş gerektirmez).
 export const storefrontRouter = router({
   // Vitrin: satışta ve fiyatı olan ürünler (yalnızca gerekli alanlar dışa açılır).
+  /**
+   * Vitrin listesi — ana ürün altında GRUPLANMIŞ.
+   *
+   * İki hata birden düzeltildi:
+   *  1) Filtre yalnız "arsiv"i eliyordu, yani TASLAK ürünler herkese açık
+   *     vitrinde görünüyordu. Artık sadece "satista" olanlar dışa açılır.
+   *  2) Ana ürün ve türevleri aynı düzlemde dönüyordu; parentId dışa hiç
+   *     açılmadığı için vitrin gruplayamıyor, her türev ayrı kart oluyordu.
+   *     Artık grup döner: kart ana üründür, ambalaj/renk seçimi türevlerdir.
+   *
+   * Türevi olan ana ürün kendisi satılmaz (kavramsal kayıttır); türevi
+   * olmayan ana ürün tek seçenekli grup olarak doğrudan satılır.
+   */
   products: publicProcedure.query(async () => {
     const products = await db.listProducts();
-    return products
-      .filter(p => p.status !== "arsiv" && parseFloat(String(p.salePrice)) > 0)
-      .map(p => ({
-        id: p.id,
-        name: p.name,
-        series: p.series,
-        salePrice: parseFloat(String(p.salePrice)) || 0,
-        discountPercent: parseFloat(String(p.discountPercent)) || 0,
-        shortDescription: p.shortDescription,
-        imageUrls: p.imageUrls,
-        mockupUrl: p.mockupUrl,
-        inStock: (p.stockQty ?? 0) > 0,
-      }));
+    const sellable = products.filter(
+      p => p.status === "satista" && parseFloat(String(p.salePrice)) > 0,
+    );
+    const view = (p: (typeof products)[number]) => ({
+      id: p.id,
+      name: p.name,
+      packaging: p.packaging,
+      colorCode: p.colorCode,
+      colorHex: p.colorHex,
+      salePrice: parseFloat(String(p.salePrice)) || 0,
+      discountPercent: parseFloat(String(p.discountPercent)) || 0,
+      inStock: (p.stockQty ?? 0) > 0,
+    });
+    const net = (v: { salePrice: number; discountPercent: number }) =>
+      v.salePrice * (1 - v.discountPercent / 100);
+
+    const childrenOf = new Map<number, typeof sellable>();
+    for (const p of sellable) {
+      if (p.parentId == null) continue;
+      childrenOf.set(p.parentId, [...(childrenOf.get(p.parentId) ?? []), p]);
+    }
+
+    // Ana ürünü satışta olmayan ama türevi satışta olan gruplar da görünmeli;
+    // başlık/görsel için ana ürün kaydı katalogdan okunur.
+    const byId = new Map(products.map(p => [p.id, p]));
+    const groupIds = new Set<number>([
+      ...sellable.filter(p => p.parentId == null).map(p => p.id),
+      ...Array.from(childrenOf.keys()),
+    ]);
+
+    const groups = [];
+    for (const id of Array.from(groupIds)) {
+      const head = byId.get(id);
+      if (!head || head.status === "arsiv") continue;
+      const variants = (childrenOf.get(id) ?? []).map(view);
+      // Türevi yoksa ana ürünün kendisi tek seçenektir.
+      const options =
+        variants.length > 0
+          ? variants
+          : head.status === "satista" && parseFloat(String(head.salePrice)) > 0
+            ? [view(head)]
+            : [];
+      if (options.length === 0) continue;
+
+      const prices = options.map(net);
+      groups.push({
+        id: head.id,
+        name: head.name,
+        series: head.series,
+        shortDescription: head.shortDescription,
+        // Görsel ana üründen, yoksa ilk seçenekten.
+        imageUrls: head.imageUrls ?? byId.get(options[0].id)?.imageUrls ?? null,
+        mockupUrl: head.mockupUrl ?? byId.get(options[0].id)?.mockupUrl ?? null,
+        minPrice: Math.min(...prices),
+        maxPrice: Math.max(...prices),
+        inStock: options.some(o => o.inStock),
+        options,
+      });
+    }
+    return groups.sort((a, b) => a.name.localeCompare(b.name, "tr"));
   }),
   product: publicProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
     const p = await db.getProduct(input.id);
-    if (!p || p.status === "arsiv") throw new TRPCError({ code: "NOT_FOUND", message: "Ürün bulunamadı" });
+    // Taslak ürün de vitrine açılmamalı — kart hazırlanırken müşteriye görünüyordu.
+    if (!p || p.status !== "satista") throw new TRPCError({ code: "NOT_FOUND", message: "Ürün bulunamadı" });
     return {
       id: p.id,
       name: p.name,

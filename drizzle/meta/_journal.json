@@ -232,6 +232,13 @@
       "when": 1785094556596,
       "tag": "0032_dapper_lorna_dane",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "5",
+      "when": 1785231617802,
+      "tag": "0033_tan_puff_adder",
+      "breakpoints": true
     }
   ]
 }

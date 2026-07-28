@@ -8,6 +8,8 @@ import {
   mysqlTable,
   text,
   timestamp,
+  tinyint,
+  unique,
   varchar,
 } from "drizzle-orm/mysql-core";
 
@@ -40,7 +42,19 @@ export const materials = mysqlTable("materials", {
   name: varchar("name", { length: 255 }).notNull(),
   category: varchar("category", { length: 64 }).notNull().default("diğer"),
   unit: varchar("unit", { length: 32 }).notNull().default("gr"),
+  // Kalem türü (çok seviyeli reçete / BOM): hammadde satın alınır, yarı mamul
+  // ÜRETİLİR (kendi formülü vardır ve başka reçetelere girdi olur), ambalaj
+  // şişe/kapak/etiket gibi adetli kalemdir, masraf kapasiteye girmez.
+  // Mevcut `category` alanı serbest metin olarak kalır (rapor/gruplama).
+  type: mysqlEnum("type", ["hammadde", "yari_mamul", "ambalaj", "masraf"])
+    .notNull()
+    .default("hammadde"),
   stockQty: decimal("stockQty", { precision: 12, scale: 3 }).notNull().default("0"),
+  // Açık siparişler için ayrılmış miktar. Satılabilir = stok − rezerve − emniyet.
+  // Sipariş geldiğinde artar, üretim yapılınca stoktan düşülüp rezerv kapanır.
+  reservedQty: decimal("reservedQty", { precision: 12, scale: 3 }).notNull().default("0"),
+  // Hiç dokunulmayan tampon (yavaş tedarik edilen kalemlerde >0 tutulur).
+  safetyQty: decimal("safetyQty", { precision: 12, scale: 3 }).notNull().default("0"),
   criticalQty: decimal("criticalQty", { precision: 12, scale: 3 }).notNull().default("0"),
   unitCost: decimal("unitCost", { precision: 12, scale: 4 }).notNull().default("0"),
   supplierId: int("supplierId"),
@@ -932,3 +946,458 @@ export const crmOpportunities = mysqlTable(
 
 export type CrmOpportunity = typeof crmOpportunities.$inferSelect;
 export type InsertCrmOpportunity = typeof crmOpportunities.$inferInsert;
+
+/* ==========================================================================
+ * ÜRÜN MİMARİSİ v3 — Master Product / Listing / Channel Listing
+ *
+ * Eski model (products.parentId ile ana ürün → türev ağacı) fiziksel ürünle
+ * satış ilanını tek kayıtta birleştiriyordu. Bu yüzden aynı şişeyi farklı
+ * isimlerle satmak ürünü çoğaltıyor, stok ve reçete bölünüyordu.
+ *
+ * Yeni model üç katman:
+ *   masterProducts  → fiziksel gerçeklik (stok, kapasite, reçete, barkod)
+ *   listings        → içerik (başlık, açıklama, SEO, kullanım alanı)
+ *   channelListings → yayın (pazaryeri SKU/barkod, kategori, fiyat, senkron)
+ *
+ * Master kimliği bir AĞAÇ değil, bir KÜP KOORDİNATIDIR:
+ *   seri × renk × form × ambalaj × hazırlık(r2u)
+ * Bu beşlinin UNIQUE olması mükerrer ürünü veritabanı seviyesinde imkânsız kılar.
+ * ========================================================================== */
+
+/**
+ * Renkler. `seriesId` dolu ise renk o seriye özeldir (RAL COLOUR'ın RAL kodları,
+ * CANDY'nin candy tonları); boşsa tüm serilerde kullanılabilir.
+ *
+ * NOT: Renksiz kalemler (tiner vb.) için NULL kullanılmaz — "NOTR" kodlu bir
+ * satır tohumlanır ve masterProducts.colorId NOT NULL kalır. Sebebi MySQL'de
+ * UNIQUE indeksin NULL'ları birbirinden farklı sayması: colorId nullable olsaydı
+ * küp koordinatı tekilliği renksiz ürünlerde sessizce delinirdi.
+ */
+export const colors = mysqlTable(
+  "colors",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    code: varchar("code", { length: 64 }).notNull(),
+    name: varchar("name", { length: 128 }).notNull(),
+    hex: varchar("hex", { length: 16 }),
+    // Renk ailesi (kırmızı/mavi/nötr) — filtreleme ve vitrin gruplaması.
+    family: varchar("family", { length: 64 }),
+    finish: mysqlEnum("finish", ["duz", "metalik", "sedef", "candy", "neon", "seffaf"])
+      .notNull()
+      .default("duz"),
+    seriesId: int("seriesId"),
+    sortOrder: int("sortOrder").notNull().default(0),
+    isActive: tinyint("isActive").notNull().default(1),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  t => [unique("colors_company_code_uq").on(t.companyId, t.code), index("colors_series_idx").on(t.seriesId)],
+);
+
+export type Color = typeof colors.$inferSelect;
+export type InsertColor = typeof colors.$inferInsert;
+
+/**
+ * Ürün formu (fiziksel): airbrush · paint · sprey · rötuş.
+ * "r2u" bir form DEĞİL, masterProducts.readiness alanındaki bayraktır —
+ * aynı formun kullanıma hazır (inceltilmiş) hali.
+ */
+export const productFamilies = mysqlTable(
+  "productFamilies",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    code: varchar("code", { length: 32 }).notNull(),
+    name: varchar("name", { length: 64 }).notNull(),
+    // Internal SKU'da kullanılan kısa ek (airbrush → "ab").
+    skuSegment: varchar("skuSegment", { length: 8 }),
+    sortOrder: int("sortOrder").notNull().default(0),
+    isActive: tinyint("isActive").notNull().default(1),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  t => [unique("productFamilies_company_code_uq").on(t.companyId, t.code)],
+);
+
+export type ProductFamily = typeof productFamilies.$inferSelect;
+export type InsertProductFamily = typeof productFamilies.$inferInsert;
+
+/**
+ * Ambalajlar. `volumeMl` formül ölçeklemesinin paydası: bir master'ın birim
+ * ihtiyacı = reçete miktarı × (ambalaj hacmi / reçete baz hacmi).
+ *
+ * `materialId` bu ambalajın stok kalemi (500 ML PET şişe). Kapasite hesabında
+ * boya kadar şişe de kısıttır — boya var ama şişe yoksa üretim yapılamaz.
+ */
+export const packagings = mysqlTable(
+  "packagings",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    code: varchar("code", { length: 32 }).notNull(),
+    name: varchar("name", { length: 64 }).notNull(),
+    volumeMl: decimal("volumeMl", { precision: 10, scale: 2 }).notNull().default("0"),
+    container: varchar("container", { length: 64 }),
+    materialId: int("materialId"),
+    skuSegment: varchar("skuSegment", { length: 8 }),
+    weightG: decimal("weightG", { precision: 10, scale: 2 }),
+    desi: decimal("desi", { precision: 10, scale: 2 }),
+    sortOrder: int("sortOrder").notNull().default(0),
+    isActive: tinyint("isActive").notNull().default(1),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  t => [unique("packagings_company_code_uq").on(t.companyId, t.code)],
+);
+
+export type Packaging = typeof packagings.$inferSelect;
+export type InsertPackaging = typeof packagings.$inferInsert;
+
+/**
+ * Ambalajın kendi malzeme listesi: kapak, etiket, koli — şişe dışındaki,
+ * hacimle ölçeklenmeyen (adet başına sabit) kalemler.
+ */
+export const packagingInputs = mysqlTable(
+  "packagingInputs",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    packagingId: int("packagingId").notNull(),
+    materialId: int("materialId").notNull(),
+    qtyPerUnit: decimal("qtyPerUnit", { precision: 12, scale: 4 }).notNull().default("1"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  t => [
+    unique("packagingInputs_pack_mat_uq").on(t.packagingId, t.materialId),
+    index("packagingInputs_material_idx").on(t.materialId),
+  ],
+);
+
+export type PackagingInput = typeof packagingInputs.$inferSelect;
+export type InsertPackagingInput = typeof packagingInputs.$inferInsert;
+
+/**
+ * Kullanım alanı — LISTING ekseni, master ekseni DEĞİL.
+ * 3D baskı · Rapala · Otomotiv · Bisiklet · Maket · Jant…
+ * Aynı fiziksel şişe, farklı alıcı niyetine göre farklı ilanla satılır.
+ *
+ * "GENEL" kodlu bir satır tohumlanır: kullanım alanı belirtilmeyen jenerik
+ * ilan onu kullanır. Böylece listings.useCaseId NOT NULL kalır ve
+ * UNIQUE(masterId, useCaseId) NULL yüzünden delinmez.
+ */
+export const useCases = mysqlTable(
+  "useCases",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    code: varchar("code", { length: 32 }).notNull(),
+    name: varchar("name", { length: 64 }).notNull(),
+    // İlan başlığı şablonu. Değişkenler: {{renk}} {{seri}} {{ambalaj}} {{kullanim}}
+    titlePattern: varchar("titlePattern", { length: 255 }),
+    sortOrder: int("sortOrder").notNull().default(0),
+    isActive: tinyint("isActive").notNull().default(1),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  t => [unique("useCases_company_code_uq").on(t.companyId, t.code)],
+);
+
+export type UseCase = typeof useCases.$inferSelect;
+export type InsertUseCase = typeof useCases.$inferInsert;
+
+/* ---- Seyrek küp: her koordinat geçerli değil ---------------------------- */
+
+/**
+ * Küp doludur sanılırsa 9 seri × 30 renk × 5 form × 9 ambalaj × 2 hazırlık =
+ * 24.300 master üretilir; bunun büyük kısmı anlamsızdır (RÖTUŞ KUTUSU yalnız
+ * rötuşta, SPREY 400ML yalnız spreyde kullanılır). Master üretimi kartezyen
+ * çarpımdan değil, bu uyumluluk tablolarının kesişiminden gelir.
+ */
+export const seriesPackagings = mysqlTable(
+  "seriesPackagings",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    seriesId: int("seriesId").notNull(),
+    packagingId: int("packagingId").notNull(),
+  },
+  t => [unique("seriesPackagings_uq").on(t.seriesId, t.packagingId)],
+);
+
+export const seriesFamilies = mysqlTable(
+  "seriesFamilies",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    seriesId: int("seriesId").notNull(),
+    familyId: int("familyId").notNull(),
+  },
+  t => [unique("seriesFamilies_uq").on(t.seriesId, t.familyId)],
+);
+
+export type SeriesPackaging = typeof seriesPackagings.$inferSelect;
+export type SeriesFamily = typeof seriesFamilies.$inferSelect;
+
+/* ---- Formüller: çok seviyeli, özyinelemeli BOM -------------------------- */
+
+/**
+ * Reçete. Eski `formulaItems` doğrudan bir ürüne bağlıydı; bu yüzden aynı
+ * rengin 30/100/250/500 ml'si için dört kopya tutuluyor ve zamanla birbirinden
+ * kayıyordu. Yeni formül BAZ HACİM için yazılır (örn. 1000 ml) ve master'ın
+ * ambalaj hacmine göre ölçeklenir — tek reçete tüm boyutları besler.
+ *
+ * `outputType = "yari_mamul"` ise reçetenin çıktısı bir materials kalemidir
+ * (Candy Red harcı gibi) ve o kalem başka reçetelere girdi olabilir. BOM'u
+ * özyinelemeli yapan budur: hammadde → yarı mamul → r2u → mamul.
+ */
+export const formulas = mysqlTable(
+  "formulas",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    name: varchar("name", { length: 160 }).notNull(),
+    outputType: mysqlEnum("outputType", ["yari_mamul", "mamul"]).notNull().default("mamul"),
+    // Yarı mamul üretiyorsa hangi materials kalemi (aksi halde boş).
+    outputMaterialId: int("outputMaterialId"),
+    // Mamul reçetesi ise hangi koordinata ait (renk bazlı reçete ayrımı).
+    seriesId: int("seriesId"),
+    colorId: int("colorId"),
+    familyId: int("familyId"),
+    readiness: mysqlEnum("readiness", ["konsantre", "r2u"]),
+    // Reçete kaç birim çıktı için yazıldı (ölçeklemenin paydası).
+    baseQty: decimal("baseQty", { precision: 12, scale: 3 }).notNull().default("1000"),
+    baseUnit: varchar("baseUnit", { length: 32 }).notNull().default("ml"),
+    // Fire payı (%). Kapasite bunu düşerek hesaplanır; yoksa hep iyimser çıkar.
+    wastePercent: decimal("wastePercent", { precision: 5, scale: 2 }).notNull().default("0"),
+    notes: text("notes"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  t => [
+    index("formulas_output_material_idx").on(t.outputMaterialId),
+    index("formulas_coord_idx").on(t.seriesId, t.colorId, t.familyId),
+  ],
+);
+
+export type Formula = typeof formulas.$inferSelect;
+export type InsertFormula = typeof formulas.$inferInsert;
+
+/**
+ * Reçete girdileri. `inputMaterialId` hammadde, ambalaj VEYA yarı mamul
+ * olabilir — yarı mamulü gösterebilmesi BOM'u çok seviyeli yapar.
+ * `materialId` indeksi ters aramayı verir: "bu hammaddeyi hangi reçeteler
+ * kullanıyor" → darboğaz analizi ve stok değişiminde etkilenen master'lar.
+ */
+export const formulaInputs = mysqlTable(
+  "formulaInputs",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    formulaId: int("formulaId").notNull(),
+    inputMaterialId: int("inputMaterialId").notNull(),
+    qtyPerBase: decimal("qtyPerBase", { precision: 12, scale: 4 }).notNull(),
+    note: text("note"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  t => [
+    unique("formulaInputs_formula_material_uq").on(t.formulaId, t.inputMaterialId),
+    index("formulaInputs_material_idx").on(t.inputMaterialId),
+  ],
+);
+
+export type FormulaInput = typeof formulaInputs.$inferSelect;
+export type InsertFormulaInput = typeof formulaInputs.$inferInsert;
+
+/* ---- Master Product: fiziksel gerçeklik --------------------------------- */
+
+export const masterProducts = mysqlTable(
+  "masterProducts",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+
+    // Küp koordinatı — hepsi NOT NULL (bkz. colors tablosundaki NULL notu).
+    seriesId: int("seriesId").notNull(),
+    colorId: int("colorId").notNull(),
+    familyId: int("familyId").notNull(),
+    packagingId: int("packagingId").notNull(),
+    readiness: mysqlEnum("readiness", ["konsantre", "r2u"]).notNull().default("konsantre"),
+
+    // Kullanıcının verdiği renk/temel kod: marka+seri+renk+renk kodu.
+    // Örn. aoccndred1822 — bu kod bir MASTER'ı değil bir RENGİ tanımlar
+    // (form/ambalaj/hazırlık içermez), o yüzden kimlik değil ön ektir.
+    baseCode: varchar("baseCode", { length: 64 }),
+    // Master kimliği: baseCode + form + ambalaj + hazırlık ekleri.
+    // Örn. aoccndred1822ab100r2u. Asla pazaryerine gönderilmez.
+    internalSku: varchar("internalSku", { length: 96 }).notNull(),
+    // Gerçek GS1 barkodu (varsa). Fatura/irsaliye/depo bunu kullanır.
+    // Pazaryerine giden barkod ilan başına ayrıdır (channelListings).
+    gtin: varchar("gtin", { length: 20 }),
+
+    formulaId: int("formulaId"),
+    // Ambalaj hacmi / formül baz hacmi. Saklanır ki doğrusal olmayan
+    // durumlarda elle ezilebilsin.
+    formulaScale: decimal("formulaScale", { precision: 10, scale: 4 }).notNull().default("1"),
+
+    // Kapasite (hammaddeden üretilebilir adet) — capacity.ts hesaplar.
+    buildableQty: int("buildableQty").notNull().default(0),
+    buildableComputedAt: timestamp("buildableComputedAt"),
+    // İlana yazılacak üst sınır: push = min(buildableQty, virtualStockCap).
+    virtualStockCap: int("virtualStockCap").notNull().default(10),
+
+    // Mamul stok — siparişe göre üretimde kullanılmaz, toptan satış için hazır.
+    stockQty: int("stockQty").notNull().default(0),
+    reservedQty: int("reservedQty").notNull().default(0),
+    criticalQty: int("criticalQty").notNull().default(0),
+
+    weightG: decimal("weightG", { precision: 10, scale: 2 }),
+    desi: decimal("desi", { precision: 10, scale: 2 }),
+    avgCost: decimal("avgCost", { precision: 12, scale: 4 }).notNull().default("0"),
+
+    status: mysqlEnum("status", ["taslak", "aktif", "arsiv"]).notNull().default("taslak"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  t => [
+    // Küp tekilliği: aynı koordinatta ikinci bir master açılamaz.
+    unique("masterProducts_cube_uq").on(
+      t.companyId,
+      t.seriesId,
+      t.colorId,
+      t.familyId,
+      t.packagingId,
+      t.readiness,
+    ),
+    unique("masterProducts_sku_uq").on(t.companyId, t.internalSku),
+    index("masterProducts_baseCode_idx").on(t.baseCode),
+    index("masterProducts_formula_idx").on(t.formulaId),
+    index("masterProducts_status_idx").on(t.status),
+  ],
+);
+
+export type MasterProduct = typeof masterProducts.$inferSelect;
+export type InsertMasterProduct = typeof masterProducts.$inferInsert;
+
+/* ---- Listing: içerik katmanı -------------------------------------------- */
+
+export const listings = mysqlTable(
+  "listings",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    masterId: int("masterId").notNull(),
+    useCaseId: int("useCaseId").notNull(),
+    // Düşük kapasitede stoğun toplandığı ve içerik mirasına referans olan ilan.
+    isPrimary: tinyint("isPrimary").notNull().default(0),
+
+    title: varchar("title", { length: 255 }).notNull(),
+    slug: varchar("slug", { length: 255 }),
+    shortDescription: mediumtext("shortDescription"),
+    longDescription: mediumtext("longDescription"),
+    applicationText: mediumtext("applicationText"),
+    seoTitle: varchar("seoTitle", { length: 255 }),
+    seoKeywords: text("seoKeywords"),
+
+    status: mysqlEnum("status", ["taslak", "aktif", "arsiv"]).notNull().default("taslak"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  t => [
+    // İlan üretimini idempotent yapan anahtar: "yeniden üret" mükerrer açmaz.
+    unique("listings_master_usecase_uq").on(t.masterId, t.useCaseId),
+    index("listings_master_idx").on(t.masterId),
+    index("listings_status_idx").on(t.status),
+  ],
+);
+
+export type Listing = typeof listings.$inferSelect;
+export type InsertListing = typeof listings.$inferInsert;
+
+/** İlan görselleri — URL olarak. Base64 asla veritabanında tutulmaz. */
+export const listingImages = mysqlTable(
+  "listingImages",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    listingId: int("listingId").notNull(),
+    url: varchar("url", { length: 1024 }).notNull(),
+    role: varchar("role", { length: 32 }),
+    sortOrder: int("sortOrder").notNull().default(0),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  t => [index("listingImages_listing_idx").on(t.listingId)],
+);
+
+export type ListingImage = typeof listingImages.$inferSelect;
+
+/* ---- Channel Listing: yayın katmanı ------------------------------------- */
+
+export const salesChannels = mysqlTable(
+  "salesChannels",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    code: varchar("code", { length: 32 }).notNull(),
+    name: varchar("name", { length: 64 }).notNull(),
+    isActive: tinyint("isActive").notNull().default(1),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  t => [unique("salesChannels_company_code_uq").on(t.companyId, t.code)],
+);
+
+export type SalesChannel = typeof salesChannels.$inferSelect;
+
+/**
+ * Bir ilanın bir kanaldaki yayını. Pazaryeri SKU'su ve barkodu ilan başına
+ * ayrıdır: Trendyol'da barkod ilanın benzersiz anahtarıdır, aynı barkodla iki
+ * ilan yan yana duramaz. Bu kodlar BİR KEZ üretilip saklanır ve bir daha
+ * hesaplanmaz — türetme kuralı değişirse tüm pazaryeri eşleşmeleri kopar.
+ *
+ * `masterId` bilerek denormalize: stok/kapasite değişiminde etkilenen
+ * yayınları tek indeksle bulmak ve aşağıdaki mükerrer ilan kilidini kurmak için.
+ */
+export const channelListings = mysqlTable(
+  "channelListings",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    listingId: int("listingId").notNull(),
+    masterId: int("masterId").notNull(),
+    channelId: int("channelId").notNull(),
+
+    channelSku: varchar("channelSku", { length: 96 }).notNull(),
+    channelBarcode: varchar("channelBarcode", { length: 64 }).notNull(),
+    channelCategoryId: varchar("channelCategoryId", { length: 64 }),
+    // Trendyol productMainId — aynı değeri paylaşan yayınlar tek ilanda
+    // varyant seçici olarak toplanır (örn. aynı rengin farklı ambalajları).
+    groupKey: varchar("groupKey", { length: 96 }),
+
+    price: decimal("price", { precision: 12, scale: 2 }).notNull().default("0"),
+    discountPercent: decimal("discountPercent", { precision: 5, scale: 2 }).notNull().default("0"),
+
+    // Pazaryerinin şu an inandığı miktar (gerçek stok DEĞİL, gönderim önbelleği).
+    pushedQty: int("pushedQty").notNull().default(0),
+    syncState: mysqlEnum("syncState", ["temiz", "kirli", "gonderiliyor", "hata"])
+      .notNull()
+      .default("kirli"),
+    syncedAt: timestamp("syncedAt"),
+    remoteId: varchar("remoteId", { length: 128 }),
+    batchId: varchar("batchId", { length: 128 }),
+    lastError: text("lastError"),
+
+    status: mysqlEnum("status", ["taslak", "canli", "durduruldu"]).notNull().default("taslak"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  t => [
+    unique("channelListings_channel_sku_uq").on(t.channelId, t.channelSku),
+    unique("channelListings_channel_barcode_uq").on(t.channelId, t.channelBarcode),
+    unique("channelListings_listing_channel_uq").on(t.listingId, t.channelId),
+    // Mükerrer ilan kilidi: bir master, bir kanalda, bir kategoride tek ilan.
+    // Pazaryerlerinin mükerrer ilan yaptırımı aynı kategorideki kopyaları
+    // hedefler; farklı kategori (3D Baskı vs Balıkçılık) meşrudur.
+    unique("channelListings_master_channel_cat_uq").on(t.masterId, t.channelId, t.channelCategoryId),
+    index("channelListings_master_idx").on(t.masterId),
+    index("channelListings_sync_idx").on(t.channelId, t.syncState),
+  ],
+);
+
+export type ChannelListing = typeof channelListings.$inferSelect;
+export type InsertChannelListing = typeof channelListings.$inferInsert;

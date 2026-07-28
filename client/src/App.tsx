@@ -6,6 +6,7 @@ import Accounts from "@/pages/Accounts";
 import Analytics from "@/pages/Analytics";
 import Assistant from "@/pages/Assistant";
 import Campaigns from "@/pages/Campaigns";
+import Catalog from "@/pages/Catalog";
 import Cheques from "@/pages/Cheques";
 import Crm from "@/pages/Crm";
 import Customers from "@/pages/Customers";
@@ -26,6 +27,7 @@ import Products from "@/pages/Products";
 import Purchases from "@/pages/Purchases";
 import Questions from "@/pages/Questions";
 import Quotes from "@/pages/Quotes";
+import Recipes from "@/pages/Recipes";
 import Reconcile from "@/pages/Reconcile";
 import Settings from "@/pages/Settings";
 import Stock from "@/pages/Stock";
@@ -55,6 +57,8 @@ function AdminApp() {
         <Route path={"/stok"} component={Stock} />
         <Route path={"/faturalar"} component={Purchases} />
         <Route path={"/urunler"} component={Products} />
+        <Route path={"/katalog"} component={Catalog} />
+        <Route path={"/recete"} component={Recipes} />
         <Route path={"/urun-aktar"} component={ProductImport} />
         <Route path={"/urun/:id"} component={ProductDetail} />
         <Route path={"/sorular"} component={Questions} />

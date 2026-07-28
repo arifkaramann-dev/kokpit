@@ -85,33 +85,64 @@ export default function Storefront() {
               <p className="text-sm text-neutral-500">Şu an satışta ürün yok.</p>
             ) : (
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                {list.map(p => {
-                  const img = firstImage(p.imageUrls, p.mockupUrl);
-                  const net = p.salePrice * (1 - p.discountPercent / 100);
+                {list.map(g => {
+                  const img = firstImage(g.imageUrls, g.mockupUrl);
+                  // Tek seçenekli grup doğrudan sepete girer; çok seçenekli
+                  // grupta ambalaj/renk seçimi kartın içinde yapılır.
+                  const single = g.options.length === 1 ? g.options[0] : null;
                   return (
-                    <div key={p.id} className="rounded-xl border bg-white overflow-hidden flex flex-col">
+                    <div key={g.id} className="rounded-xl border bg-white overflow-hidden flex flex-col">
                       <button
                         className="aspect-square bg-neutral-100 flex items-center justify-center"
                         onClick={() => {
-                          setDetailId(p.id);
+                          setDetailId(single ? single.id : g.options[0].id);
                           setView("detail");
                         }}
                       >
                         {img ? (
-                          <img src={img} alt={p.name} className="h-full w-full object-cover" />
+                          <img src={img} alt={g.name} className="h-full w-full object-cover" />
                         ) : (
                           <span className="text-neutral-300 text-sm">görsel yok</span>
                         )}
                       </button>
                       <div className="p-3 flex flex-col gap-2 flex-1">
-                        <p className="text-sm font-medium leading-tight line-clamp-2">{p.name}</p>
-                        <div className="mt-auto flex items-center justify-between">
-                          <span className="font-semibold">{formatTL(net)}</span>
-                          <Button size="sm" disabled={!p.inStock} onClick={() => add(p.id)}>
-                            <Plus className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                        {!p.inStock && <span className="text-[11px] text-amber-600">Stokta yok</span>}
+                        <p className="text-sm font-medium leading-tight line-clamp-2">{g.name}</p>
+                        <span className="font-semibold">
+                          {g.minPrice === g.maxPrice
+                            ? formatTL(g.minPrice)
+                            : `${formatTL(g.minPrice)} – ${formatTL(g.maxPrice)}`}
+                        </span>
+
+                        {single ? (
+                          <div className="mt-auto flex items-center justify-end">
+                            <Button size="sm" disabled={!single.inStock} onClick={() => add(single.id)}>
+                              <Plus className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="mt-auto flex flex-wrap gap-1">
+                            {g.options.map(o => (
+                              <button
+                                key={o.id}
+                                disabled={!o.inStock}
+                                onClick={() => add(o.id)}
+                                title={
+                                  o.inStock
+                                    ? `${formatTL(o.salePrice * (1 - o.discountPercent / 100))} — sepete ekle`
+                                    : "Stokta yok"
+                                }
+                                className={`rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                                  o.inStock
+                                    ? "hover:bg-neutral-900 hover:text-white"
+                                    : "cursor-not-allowed text-neutral-300 line-through"
+                                }`}
+                              >
+                                {o.packaging || o.colorCode || o.name}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {!g.inStock && <span className="text-[11px] text-amber-600">Stokta yok</span>}
                       </div>
                     </div>
                   );
@@ -163,7 +194,22 @@ function ProductDetail({ id, onBack, onAdd }: { id: number; onBack: () => void; 
   );
 }
 
-type StoreProduct = { id: number; name: string; salePrice: number; discountPercent: number; imageUrls: string | null; mockupUrl: string | null; inStock: boolean };
+/** Sepetteki satır: gruptaki bir seçenek (ambalaj/renk türevi). */
+type StoreOption = {
+  id: number;
+  name: string;
+  packaging: string | null;
+  salePrice: number;
+  discountPercent: number;
+  inStock: boolean;
+};
+type StoreGroup = {
+  id: number;
+  name: string;
+  imageUrls: string | null;
+  mockupUrl: string | null;
+  options: StoreOption[];
+};
 
 function CartView({
   cart,
@@ -173,18 +219,21 @@ function CartView({
   onDone,
 }: {
   cart: Cart;
-  products: StoreProduct[];
+  products: StoreGroup[];
   setQty: (id: number, qty: number) => void;
   onBack: () => void;
   onDone: () => void;
 }) {
   const utils = trpc.useUtils();
+  // Sepet seçenek (türev) kimliği tutar; grubun içinden bulunur.
+  const optionById = new Map<number, StoreOption>();
+  for (const g of products) for (const o of g.options) optionById.set(o.id, o);
   const rows = Object.entries(cart)
     .map(([id, qty]) => {
-      const p = products.find(x => x.id === Number(id));
+      const p = optionById.get(Number(id));
       return p ? { p, qty, net: p.salePrice * (1 - p.discountPercent / 100) } : null;
     })
-    .filter((x): x is { p: StoreProduct; qty: number; net: number } => x !== null);
+    .filter((x): x is { p: StoreOption; qty: number; net: number } => x !== null);
   const subtotal = rows.reduce((s, r) => s + r.net * r.qty, 0);
 
   const [coupon, setCoupon] = useState("");

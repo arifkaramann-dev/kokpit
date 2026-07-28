@@ -11,7 +11,7 @@ import * as db from "../db";
 import { itemsTotal, summarizeItems, toItemRows } from "../orderUtils";
 import { extractInvoice } from "../_core/claude";
 import { executeAssistantCommand, generateOrderNo, generateQuoteNo } from "../assistant";
-import { buildSaleTitle, deriveCombos, parseSetCount, renameVariantTitle } from "../productUtils";
+import { buildSaleTitle, deriveCombos, parseSetCount, renameVariantTitle, splitExistingCombos } from "../productUtils";
 import { computePrice, extractJson, parseFeatures, pickReferenceProduct, scoreReference, suggestSku } from "../autofill";
 import { computeReorderSuggestions, summarizeReorder } from "../reorder";
 import { importUrunKayit } from "../importSeed";
@@ -512,8 +512,9 @@ export const productsRouter = router({
         throw new TRPCError({ code: "BAD_REQUEST", message: "Türevden türetme yapılamaz — ana ürünü seçin." });
       }
       // SKU tekilliği (Faz A1): mevcut SKU'larla çakışan öneriye sayı eklenir.
+      const allProducts = await db.listProducts();
       const existingSkus = new Set(
-        (await db.listProducts()).map(p => p.sku?.trim()).filter((s): s is string => !!s),
+        allProducts.map(p => p.sku?.trim()).filter((s): s is string => !!s),
       );
       const uniqueSku = (base: string) => {
         let candidate = base;
@@ -533,7 +534,20 @@ export const productsRouter = router({
       if (combos.length > 60) {
         throw new TRPCError({ code: "BAD_REQUEST", message: `${combos.length} kombinasyon çok fazla (en fazla 60)` });
       }
-      for (const combo of combos) {
+      // Aynı seçimle ikinci kez türetilince mükerrer türev açılmasın: bu ana
+      // ürünün mevcut türev başlıklarıyla eşleşen kombinasyonlar atlanır.
+      const { fresh, duplicates } = splitExistingCombos(
+        parent.name,
+        combos,
+        allProducts.filter(p => p.parentId === parent.id).map(p => p.name),
+      );
+      if (fresh.length === 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Seçilen ${duplicates.length} kombinasyonun tümü bu ana üründe zaten var — yeni türev oluşturulmadı.`,
+        });
+      }
+      for (const combo of fresh) {
         // Set/paket türevlerinde fiyat ve ambalaj maliyeti adetle çarpılır.
         const setCount = parseSetCount(combo.set);
         const title = buildSaleTitle(parent.name, combo.use, combo.packaging, combo.color, combo.set);
@@ -541,8 +555,10 @@ export const productsRouter = router({
           parentId: parent.id,
           name: title,
           series: parent.series,
-          colorCode: parent.colorCode,
-          colorHex: parent.colorHex,
+          // Renge göre türetildiyse türevin rengi kendi rengidir; ana ürünün
+          // kodu kopyalanınca bütün renk türevleri aynı renkte görünüyordu.
+          colorCode: combo.color ?? parent.colorCode,
+          colorHex: combo.color ? null : parent.colorHex,
           surfaceType: combo.use ?? parent.surfaceType,
           packaging: combo.packaging ?? parent.packaging,
           description: parent.description,
@@ -581,7 +597,7 @@ export const productsRouter = router({
           );
         }
       }
-      return { count: combos.length };
+      return { count: fresh.length, skipped: duplicates.length };
     }),
   // Ana ürün kartındaki seçili alan gruplarını tüm türevlere kopyalar.
   // Türeve özgü alanlara (ad, fiyat, ambalaj, barkod, SKU, stok, renk,

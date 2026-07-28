@@ -4,6 +4,7 @@
 import { systemRouter } from "./_core/systemRouter";
 import { router } from "./_core/trpc";
 import { materialsRouter, productsRouter, productionRouter, formulaRouter, seriesRouter } from "./modules/urun";
+import { katalogRouter } from "./modules/katalog";
 import { crmRouter, ordersRouter, quotesRouter } from "./modules/satis";
 import {
   purchasesRouter, reportRouter, customersRouter, chequesRouter, accountsRouter, transactionsRouter, expensesRouter, suppliersRouter, invoicesRouter, kargoRouter, reconcileRouter,
@@ -23,6 +24,9 @@ export const appRouter = router({
   auth: authRouter,
   materials: materialsRouter,
   products: productsRouter,
+  // Ürün mimarisi v3 (Master/Listing/ChannelListing + kapasite). Eski
+  // products router'ı geçiş boyunca yerinde kalır.
+  katalog: katalogRouter,
   production: productionRouter,
   formula: formulaRouter,
   series: seriesRouter,

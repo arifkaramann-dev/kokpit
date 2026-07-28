@@ -53,6 +53,29 @@ import {
   suppliers,
   users,
   whatsappAuth,
+  // Ürün mimarisi v3
+  colors,
+  productFamilies,
+  packagings,
+  packagingInputs,
+  useCases,
+  seriesPackagings,
+  seriesFamilies,
+  formulas,
+  formulaInputs,
+  masterProducts,
+  listings,
+  salesChannels,
+  channelListings,
+  InsertColor,
+  InsertProductFamily,
+  InsertPackaging,
+  InsertUseCase,
+  InsertFormula,
+  InsertFormulaInput,
+  InsertMasterProduct,
+  InsertListing,
+  InsertChannelListing,
 } from "../drizzle/schema";
 import { resolveProductIdForItem } from "./orderUtils";
 import { isTokenRevoked } from "./authUtils";
@@ -2364,4 +2387,304 @@ export async function nextInvoiceNo() {
     .values({ key: "invoiceCounter", value: String(next) })
     .onDuplicateKeyUpdate({ set: { value: String(next) } });
   return next;
+}
+
+/* ==========================================================================
+ * ÜRÜN MİMARİSİ v3 — boyutlar, master, ilan, kanal yayını, kapasite
+ * ========================================================================== */
+
+/* ---- Boyutlar ----------------------------------------------------------- */
+
+export async function listColors() {
+  const db = await requireDb();
+  return db.select().from(colors).orderBy(colors.sortOrder, colors.name);
+}
+
+export async function listProductFamilies() {
+  const db = await requireDb();
+  return db.select().from(productFamilies).orderBy(productFamilies.sortOrder, productFamilies.name);
+}
+
+export async function listPackagings() {
+  const db = await requireDb();
+  return db.select().from(packagings).orderBy(packagings.sortOrder, packagings.name);
+}
+
+export async function listUseCases() {
+  const db = await requireDb();
+  return db.select().from(useCases).orderBy(useCases.sortOrder, useCases.name);
+}
+
+export async function listSalesChannels() {
+  const db = await requireDb();
+  return db.select().from(salesChannels).orderBy(salesChannels.code);
+}
+
+export async function listSeriesPackagings() {
+  const db = await requireDb();
+  return db.select().from(seriesPackagings);
+}
+
+export async function listSeriesFamilies() {
+  const db = await requireDb();
+  return db.select().from(seriesFamilies);
+}
+
+/**
+ * Boyut satırlarını koda göre ekler; var olana dokunmaz (idempotent tohumlama).
+ * Dönen değer: kod → id eşlemesi.
+ */
+async function upsertByCode<T extends { id: number; code: string }>(
+  table: typeof colors | typeof productFamilies | typeof packagings | typeof useCases | typeof salesChannels,
+  rows: Record<string, unknown>[],
+): Promise<{ map: Map<string, number>; created: number }> {
+  const db = await requireDb();
+  const existing = (await db.select().from(table as never)) as unknown as T[];
+  const map = new Map(existing.map(r => [r.code, r.id]));
+  let created = 0;
+  for (const row of rows) {
+    const code = String(row.code ?? "");
+    if (!code || map.has(code)) continue;
+    const [res] = await db.insert(table as never).values(row as never);
+    map.set(code, Number(res.insertId));
+    created++;
+  }
+  return { map, created };
+}
+
+export async function seedColors(rows: InsertColor[]) {
+  return upsertByCode(colors, rows as never);
+}
+export async function seedFamilies(rows: InsertProductFamily[]) {
+  return upsertByCode(productFamilies, rows as never);
+}
+export async function seedPackagings(rows: InsertPackaging[]) {
+  return upsertByCode(packagings, rows as never);
+}
+export async function seedUseCases(rows: InsertUseCase[]) {
+  return upsertByCode(useCases, rows as never);
+}
+export async function seedSalesChannels(rows: { code: string; name: string }[]) {
+  return upsertByCode(salesChannels, rows as never);
+}
+
+/** Seri × ambalaj / seri × form uyumluluğu — küpü seyrek tutan kısıt. */
+export async function setSeriesPackagings(seriesId: number, packagingIds: number[]) {
+  const db = await requireDb();
+  await db.delete(seriesPackagings).where(eq(seriesPackagings.seriesId, seriesId));
+  for (const packagingId of packagingIds) {
+    await db.insert(seriesPackagings).values({ seriesId, packagingId });
+  }
+}
+
+export async function setSeriesFamilies(seriesId: number, familyIds: number[]) {
+  const db = await requireDb();
+  await db.delete(seriesFamilies).where(eq(seriesFamilies.seriesId, seriesId));
+  for (const familyId of familyIds) {
+    await db.insert(seriesFamilies).values({ seriesId, familyId });
+  }
+}
+
+/* ---- Formüller (çok seviyeli BOM) --------------------------------------- */
+
+export async function listFormulas() {
+  const db = await requireDb();
+  return db.select().from(formulas);
+}
+
+export async function listFormulaInputs() {
+  const db = await requireDb();
+  return db.select().from(formulaInputs);
+}
+
+export async function listPackagingInputs() {
+  const db = await requireDb();
+  return db.select().from(packagingInputs);
+}
+
+export async function createFormula(data: InsertFormula) {
+  const db = await requireDb();
+  const [r] = await db.insert(formulas).values(data);
+  return Number(r.insertId);
+}
+
+export async function updateFormula(id: number, data: Partial<InsertFormula>) {
+  const db = await requireDb();
+  await db.update(formulas).set(data).where(eq(formulas.id, id));
+}
+
+export async function setFormulaInputs(
+  formulaId: number,
+  rows: { inputMaterialId: number; qtyPerBase: number; note?: string | null }[],
+) {
+  const db = await requireDb();
+  await db.delete(formulaInputs).where(eq(formulaInputs.formulaId, formulaId));
+  for (const row of rows) {
+    await db.insert(formulaInputs).values({
+      formulaId,
+      inputMaterialId: row.inputMaterialId,
+      qtyPerBase: String(row.qtyPerBase),
+      note: row.note ?? null,
+    } as InsertFormulaInput);
+  }
+}
+
+/* ---- Master ürünler ------------------------------------------------------ */
+
+export async function listMasterProducts() {
+  const db = await requireDb();
+  return db.select().from(masterProducts).orderBy(masterProducts.internalSku);
+}
+
+export async function getMasterProduct(id: number) {
+  const db = await requireDb();
+  const rows = await db.select().from(masterProducts).where(eq(masterProducts.id, id)).limit(1);
+  return rows[0] ?? null;
+}
+
+export async function createMasterProduct(data: InsertMasterProduct) {
+  const db = await requireDb();
+  const [r] = await db.insert(masterProducts).values(data);
+  return Number(r.insertId);
+}
+
+export async function updateMasterProduct(id: number, data: Partial<InsertMasterProduct>) {
+  const db = await requireDb();
+  await db.update(masterProducts).set(data).where(eq(masterProducts.id, id));
+}
+
+/**
+ * Kapasite sonuçlarını master'lara yazar. Yalnız DEĞİŞEN satırlara dokunur —
+ * 5.000 master'da her hesapta 5.000 UPDATE atmanın anlamı yok.
+ */
+export async function writeBuildableQty(rows: { masterId: number; buildable: number }[]) {
+  const db = await requireDb();
+  const current = await db
+    .select({ id: masterProducts.id, buildableQty: masterProducts.buildableQty })
+    .from(masterProducts);
+  const byId = new Map(current.map(r => [r.id, r.buildableQty]));
+  const now = new Date();
+  let changed = 0;
+  for (const row of rows) {
+    if (byId.get(row.masterId) === row.buildable) continue;
+    await db
+      .update(masterProducts)
+      .set({ buildableQty: row.buildable, buildableComputedAt: now })
+      .where(eq(masterProducts.id, row.masterId));
+    changed++;
+  }
+  return changed;
+}
+
+/* ---- İlanlar ------------------------------------------------------------- */
+
+export async function listListings() {
+  const db = await requireDb();
+  return db.select().from(listings);
+}
+
+export async function listListingsByMaster(masterId: number) {
+  const db = await requireDb();
+  return db.select().from(listings).where(eq(listings.masterId, masterId));
+}
+
+export async function createListing(data: InsertListing) {
+  const db = await requireDb();
+  const [r] = await db.insert(listings).values(data);
+  return Number(r.insertId);
+}
+
+export async function updateListing(id: number, data: Partial<InsertListing>) {
+  const db = await requireDb();
+  await db.update(listings).set(data).where(eq(listings.id, id));
+}
+
+/* ---- Kanal yayınları ----------------------------------------------------- */
+
+export async function listChannelListings() {
+  const db = await requireDb();
+  return db.select().from(channelListings);
+}
+
+export async function createChannelListing(data: InsertChannelListing) {
+  const db = await requireDb();
+  const [r] = await db.insert(channelListings).values(data);
+  return Number(r.insertId);
+}
+
+export async function updateChannelListing(id: number, data: Partial<InsertChannelListing>) {
+  const db = await requireDb();
+  await db.update(channelListings).set(data).where(eq(channelListings.id, id));
+}
+
+/**
+ * Bir kanalda üretilmiş en büyük sıra numarası. Pazaryeri SKU'su ve barkodu
+ * buradan devam eder; kodlar bir kez üretilip saklandığı için sayaç asla
+ * geriye sarmaz.
+ */
+export async function nextChannelSequence(): Promise<number> {
+  const db = await requireDb();
+  const [row] = await db
+    .select({ n: sql<number>`COALESCE(MAX(${channelListings.id}), 0)` })
+    .from(channelListings);
+  return Number(row?.n ?? 0) + 1;
+}
+
+/**
+ * Kapasitesi değişen master'ların yayınlarını kirli işaretler.
+ * Satış anında hesap yapılmaz; işçi kirli satırları toplu gönderir.
+ */
+export async function markChannelListingsDirty(masterIds: number[]) {
+  if (masterIds.length === 0) return 0;
+  const db = await requireDb();
+  await db
+    .update(channelListings)
+    .set({ syncState: "kirli" })
+    .where(inArray(channelListings.masterId, masterIds));
+  return masterIds.length;
+}
+
+/* ---- Hammadde rezervasyonu ---------------------------------------------- */
+
+/**
+ * Açık sipariş için hammadde rezerve eder — ATOMİK.
+ *
+ * Sipariş ile üretim arasındaki günlerde hammadde "boşta" görünmesin diye
+ * rezerv burada açılır. WHERE koşulu aşırı satış kalkanıdır: yetersizse hiç
+ * satır güncellenmez ve çağıran bunu görür. Yarış durumu (iki pazaryerinden
+ * aynı anda sipariş) uygulama katmanında değil, veritabanında çözülür.
+ */
+export async function reserveMaterial(materialId: number, qty: number): Promise<boolean> {
+  const db = await requireDb();
+  const [res] = await db
+    .update(materials)
+    .set({ reservedQty: sql`${materials.reservedQty} + ${qty}` })
+    .where(
+      and(
+        eq(materials.id, materialId),
+        sql`${materials.stockQty} - ${materials.reservedQty} - ${materials.safetyQty} >= ${qty}`,
+      ),
+    );
+  return (res as { affectedRows?: number }).affectedRows !== 0;
+}
+
+/** Rezervi geri açar (sipariş iptali/iadesi). Eksiye düşmez. */
+export async function releaseMaterial(materialId: number, qty: number) {
+  const db = await requireDb();
+  await db
+    .update(materials)
+    .set({ reservedQty: sql`GREATEST(0, ${materials.reservedQty} - ${qty})` })
+    .where(eq(materials.id, materialId));
+}
+
+/** Üretim tamamlandı: rezerv kapanır ve gerçek stok düşer. */
+export async function consumeMaterial(materialId: number, qty: number) {
+  const db = await requireDb();
+  await db
+    .update(materials)
+    .set({
+      reservedQty: sql`GREATEST(0, ${materials.reservedQty} - ${qty})`,
+      stockQty: sql`GREATEST(0, ${materials.stockQty} - ${qty})`,
+    })
+    .where(eq(materials.id, materialId));
 }
