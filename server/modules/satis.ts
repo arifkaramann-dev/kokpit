@@ -8,6 +8,7 @@ import { systemRouter } from "../_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { TRPCError } from "@trpc/server";
 import * as db from "../db";
+import { syncOrderReservation } from "../orderReservation";
 import { itemsTotal, summarizeItems, toItemRows } from "../orderUtils";
 import { extractInvoice } from "../_core/claude";
 import { executeAssistantCommand, generateOrderNo, generateQuoteNo } from "../assistant";
@@ -267,7 +268,20 @@ export const ordersRouter = router({
     }),
   setStatus: protectedProcedure
     .input(z.object({ id: z.number(), status: z.enum(["new", "production", "ready", "done", "cancelled"]) }))
-    .mutation(({ input }) => db.updateOrder(input.id, { status: input.status })),
+    .mutation(async ({ input }) => {
+      await db.updateOrder(input.id, { status: input.status });
+      // Hammadde rezervasyonu duruma bağlıdır: yeni/üretimde → rezerve,
+      // hazır/tamam → tüket, iptal → serbest bırak. Ayrı bir düğmeye
+      // bağlanmadı; unutulunca defter gerçekle ayrışırdı.
+      // Rezervasyon başarısız olsa bile durum değişikliği geri alınmaz —
+      // müşteri siparişi kabul edilmiş sayılır, yalnız eksik bildirilir.
+      try {
+        const res = await syncOrderReservation(input.id, input.status);
+        return { ok: true, reservation: res };
+      } catch {
+        return { ok: true, reservation: null };
+      }
+    }),
   // Ödeme durumu/tutarı: kart üzerinden hızlı tahsilat işaretleme.
   setPayment: protectedProcedure
     .input(
