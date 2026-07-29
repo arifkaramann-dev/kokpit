@@ -30,6 +30,15 @@ export default function SeriesMatrix() {
   const { data: dims } = trpc.katalog.dimensions.useQuery();
   const { data: series } = trpc.series.list.useQuery();
   const { data: links } = trpc.katalog.seriesLinks.useQuery();
+  const { data: redundant } = trpc.katalog.redundantPackagings.useQuery();
+
+  const deactivate = trpc.katalog.setPackagingActive.useMutation({
+    onSuccess: () => {
+      utils.katalog.invalidate();
+      toast.success("Ambalaj pasife alındı");
+    },
+    onError: e => toast.error(e.message),
+  });
 
   const [seriesId, setSeriesId] = useState<string>("");
   const activeId = Number(seriesId) || series?.[0]?.id || 0;
@@ -123,6 +132,34 @@ export default function SeriesMatrix() {
         renkler de dahil.
       </p>
 
+      {(redundant?.length ?? 0) > 0 && (
+        <div className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
+            Hazırlık eksenini tekrar eden ambalajlar
+          </div>
+          <p className="text-xs text-muted-foreground">
+            "Kullanıma hazır" ayrı bir eksen (r2u). Bu ambalajlar aynı bilgiyi ikinci kez
+            taşıyor ve her ürünü ikiye katlıyor: "30 ML + r2u" ile "30 ml (ReadyToUse) + r2u"
+            aynı şey. Pasife alın.
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {redundant?.map(p => (
+              <Button
+                key={p.id}
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                disabled={deactivate.isPending}
+                onClick={() => deactivate.mutate({ id: p.id, isActive: false })}
+              >
+                {p.name} — pasife al
+              </Button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {sel.colors.size === 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
           <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
@@ -187,7 +224,100 @@ export default function SeriesMatrix() {
           </Chip>
         ))}
       </Axis>
+
+      <FamilyPackagingMatrix families={families} packagings={packagings} links={links?.familyPackagings ?? []} />
     </Card>
+  );
+}
+
+/**
+ * Form × ambalaj uyumluluğu.
+ *
+ * Seri ekseni sprey kutusunu da airbrush formunu da içeriyorsa "Airbrush ·
+ * SPREY 400ML" master'ı üretiliyordu — çünkü form ile ambalaj arasında hiç
+ * kısıt yoktu. Burada her formun hangi ambalajlarla eşleşeceği belirlenir.
+ */
+function FamilyPackagingMatrix({
+  families,
+  packagings,
+  links,
+}: {
+  families: { id: number; name: string }[];
+  packagings: { id: number; name: string }[];
+  links: { familyId: number; packagingId: number }[];
+}) {
+  const utils = trpc.useUtils();
+  const [familyId, setFamilyId] = useState<string>("");
+  const activeId = Number(familyId) || families[0]?.id || 0;
+
+  const current = useMemo(
+    () => new Set(links.filter(l => l.familyId === activeId).map(l => l.packagingId)),
+    [links, activeId],
+  );
+  const [sel, setSel] = useState(current);
+  useEffect(() => setSel(current), [current]);
+
+  const save = trpc.katalog.setFamilyPackagings.useMutation({
+    onSuccess: () => {
+      utils.katalog.invalidate();
+      toast.success("Form uyumluluğu kaydedildi");
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  const dirty =
+    sel.size !== current.size || Array.from(sel).some(id => !current.has(id));
+
+  return (
+    <div className="space-y-2 border-t pt-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="text-sm font-semibold">Form × Ambalaj</span>
+        <Select value={String(activeId)} onValueChange={setFamilyId}>
+          <SelectTrigger className="w-44">
+            <SelectValue placeholder="Form seçin" />
+          </SelectTrigger>
+          <SelectContent>
+            {families.map(f => (
+              <SelectItem key={f.id} value={String(f.id)}>
+                {f.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {dirty && (
+          <Button
+            size="sm"
+            className="ml-auto"
+            disabled={save.isPending}
+            onClick={() => save.mutate({ familyId: activeId, packagingIds: Array.from(sel) })}
+          >
+            <Save className="mr-1 h-4 w-4" /> Kaydet
+          </Button>
+        )}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Sprey kutusu yalnız sprey formunda anlamlıdır. Seçim yapılmazsa bu form serinin tüm
+        ambalajlarıyla eşleşir.
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        {packagings.map(p => (
+          <Chip
+            key={p.id}
+            active={sel.has(p.id)}
+            onClick={() =>
+              setSel(prev => {
+                const next = new Set(prev);
+                if (next.has(p.id)) next.delete(p.id);
+                else next.add(p.id);
+                return next;
+              })
+            }
+          >
+            {p.name}
+          </Chip>
+        ))}
+      </div>
+    </div>
   );
 }
 

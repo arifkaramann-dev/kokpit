@@ -18,7 +18,14 @@ import {
   type CapacityMaterial,
   type MaterialType,
 } from "../capacity";
-import { buildBaseCode, buildChannelBarcode, buildChannelSku, buildInternalSku, buildSlug } from "../catalogCodes";
+import {
+  buildBaseCode,
+  buildChannelBarcode,
+  buildChannelSku,
+  buildInternalSku,
+  buildSlug,
+  looksLikeReadyToUse,
+} from "../catalogCodes";
 import { mapToTrendyolCards } from "../cardMapping";
 import { cubeKey, planListings, planMasters, type Readiness } from "../catalogPlan";
 import { runCapacityRecompute } from "../catalogJobs";
@@ -321,13 +328,43 @@ export const katalogRouter = router({
 
   /** Seri uyumluluk matrisi — hangi seride hangi renk/form/ambalaj üretiliyor. */
   seriesLinks: protectedProcedure.query(async () => {
-    const [sp, sf, sc] = await Promise.all([
+    const [sp, sf, sc, fp] = await Promise.all([
       db.listSeriesPackagings(),
       db.listSeriesFamilies(),
       db.listSeriesColors(),
+      db.listFamilyPackagings(),
     ]);
-    return { packagings: sp, families: sf, colors: sc };
+    return { packagings: sp, families: sf, colors: sc, familyPackagings: fp };
   }),
+
+  /** Form × ambalaj uyumluluğu. */
+  setFamilyPackagings: protectedProcedure
+    .input(z.object({ familyId: z.number(), packagingIds: z.array(z.number()) }))
+    .mutation(async ({ input }) => {
+      await db.setFamilyPackagings(input.familyId, input.packagingIds);
+      return { ok: true };
+    }),
+
+  /**
+   * Hazırlık eksenini TEKRAR EDEN ambalajlar.
+   *
+   * "30 ml (ReadyToUse)" bir ambalaj değil, 30 ml ambalajın kullanıma hazır
+   * halidir. Hazırlık zaten ayrı eksen; böyle bir satır listede kalırsa aynı
+   * ürün iki kez üretilir ("30 ML + r2u" ve "30 ml (ReadyToUse) + r2u").
+   */
+  redundantPackagings: protectedProcedure.query(async () => {
+    const rows = (await db.listPackagings()) as { id: number; name: string; isActive: number }[];
+    return rows
+      .filter(p => p.isActive !== 0 && looksLikeReadyToUse(p.name))
+      .map(p => ({ id: p.id, name: p.name }));
+  }),
+
+  setPackagingActive: protectedProcedure
+    .input(z.object({ id: z.number(), isActive: z.boolean() }))
+    .mutation(async ({ input }) => {
+      await db.setPackagingActive(input.id, input.isActive);
+      return { ok: true };
+    }),
 
   /* ---- Master üretimi --------------------------------------------------- */
 
@@ -345,7 +382,7 @@ export const katalogRouter = router({
       }),
     )
     .mutation(async ({ input }) => {
-      const [series, colors, families, packagings, sp, sf, sc, existing] = await Promise.all([
+      const [series, colors, families, packagings, sp, sf, sc, fp, existing] = await Promise.all([
         db.listProductSeries(),
         db.listColors(),
         db.listProductFamilies(),
@@ -353,8 +390,17 @@ export const katalogRouter = router({
         db.listSeriesPackagings(),
         db.listSeriesFamilies(),
         db.listSeriesColors(),
+        db.listFamilyPackagings(),
         db.listMasterProducts(),
       ]);
+
+      // Form × ambalaj kısıtı — "Airbrush · SPREY 400ML" burada elenir.
+      const fpMap = new Map<number, Set<number>>();
+      for (const r of fp as { familyId: number; packagingId: number }[]) {
+        const set = fpMap.get(r.familyId) ?? new Set<number>();
+        set.add(r.packagingId);
+        fpMap.set(r.familyId, set);
+      }
 
       const packBySeries = new Map<number, number[]>();
       for (const r of sp as { seriesId: number; packagingId: number }[]) {
@@ -416,6 +462,7 @@ export const katalogRouter = router({
             }),
           ),
         ),
+        familyPackagings: fpMap,
         existingSkus: new Set(
           (existing as Record<string, unknown>[]).map(m => String(m.internalSku ?? "")),
         ),
@@ -1451,7 +1498,11 @@ export const katalogRouter = router({
       return {
         masterId,
         internalSku: String(m.internalSku ?? ""),
+        // Gruplama için kimlikler: liste düz değil, seri → renk → varyant
+        // ağacı olarak gösterilir.
         seriesId: m.seriesId as number,
+        colorId: m.colorId as number,
+        baseCode: (m.baseCode as string | null) ?? null,
         series: seriesById.get(m.seriesId as number)?.name ?? null,
         family: familyById.get(m.familyId as number)?.name ?? null,
         packaging: packById.get(m.packagingId as number)?.name ?? null,

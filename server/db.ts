@@ -64,6 +64,7 @@ import {
   seriesPackagings,
   seriesFamilies,
   seriesColors,
+  familyPackagings,
   formulas,
   formulaInputs,
   masterProducts,
@@ -2688,6 +2689,26 @@ export async function setSeriesColors(seriesId: number, colorIds: number[]) {
 export async function listSeriesColors() {
   const db = await requireDb();
   return db.select().from(seriesColors);
+}
+
+/** Form × ambalaj uyumluluğu — "Airbrush · SPREY 400ML" gibi kombinasyonları eler. */
+export async function setFamilyPackagings(familyId: number, packagingIds: number[]) {
+  const db = await requireDb();
+  await db.delete(familyPackagings).where(eq(familyPackagings.familyId, familyId));
+  for (const packagingId of packagingIds) {
+    await db.insert(familyPackagings).values({ familyId, packagingId });
+  }
+}
+
+export async function listFamilyPackagings() {
+  const db = await requireDb();
+  return db.select().from(familyPackagings);
+}
+
+/** Ambalajı pasife alır — hazırlık eksenini tekrar eden kalemler için. */
+export async function setPackagingActive(id: number, isActive: boolean) {
+  const db = await requireDb();
+  await db.update(packagings).set({ isActive: isActive ? 1 : 0 }).where(eq(packagings.id, id));
 }
 
 export async function setSeriesFamilies(seriesId: number, familyIds: number[]) {
