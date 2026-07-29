@@ -9,6 +9,7 @@ import {
   ean13CheckDigit,
   isValidEan13,
   parseVolumeMl,
+  uniqueSkuSegments,
 } from "./catalogCodes";
 import { cubeKey, planListings, planMasters, type PlanSeries } from "./catalogPlan";
 
@@ -251,6 +252,119 @@ describe("planMasters — seyrek küp", () => {
       onlySeriesIds: [10],
     });
     expect(plan.create.every(m => m.seriesId === 10)).toBe(true);
+  });
+});
+
+describe("planMasters — SKU çakışması üretimi durdurmaz", () => {
+  // Gerçek hata: "30 ML PET" ve "30 ML CAM" ikisi de hacimden "30" eki alıyor.
+  // Aynı seri+renk+form altında internal SKU birebir aynı çıkıyor ve master
+  // üretimi "Kod çakışması" ile duruyordu.
+  const collidingPackagings = [
+    { id: 1, code: "pet30", name: "30 ML PET", skuSegment: "30", volumeMl: 30 },
+    { id: 2, code: "cam30", name: "30 ML CAM", skuSegment: "30", volumeMl: 30 },
+  ];
+  const series: PlanSeries = {
+    id: 10,
+    name: "CANDY",
+    prefix: "cnd",
+    packagingIds: [1, 2],
+    familyIds: [1],
+    readiness: ["konsantre"],
+  };
+
+  it("çakışan kodları ayrıştırır ve iki master da üretilir", () => {
+    const plan = planMasters({
+      series: [series],
+      colors: [colors[0]],
+      families,
+      packagings: collidingPackagings,
+      existingKeys: new Set(),
+    });
+    expect(plan.create).toHaveLength(2);
+    const skus = plan.create.map(m => m.internalSku);
+    expect(new Set(skus).size).toBe(2);
+  });
+
+  it("çakışmayı yine de bildirir — ekler iyileştirilebilsin", () => {
+    const plan = planMasters({
+      series: [series],
+      colors: [colors[0]],
+      families,
+      packagings: collidingPackagings,
+      existingKeys: new Set(),
+    });
+    expect(plan.conflicts).toHaveLength(1);
+  });
+
+  it("ayrıştırma deterministik — aynı girdi aynı kodu verir", () => {
+    const run = () =>
+      planMasters({
+        series: [series],
+        colors: [colors[0]],
+        families,
+        packagings: collidingPackagings,
+        existingKeys: new Set(),
+      }).create.map(m => m.internalSku);
+    expect(run()).toEqual(run());
+  });
+
+  it("katalogda kullanılan kodla çakışmaz", () => {
+    const first = planMasters({
+      series: [series],
+      colors: [colors[0]],
+      families,
+      packagings: collidingPackagings,
+      existingKeys: new Set(),
+    });
+    const taken = new Set(first.create.map(m => m.internalSku));
+    const second = planMasters({
+      series: [{ ...series, id: 11, prefix: "cnd" }],
+      colors: [colors[2]],
+      families,
+      packagings: collidingPackagings,
+      existingKeys: new Set(),
+      existingSkus: taken,
+    });
+    for (const m of second.create) expect(taken.has(m.internalSku)).toBe(false);
+  });
+});
+
+describe("uniqueSkuSegments — çakışan ekleri tekilleştirir", () => {
+  it("aynı hacimli iki ambalajı adından ayırır", () => {
+    const out = uniqueSkuSegments([
+      { id: 1, name: "30 ML PET", base: "30" },
+      { id: 2, name: "30 ML CAM", base: "30" },
+    ]);
+    expect(out.get(1)).toBe("30pet");
+    expect(out.get(2)).toBe("30cam");
+  });
+
+  it("tekil eke dokunmaz", () => {
+    const out = uniqueSkuSegments([
+      { id: 1, name: "100 ML PET", base: "100" },
+      { id: 2, name: "500 ML PET", base: "500" },
+    ]);
+    expect(out.get(1)).toBe("100");
+    expect(out.get(2)).toBe("500");
+  });
+
+  it("ayırt edici kelime yoksa sıra ekler", () => {
+    const out = uniqueSkuSegments([
+      { id: 1, name: "30 ML", base: "30" },
+      { id: 2, name: "30 ML", base: "30" },
+    ]);
+    expect(new Set([out.get(1), out.get(2)]).size).toBe(2);
+  });
+
+  it("sonuç satır sırasından bağımsız", () => {
+    const rows = [
+      { id: 1, name: "30 ML PET", base: "30" },
+      { id: 2, name: "30 ML CAM", base: "30" },
+    ];
+    const a = uniqueSkuSegments(rows);
+    const b = uniqueSkuSegments([...rows].reverse());
+    expect(a.get(1)).toBe(b.get(1));
+    expect(a.get(2)).toBe(b.get(2));
   });
 });
 

@@ -84,6 +84,7 @@ import {
   InsertListing,
   InsertChannelListing,
 } from "../drizzle/schema";
+import { uniqueSkuSegments } from "./catalogCodes";
 import { buildChannelRefIndex, planOrderBinding, resolveMasterByRef } from "./orderBinding";
 import { resolveProductIdForItem } from "./orderUtils";
 import { isTokenRevoked } from "./authUtils";
@@ -2603,6 +2604,57 @@ export async function seedFamilies(rows: InsertProductFamily[]) {
 }
 export async function seedPackagings(rows: InsertPackaging[]) {
   return upsertByCode(packagings, rows as never);
+}
+
+/**
+ * Çakışan SKU eklerini tekilleştirir (ambalaj ve form).
+ *
+ * `upsertByCode` var olan satıra dokunmaz; bu yüzden tohumlama düzeltilse de
+ * daha önce yazılmış çakışan ekler ("30 ML PET" ve "30 ML CAM" ikisi de "30")
+ * yerinde kalıyordu ve master üretimi hata veriyordu.
+ *
+ * Master'ların saklanmış `internalSku` değeri DEĞİŞMEZ — kod bir kez üretilir
+ * kuralı geçerli. Bu onarım yalnız BUNDAN SONRA üretilecek kodları etkiler.
+ */
+export async function repairSkuSegments(): Promise<{
+  packagings: number;
+  families: number;
+  changes: { kind: "ambalaj" | "form"; name: string; from: string; to: string }[];
+}> {
+  const db = await requireDb();
+  const changes: { kind: "ambalaj" | "form"; name: string; from: string; to: string }[] = [];
+
+  const packRows = await db.select().from(packagings);
+  const packSegments = uniqueSkuSegments(
+    packRows.map(p => ({
+      id: p.id,
+      name: p.name,
+      base: p.skuSegment ?? p.code,
+    })),
+  );
+  let packChanged = 0;
+  for (const p of packRows) {
+    const next = packSegments.get(p.id);
+    if (!next || next === p.skuSegment) continue;
+    await db.update(packagings).set({ skuSegment: next }).where(eq(packagings.id, p.id));
+    changes.push({ kind: "ambalaj", name: p.name, from: p.skuSegment ?? "", to: next });
+    packChanged++;
+  }
+
+  const famRows = await db.select().from(productFamilies);
+  const famSegments = uniqueSkuSegments(
+    famRows.map(f => ({ id: f.id, name: f.name, base: f.skuSegment ?? f.code })),
+  );
+  let famChanged = 0;
+  for (const f of famRows) {
+    const next = famSegments.get(f.id);
+    if (!next || next === f.skuSegment) continue;
+    await db.update(productFamilies).set({ skuSegment: next }).where(eq(productFamilies.id, f.id));
+    changes.push({ kind: "form", name: f.name, from: f.skuSegment ?? "", to: next });
+    famChanged++;
+  }
+
+  return { packagings: packChanged, families: famChanged, changes };
 }
 export async function seedUseCases(rows: InsertUseCase[]) {
   return upsertByCode(useCases, rows as never);

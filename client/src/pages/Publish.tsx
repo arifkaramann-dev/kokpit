@@ -1,4 +1,5 @@
 import AttributeMapping from "@/components/AttributeMapping";
+import CategoryMapping from "@/components/CategoryMapping";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -92,17 +93,6 @@ export default function Publish() {
     },
     onError: e => toast.error(e.message, { duration: 12000 }),
   });
-
-  const setCategory = trpc.katalog.setChannelCategory.useMutation({
-    onSuccess: () => {
-      utils.katalog.channelCategories.invalidate();
-      toast.success("Kategori eşlendi");
-    },
-    onError: e => toast.error(e.message),
-  });
-
-  const catOf = (useCaseId: number, chId: number) =>
-    (categories ?? []).find(c => c.useCaseId === useCaseId && c.channelId === chId);
 
   const publishedCount = (published ?? []).filter(p => p.channelId === activeChannel).length;
   const mappedCount = (categories ?? []).filter(c => c.channelId === activeChannel).length;
@@ -357,50 +347,13 @@ export default function Publish() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="kategori" className="space-y-3 pt-3">
-          <Card className="p-4 text-sm text-muted-foreground">
-            Her kullanım alanı bir pazaryeri kategorisine eşlenmeli — kategorisiz ilan açılamaz.
-            <span className="mt-1 block">
-              Eşleme aynı zamanda <strong className="text-foreground">mükerrer ilan kilidinin</strong>{" "}
-              dayanağı: bir ürün, bir kanalda, bir kategoride tek ilan. İki kullanım alanını aynı
-              kategoriye eşlerseniz ikincisi yayında atlanır.
-            </span>
-          </Card>
-
-          <Card className="overflow-hidden p-0">
-            <table className="w-full text-sm">
-              <thead className="bg-muted/50 text-xs text-muted-foreground">
-                <tr>
-                  <th className="p-2 text-left">Kullanım alanı</th>
-                  <th className="p-2 text-left">Kategori kimliği</th>
-                  <th className="p-2 text-left">Kategori adı (not)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {useCases.map(u => (
-                  <CategoryRow
-                    key={u.id}
-                    useCaseName={u.name}
-                    current={catOf(u.id, activeChannel)}
-                    onSave={(categoryId, categoryName) =>
-                      setCategory.mutate({
-                        useCaseId: u.id,
-                        channelId: activeChannel,
-                        categoryId,
-                        categoryName,
-                      })
-                    }
-                  />
-                ))}
-              </tbody>
-            </table>
-          </Card>
-
-          <Card className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
-            <Store className="h-4 w-4 shrink-0" />
-            Trendyol kategori kimliklerini Ayarlar sayfasındaki kategori arama aracından
-            bulabilirsiniz.
-          </Card>
+        <TabsContent value="kategori" className="pt-3">
+          <CategoryMapping
+            channelId={activeChannel}
+            channelName={channels.find(c => c.id === activeChannel)?.name ?? ""}
+            useCases={useCases}
+            categories={categories ?? []}
+          />
         </TabsContent>
 
         <TabsContent value="ozellik" className="pt-3">
@@ -408,46 +361,5 @@ export default function Publish() {
         </TabsContent>
       </Tabs>
     </div>
-  );
-}
-
-function CategoryRow({
-  useCaseName,
-  current,
-  onSave,
-}: {
-  useCaseName: string;
-  current: { categoryId: string; categoryName: string | null } | undefined;
-  onSave: (categoryId: string, categoryName: string | null) => void;
-}) {
-  const [id, setId] = useState(current?.categoryId ?? "");
-  const [name, setName] = useState(current?.categoryName ?? "");
-  const dirty = id !== (current?.categoryId ?? "") || name !== (current?.categoryName ?? "");
-
-  return (
-    <tr className="border-t">
-      <td className="p-2 font-medium">{useCaseName}</td>
-      <td className="p-2">
-        <Input
-          value={id}
-          onChange={e => setId(e.target.value)}
-          placeholder="örn. 1234"
-          className="h-8 w-40 font-mono text-xs"
-        />
-      </td>
-      <td className="flex items-center gap-2 p-2">
-        <Input
-          value={name}
-          onChange={e => setName(e.target.value)}
-          placeholder="3D Baskı Malzemeleri"
-          className="h-8 text-xs"
-        />
-        {dirty && id.trim() && (
-          <Button size="sm" className="h-8" onClick={() => onSave(id.trim(), name.trim() || null)}>
-            Kaydet
-          </Button>
-        )}
-      </td>
-    </tr>
   );
 }

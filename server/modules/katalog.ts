@@ -22,6 +22,12 @@ import { buildBaseCode, buildChannelBarcode, buildChannelSku, buildInternalSku, 
 import { mapToTrendyolCards } from "../cardMapping";
 import { cubeKey, planListings, planMasters, type Readiness } from "../catalogPlan";
 import { runCapacityRecompute } from "../catalogJobs";
+import {
+  flattenCategories,
+  searchCategories,
+  suggestForUseCases,
+  type FlatCategory,
+} from "../categorySuggest";
 import { syncAllChannels, syncChannel } from "../channelSyncWorker";
 import { generateContentBlock, templateContentBlock } from "../contentAi";
 import { computeMasterCosts, marginOf } from "../costing";
@@ -50,11 +56,49 @@ import {
 import { planProduction, resolveOrderLines } from "../productionPlan";
 import { planPublications, summarizeSkips } from "../publishPlan";
 import { GENERIC_USE_CASE_CODE, seedCatalogDimensions } from "../seedCatalog";
+import { fetchHepsiburadaCategories } from "../hepsiburada";
 import {
+  fetchTrendyolCategories,
   fetchTrendyolCategoryAttributes,
   parseCardSettings,
   pushTrendyolProductCards,
 } from "../trendyolProducts";
+
+/* ---- Pazaryeri kategori ağacı önbelleği ---------------------------------- */
+
+/**
+ * Kategori ağacı binlerce satır ve seyrek değişir; her arama tuşunda API'ye
+ * gitmek hem yavaş hem kotayı yer. Süreç belleğinde tutulur.
+ */
+const categoryCache = new Map<string, { at: number; rows: FlatCategory[] }>();
+const CATEGORY_TTL_MS = 6 * 60 * 60 * 1000;
+
+async function loadChannelCategories(channelCode: string): Promise<FlatCategory[]> {
+  const hit = categoryCache.get(channelCode);
+  if (hit && Date.now() - hit.at < CATEGORY_TTL_MS) return hit.rows;
+
+  let raw: unknown;
+  try {
+    if (channelCode === "trendyol") raw = await fetchTrendyolCategories();
+    else if (channelCode === "hepsiburada") raw = await fetchHepsiburadaCategories();
+    else {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `"${channelCode}" kanalı için kategori listesi çekilemiyor — kimliği elle girin.`,
+      });
+    }
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: error instanceof Error ? error.message : "Kategori listesi alınamadı",
+    });
+  }
+
+  const rows = flattenCategories(raw);
+  categoryCache.set(channelCode, { at: Date.now(), rows });
+  return rows;
+}
 
 /** productSeries JSON alanındaki {label,value} veya düz metin dizisini çözer. */
 function parseStringArray(value: unknown): string[] {
@@ -171,7 +215,17 @@ export const katalogRouter = router({
    * Boyutları şirketin mevcut sözlüğünden tohumlar (seriler, şablonlar,
    * hammadde kayıtları). Idempotent — tekrar çalıştırmak zarar vermez.
    */
-  seedDimensions: protectedProcedure.mutation(() => seedCatalogDimensions()),
+  seedDimensions: protectedProcedure.mutation(async () => {
+    const seeded = await seedCatalogDimensions();
+    // Tohumlama var olan satıra dokunmaz; daha önce yazılmış çakışan SKU
+    // ekleri burada onarılır — aksi halde master üretimi "kod çakışması"
+    // ile durur ve kullanıcının elinden bir şey gelmez.
+    const repaired = await db.repairSkuSegments();
+    return { ...seeded, repaired };
+  }),
+
+  /** SKU eklerini tek başına onarır — tohumlamayı yeniden çalıştırmadan. */
+  repairSkuSegments: protectedProcedure.mutation(() => db.repairSkuSegments()),
 
   /**
    * Boyut ekleme/düzenleme — Tanımlar sayfası. Renk, ambalaj, form ve kullanım
@@ -340,18 +394,24 @@ export const katalogRouter = router({
             }),
           ),
         ),
+        existingSkus: new Set(
+          (existing as Record<string, unknown>[]).map(m => String(m.internalSku ?? "")),
+        ),
         onlySeriesIds: input.seriesIds,
       });
 
-      if (plan.conflicts.length > 0) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: `Kod çakışması: ${plan.conflicts
-            .slice(0, 3)
-            .map(c => c.internalSku)
-            .join(", ")} — seri ön eki veya ambalaj SKU eki tekrar ediyor.`,
-        });
-      }
+      // Çakışma ARTIK ÜRETİMİ DURDURMAZ: kod otomatik ayrıştırılır. Eskiden
+      // burada hata atılıyordu ve kullanıcı çıkmaza giriyordu — iki ambalajın
+      // hacmi aynıysa (30 ML PET / 30 ML CAM) SKU eki de aynı oluyordu ve
+      // elle düzeltmekten başka yol yoktu. Yine de bildirilir ki ekler
+      // iyileştirilebilsin.
+      const conflictNote =
+        plan.conflicts.length > 0
+          ? `${plan.conflicts.length} kod çakışması otomatik ayrıştırıldı (${plan.conflicts
+              .slice(0, 3)
+              .map(c => c.internalSku)
+              .join(", ")}). Tanımlar'dan SKU eklerini netleştirebilirsiniz.`
+          : null;
 
       if (input.dryRun) {
         return {
@@ -360,6 +420,7 @@ export const katalogRouter = router({
           alreadyExists: plan.existing.length,
           sample: plan.create.slice(0, 20).map(m => m.internalSku),
           created: 0,
+          conflictNote,
         };
       }
 
@@ -385,7 +446,14 @@ export const katalogRouter = router({
         } as never);
         created++;
       }
-      return { dryRun: false, willCreate: plan.create.length, alreadyExists: plan.existing.length, created, sample: [] };
+      return {
+        dryRun: false,
+        willCreate: plan.create.length,
+        alreadyExists: plan.existing.length,
+        created,
+        sample: [],
+        conflictNote,
+      };
     }),
 
   masters: protectedProcedure.query(() => db.listMasterProducts()),
@@ -761,6 +829,73 @@ export const katalogRouter = router({
 
   /** Kullanım alanı × kanal → pazaryeri kategorisi. Toplu yayının ön koşulu. */
   channelCategories: protectedProcedure.query(() => db.listUseCaseChannelCategories()),
+
+  /**
+   * Pazaryeri kategori ağacı — arama ve otomatik öneri için.
+   *
+   * Kategori kimliğini panelden elle bulup kopyalamak, kullanım alanı × kanal
+   * başına ayrı ayrı yapılan bir işti. Ağaç API'den çekilip yaprak listesine
+   * düzleştirilir; arama ve öneri saf modülde yapılır.
+   *
+   * Ağaç büyük (binlerce satır) ve seyrek değişir; bellekte tutulur.
+   */
+  channelCategoryTree: protectedProcedure
+    .input(z.object({ channelId: z.number(), query: z.string().default("") }))
+    .query(async ({ input }) => {
+      const channels = (await db.listSalesChannels()) as { id: number; code: string }[];
+      const channel = channels.find(c => c.id === input.channelId);
+      if (!channel) throw new TRPCError({ code: "NOT_FOUND", message: "Kanal bulunamadı" });
+
+      const flat = await loadChannelCategories(channel.code);
+      return {
+        channelCode: channel.code,
+        total: flat.length,
+        results: searchCategories(flat, input.query, 40),
+      };
+    }),
+
+  /**
+   * Eşlenmemiş kullanım alanları için kategori önerisi.
+   *
+   * Öneri KESİN DEĞİLDİR ve otomatik yazılmaz — kullanıcı onaylar. Yanlış
+   * kategori kartın reddedilmesine ya da yanlış vitrinde görünmesine yol
+   * açar; puan ekranda gösterilir ki güven seviyesi görünsün.
+   */
+  suggestChannelCategories: protectedProcedure
+    .input(z.object({ channelId: z.number(), onlyUnmapped: z.boolean().default(true) }))
+    .query(async ({ input }) => {
+      const [channels, useCases, mapped, series] = await Promise.all([
+        db.listSalesChannels(),
+        db.listUseCases(),
+        db.listUseCaseChannelCategories(),
+        db.listProductSeries(),
+      ]);
+      const channel = (channels as { id: number; code: string }[]).find(
+        c => c.id === input.channelId,
+      );
+      if (!channel) throw new TRPCError({ code: "NOT_FOUND", message: "Kanal bulunamadı" });
+
+      const already = new Set(
+        (mapped as { useCaseId: number; channelId: number }[])
+          .filter(m => m.channelId === input.channelId)
+          .map(m => m.useCaseId),
+      );
+      const targets = (useCases as { id: number; name: string }[]).filter(
+        u => !input.onlyUnmapped || !already.has(u.id),
+      );
+      if (targets.length === 0) return { channelCode: channel.code, rows: [] };
+
+      const flat = await loadChannelCategories(channel.code);
+      // Seri adları ek ipucu: "CANDY", "SPREY" gibi terimler kategori
+      // adlarında geçebiliyor.
+      const extraTerms = (series as { name: string }[]).map(x => x.name).slice(0, 12);
+
+      return {
+        channelCode: channel.code,
+        rows: suggestForUseCases({ useCases: targets, categories: flat, extraTerms }),
+      };
+    }),
+
 
   setChannelCategory: protectedProcedure
     .input(

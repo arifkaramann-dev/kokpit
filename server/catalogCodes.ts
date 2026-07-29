@@ -27,6 +27,17 @@ export function codeSegment(value: string | null | undefined, maxLen = 12): stri
 }
 
 /**
+ * Addaki harf kelimeleri (rakamlar ve noktalama atılır).
+ * "30 ML PET" → ["ml", "pet"] · "1 LT(900 GR)" → ["lt", "gr"]
+ */
+export function codeWords(value: string | null | undefined): string[] {
+  return asciiFold(String(value ?? ""))
+    .toLowerCase()
+    .split(/[^a-z]+/)
+    .filter(Boolean);
+}
+
+/**
  * Temel kod (renk kimliği): marka + seri ön eki + renk kodu.
  * Örn. aoc + cnd + red1822 → "aoccndred1822"
  *
@@ -45,6 +56,69 @@ export function buildBaseCode(input: {
   ]
     .filter(Boolean)
     .join("");
+}
+
+/**
+ * Boyut SKU eklerini TEKİL hale getirir.
+ *
+ * Sorun: ambalaj SKU eki hacimden türetiliyordu ("100 ML PET" → "100").
+ * "30 ML PET" ve "30 ML CAM" ikisi de "30" alıyor; aynı seri+renk+form
+ * altında iki farklı ambalaj AYNI internal SKU'yu üretiyor ve master üretimi
+ * "Kod çakışması" ile duruyordu. Kullanıcının yapabileceği bir şey yoktu —
+ * ekleri elle düzeltmesi isteniyordu.
+ *
+ * Çözüm: çakışan eke, adın AYIRT EDİCİ parçasından kısa bir ek eklenir
+ * ("30pet" · "30cam"). Ayırt edici parça bulunamazsa sıra numarası eklenir.
+ * Sonuç okunur kalır ve deterministiktir: aynı girdi hep aynı eki verir.
+ *
+ * `id` sırası değil, ADIN kendisi belirleyici — satır sırası değişince kod
+ * değişmesin diye.
+ */
+export function uniqueSkuSegments(
+  rows: { id: number; name: string; base: string }[],
+): Map<number, string> {
+  const out = new Map<number, string>();
+  const used = new Set<string>();
+
+  // Aynı temel eki paylaşanlar gruplanır; tekil olanlar olduğu gibi kalır.
+  const byBase = new Map<string, typeof rows>();
+  for (const r of rows) {
+    const base = codeSegment(r.base, 8) || codeSegment(r.name, 8) || "x";
+    byBase.set(base, [...(byBase.get(base) ?? []), r]);
+  }
+
+  for (const [base, group] of Array.from(byBase.entries())) {
+    if (group.length === 1) {
+      out.set(group[0].id, base);
+      used.add(base);
+      continue;
+    }
+    // Ada göre sırala: sonuç satır sırasından bağımsız olsun.
+    const sorted = [...group].sort((a, b) => a.name.localeCompare(b.name, "tr"));
+    for (let i = 0; i < sorted.length; i++) {
+      const r = sorted[i];
+      // Addaki rakam olmayan ilk anlamlı kelime ayırt edicidir: "30 ML PET"
+      // içinde "ml" atlanır, "pet" alınır.
+      const words = codeWords(r.name).filter(
+        w => w.length >= 2 && w !== "ml" && w !== "lt" && w !== "litre",
+      );
+      let candidate = "";
+      for (const w of words) {
+        const guess = `${base}${w.slice(0, 4)}`;
+        if (!used.has(guess)) {
+          candidate = guess;
+          break;
+        }
+      }
+      if (!candidate) candidate = `${base}${i + 1}`;
+      // Son çare: hâlâ çakışıyorsa sayı artırılır.
+      let n = 2;
+      while (used.has(candidate)) candidate = `${base}${i + 1}x${n++}`;
+      out.set(r.id, candidate);
+      used.add(candidate);
+    }
+  }
+  return out;
 }
 
 /**

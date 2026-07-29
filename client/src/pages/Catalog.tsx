@@ -19,6 +19,7 @@ import {
   RefreshCw,
   Sparkles,
   Store,
+  Wrench,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -52,9 +53,28 @@ export default function Catalog() {
   const seed = trpc.katalog.seedDimensions.useMutation({
     onSuccess: r => {
       utils.katalog.invalidate();
+      const fixed = r.repaired.changes.length;
       toast.success(
-        `Boyutlar hazır — ${r.colors} renk, ${r.families} form, ${r.packagings} ambalaj, ${r.useCases} kullanım alanı, ${r.channels} kanal, ${r.seriesLinks} seri eşlemesi`,
+        `Boyutlar hazır — ${r.colors} renk, ${r.families} form, ${r.packagings} ambalaj, ${r.useCases} kullanım alanı, ${r.channels} kanal, ${r.seriesLinks} seri eşlemesi` +
+          (fixed > 0 ? ` · ${fixed} SKU eki tekilleştirildi` : ""),
         { duration: 8000 },
+      );
+    },
+    onError: e => toast.error(e.message, { duration: 8000 }),
+  });
+
+  // Çakışan SKU ekleri master üretimini durduruyordu; tek başına da onarılır.
+  const repair = trpc.katalog.repairSkuSegments.useMutation({
+    onSuccess: r => {
+      utils.katalog.invalidate();
+      toast.success(
+        r.changes.length === 0
+          ? "SKU ekleri zaten tekil — düzeltilecek bir şey yok."
+          : `${r.changes.length} SKU eki tekilleştirildi: ${r.changes
+              .slice(0, 4)
+              .map(c => `${c.name} → ${c.to}`)
+              .join(" · ")}`,
+        { duration: 10000 },
       );
     },
     onError: e => toast.error(e.message, { duration: 8000 }),
@@ -65,11 +85,15 @@ export default function Catalog() {
       if (r.dryRun) {
         setPreview({ kind: "master", willCreate: r.willCreate, sample: r.sample });
         if (r.willCreate === 0) toast.info("Üretilecek yeni master yok — hepsi zaten var.");
+        else if (r.conflictNote) toast.info(r.conflictNote, { duration: 12000 });
         return;
       }
       setPreview(null);
       utils.katalog.invalidate();
-      toast.success(`${r.created} master ürün oluşturuldu`);
+      toast.success(
+        `${r.created} master ürün oluşturuldu` + (r.conflictNote ? ` · ${r.conflictNote}` : ""),
+        { duration: r.conflictNote ? 12000 : 6000 },
+      );
     },
     onError: e => toast.error(e.message, { duration: 10000 }),
   });
@@ -374,10 +398,23 @@ export default function Catalog() {
           Renk, form, ambalaj ve kullanım alanları şirketin mevcut sözlüğünden kurulur (seriler,
           şablonlar, hammadde kayıtları). Tekrar çalıştırmak zarar vermez — var olana dokunmaz.
         </p>
+        <p className="text-xs text-muted-foreground">
+          <strong className="text-foreground">SKU Eklerini Onar</strong>: aynı hacimli iki ambalaj
+          (30 ML PET / 30 ML CAM) aynı kod ekini alırsa master üretimi çakışırdı. Onarım ekleri
+          adından ayırır ("30pet" · "30cam"). Zaten üretilmiş ürünlerin kodu değişmez.
+        </p>
         <div className="flex flex-wrap items-center gap-2">
           <Button onClick={() => seed.mutate()} disabled={seed.isPending}>
             {seed.isPending ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Sparkles className="mr-1 h-4 w-4" />}
             Boyutları Tohumla
+          </Button>
+          <Button variant="outline" onClick={() => repair.mutate()} disabled={repair.isPending}>
+            {repair.isPending ? (
+              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+            ) : (
+              <Wrench className="mr-1 h-4 w-4" />
+            )}
+            SKU Eklerini Onar
           </Button>
           {dimReady && (
             <span className="text-xs text-muted-foreground">
