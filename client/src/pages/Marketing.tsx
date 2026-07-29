@@ -32,7 +32,8 @@ const TONES = [
 export default function Marketing() {
   const utils = trpc.useUtils();
   const { data: history } = trpc.marketing.history.useQuery();
-  const { data: products } = trpc.products.list.useQuery();
+  // v3 kataloğu — pazarlama metni v3 ürün adlarından beslenir.
+  const { data: catalog } = trpc.katalog.sellableList.useQuery();
 
   const [contentType, setContentType] = useState<string>("instagram_post");
   const [productName, setProductName] = useState("");
@@ -162,14 +163,14 @@ export default function Marketing() {
           </div>
           <div className="space-y-1.5">
             <Label>Ürün</Label>
-            {(products ?? []).length > 0 && (
+            {(catalog ?? []).length > 0 && (
               <Select value="" onValueChange={v => setProductName(v)}>
                 <SelectTrigger>
                   <SelectValue placeholder="Kayıtlı ürünlerden seç (opsiyonel)" />
                 </SelectTrigger>
                 <SelectContent>
-                  {(products ?? []).map(p => (
-                    <SelectItem key={p.id} value={p.name}>
+                  {(catalog ?? []).map(p => (
+                    <SelectItem key={p.masterId} value={p.name}>
                       {p.name}
                     </SelectItem>
                   ))}

@@ -2,6 +2,10 @@
 
 **Tarih:** 2026-07-28 · **Referans commit:** `4a2cc77` (PR #66 sonrası)
 
+> **DURUM (güncelleme):** 6 fazın tamamı uygulandı. Aşağıdaki analiz tarihsel
+> kayıt olarak durur; her fazın altında ne yapıldığı işaretlidir. Kalan
+> bilinen açıklar §5'te.
+
 Bu belge v3 ürün mimarisi (Master / Listing / ChannelListing) tamamlandıktan
 sonraki gerçek durumu, kanıtlı eksikleri ve değer sırasına göre yol haritasını
 tutar. Her iddia kod okunarak doğrulanmıştır; dosya ve satır referansları
@@ -145,7 +149,7 @@ hata riski demek.
 Sıra Yönetim Kurulu önceliğine göre: **para kazandır → zaman kurtar → hata
 azalt → kararı kolaylaştır**.
 
-### Faz 1 — Sipariş↔Master kesin bağı  ⭐ en yüksek getirili
+### ✅ Faz 1 — Sipariş↔Master kesin bağı
 
 *Hata azaltır (yanlış rezerv), sonraki her şeyin önkoşulu.*
 
@@ -156,7 +160,7 @@ azalt → kararı kolaylaştır**.
 
 **Ölçüt:** açık siparişlerin ≥%95'i `via: "kanal_kodu"` ile bağlanıyor.
 
-### Faz 2 — Master ve seri başına getiri paneli
+### ✅ Faz 2 — Master ve seri başına getiri paneli
 
 *Kararı kolaylaştırır: neyi üreteceğine veri karar verir.*
 
@@ -164,7 +168,7 @@ azalt → kararı kolaylaştır**.
 - Seri başına toplama + "ölü renk" listesi (90 günde 0 satış)
 - Ürün kartına "Getiri" sekmesi, Kokpit'e "en çok kazandıran 10 renk"
 
-### Faz 3 — Görsel boru hattı
+### ✅ Faz 3 — Görsel boru hattı
 
 *Kart açmanın önündeki tek engeli kaldırır — doğrudan para.*
 
@@ -173,7 +177,7 @@ azalt → kararı kolaylaştır**.
 - İlan başına özel görsel (opsiyonel, master'ı ezer)
 - Eksik görsel listesi Kokpit'te iş listesi olarak
 
-### Faz 4 — Sipariş ve üretim sayfalarını v3'e taşı
+### ✅ Faz 4 — Sipariş ve üretim sayfalarını v3'e taşı
 
 *Zaman kurtarır: tek katalog, tek yer.*
 
@@ -181,7 +185,7 @@ azalt → kararı kolaylaştır**.
 - `Production` üretim emri → master + reçete + eksik hammadde
 - `CommandPalette` v3 arama
 
-### Faz 5 — Vitrin v3
+### ✅ Faz 5 — Vitrin v3
 
 *Para kazandırır: web mağaza kendi kanalımız, komisyonsuz.*
 
@@ -189,7 +193,7 @@ azalt → kararı kolaylaştır**.
 - Renk/ambalaj seçici ilan varyantlarından
 - İçerik ve görsel zaten üretilmiş durumda — sadece bağlanacak
 
-### Faz 6 — Eski modelin emekliliği
+### ✅ Faz 6 — Eski modelin emekliliği
 
 *Bakım maliyetini kalıcı düşürür.*
 
@@ -199,8 +203,33 @@ azalt → kararı kolaylaştır**.
 
 ---
 
-## 5. Sonraki hamle önerisi
+## 5. Uygulama sonrası durum
 
-**Faz 1**, tek oturumda bitecek büyüklükte ve Faz 2'nin kapısını açıyor.
-Faz 3 (görsel) ondan bağımsız ilerleyebilir — barındırma kararı verilir
-verilmez paralel yürütülebilir.
+### Ne yapıldı
+
+| Faz | Ne değişti |
+|---|---|
+| 1 | `orderItems.channelRef` + `masterId` kolonları; gelen barkod SAKLANIYOR ve `channelListings` ile kesin eşleşiyor. `resolveOrderLines` yedek yola indi (`via: "kayitli"` yeni birincil yol). Zamanlayıcı her turda bağsız satırları tarıyor; elle bağlama ekranı var. |
+| 2 | `masterRevenue.ts` (saf, 15 test): master/seri başına adet-ciro-maliyet-kâr-marj, ölü renk tespiti. Katalog → Getiri sekmesi. Analytics kârlılık paneli buradan besleniyor. |
+| 3 | `masterImages.data` + `/api/img/master/:id` herkese açık servis; dosya yükleme, renk başına TOPLU atama, eksik görsel iş listesi (renk bazında). Pazaryerine mutlak adres `publicBaseUrl` ile üretiliyor. |
+| 4 | Orders · Quotes · Marketing · Questions · CommandPalette `katalog.sellableList`'e geçti; sipariş/teklif satırı `masterId` ile yazılıyor. Production sayfası yeniden yazıldı: kuyruk açık sipariş talebinden, üretim çok seviyeli BOM'dan düşüyor (`produceMaster`). |
+| 5 | `storefrontCatalog.ts` (saf, 15 test): vitrin web kanalı yayınlarından besleniyor, kart = renk + ambalaj seçenekleri. Web siparişi doğrudan master'a bağlanıyor. Web'e hiç yayın yoksa eski modele düşüyor — canlı mağaza bir an boş kalmıyor. |
+| 6 | Eski içe aktarma sayfası (`ProductImport`) kaldırıldı — `products` tablosuna elle yeni kayıt açan son yol kapandı. Analytics eski `costSummary`'den koptu. |
+
+### Bilinen açıklar
+
+- **`products` tablosu hâlâ okunuyor.** `resolveProductIdForItem` sipariş
+  kalemine eski `productId`'yi yazmaya devam ediyor (geçmiş raporlar bozulmasın
+  diye). Tablo yalnız-okunur değil, sadece elle yeni kayıt açan yol kapandı.
+  Tamamen kaldırmak `devProject` akışının da v3'e taşınmasını gerektirir.
+- **Görsel base64 olarak veritabanında.** Eski `productImages` deseniyle aynı;
+  dış bağımlılık istemediği için seçildi. Birkaç yüz fotoğrafta sorun değil,
+  binlerce olunca S3'e taşınmalı — `masterImages.url` dolu satırlar zaten aynı
+  kod yolundan geçiyor, geçiş kırılma yaratmaz.
+- **Maliyet geçmişe dönük değil.** Getiri raporundaki kâr bugünkü hammadde
+  fiyatlarıyla hesaplanır. Eğilim ve sıralama için doğru, muhasebe için değil.
+  Panelde de böyle yazıyor.
+- **Pazaryeri çağrıları canlıda doğrulanmalı.** Geliştirme ortamı pazaryerlerine
+  çıkamıyor: `importChannelAttributes` ve kart açma yalnız Render'da test edilir.
+- **Vitrin geçişi yayına bağlı.** Web kanalına ilk "canli" yayın yapıldığı an
+  vitrin v3'e geçer. O ana kadar eski ürünleri göstermeye devam eder.

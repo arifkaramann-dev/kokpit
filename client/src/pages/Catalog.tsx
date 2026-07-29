@@ -1,3 +1,6 @@
+import CatalogRevenue from "@/components/CatalogRevenue";
+import MissingImages from "@/components/MissingImages";
+import UnboundOrderItems from "@/components/UnboundOrderItems";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -158,8 +161,26 @@ export default function Catalog() {
         <TabsList>
           <TabsTrigger value="liste">Ürün Listesi</TabsTrigger>
           <TabsTrigger value="seriler">Seri Takibi</TabsTrigger>
+          <TabsTrigger value="getiri">Getiri</TabsTrigger>
+          <TabsTrigger value="gorseller">Görseller</TabsTrigger>
+          <TabsTrigger value="baglar">Bağlanmamış Satırlar</TabsTrigger>
           <TabsTrigger value="kurulum">Kurulum</TabsTrigger>
         </TabsList>
+
+        {/* Getiri — hangi renk para kazandırıyor */}
+        <TabsContent value="getiri" className="pt-3">
+          <CatalogRevenue />
+        </TabsContent>
+
+        {/* Görseller — kart açmanın önündeki tek fiziksel engel */}
+        <TabsContent value="gorseller" className="pt-3">
+          <MissingImages />
+        </TabsContent>
+
+        {/* Bağlanmamış satırlar — üretim planı ve getiri bunlara bağlı */}
+        <TabsContent value="baglar" className="pt-3">
+          <UnboundOrderItems />
+        </TabsContent>
 
         {/* Ürün listesi — takip sütunlarıyla. Eksikler, getiri (maliyet/kâr),
             hedef pazar (ilan sayısı) ve fırsat (açılmamış kullanım alanı). */}

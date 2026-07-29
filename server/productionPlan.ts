@@ -29,6 +29,12 @@ export type OrderLine = {
   quantity: number;
   /** Pazaryerinden gelen satıcı kodu / barkod (varsa). */
   channelRef?: string | null;
+  /**
+   * Sipariş düşerken kesin olarak çözülüp SAKLANMIŞ master bağı.
+   * Doluysa tahmin yürütülmez — bu alan bulanık eşleştirmeyi kritik yoldan
+   * çıkarmak için vardır.
+   */
+  masterId?: number | null;
 };
 
 export type ResolvableListing = {
@@ -43,7 +49,7 @@ export type ResolvedLine = {
   line: OrderLine;
   masterId: number | null;
   /** Nasıl eşleşti — teşhis ve güven seviyesi için. */
-  via: "kanal_kodu" | "baslik" | "yaklasik" | "eslesmedi";
+  via: "kayitli" | "kanal_kodu" | "baslik" | "yaklasik" | "eslesmedi";
 };
 
 /** Başlık karşılaştırması: Türkçe harf, boşluk ve noktalama farkını yok sayar. */
@@ -69,10 +75,15 @@ function similarity(a: string, b: string): number {
 }
 
 /**
- * Sipariş satırlarını master'a bağlar. Üç yol, güvenden zayıfa:
+ * Sipariş satırlarını master'a bağlar. Dört yol, güvenden zayıfa:
+ *   0) Kayıtlı bağ (`orderItems.masterId`) — sipariş düşerken bir kez çözüldü
  *   1) Pazaryeri kodu (kesin) — ilan yayınlanmışsa bu çalışır
  *   2) Başlık birebir
  *   3) Kelime örtüşmesi ≥ eşik — pazaryeri başlıkları düzenlenebildiği için
+ *
+ * 0 ve 1 kesindir; 2 ve 3 tahmindir ve YEDEK yoldur. Normal işleyişte her
+ * satır 0 ile biter: kanal kodu sipariş anında saklanıp çözülür. 2-3 yalnız
+ * elden girilen ya da ilanı silinmiş kalemler için kalır.
  *
  * Eşleşmeyen satır sessizce düşmez; çağıran onu kullanıcıya gösterir.
  * Yanlış eşleşme, eşleşmemekten kötüdür — eşik bilinçli olarak yüksek.
@@ -97,6 +108,9 @@ export function resolveOrderLines(
   }
 
   return lines.map((line): ResolvedLine => {
+    // Kayıtlı bağ her şeyi ezer: elle düzeltilmiş bir bağ tahminle bozulmamalı.
+    if (line.masterId != null) return { line, masterId: line.masterId, via: "kayitli" };
+
     const ref = line.channelRef?.trim().toLowerCase();
     if (ref && byRef.has(ref)) {
       return { line, masterId: byRef.get(ref)!, via: "kanal_kodu" };

@@ -24,7 +24,46 @@ function decodeImage(data: string): { mime: string; buffer: Buffer } | null {
   return null;
 }
 
+/** Ortak gönderim: MIME, önbellek ve CORS başlıkları tek yerde. */
+function sendImage(res: Response, data: string) {
+  const decoded = decodeImage(data);
+  if (!decoded) {
+    res.status(404).send("Görsel çözülemedi");
+    return;
+  }
+  res.setHeader("Content-Type", decoded.mime);
+  // Pazaryeri/CDN'ler tekrar tekrar çekmesin diye 1 gün önbellek.
+  res.setHeader("Cache-Control", "public, max-age=86400");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.send(decoded.buffer);
+}
+
 export function registerImageRoutes(app: Express) {
+  /**
+   * v3 master görseli: /api/img/master/{imageId}
+   *
+   * Ürün rotasından ÖNCE tanımlanır — "master" bir productId olarak
+   * yorumlanmasın diye sıra önemlidir.
+   */
+  app.get("/api/img/master/:imageId", async (req: Request, res: Response) => {
+    const imageId = Number(req.params.imageId);
+    if (!Number.isFinite(imageId)) {
+      res.status(400).send("Geçersiz istek");
+      return;
+    }
+    try {
+      const row = await db.getMasterImage(imageId);
+      if (!row?.data) {
+        res.status(404).send("Görsel yok");
+        return;
+      }
+      sendImage(res, row.data);
+    } catch (error) {
+      console.error("[images] master görseli hatası:", error);
+      res.status(500).send("Sunucu hatası");
+    }
+  });
+
   app.get("/api/img/:productId/:kind", async (req: Request, res: Response) => {
     const productId = Number(req.params.productId);
     const kind = req.params.kind;
@@ -38,16 +77,7 @@ export function registerImageRoutes(app: Express) {
         res.status(404).send("Görsel yok");
         return;
       }
-      const decoded = decodeImage(row.data);
-      if (!decoded) {
-        res.status(404).send("Görsel çözülemedi");
-        return;
-      }
-      res.setHeader("Content-Type", decoded.mime);
-      // Pazaryeri/CDN'ler tekrar tekrar çekmesin diye 1 gün önbellek.
-      res.setHeader("Cache-Control", "public, max-age=86400");
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.send(decoded.buffer);
+      sendImage(res, row.data);
     } catch (error) {
       console.error("[images] hata:", error);
       res.status(500).send("Sunucu hatası");

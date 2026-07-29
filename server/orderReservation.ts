@@ -120,11 +120,22 @@ async function orderRequirements(orderId: number) {
   }));
 
   const resolved = resolveOrderLines(
-    (items as { id: number; orderId: number; productName: string; quantity: string }[]).map(i => ({
+    (items as {
+      id: number;
+      orderId: number;
+      productName: string;
+      quantity: string;
+      channelRef: string | null;
+      masterId: number | null;
+    }[]).map(i => ({
       id: i.id,
       orderId: i.orderId,
       productName: i.productName,
       quantity: num(i.quantity),
+      // Kayıtlı bağ ve kanal kodu artık taşınıyor: bulanık başlık
+      // eşleştirmesi kritik yoldan çıkıp yedek yola iniyor.
+      channelRef: i.channelRef,
+      masterId: i.masterId,
     })),
     resolvable,
   );

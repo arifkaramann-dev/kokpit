@@ -267,6 +267,13 @@
       "when": 1785281574972,
       "tag": "0037_wealthy_tarot",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "5",
+      "when": 1785343307057,
+      "tag": "0038_lush_nebula",
+      "breakpoints": true
     }
   ]
 }

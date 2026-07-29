@@ -550,6 +550,16 @@ function Field({
   );
 }
 
+/** Dosyayı data URL'e çevirir — sunucuya base64 olarak gider. */
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("okunamadı"));
+    reader.readAsDataURL(file);
+  });
+}
+
 /** Lojistik değerinin kaynağı — "neden bu değer?" sorusunun cevabı. */
 const SOURCE_HINT: Record<string, string> = {
   master: "ürüne özel girilmiş",
@@ -566,10 +576,11 @@ function MasterImages({
   images,
 }: {
   masterId: number;
-  images: { id: number; url: string; role: string | null; sortOrder: number }[];
+  images: { id: number; url: string | null; role: string | null; sortOrder: number; hosted: boolean }[];
 }) {
   const utils = trpc.useUtils();
   const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
 
   const add = trpc.katalog.addMasterImage.useMutation({
     onSuccess: () => {
@@ -598,8 +609,30 @@ function MasterImages({
       </Card>
 
       <Card className="flex flex-wrap items-end gap-2 p-4">
-        <div className="min-w-64 flex-1 space-y-1.5">
-          <Label>Görsel adresi</Label>
+        <div className="space-y-1.5">
+          <Label>Dosyadan yükle</Label>
+          <Input
+            type="file"
+            accept="image/*"
+            disabled={busy || add.isPending}
+            className="text-xs"
+            onChange={async e => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (!file) return;
+              setBusy(true);
+              try {
+                add.mutate({ masterId, data: await readAsDataUrl(file) });
+              } catch {
+                toast.error("Dosya okunamadı");
+              } finally {
+                setBusy(false);
+              }
+            }}
+          />
+        </div>
+        <div className="min-w-56 flex-1 space-y-1.5">
+          <Label>ya da adres</Label>
           <Input
             value={url}
             onChange={e => setUrl(e.target.value)}
@@ -617,20 +650,24 @@ function MasterImages({
 
       {sorted.length === 0 ? (
         <Card className="p-6 text-center text-sm text-muted-foreground">
-          Görsel yok — bu ürünün kartı pazaryerinde açılamaz.
+          Görsel yok — bu ürünün kartı pazaryerinde açılamaz. Aynı rengin tüm
+          ambalajlarına tek seferde görsel atamak için Katalog → Görseller'i kullanın.
         </Card>
       ) : (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {sorted.map((img, i) => (
             <Card key={img.id} className="space-y-2 overflow-hidden p-2">
-              <img
-                src={img.url}
-                alt=""
-                className="h-32 w-full rounded bg-muted object-contain"
-                loading="lazy"
-              />
+              {img.url && (
+                <img
+                  src={img.url}
+                  alt=""
+                  className="h-32 w-full rounded bg-muted object-contain"
+                  loading="lazy"
+                />
+              )}
               <div className="flex items-center justify-between gap-2">
                 <Badge variant={i === 0 ? "default" : "outline"}>{i === 0 ? "Kapak" : i + 1}</Badge>
+                {!img.hosted && <Badge variant="outline">dış</Badge>}
                 <Button size="sm" variant="ghost" onClick={() => remove.mutate({ id: img.id })}>
                   Kaldır
                 </Button>

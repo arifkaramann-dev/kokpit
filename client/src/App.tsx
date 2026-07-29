@@ -24,7 +24,6 @@ import Orders from "@/pages/Orders";
 import Pricing from "@/pages/Pricing";
 import Production from "@/pages/Production";
 import MasterCard from "@/pages/MasterCard";
-import ProductImport from "@/pages/ProductImport";
 import Publish from "@/pages/Publish";
 import Purchases from "@/pages/Purchases";
 import Questions from "@/pages/Questions";
@@ -72,7 +71,6 @@ function AdminApp() {
         <Route path={"/yayin"} component={Publish} />
         <Route path={"/tanimlar"} component={Definitions} />
         <Route path={"/recete"} component={Recipes} />
-        <Route path={"/urun-aktar"} component={ProductImport} />
         <Route path={"/urun/:id"} component={MasterCard} />
         <Route path={"/sorular"} component={Questions} />
         <Route path={"/gelistirme"} component={Development} />

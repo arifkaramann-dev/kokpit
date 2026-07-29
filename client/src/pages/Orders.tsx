@@ -90,7 +90,13 @@ type OrderRow = {
   createdAt: Date;
 };
 
-type ItemRow = { productName: string; quantity: string; unitPrice: string };
+type ItemRow = {
+  productName: string;
+  quantity: string;
+  unitPrice: string;
+  /** v3 katalog bağı — listeden seçilince dolar, serbest kalemde null kalır. */
+  masterId: number | null;
+};
 
 /** Geliver'den dönen tek bir kargo teklifi (firma + fiyat). */
 type ShipmentOfferRow = { id: string; carrier: string; amount: number; currency: string; estDays: string | null };
@@ -164,6 +170,7 @@ function parseItemRows(items: ItemRow[]) {
       productName: r.productName.trim(),
       quantity: parseFloat(r.quantity) || 1,
       unitPrice: parseFloat(r.unitPrice) || 0,
+      masterId: r.masterId,
     }));
 }
 
@@ -225,7 +232,8 @@ export default function Orders() {
   // Pano tam tabloyu çekmez: son N sipariş yeter, gerekirse "daha eski" ile büyür.
   const [orderLimit, setOrderLimit] = useState(400);
   const { data: orders, isLoading } = trpc.orders.list.useQuery({ limit: orderLimit });
-  const { data: products } = trpc.products.list.useQuery();
+  // v3 kataloğu: sipariş satırı ürüne masterId ile bağlanır, ad tahminiyle değil.
+  const { data: catalog } = trpc.katalog.sellableList.useQuery();
   const { data: customersList } = trpc.customers.list.useQuery();
   const { data: mpStatus } = trpc.orders.marketplaceStatus.useQuery();
   const { data: kargoCfg } = trpc.kargo.configured.useQuery();
@@ -697,6 +705,7 @@ export default function Orders() {
           productName: i.productName,
           quantity: String(parseFloat(i.quantity)),
           unitPrice: String(parseFloat(i.unitPrice)),
+          masterId: i.masterId ?? null,
         })),
       }));
     } catch {
@@ -946,7 +955,7 @@ export default function Orders() {
                     onClick={() =>
                       setForm(f => ({
                         ...f,
-                        items: [...f.items, { productName: "", quantity: "1", unitPrice: "" }],
+                        items: [...f.items, { productName: "", quantity: "1", unitPrice: "", masterId: null }],
                       }))
                     }
                   >
@@ -968,12 +977,12 @@ export default function Orders() {
                           value={row.productName}
                           placeholder="Ürün adı"
                           title={
-                            row.productName.trim() && !products?.some(p => p.name === row.productName.trim())
+                            row.productName.trim() && row.masterId == null
                               ? "Katalogla eşleşmedi — serbest kalem olarak kaydedilir (stok düşümü ve ürün raporu dışında kalır)"
                               : undefined
                           }
                           className={
-                            row.productName.trim() && !products?.some(p => p.name === row.productName.trim())
+                            row.productName.trim() && row.masterId == null
                               ? "border-amber-400 focus-visible:ring-amber-400"
                               : undefined
                           }
@@ -981,14 +990,15 @@ export default function Orders() {
                             const name = e.target.value;
                             setForm(f => {
                               const items = [...f.items];
-                              const matched = products?.find(p => p.name === name);
+                              const matched = catalog?.find(p => p.name === name);
                               items[idx] = {
                                 ...items[idx],
                                 productName: name,
-                                // Ürün listesinden seçilirse satış fiyatını otomatik doldur.
+                                // Katalogdan seçilince ürün bağı ve taban fiyat gelir.
+                                masterId: matched?.masterId ?? null,
                                 unitPrice:
                                   matched && !items[idx].unitPrice
-                                    ? String(parseFloat(matched.salePrice))
+                                    ? String(matched.basePrice)
                                     : items[idx].unitPrice,
                               };
                               return { ...f, items };
@@ -1036,8 +1046,8 @@ export default function Orders() {
                       </div>
                     ))}
                     <datalist id="order-product-options">
-                      {products?.map(p => (
-                        <option key={p.id} value={p.name} />
+                      {catalog?.map(p => (
+                        <option key={p.masterId} value={p.name} />
                       ))}
                     </datalist>
                     <p className="text-sm font-medium text-right">

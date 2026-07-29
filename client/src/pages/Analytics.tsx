@@ -73,41 +73,31 @@ export default function Analytics() {
   const { data } = trpc.report.data.useQuery();
   const [profitDays, setProfitDays] = useState(30);
   const { data: channelProfit } = trpc.report.channelProfit.useQuery({ days: profitDays });
-  // Ürün Kârlılığı (Faz F1): kalem bazlı satış + reçete maliyetiyle brüt kâr.
-  const { data: productSales } = trpc.report.productSales.useQuery({ days: profitDays });
-  const { data: productList } = trpc.products.list.useQuery();
-  const { data: costSummary } = trpc.products.costSummary.useQuery();
+  // Ürün Kârlılığı — v3 kataloğundan (`katalog.revenue`).
+  //
+  // Eskiden eski `products` tablosundan besleniyordu: satış satırı ada göre
+  // eşleşiyor, maliyet tek seviyeli reçeteden geliyordu. Artık sipariş satırı
+  // master'a KAYITLI bağla bağlanır (orderItems.masterId) ve maliyet çok
+  // seviyeli BOM'dan gelir. Bağı olmayan satırlar hesaba girmez; ne kadarının
+  // eksik olduğu `unboundItemCount` ile görünür.
+  const { data: revenue } = trpc.katalog.revenue.useQuery({ days: profitDays });
 
   const productProfit = useMemo(() => {
-    if (!productSales) return null;
-    const nameById = new Map((productList ?? []).map(p => [p.id, p.name]));
-    const costById = new Map((costSummary ?? []).map(c => [c.productId, c.materialCost]));
-    const packById = new Map(
-      (productList ?? []).map(p => [p.id, (num(p.packagingCost) || 0) + (num(p.shippingCost) || 0)]),
-    );
-    let unmatchedRevenue = 0;
-    const rows = [];
-    for (const s of productSales) {
-      if (s.productId === null) {
-        unmatchedRevenue += s.revenue;
-        continue;
-      }
-      const unitCost = (costById.get(s.productId) ?? 0) + (packById.get(s.productId) ?? 0);
-      const cost = unitCost * s.qty;
-      rows.push({
-        productId: s.productId,
-        name: nameById.get(s.productId) ?? `#${s.productId}`,
-        qty: s.qty,
-        revenue: s.revenue,
-        cost,
-        gross: s.revenue - cost,
-        margin: s.revenue > 0 ? ((s.revenue - cost) / s.revenue) * 100 : 0,
-        hasCost: (costById.get(s.productId) ?? 0) > 0,
-      });
-    }
-    rows.sort((a, b) => b.gross - a.gross);
-    return { rows: rows.slice(0, 15), unmatchedRevenue };
-  }, [productSales, productList, costSummary]);
+    if (!revenue) return null;
+    return {
+      rows: revenue.masters.slice(0, 15).map(m => ({
+        productId: m.masterId,
+        name: m.label || `#${m.masterId}`,
+        qty: m.qty,
+        revenue: m.revenue,
+        cost: m.cost,
+        gross: m.profit,
+        margin: m.marginPercent,
+        hasCost: m.cost > 0,
+      })),
+      unboundItemCount: revenue.unboundItemCount,
+    };
+  }, [revenue]);
 
   const model = useMemo(() => {
     if (!data) return null;
@@ -485,10 +475,10 @@ export default function Analytics() {
                     ))}
                   </TableBody>
                 </Table>
-                {productProfit.unmatchedRevenue > 0 && (
+                {productProfit.unboundItemCount > 0 && (
                   <p className="mt-2 text-[11px] text-amber-600">
-                    {formatTL(productProfit.unmatchedRevenue)} tutarında satış katalogla eşleşmeyen
-                    serbest kalemlerde — sipariş girerken üründen seçerseniz rapora dahil olur.
+                    {productProfit.unboundItemCount} sipariş satırı bir ürüne bağlı değil — bu
+                    satırlar rapora girmiyor. Katalog → Bağlanmamış Satırlar'dan bağlayabilirsiniz.
                   </p>
                 )}
               </div>

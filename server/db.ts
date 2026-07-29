@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, lte, ne, notInArray, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   accounts,
@@ -84,6 +84,7 @@ import {
   InsertListing,
   InsertChannelListing,
 } from "../drizzle/schema";
+import { buildChannelRefIndex, planOrderBinding, resolveMasterByRef } from "./orderBinding";
 import { resolveProductIdForItem } from "./orderUtils";
 import { isTokenRevoked } from "./authUtils";
 import {
@@ -1212,6 +1213,21 @@ export async function listOrderItems(orderId: number) {
   return db.select().from(orderItems).where(eq(orderItems.orderId, orderId)).orderBy(orderItems.id);
 }
 
+/** Tüm sipariş kalemleri — getiri raporu master başına toplar. */
+export async function listAllOrderItems() {
+  const db = await requireDb();
+  return db
+    .select({
+      id: orderItems.id,
+      orderId: orderItems.orderId,
+      masterId: orderItems.masterId,
+      quantity: orderItems.quantity,
+      unitPrice: orderItems.unitPrice,
+      createdAt: orderItems.createdAt,
+    })
+    .from(orderItems);
+}
+
 /** Birden çok siparişin kalemleri tek sorguda (toplu içerik dökümü yazdırma için). */
 export async function listOrderItemsBulk(orderIds: number[]) {
   if (orderIds.length === 0) return [];
@@ -1320,6 +1336,35 @@ export async function recordProductionRun(productId: number, qty: number, note?:
   await recordProductMovement(productId, "in", qty, "Üretim girişi");
 }
 
+/**
+ * v3 üretim emri: hammadde düşümü çağıran tarafından yapılır (çok seviyeli
+ * BOM patlatması `planProduction`'da), burada emir kaydı ve mamul stok girişi
+ * yapılır.
+ */
+export async function recordMasterProductionRun(
+  masterId: number,
+  qty: number,
+  note?: string | null,
+) {
+  const db = await requireDb();
+  await db.insert(productionRuns).values({ productId: 0, masterId, qty, note: note ?? null });
+  await db
+    .update(masterProducts)
+    .set({ stockQty: sql`${masterProducts.stockQty} + ${qty}` })
+    .where(eq(masterProducts.id, masterId));
+}
+
+/** v3 üretim geçmişi — master bağı olan emirler. */
+export async function listMasterProductionRuns(limit = 50) {
+  const db = await requireDb();
+  return db
+    .select()
+    .from(productionRuns)
+    .where(isNotNull(productionRuns.masterId))
+    .orderBy(desc(productionRuns.id))
+    .limit(limit);
+}
+
 export async function getProductionRun(id: number) {
   const db = await requireDb();
   const rows = await db.select().from(productionRuns).where(eq(productionRuns.id, id)).limit(1);
@@ -1375,9 +1420,25 @@ export async function replaceOrderItems(
     const refs = await db
       .select({ id: products.id, name: products.name, barcode: products.barcode })
       .from(products);
+    // v3 bağı: gelen barkod/SKU kendi ürettiğimiz kanal koduyla eşleştirilir.
+    // Barkod artık SAKLANIR — eskiden eşleşmede kullanılıp atılıyordu, bu
+    // yüzden sipariş↔master bağı her okumada başlıktan tahmin ediliyordu.
+    const { index } = buildChannelRefIndex(
+      (await db
+        .select({
+          masterId: channelListings.masterId,
+          listingId: channelListings.listingId,
+          channelSku: channelListings.channelSku,
+          channelBarcode: channelListings.channelBarcode,
+        })
+        .from(channelListings)) as never,
+    );
     const rows = items.map(({ barcode, ...item }) => ({
       ...item,
       productId: item.productId ?? resolveProductIdForItem({ productName: item.productName, barcode }, refs),
+      channelRef: item.channelRef ?? barcode ?? null,
+      masterId:
+        item.masterId ?? resolveMasterByRef(item.channelRef ?? barcode, index)?.masterId ?? null,
       orderId,
     }));
     await db.insert(orderItems).values(rows);
@@ -1385,6 +1446,81 @@ export async function replaceOrderItems(
       await applyItemsStock(rows, "out", `Satış: ${order?.orderNo ?? orderId}`, orderId);
     }
   }
+}
+
+/* ---- Sipariş ↔ master bağı ---------------------------------------------- */
+
+/**
+ * Bağı olmayan sipariş kalemlerini kanal kodundan çözer ve YAZAR.
+ *
+ * Geçmiş siparişler bu kolonlar yokken düştüğü için bağsız; ayrıca ilan
+ * sonradan yayınlandığında da bağ kurulabilir hale gelir. Bağlı kalem asla
+ * yeniden yazılmaz (elle düzeltme korunur) — bkz. `planOrderBinding`.
+ */
+export async function backfillOrderBinding(): Promise<{
+  bound: number;
+  unknownRefs: { itemId: number; productName: string; channelRef: string }[];
+  noRef: number;
+  alreadyBound: number;
+}> {
+  const db = await requireDb();
+  const [items, refs] = await Promise.all([
+    db
+      .select({
+        id: orderItems.id,
+        orderId: orderItems.orderId,
+        productName: orderItems.productName,
+        channelRef: orderItems.channelRef,
+        masterId: orderItems.masterId,
+      })
+      .from(orderItems),
+    db
+      .select({
+        masterId: channelListings.masterId,
+        listingId: channelListings.listingId,
+        channelSku: channelListings.channelSku,
+        channelBarcode: channelListings.channelBarcode,
+      })
+      .from(channelListings),
+  ]);
+
+  const { index } = buildChannelRefIndex(refs as never);
+  const plan = planOrderBinding({ items: items as never, index });
+  for (const u of plan.updates) {
+    await db.update(orderItems).set({ masterId: u.masterId }).where(eq(orderItems.id, u.itemId));
+  }
+  return {
+    bound: plan.updates.length,
+    unknownRefs: plan.unknownRefs,
+    noRef: plan.noRef.length,
+    alreadyBound: plan.alreadyBound,
+  };
+}
+
+/** Tek kalemi elle bağlar — kanal kodu yoksa ya da tanınmadıysa son çare. */
+export async function bindOrderItem(itemId: number, masterId: number | null) {
+  const db = await requireDb();
+  await db.update(orderItems).set({ masterId }).where(eq(orderItems.id, itemId));
+}
+
+/** Bağı olmayan kalemler — "elle bağla" iş listesi. */
+export async function listUnboundOrderItems(limit = 200) {
+  const db = await requireDb();
+  return db
+    .select({
+      id: orderItems.id,
+      orderId: orderItems.orderId,
+      orderNo: orders.orderNo,
+      productName: orderItems.productName,
+      channelRef: orderItems.channelRef,
+      quantity: orderItems.quantity,
+      createdAt: orderItems.createdAt,
+    })
+    .from(orderItems)
+    .leftJoin(orders, eq(orderItems.orderId, orders.id))
+    .where(isNull(orderItems.masterId))
+    .orderBy(desc(orderItems.id))
+    .limit(limit);
 }
 
 export async function countOrdersToday() {
@@ -2767,23 +2903,107 @@ export async function listMasterImages(masterId?: number) {
   return masterId ? q.where(eq(masterImages.masterId, masterId)) : q;
 }
 
-export async function addMasterImage(input: { masterId: number; url: string; role?: string | null }) {
+export async function getMasterImage(id: number) {
+  const db = await requireDb();
+  const [row] = await db.select().from(masterImages).where(eq(masterImages.id, id)).limit(1);
+  return row ?? null;
+}
+
+async function nextImageSort(masterId: number): Promise<number> {
   const db = await requireDb();
   const [row] = await db
     .select({ n: sql<number>`COALESCE(MAX(sortOrder), -1)` })
     .from(masterImages)
-    .where(eq(masterImages.masterId, input.masterId));
+    .where(eq(masterImages.masterId, masterId));
+  return Number(row?.n ?? -1) + 1;
+}
+
+export async function addMasterImage(input: {
+  masterId: number;
+  url?: string | null;
+  /** Yüklenen görsel (data URL). Verilirse adres kendi sunucumuzdan türetilir. */
+  data?: string | null;
+  role?: string | null;
+}) {
+  const db = await requireDb();
   await db.insert(masterImages).values({
     masterId: input.masterId,
-    url: input.url,
+    url: input.url?.trim() || null,
+    data: input.data ?? null,
     role: input.role ?? null,
-    sortOrder: Number(row?.n ?? -1) + 1,
+    sortOrder: await nextImageSort(input.masterId),
   });
+}
+
+/**
+ * Bir görseli o RENGİN tüm master'larına ekler.
+ *
+ * Bir rengin 30/100/250/500 ml'si aynı fotoğrafı kullanır; tek tek eklemek
+ * dört kat iş demekti. Zaten aynı görsele sahip master atlanır — tekrar
+ * çalıştırmak mükerrer satır açmaz.
+ */
+export async function assignImageToColor(input: {
+  colorId: number;
+  seriesId?: number | null;
+  url?: string | null;
+  data?: string | null;
+  role?: string | null;
+}): Promise<{ added: number; skipped: number }> {
+  const db = await requireDb();
+  const where = input.seriesId
+    ? and(eq(masterProducts.colorId, input.colorId), eq(masterProducts.seriesId, input.seriesId))
+    : eq(masterProducts.colorId, input.colorId);
+  const targets = await db.select({ id: masterProducts.id }).from(masterProducts).where(where);
+  if (targets.length === 0) return { added: 0, skipped: 0 };
+
+  const ids = targets.map(t => t.id);
+  const existing = await db
+    .select({ masterId: masterImages.masterId, url: masterImages.url, data: masterImages.data })
+    .from(masterImages)
+    .where(inArray(masterImages.masterId, ids));
+
+  const url = input.url?.trim() || null;
+  const hasSame = new Set(
+    existing
+      .filter(e => (url ? e.url === url : input.data != null && e.data === input.data))
+      .map(e => e.masterId),
+  );
+
+  let added = 0;
+  for (const id of ids) {
+    if (hasSame.has(id)) continue;
+    await db.insert(masterImages).values({
+      masterId: id,
+      url,
+      data: input.data ?? null,
+      role: input.role ?? null,
+      sortOrder: await nextImageSort(id),
+    });
+    added += 1;
+  }
+  return { added, skipped: ids.length - added };
 }
 
 export async function deleteMasterImage(id: number) {
   const db = await requireDb();
   await db.delete(masterImages).where(eq(masterImages.id, id));
+}
+
+/** Görseli olmayan aktif/taslak master'lar — "eksik görsel" iş listesi. */
+export async function listMastersMissingImages() {
+  const db = await requireDb();
+  const withImage = db.select({ id: masterImages.masterId }).from(masterImages);
+  return db
+    .select({
+      id: masterProducts.id,
+      colorId: masterProducts.colorId,
+      seriesId: masterProducts.seriesId,
+      packagingId: masterProducts.packagingId,
+      internalSku: masterProducts.internalSku,
+      status: masterProducts.status,
+    })
+    .from(masterProducts)
+    .where(and(notInArray(masterProducts.id, withImage), ne(masterProducts.status, "arsiv")));
 }
 
 /* ---- Pazaryeri özellik eşlemesi ----------------------------------------- */

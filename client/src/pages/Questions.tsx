@@ -52,7 +52,8 @@ export default function Questions() {
   const utils = trpc.useUtils();
   const [tab, setTab] = useState<"new" | "answered" | "dismissed">("new");
   const { data: questions, isLoading } = trpc.questions.list.useQuery({ status: tab });
-  const { data: products } = trpc.products.list.useQuery();
+  // v3 kataloğu — seçilen ürünün ilan içeriği AI cevap taslağını besler.
+  const { data: catalog } = trpc.katalog.sellableList.useQuery();
   const { data: autoAnswer } = trpc.questions.autoAnswer.useQuery();
 
   const invalidate = () => {
@@ -321,8 +322,8 @@ export default function Questions() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">— Ürün yok —</SelectItem>
-                  {(products ?? []).map(p => (
-                    <SelectItem key={p.id} value={String(p.id)}>
+                  {(catalog ?? []).map(p => (
+                    <SelectItem key={p.masterId} value={String(p.masterId)}>
                       {p.name}
                     </SelectItem>
                   ))}
@@ -349,15 +350,16 @@ export default function Questions() {
             <Button
               disabled={!form.questionText.trim() || create.isPending}
               onClick={() => {
-                const productId = form.productId ? Number(form.productId) : null;
-                const productName = productId
-                  ? (products ?? []).find(p => p.id === productId)?.name ?? null
+                // Form artık master seçtiriyor; eski productId bağı boş kalır.
+                const masterId = form.productId ? Number(form.productId) : null;
+                const productName = masterId
+                  ? (catalog ?? []).find(p => p.masterId === masterId)?.name ?? null
                   : null;
                 create.mutate({
                   source: form.source as never,
                   customerName: form.customerName.trim() || null,
                   questionText: form.questionText.trim(),
-                  productId,
+                  masterId,
                   productName,
                 });
               }}

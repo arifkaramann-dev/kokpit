@@ -21,6 +21,7 @@ import {
 import { buildBaseCode, buildChannelBarcode, buildChannelSku, buildInternalSku, buildSlug } from "../catalogCodes";
 import { mapToTrendyolCards } from "../cardMapping";
 import { cubeKey, planListings, planMasters, type Readiness } from "../catalogPlan";
+import { runCapacityRecompute } from "../catalogJobs";
 import { syncAllChannels, syncChannel } from "../channelSyncWorker";
 import { generateContentBlock, templateContentBlock } from "../contentAi";
 import { computeMasterCosts, marginOf } from "../costing";
@@ -33,12 +34,19 @@ import {
 } from "../listingContent";
 import {
   guessSource,
+  imageUrlOf,
   resolveImages,
   resolveLogistics,
   type ChannelAttributeDef,
   type ImageRow,
 } from "../masterFields";
 import { masterHealth, rollupBySeries } from "../masterHealth";
+import {
+  computeMasterRevenue,
+  findDeadMasters,
+  rollupRevenueBySeries,
+  windowStart,
+} from "../masterRevenue";
 import { planProduction, resolveOrderLines } from "../productionPlan";
 import { planPublications, summarizeSkips } from "../publishPlan";
 import { GENERIC_USE_CASE_CODE, seedCatalogDimensions } from "../seedCatalog";
@@ -1492,10 +1500,25 @@ export const katalogRouter = router({
         })(),
       });
 
+      // Görsel satırı base64 taşıyabilir; istemciye yalnız adres gider —
+      // aksi halde her kart açılışında megabaytlarca veri akardı.
+      const imageRows = (await db.listMasterImages(input.masterId)) as Record<string, unknown>[];
+
       return {
         master,
         logistics,
-        images: await db.listMasterImages(input.masterId),
+        images: imageRows.map(i => ({
+          id: i.id as number,
+          url: imageUrlOf({
+            id: i.id as number,
+            url: (i.url as string | null) ?? null,
+            sortOrder: Number(i.sortOrder ?? 0),
+          }),
+          role: (i.role as string | null) ?? null,
+          sortOrder: Number(i.sortOrder ?? 0),
+          /** Dışarıdan mı geldi, biz mi barındırıyoruz. */
+          hosted: i.data != null,
+        })),
         identity: {
           series: (series as { id: number; name: string }[]).find(s => s.id === master.seriesId)?.name ?? null,
           family: (families as { id: number; name: string }[]).find(f => f.id === master.familyId)?.name ?? null,
@@ -1639,6 +1662,388 @@ export const katalogRouter = router({
     .input(z.object({ dryRun: z.boolean().default(false) }))
     .mutation(({ input }) => syncAllChannels({ dryRun: input.dryRun })),
 
+  /**
+   * Satılabilir ürün listesi — elden sipariş/teklif formları ve komut paleti.
+   *
+   * Eski `products.list` ile aynı işi görür ama v3 kataloğundan besler:
+   * arşiv olmayan her master tek satır, okunur ad + taban fiyat + kapasite.
+   * Bu uç sayesinde sipariş satırı `masterId` ile yazılır ve bağ tahmine
+   * kalmaz (bkz. `orderBinding.ts`).
+   */
+  sellableList: protectedProcedure.query(async () => {
+    const [masters, colors, packagings, series, families] = await Promise.all([
+      db.listMasterProducts(),
+      db.listColors(),
+      db.listPackagings(),
+      db.listProductSeries(),
+      db.listProductFamilies(),
+    ]);
+    const colorById = new Map((colors as { id: number; name: string; hex: string | null }[]).map(c => [c.id, c]));
+    const packName = new Map((packagings as { id: number; name: string }[]).map(p => [p.id, p.name]));
+    const seriesName = new Map((series as { id: number; name: string }[]).map(s => [s.id, s.name]));
+    const familyName = new Map((families as { id: number; name: string }[]).map(f => [f.id, f.name]));
+
+    return (masters as Record<string, unknown>[])
+      .filter(m => m.status !== "arsiv")
+      .map(m => {
+        const color = colorById.get(m.colorId as number);
+        const parts = [
+          seriesName.get(m.seriesId as number),
+          color?.name,
+          familyName.get(m.familyId as number),
+          packName.get(m.packagingId as number),
+          m.readiness === "r2u" ? "Kullanıma hazır" : null,
+        ].filter(Boolean);
+        return {
+          masterId: m.id as number,
+          name: parts.join(" · "),
+          internalSku: String(m.internalSku ?? ""),
+          hex: color?.hex ?? null,
+          basePrice: num(m.basePrice),
+          buildableQty: Number(m.buildableQty ?? 0),
+          status: m.status as "taslak" | "aktif" | "arsiv",
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, "tr"));
+  }),
+
+  /**
+   * v3 üretim emri: master + adet → çok seviyeli reçete patlatılır, hammadde
+   * düşer, mamul stok artar, emir kaydı yazılır.
+   *
+   * Eski `production.produce` tek seviyeli `formulaItems` okuyordu; yarı mamul
+   * içeren reçetelerde eksik düşüm yapıyordu. Bu uç `planProduction` ile
+   * hammaddeye kadar iner.
+   *
+   * Eksik hammadde varsa `force` olmadan üretim yapılmaz — sessizce eksi stok
+   * yazmak envanteri bozar.
+   */
+  produceMaster: protectedProcedure
+    .input(
+      z.object({
+        masterId: z.number(),
+        qty: z.number().positive().max(100000),
+        force: z.boolean().default(false),
+        note: z.string().max(500).nullish(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const data = await loadCapacityInputs();
+      const plan = planProduction({
+        demand: [{ masterId: input.masterId, qty: input.qty }],
+        masters: (data.masters as Record<string, unknown>[]).map(m => ({
+          id: m.id as number,
+          formulaId: (m.formulaId as number | null) ?? null,
+          formulaScale: num(m.formulaScale) || 1,
+          packagingId: (m.packagingId as number | null) ?? null,
+        })),
+        formulas: data.formulas,
+        packagings: data.packagings,
+        materials: data.rawMaterials.map(m => ({
+          id: m.id as number,
+          name: String(m.name ?? ""),
+          type: (m.type as MaterialType) ?? "hammadde",
+          stockQty: num(m.stockQty),
+          reservedQty: num(m.reservedQty),
+        })),
+      });
+
+      if (plan.missingFormula.length > 0 && !input.force) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Bu ürünün reçetesi yok — önce Reçeteler'den bağlayın.",
+        });
+      }
+      const short = plan.shortages;
+      if (short.length > 0 && !input.force) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Hammadde yetersiz: ${short
+            .slice(0, 5)
+            .map(n => `${n.name} (eksik ${Math.ceil(n.missing)})`)
+            .join(" · ")}`,
+        });
+      }
+
+      for (const n of plan.needs) {
+        if (n.needed > 0) {
+          await db.adjustStock(n.materialId, "out", n.needed, `Üretim: ${input.qty} adet`);
+        }
+      }
+      const note = [
+        input.note?.trim() || null,
+        short.length > 0 ? `Eksik stokla zorlandı: ${short.map(n => n.name).join(", ")}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      await db.recordMasterProductionRun(input.masterId, Math.round(input.qty), note || null);
+
+      // Üretim kapasiteyi ve dolayısıyla pazaryeri stoğunu değiştirir;
+      // zamanlayıcıyı beklemeden yeniden hesaplanır.
+      await runCapacityRecompute();
+      return { deducted: plan.needs.length, shortages: short.map(n => n.name) };
+    }),
+
+  /**
+   * Üretim öncesi önizleme: "10 adet yapsam neyim eksik?"
+   *
+   * Üretimle aynı hesap (planProduction) kullanılır — önizlemede yeşil görünüp
+   * üretimde patlayan bir durum olmaz.
+   */
+  productionPreview: protectedProcedure
+    .input(z.object({ masterId: z.number(), qty: z.number().positive().max(100000) }))
+    .query(async ({ input }) => {
+      const data = await loadCapacityInputs();
+      const plan = planProduction({
+        demand: [{ masterId: input.masterId, qty: input.qty }],
+        masters: (data.masters as Record<string, unknown>[]).map(m => ({
+          id: m.id as number,
+          formulaId: (m.formulaId as number | null) ?? null,
+          formulaScale: num(m.formulaScale) || 1,
+          packagingId: (m.packagingId as number | null) ?? null,
+        })),
+        formulas: data.formulas,
+        packagings: data.packagings,
+        materials: data.rawMaterials.map(m => ({
+          id: m.id as number,
+          name: String(m.name ?? ""),
+          type: (m.type as MaterialType) ?? "hammadde",
+          stockQty: num(m.stockQty),
+          reservedQty: num(m.reservedQty),
+        })),
+      });
+      const [cost] = computeMasterCosts({
+        masters: data.masters.filter(m => m.id === input.masterId),
+        materials: data.rawMaterials.map(m => ({
+          id: m.id as number,
+          name: String(m.name ?? ""),
+          type: (m.type as "hammadde" | "yari_mamul" | "ambalaj" | "masraf") ?? "hammadde",
+          unitCost: (m.unitCost as string) ?? 0,
+        })),
+        formulas: data.formulas,
+        packagings: data.packagings,
+      });
+      return { ...plan, unitCost: cost?.totalCost ?? 0 };
+    }),
+
+  /**
+   * Üretim kuyruğu: neyi üretmek gerekiyor.
+   *
+   * Eski kuyruk mamul stoğuna bakıyordu (eksi stok = üret). Siparişe göre
+   * üretimde mamul stok tutulmadığı için o kuyruk hep boştu. v3 kuyruğu AÇIK
+   * SİPARİŞ TALEBİNDEN gelir; ikinci sırada kritik eşiğin altına düşen mamul
+   * stoklar durur (toptan için tampon tutulan ürünler).
+   */
+  productionQueue: protectedProcedure.query(async () => {
+    const [orders, listings, channelListings, colors, packagings] = await Promise.all([
+      db.listOrders(),
+      db.listListings(),
+      db.listChannelListings(),
+      db.listColors(),
+      db.listPackagings(),
+    ]);
+    const openOrders = (orders as Record<string, unknown>[]).filter(
+      o => o.status === "new" || o.status === "production",
+    );
+    const items = openOrders.length
+      ? ((await db.listOrderItemsBulk(openOrders.map(o => o.id as number))) as Record<
+          string,
+          unknown
+        >[])
+      : [];
+
+    const refsByListing = new Map<number, string[]>();
+    for (const c of channelListings as { listingId: number; channelSku: string; channelBarcode: string }[]) {
+      refsByListing.set(c.listingId, [
+        ...(refsByListing.get(c.listingId) ?? []),
+        c.channelSku,
+        c.channelBarcode,
+      ]);
+    }
+    const resolved = resolveOrderLines(
+      items.map(i => ({
+        id: i.id as number,
+        orderId: i.orderId as number,
+        productName: String(i.productName ?? ""),
+        quantity: num(i.quantity),
+        channelRef: (i.channelRef as string | null) ?? null,
+        masterId: (i.masterId as number | null) ?? null,
+      })),
+      (listings as { id: number; masterId: number; title: string }[]).map(l => ({
+        masterId: l.masterId,
+        listingId: l.id,
+        title: l.title,
+        channelRefs: refsByListing.get(l.id) ?? [],
+      })),
+    );
+
+    const demand = new Map<number, number>();
+    for (const r of resolved) {
+      if (r.masterId == null) continue;
+      demand.set(r.masterId, (demand.get(r.masterId) ?? 0) + r.line.quantity);
+    }
+
+    const data = await loadCapacityInputs();
+    const masters = data.masters as Record<string, unknown>[];
+    const colorName = new Map((colors as { id: number; name: string }[]).map(c => [c.id, c.name]));
+    const packName = new Map((packagings as { id: number; name: string }[]).map(p => [p.id, p.name]));
+
+    const rows = masters
+      .map(m => {
+        const id = m.id as number;
+        const needed = demand.get(id) ?? 0;
+        const stock = Number(m.stockQty ?? 0);
+        const critical = Number(m.criticalQty ?? 0);
+        // Sipariş talebi stoktan karşılanamayan kısım + kritik eşik açığı.
+        const forOrders = Math.max(0, needed - stock);
+        const forBuffer = critical > 0 ? Math.max(0, critical - stock) : 0;
+        return {
+          masterId: id,
+          label: [colorName.get(m.colorId as number), packName.get(m.packagingId as number)]
+            .filter(Boolean)
+            .join(" · "),
+          internalSku: String(m.internalSku ?? ""),
+          ordered: needed,
+          stockQty: stock,
+          criticalQty: critical,
+          buildableQty: Number(m.buildableQty ?? 0),
+          suggested: Math.max(forOrders, forBuffer),
+          reason: forOrders > 0 ? ("siparis" as const) : ("tampon" as const),
+        };
+      })
+      .filter(r => r.suggested > 0)
+      .sort((a, b) => {
+        if (a.reason !== b.reason) return a.reason === "siparis" ? -1 : 1;
+        return b.suggested - a.suggested;
+      });
+
+    return {
+      rows,
+      unmatchedLines: resolved.filter(r => r.masterId == null).length,
+    };
+  }),
+
+  /** v3 üretim geçmişi. */
+  productionRuns: protectedProcedure
+    .input(z.object({ limit: z.number().min(1).max(500).default(50) }).default({ limit: 50 }))
+    .query(({ input }) => db.listMasterProductionRuns(input.limit)),
+
+  /* ---- Sipariş ↔ master bağı -------------------------------------------- */
+
+  /**
+   * Bağsız sipariş kalemlerini kanal kodundan çözer ve yazar.
+   *
+   * Geçmiş siparişler bu kolonlar yokken düştü; ayrıca ilan sonradan
+   * yayınlandığında da bağ kurulabilir hale gelir. Zamanlayıcı da çağırır.
+   */
+  bindOrders: protectedProcedure.mutation(() => db.backfillOrderBinding()),
+
+  /** Bağı olmayan kalemler — "elle bağla" iş listesi. */
+  unboundOrderItems: protectedProcedure.query(() => db.listUnboundOrderItems()),
+
+  /** Tek kalemi elle bağlar; null göndermek bağı kaldırır. */
+  bindOrderItem: protectedProcedure
+    .input(z.object({ itemId: z.number(), masterId: z.number().nullable() }))
+    .mutation(async ({ input }) => {
+      await db.bindOrderItem(input.itemId, input.masterId);
+      return { ok: true };
+    }),
+
+  /* ---- Getiri: hangi renk para kazandırıyor ----------------------------- */
+
+  /**
+   * Master ve seri başına satış/ciro/kâr + ölü renkler.
+   *
+   * `orderItems.masterId` bağına dayanır. Bağı olmayan kalem hesaba GİRMEZ —
+   * yanlış master'a ciro yazmaktansa dışarıda kalır; bağsız sayısı ayrıca
+   * bildirilir ki rakamın ne kadarının eksik olduğu görünsün.
+   */
+  revenue: protectedProcedure
+    .input(z.object({ days: z.number().min(0).max(3650).default(90) }).default({ days: 90 }))
+    .query(async ({ input }) => {
+      const [items, orders, series, colors, packagings] = await Promise.all([
+        db.listAllOrderItems(),
+        db.listOrders(),
+        db.listProductSeries(),
+        db.listColors(),
+        db.listPackagings(),
+      ]);
+      const data = await loadCapacityInputs();
+      const costs = computeMasterCosts({
+        masters: data.masters,
+        materials: data.rawMaterials.map(m => ({
+          id: m.id as number,
+          name: String(m.name ?? ""),
+          type: (m.type as "hammadde" | "yari_mamul" | "ambalaj" | "masraf") ?? "hammadde",
+          unitCost: (m.unitCost as string) ?? 0,
+        })),
+        formulas: data.formulas,
+        packagings: data.packagings,
+      });
+      const unitCosts = new Map(costs.map(c => [c.masterId, c.totalCost]));
+
+      const orderRow = new Map(
+        (orders as Record<string, unknown>[]).map(o => [
+          o.id as number,
+          { status: String(o.status ?? ""), createdAt: o.createdAt as Date },
+        ]),
+      );
+
+      let unbound = 0;
+      const lines = (items as Record<string, unknown>[]).map(i => {
+        const order = orderRow.get(i.orderId as number);
+        if (i.masterId == null) unbound += 1;
+        return {
+          masterId: (i.masterId as number | null) ?? null,
+          orderId: i.orderId as number,
+          quantity: num(i.quantity),
+          unitPrice: num(i.unitPrice),
+          soldAt: order?.createdAt ?? (i.createdAt as Date) ?? new Date(),
+          cancelled: order?.status === "cancelled",
+        };
+      });
+
+      const revenue = computeMasterRevenue({
+        lines,
+        unitCosts,
+        since: windowStart(input.days),
+      });
+
+      const masters = data.masters as Record<string, unknown>[];
+      const seriesOf = new Map(masters.map(m => [m.id as number, m.seriesId as number]));
+      const colorName = new Map((colors as { id: number; name: string }[]).map(c => [c.id, c.name]));
+      const packName = new Map((packagings as { id: number; name: string }[]).map(p => [p.id, p.name]));
+      const seriesName = new Map((series as { id: number; name: string }[]).map(s => [s.id, s.name]));
+      const masterById = new Map(masters.map(m => [m.id as number, m]));
+
+      const label = (masterId: number) => {
+        const m = masterById.get(masterId);
+        if (!m) return `#${masterId}`;
+        return [
+          colorName.get(m.colorId as number) ?? "",
+          packName.get(m.packagingId as number) ?? "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
+      };
+
+      const activeIds = masters.filter(m => m.status === "aktif").map(m => m.id as number);
+
+      return {
+        days: input.days,
+        unboundItemCount: unbound,
+        masters: revenue.map(r => ({ ...r, label: label(r.masterId) })),
+        series: rollupRevenueBySeries(revenue, seriesOf).map(s => ({
+          ...s,
+          name: seriesName.get(s.seriesId) ?? `#${s.seriesId}`,
+        })),
+        dead: findDeadMasters({ activeMasterIds: activeIds, revenue }).map(d => ({
+          ...d,
+          label: label(d.masterId),
+        })),
+      };
+    }),
+
   /* ---- Master görselleri: ilanlar devralır ------------------------------ */
 
   masterImages: protectedProcedure
@@ -1649,13 +2054,41 @@ export const katalogRouter = router({
     .input(
       z.object({
         masterId: z.number(),
-        url: z.string().url("Geçerli bir görsel adresi girin"),
+        url: z.string().url("Geçerli bir görsel adresi girin").nullish(),
+        /** Yüklenen dosya (data URL). Adres yerine bu verilebilir. */
+        data: z.string().min(1).nullish(),
         role: z.string().max(32).nullish(),
       }),
     )
     .mutation(async ({ input }) => {
+      if (!input.url && !input.data) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Dosya yükleyin ya da adres girin" });
+      }
       await db.addMasterImage(input);
       return { ok: true };
+    }),
+
+  /**
+   * Bir görseli o rengin tüm ambalajlarına birden atar.
+   *
+   * 30/100/250/500 ml aynı fotoğrafı kullanır; tek tek eklemek dört kat işti.
+   */
+  assignImageToColor: protectedProcedure
+    .input(
+      z.object({
+        colorId: z.number(),
+        /** Verilirse yalnız o serinin ürünleri; boşsa rengin tüm ürünleri. */
+        seriesId: z.number().nullish(),
+        url: z.string().url("Geçerli bir görsel adresi girin").nullish(),
+        data: z.string().min(1).nullish(),
+        role: z.string().max(32).nullish(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      if (!input.url && !input.data) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Dosya yükleyin ya da adres girin" });
+      }
+      return db.assignImageToColor(input);
     }),
 
   deleteMasterImage: protectedProcedure
@@ -1664,6 +2097,53 @@ export const katalogRouter = router({
       await db.deleteMasterImage(input.id);
       return { ok: true };
     }),
+
+  /**
+   * Görseli eksik ürünler — RENGE göre gruplanır.
+   *
+   * Ürün ürün listelemek yanıltıcı olurdu: 40 eksik satır aslında 10 renk
+   * demek ve renk başına tek görsel hepsini kapatır. İş listesi o yüzden
+   * renk düzleminde verilir.
+   */
+  missingImages: protectedProcedure.query(async () => {
+    const [rows, colors, series] = await Promise.all([
+      db.listMastersMissingImages(),
+      db.listColors(),
+      db.listProductSeries(),
+    ]);
+    const colorName = new Map(
+      (colors as { id: number; name: string; hex: string | null }[]).map(c => [c.id, c]),
+    );
+    const seriesName = new Map((series as { id: number; name: string }[]).map(s => [s.id, s.name]));
+
+    const groups = new Map<string, {
+      colorId: number;
+      seriesId: number;
+      colorName: string;
+      hex: string | null;
+      seriesName: string;
+      count: number;
+    }>();
+    for (const r of rows as Record<string, unknown>[]) {
+      const colorId = r.colorId as number;
+      const seriesId = r.seriesId as number;
+      const key = `${seriesId}|${colorId}`;
+      const g = groups.get(key) ?? {
+        colorId,
+        seriesId,
+        colorName: colorName.get(colorId)?.name ?? `#${colorId}`,
+        hex: colorName.get(colorId)?.hex ?? null,
+        seriesName: seriesName.get(seriesId) ?? `#${seriesId}`,
+        count: 0,
+      };
+      g.count += 1;
+      groups.set(key, g);
+    }
+    return {
+      totalMasters: (rows as unknown[]).length,
+      groups: Array.from(groups.values()).sort((a, b) => b.count - a.count),
+    };
+  }),
 
   /* ---- Pazaryeri özellikleri: master'ın küpünden ------------------------ */
 
@@ -1896,8 +2376,9 @@ export const katalogRouter = router({
         imagesByListing.set(img.listingId, [...(imagesByListing.get(img.listingId) ?? []), row]);
       }
       const imagesByMaster = new Map<number, ImageRow[]>();
-      for (const img of mImages as { masterId: number; url: string; sortOrder: number }[]) {
-        const row = { url: img.url, sortOrder: Number(img.sortOrder ?? 0) };
+      for (const img of mImages as { id: number; masterId: number; url: string | null; sortOrder: number }[]) {
+        // `id` taşınır: yüklenen görselin adresi ondan türetilir.
+        const row = { id: img.id, url: img.url, sortOrder: Number(img.sortOrder ?? 0) };
         imagesByMaster.set(img.masterId, [...(imagesByMaster.get(img.masterId) ?? []), row]);
       }
 
@@ -1960,11 +2441,14 @@ export const katalogRouter = router({
           title: String(l.title ?? ""),
           shortDescription: (l.shortDescription as string | null) ?? null,
           longDescription: (l.longDescription as string | null) ?? null,
-          // İlanın kendi görseli yoksa master'ınki devralınır.
+          // İlanın kendi görseli yoksa master'ınki devralınır. Pazaryeri
+          // MUTLAK adres ister — kendi barındırdığımız görseller publicBaseUrl
+          // ile tam adrese çevrilir.
           imageUrls: resolveImages({
             listingImages: imagesByListing.get(l.id as number) ?? [],
             masterImages: imagesByMaster.get(l.masterId as number) ?? [],
             limit: 8,
+            publicBaseUrl: (cfg.value as { publicBaseUrl?: string }).publicBaseUrl ?? "",
           }),
         })),
         masters: masterRows.map(m => {
@@ -2253,11 +2737,22 @@ export const katalogRouter = router({
       }));
 
       const resolved = resolveOrderLines(
-        (items as { id: number; orderId: number; productName: string; quantity: string }[]).map(i => ({
+        (items as {
+          id: number;
+          orderId: number;
+          productName: string;
+          quantity: string;
+          channelRef: string | null;
+          masterId: number | null;
+        }[]).map(i => ({
           id: i.id,
           orderId: i.orderId,
           productName: i.productName,
           quantity: num(i.quantity),
+          // Kayıtlı bağ ve kanal kodu artık taşınıyor: bulanık başlık
+          // eşleştirmesi kritik yoldan çıkıp yedek yola iniyor.
+          channelRef: i.channelRef,
+          masterId: i.masterId,
         })),
         resolvable,
       );

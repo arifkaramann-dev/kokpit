@@ -286,6 +286,24 @@ export const orderItems = mysqlTable(
     // Ürün bağ: ürün bazlı satış/kâr raporu ve stok düşümü için ID.
     // NULL = katalogda eşleşmeyen serbest kalem.
     productId: int("productId"),
+    /**
+     * Pazaryerinden gelen satıcı kodu / barkod.
+     *
+     * Bu değer siparişle birlikte geliyordu ama saklanmıyordu; yalnız eski
+     * `products` eşleşmesinde kullanılıp atılıyordu. Sonuç: kendi ürettiğimiz
+     * `channelListings.channelBarcode` ile geri gelen barkod hiç
+     * karşılaştırılamıyor, sipariş↔ürün bağı her okumada başlık benzerliğiyle
+     * TAHMİN ediliyordu. Saklamak o tahmini kesin eşleşmeye çevirir.
+     */
+    channelRef: varchar("channelRef", { length: 64 }),
+    /**
+     * v3 master bağı — bir kez çözülür ve yazılır.
+     *
+     * Kalıcı olması şart: ilan başlığı pazaryerinde düzenlenince (SEO için sık
+     * yapılır) geçmiş siparişlerin bağı kopmasın. Ayrıca master başına ciro/kâr
+     * raporu ancak bu kolonla yazılabilir.
+     */
+    masterId: int("masterId"),
     quantity: decimal("quantity", { precision: 12, scale: 2 }).notNull().default("1"),
     unitPrice: decimal("unitPrice", { precision: 12, scale: 2 }).notNull().default("0"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -293,6 +311,8 @@ export const orderItems = mysqlTable(
   t => [
     index("orderItems_orderId_idx").on(t.orderId),
     index("orderItems_productId_idx").on(t.productId),
+    index("orderItems_master_idx").on(t.masterId),
+    index("orderItems_channelRef_idx").on(t.channelRef),
   ],
 );
 
@@ -769,12 +789,21 @@ export const productionRuns = mysqlTable(
   {
     id: int("id").autoincrement().primaryKey(),
   companyId: int("companyId").notNull().default(1),
+    /**
+     * Eski ürün bağı. v3 üretiminde 0 kalır; `masterId` doludur.
+     * NOT NULL olduğu için kaldırılmadı — geçmiş kayıtlar bozulmasın.
+     */
     productId: int("productId").notNull(),
+    /** v3 master bağı — yeni üretim emirleri bunu kullanır. */
+    masterId: int("masterId"),
     qty: int("qty").notNull(),
     note: text("note"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
-  t => [index("productionRuns_productId_idx").on(t.productId)],
+  t => [
+    index("productionRuns_productId_idx").on(t.productId),
+    index("productionRuns_master_idx").on(t.masterId),
+  ],
 );
 
 export type ProductionRun = typeof productionRuns.$inferSelect;
@@ -845,6 +874,8 @@ export const quoteItems = mysqlTable(
     quoteId: int("quoteId").notNull(),
     productName: varchar("productName", { length: 255 }).notNull(),
     productId: int("productId"),
+    /** v3 ürün bağı — teklif siparişe dönüşürken bağ korunsun diye taşınır. */
+    masterId: int("masterId"),
     quantity: decimal("quantity", { precision: 12, scale: 2 }).notNull().default("1"),
     unitPrice: decimal("unitPrice", { precision: 12, scale: 2 }).notNull().default("0"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -900,6 +931,8 @@ export const marketplaceQuestions = mysqlTable(
     questionText: text("questionText").notNull(),
     // İlgili ürün (varsa) — cevap taslağı ürün kılavuzundan beslenir.
     productId: int("productId"),
+    /** v3 ürün bağı — cevap taslağı ilan içeriğinden beslenir. */
+    masterId: int("masterId"),
     productName: varchar("productName", { length: 255 }),
     status: mysqlEnum("status", ["new", "answered", "dismissed"]).notNull().default("new"),
     answerDraft: text("answerDraft"),
@@ -1526,7 +1559,22 @@ export const masterImages = mysqlTable(
     id: int("id").autoincrement().primaryKey(),
     companyId: int("companyId").notNull().default(1),
     masterId: int("masterId").notNull(),
-    url: varchar("url", { length: 1024 }).notNull(),
+    /**
+     * Dış adres. Boşsa görsel `data` alanındadır ve `/api/img/master/{id}`
+     * üzerinden servis edilir — adres okuma anında türetilir ki alan adı
+     * değişince satırlar bozulmasın.
+     */
+    url: varchar("url", { length: 1024 }),
+    /**
+     * Yüklenen görsel (data URL / base64).
+     *
+     * Neden veritabanında: pazaryeri kartı MUTLAK ve herkese açık bir adres
+     * ister. Render'da kalıcı disk yok, S3 de yapılandırılmamış olabilir.
+     * Eski `productImages` deseni (base64 + `/api/img` servisi) zaten çalışıyor
+     * ve dış bağımlılık gerektirmiyor; aynı yol izlenir. S3 yapılandırılınca
+     * `url` dolu satırlar aynı kod yolundan geçer — geçiş kırılma yaratmaz.
+     */
+    data: mediumtext("data"),
     role: varchar("role", { length: 32 }),
     sortOrder: int("sortOrder").notNull().default(0),
     createdAt: timestamp("createdAt").defaultNow().notNull(),

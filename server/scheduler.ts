@@ -132,6 +132,15 @@ async function tick() {
  * bağlama patlarsa kapasite yine de hesaplanır.
  */
 async function runCatalogJobs() {
+  // Sipariş↔ürün bağı ilk sırada: bağsız satır üretim planına ve getiri
+  // raporuna girmiyor. İlan sonradan yayınlandığında eski siparişler de
+  // bağlanabilir hale gelir, o yüzden her turda tekrar denenir.
+  try {
+    const bound = await db.backfillOrderBinding();
+    if (bound.bound > 0) console.log(`[scheduler] ${bound.bound} sipariş satırı ürüne bağlandı`);
+  } catch (error) {
+    console.error("[scheduler] sipariş bağlama hatası:", error);
+  }
   try {
     const bind = await runFormulaBinding();
     if (bind.bound > 0) console.log(`[scheduler] ${bind.bound} master reçeteye bağlandı`);
