@@ -305,13 +305,29 @@ export const katalogRouter = router({
         seriesId: z.number(),
         packagingIds: z.array(z.number()),
         familyIds: z.array(z.number()),
+        /**
+         * Bu seride üretilecek renkler. Verilmezse renk bağına dokunulmaz;
+         * boş dizi bağı KALDIRIR (seri tüm renklere açılır).
+         */
+        colorIds: z.array(z.number()).optional(),
       }),
     )
     .mutation(async ({ input }) => {
       await db.setSeriesPackagings(input.seriesId, input.packagingIds);
       await db.setSeriesFamilies(input.seriesId, input.familyIds);
+      if (input.colorIds) await db.setSeriesColors(input.seriesId, input.colorIds);
       return { ok: true };
     }),
+
+  /** Seri uyumluluk matrisi — hangi seride hangi renk/form/ambalaj üretiliyor. */
+  seriesLinks: protectedProcedure.query(async () => {
+    const [sp, sf, sc] = await Promise.all([
+      db.listSeriesPackagings(),
+      db.listSeriesFamilies(),
+      db.listSeriesColors(),
+    ]);
+    return { packagings: sp, families: sf, colors: sc };
+  }),
 
   /* ---- Master üretimi --------------------------------------------------- */
 
@@ -329,13 +345,14 @@ export const katalogRouter = router({
       }),
     )
     .mutation(async ({ input }) => {
-      const [series, colors, families, packagings, sp, sf, existing] = await Promise.all([
+      const [series, colors, families, packagings, sp, sf, sc, existing] = await Promise.all([
         db.listProductSeries(),
         db.listColors(),
         db.listProductFamilies(),
         db.listPackagings(),
         db.listSeriesPackagings(),
         db.listSeriesFamilies(),
+        db.listSeriesColors(),
         db.listMasterProducts(),
       ]);
 
@@ -347,6 +364,10 @@ export const katalogRouter = router({
       for (const r of sf as { seriesId: number; familyId: number }[]) {
         famBySeries.set(r.seriesId, [...(famBySeries.get(r.seriesId) ?? []), r.familyId]);
       }
+      const colorBySeries = new Map<number, number[]>();
+      for (const r of sc as { seriesId: number; colorId: number }[]) {
+        colorBySeries.set(r.seriesId, [...(colorBySeries.get(r.seriesId) ?? []), r.colorId]);
+      }
 
       const planSeries = (series as { id: number; name: string; prefix: string | null }[])
         .filter(s => (packBySeries.get(s.id)?.length ?? 0) > 0 && (famBySeries.get(s.id)?.length ?? 0) > 0)
@@ -356,6 +377,7 @@ export const katalogRouter = router({
           prefix: s.prefix,
           packagingIds: packBySeries.get(s.id) ?? [],
           familyIds: famBySeries.get(s.id) ?? [],
+          colorIds: colorBySeries.get(s.id) ?? [],
           readiness: input.readiness as Readiness[],
         }));
 
@@ -421,6 +443,7 @@ export const katalogRouter = router({
           sample: plan.create.slice(0, 20).map(m => m.internalSku),
           created: 0,
           conflictNote,
+          breakdown: plan.breakdown,
         };
       }
 
@@ -453,6 +476,7 @@ export const katalogRouter = router({
         created,
         sample: [],
         conflictNote,
+        breakdown: plan.breakdown,
       };
     }),
 

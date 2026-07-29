@@ -63,6 +63,7 @@ import {
   useCaseChannelCategories,
   seriesPackagings,
   seriesFamilies,
+  seriesColors,
   formulas,
   formulaInputs,
   masterProducts,
@@ -2670,6 +2671,23 @@ export async function setSeriesPackagings(seriesId: number, packagingIds: number
   for (const packagingId of packagingIds) {
     await db.insert(seriesPackagings).values({ seriesId, packagingId });
   }
+}
+
+/**
+ * Seri × renk bağı. Boş liste göndermek bağı KALDIRIR ve seri eski kurala
+ * (colors.seriesId) döner — bu da pratikte "tüm renkler" demektir.
+ */
+export async function setSeriesColors(seriesId: number, colorIds: number[]) {
+  const db = await requireDb();
+  await db.delete(seriesColors).where(eq(seriesColors.seriesId, seriesId));
+  for (const colorId of colorIds) {
+    await db.insert(seriesColors).values({ seriesId, colorId });
+  }
+}
+
+export async function listSeriesColors() {
+  const db = await requireDb();
+  return db.select().from(seriesColors);
 }
 
 export async function setSeriesFamilies(seriesId: number, familyIds: number[]) {

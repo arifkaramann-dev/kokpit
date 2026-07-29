@@ -385,29 +385,56 @@ function hbListingAuth(): string {
  * `children` desteklenir).
  */
 export async function fetchHepsiburadaCategories(): Promise<unknown> {
-  const url = new URL(`${HB_LISTING_API_BASE}/product/api/categories/get-all-categories`);
-  url.searchParams.set("leaf", "true");
-  url.searchParams.set("status", "ACTIVE");
-  url.searchParams.set("page", "0");
-  url.searchParams.set("size", "3000");
-
-  const res = await fetch(url, {
-    headers: {
-      Authorization: `Basic ${hbListingAuth()}`,
-      "User-Agent": hbUserAgent(),
-      Accept: "application/json",
-    },
-  });
-  if (res.status === 401 || res.status === 403) {
+  if (!ENV.hepsiburadaMerchantId) {
     throw new Error(
-      "Hepsiburada yetki hatası: HEPSIBURADA_SERVICE_KEY (Servis Anahtarı) Render'a girilmeli.",
+      "Hepsiburada kategori listesi için HEPSIBURADA_MERCHANT_ID gerekli — Render → Environment'a girin.",
     );
   }
-  if (!res.ok) {
-    const body = (await res.text()).slice(0, 300);
-    throw new Error(`Hepsiburada kategori listesi alınamadı (${res.status}): ${body}`);
+
+  // Kategori servisi MPOP tarafındadır; listing tabanı "Merchant ID is not
+  // specified" ile 400 döner. Açık taban verilmemişse ikisi de denenir:
+  // ortam adlandırması kurulumdan kuruluma değişiyor.
+  const bases = [
+    process.env.HEPSIBURADA_MPOP_BASE_URL,
+    HB_SIT ? "https://mpop-sit.hepsiburada.com" : "https://mpop.hepsiburada.com",
+    HB_LISTING_API_BASE,
+  ].filter((b): b is string => Boolean(b));
+
+  const errors: string[] = [];
+  for (const base of bases) {
+    const url = new URL(`${base}/product/api/categories/get-all-categories`);
+    url.searchParams.set("leaf", "true");
+    url.searchParams.set("status", "ACTIVE");
+    url.searchParams.set("page", "0");
+    url.searchParams.set("size", "3000");
+    // 400 "Merchant ID is not specified" hatasının sebebi buydu.
+    url.searchParams.set("merchantId", ENV.hepsiburadaMerchantId);
+
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        headers: {
+          Authorization: `Basic ${hbListingAuth()}`,
+          "User-Agent": hbUserAgent(),
+          Accept: "application/json",
+        },
+      });
+    } catch (error) {
+      errors.push(`${base}: ${error instanceof Error ? error.message : "bağlanılamadı"}`);
+      continue;
+    }
+
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(
+        "Hepsiburada yetki hatası: HEPSIBURADA_SERVICE_KEY (Servis Anahtarı) Render'a girilmeli — panelden 'API Entegrasyon İşlemleri' altında üretilir.",
+      );
+    }
+    if (res.ok) return res.json().catch(() => ({}));
+
+    errors.push(`${base} (${res.status}): ${(await res.text()).slice(0, 200)}`);
   }
-  return res.json().catch(() => ({}));
+
+  throw new Error(`Hepsiburada kategori listesi alınamadı — ${errors.join(" · ")}`);
 }
 
 async function hbListingPost(path: string, payload: unknown): Promise<string | null> {
