@@ -63,9 +63,38 @@ export type MasterPlan = {
   create: PlannedMaster[];
   /** Zaten var olan koordinatlar — ikinci çalıştırmada buraya düşer. */
   existing: PlannedMaster[];
-  /** internalSku çakışması (farklı koordinat aynı kodu üretti) — veri hatası. */
+  /**
+   * SKU eki çakışması. ARTIK ÜRETİMİ DURDURMAZ: kod otomatik ayrıştırılır
+   * (bkz. `disambiguate`). Burası yalnızca bilgi amaçlı — hangi boyutların
+   * SKU eki iyileştirilmeli, kullanıcı görsün diye.
+   */
   conflicts: { internalSku: string; coords: string[] }[];
 };
+
+/**
+ * Çakışan internal SKU'yu ayrıştırır.
+ *
+ * Ayrıştırıcı KOORDİNATTAN gelir (ambalaj ve form kimliği), sıra numarasından
+ * değil: aynı ürün her çalıştırmada aynı kodu alsın. Kod bir kez üretilip
+ * saklandığı için bunun deterministik olması şart.
+ */
+function disambiguate(
+  rawSku: string,
+  coord: { packagingId: number; familyId: number },
+  taken: Set<string>,
+): string {
+  const candidates = [
+    `${rawSku}p${coord.packagingId}`,
+    `${rawSku}f${coord.familyId}p${coord.packagingId}`,
+  ];
+  for (const c of candidates) {
+    if (!taken.has(c)) return c;
+  }
+  let n = 2;
+  let out = `${candidates[1]}x${n}`;
+  while (taken.has(out)) out = `${candidates[1]}x${++n}`;
+  return out;
+}
 
 /** Küp koordinatının metin anahtarı — tekillik karşılaştırması için. */
 export function cubeKey(m: {
@@ -92,6 +121,8 @@ export function planMasters(input: {
   packagings: PlanPackaging[];
   /** Katalogda hâlihazırda bulunan küp anahtarları. */
   existingKeys: Set<string>;
+  /** Katalogda hâlihazırda kullanılan internal SKU'lar — kod ayrıştırma için. */
+  existingSkus?: Set<string>;
   brand?: string;
   formulaBaseQty?: number;
   /** Yalnız bu seriler üretilsin (boş = hepsi). */
@@ -106,6 +137,8 @@ export function planMasters(input: {
   const existing: PlannedMaster[] = [];
   const skuOwner = new Map<string, string[]>();
   const seenKeys = new Set<string>();
+  // Bu çalıştırmada üretilmiş kodlar — ayrıştırma bunlara bakar.
+  const takenSkus = new Set<string>(input.existingSkus ?? []);
 
   const wanted = input.onlySeriesIds?.length ? new Set(input.onlySeriesIds) : null;
 
@@ -142,13 +175,24 @@ export function planMasters(input: {
             ]
               .filter(Boolean)
               .join("");
-            const internalSku = buildInternalSku({
+            const rawSku = buildInternalSku({
               baseCode,
               familySegment: family.skuSegment ?? family.code,
               packagingSegment: packaging.skuSegment ?? packaging.code,
               readiness,
             });
-            skuOwner.set(internalSku, [...(skuOwner.get(internalSku) ?? []), key]);
+            skuOwner.set(rawSku, [...(skuOwner.get(rawSku) ?? []), key]);
+
+            // Çakışırsa üretimi durdurmak yerine kod ayrıştırılır. Eskiden
+            // "Kod çakışması" hatası veriliyordu ve kullanıcının elinden bir
+            // şey gelmiyordu; iki ambalajın hacmi aynıysa (30 ML PET / 30 ML
+            // CAM) SKU eki de aynı oluyordu. Ayrıştırıcı koordinattan gelir,
+            // deterministiktir ve internal SKU pazaryerine gitmediği için
+            // okunurluğu bozması zararsızdır.
+            const internalSku = takenSkus.has(rawSku)
+              ? disambiguate(rawSku, coord, takenSkus)
+              : rawSku;
+            takenSkus.add(internalSku);
 
             const planned: PlannedMaster = {
               ...coord,

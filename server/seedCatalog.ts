@@ -11,7 +11,7 @@
  */
 
 import * as db from "./db";
-import { codeSegment, parseVolumeMl } from "./catalogCodes";
+import { codeSegment, parseVolumeMl, uniqueSkuSegments } from "./catalogCodes";
 
 /** Renksiz kalemlerin (tiner, bazı vernikler) bağlandığı sabit renk. */
 export const NOTR_COLOR_CODE = "notr";
@@ -94,18 +94,29 @@ export async function seedCatalogDimensions(): Promise<SeedCounts> {
       .filter(m => m.category === "ambalaj")
       .map(m => m.name),
   ]);
-  const packagingRows = Array.from(packagingNames).map((name, i) => {
+  // SKU eki hacimden gelir ("100 ML PET" → "100") ama HACİM TEKİL DEĞİLDİR:
+  // "30 ML PET" ve "30 ML CAM" ikisi de "30" alır ve aynı seri+renk+form
+  // altında internal SKU çakışır. Ekler bu yüzden tekilleştirilir → "30pet",
+  // "30cam".
+  const draftRows = Array.from(packagingNames).map((name, i) => {
     const volumeMl = parseVolumeMl(name);
     return {
+      id: i,
       code: codeSegment(name, 24) || `amb${i}`,
       name,
-      volumeMl: String(volumeMl),
-      // SKU eki hacimden: "100 ML PET" → "100". Hacimsiz ise koddan kısaltma.
-      skuSegment: volumeMl > 0 ? String(volumeMl).slice(0, 8) : codeSegment(name, 6),
-      materialId: materialByName.get(name.trim().toLowerCase()) ?? null,
-      sortOrder: i,
+      volumeMl,
+      base: volumeMl > 0 ? String(volumeMl).slice(0, 8) : codeSegment(name, 6),
     };
   });
+  const segments = uniqueSkuSegments(draftRows);
+  const packagingRows = draftRows.map(r => ({
+    code: r.code,
+    name: r.name,
+    volumeMl: String(r.volumeMl),
+    skuSegment: segments.get(r.id) ?? r.base,
+    materialId: materialByName.get(r.name.trim().toLowerCase()) ?? null,
+    sortOrder: r.id,
+  }));
   const packagings = await db.seedPackagings(packagingRows as never);
 
   /* --- Kullanım alanları (LISTING ekseni) -------------------------------- */

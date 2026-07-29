@@ -376,6 +376,40 @@ function hbListingAuth(): string {
   return hbBasicAuth(secret);
 }
 
+/**
+ * Hepsiburada kategori ağacı.
+ *
+ * Kategori kimliğini panelden elle kopyalamak yerine API'den çekilir.
+ * Yanıt şekli sürümler arasında değişebildiği için ham veri döner; ayrıştırma
+ * `categorySuggest.flattenCategories` içinde yapılır (hem `subCategories` hem
+ * `children` desteklenir).
+ */
+export async function fetchHepsiburadaCategories(): Promise<unknown> {
+  const url = new URL(`${HB_LISTING_API_BASE}/product/api/categories/get-all-categories`);
+  url.searchParams.set("leaf", "true");
+  url.searchParams.set("status", "ACTIVE");
+  url.searchParams.set("page", "0");
+  url.searchParams.set("size", "3000");
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Basic ${hbListingAuth()}`,
+      "User-Agent": hbUserAgent(),
+      Accept: "application/json",
+    },
+  });
+  if (res.status === 401 || res.status === 403) {
+    throw new Error(
+      "Hepsiburada yetki hatası: HEPSIBURADA_SERVICE_KEY (Servis Anahtarı) Render'a girilmeli.",
+    );
+  }
+  if (!res.ok) {
+    const body = (await res.text()).slice(0, 300);
+    throw new Error(`Hepsiburada kategori listesi alınamadı (${res.status}): ${body}`);
+  }
+  return res.json().catch(() => ({}));
+}
+
 async function hbListingPost(path: string, payload: unknown): Promise<string | null> {
   const res = await fetch(`${HB_LISTING_API_BASE}${path}`, {
     method: "POST",
