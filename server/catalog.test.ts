@@ -8,6 +8,8 @@ import {
   buildSlug,
   ean13CheckDigit,
   isValidEan13,
+  looksLikeReadyToUse,
+  looksLikeSpray,
   parseVolumeMl,
   uniqueSkuSegments,
 } from "./catalogCodes";
@@ -252,6 +254,99 @@ describe("planMasters — seyrek küp", () => {
       onlySeriesIds: [10],
     });
     expect(plan.create.every(m => m.seriesId === 10)).toBe(true);
+  });
+});
+
+describe("planMasters — form × ambalaj uyumluluğu", () => {
+  // Gerçek hata: seride hem Airbrush formu hem SPREY 400ML ambalajı varsa
+  // "Airbrush · SPREY 400ML" master'ı üretiliyordu. Form ile ambalaj arasında
+  // hiç kısıt yoktu.
+  const seriesAll: PlanSeries = {
+    id: 10,
+    name: "CANDY",
+    prefix: "cnd",
+    packagingIds: [1, 2, 3],
+    familyIds: [1, 2],
+    colorIds: [1],
+    readiness: ["konsantre"],
+  };
+
+  it("kısıt yoksa tüm çiftler üretilir (eski davranış)", () => {
+    const plan = planMasters({
+      series: [seriesAll],
+      colors,
+      families,
+      packagings,
+      existingKeys: new Set(),
+    });
+    // 1 renk × 2 form × 3 ambalaj
+    expect(plan.create).toHaveLength(6);
+  });
+
+  it("sprey ambalajı yalnız sprey formunda üretilir", () => {
+    const plan = planMasters({
+      series: [seriesAll],
+      colors,
+      families,
+      packagings,
+      // form 1 (airbrush) → 100/500 ml · form 2 (sprey) → sprey400
+      familyPackagings: new Map([
+        [1, new Set([1, 2])],
+        [2, new Set([3])],
+      ]),
+      existingKeys: new Set(),
+    });
+    expect(plan.create).toHaveLength(3);
+    const airbrushPacks = plan.create.filter(m => m.familyId === 1).map(m => m.packagingId);
+    expect(airbrushPacks.sort()).toEqual([1, 2]);
+    expect(plan.create.filter(m => m.familyId === 2)[0].packagingId).toBe(3);
+  });
+
+  it("kırılım gerçek çift sayısını gösterir", () => {
+    const plan = planMasters({
+      series: [seriesAll],
+      colors,
+      families,
+      packagings,
+      familyPackagings: new Map([
+        [1, new Set([1, 2])],
+        [2, new Set([3])],
+      ]),
+      existingKeys: new Set(),
+    });
+    expect(plan.breakdown[0]).toMatchObject({ pairs: 3, total: 3 });
+  });
+
+  it("kısıtta olmayan form hiç ambalaj almazsa üretilmez", () => {
+    const plan = planMasters({
+      series: [seriesAll],
+      colors,
+      families,
+      packagings,
+      familyPackagings: new Map([[1, new Set([1])], [2, new Set<number>()]]),
+      existingKeys: new Set(),
+    });
+    expect(plan.create).toHaveLength(1);
+  });
+});
+
+describe("looksLikeReadyToUse — hazırlık eksenini tekrar eden ambalaj", () => {
+  const cases: [string, boolean][] = [
+    ["30 ml (ReadyToUse)", true],
+    ["30 ML R2U", true],
+    ["100 ML Kullanıma Hazır", true],
+    ["100 ML PET", false],
+    ["SPREY 400ML", false],
+  ];
+  for (const [name, expected] of cases) {
+    it(`"${name}" → ${expected}`, () => expect(looksLikeReadyToUse(name)).toBe(expected));
+  }
+});
+
+describe("looksLikeSpray", () => {
+  it("sprey ambalajını tanır", () => {
+    expect(looksLikeSpray("SPREY 400ML")).toBe(true);
+    expect(looksLikeSpray("100 ML PET")).toBe(false);
   });
 });
 

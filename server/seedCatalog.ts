@@ -11,7 +11,12 @@
  */
 
 import * as db from "./db";
-import { codeSegment, parseVolumeMl, uniqueSkuSegments } from "./catalogCodes";
+import {
+  codeSegment,
+  looksLikeSpray,
+  parseVolumeMl,
+  uniqueSkuSegments,
+} from "./catalogCodes";
 
 /** Renksiz kalemlerin (tiner, bazı vernikler) bağlandığı sabit renk. */
 export const NOTR_COLOR_CODE = "notr";
@@ -197,6 +202,25 @@ export async function seedCatalogDimensions(): Promise<SeedCounts> {
       if (notrColorId) withNotr.add(notrColorId);
       await db.setSeriesColors(s.id, Array.from(withNotr));
     }
+  }
+
+  /* --- Form × ambalaj uyumluluğu ----------------------------------------- */
+  // Küp seri×ambalaj ve seri×form eksenlerinde seyrekti ama form ile ambalaj
+  // arasında kısıt yoktu: "Airbrush · SPREY 400ML" master'ı üretiliyordu.
+  // Sprey kutusu yalnız sprey formunda, diğer ambalajlar sprey dışındaki
+  // formlarda anlamlıdır.
+  const allPackagings = (await db.listPackagings()) as {
+    id: number;
+    name: string;
+    isActive: number;
+  }[];
+  const sprayPackagingIds = allPackagings.filter(p => looksLikeSpray(p.name)).map(p => p.id);
+  const nonSprayPackagingIds = allPackagings.filter(p => !looksLikeSpray(p.name)).map(p => p.id);
+
+  for (const [code, familyId] of Array.from(familyIdByCode.entries())) {
+    const isSprayFamily = code === "sprey";
+    const ids = isSprayFamily ? sprayPackagingIds : nonSprayPackagingIds;
+    if (ids.length > 0) await db.setFamilyPackagings(familyId, ids);
   }
 
   return {

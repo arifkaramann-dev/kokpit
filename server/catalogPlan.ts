@@ -91,6 +91,8 @@ export type MasterPlan = {
     colors: number;
     families: number;
     packagings: number;
+    /** Gerçekte üretilen form×ambalaj çifti — kısıt sonrası. */
+    pairs: number;
     readiness: number;
     total: number;
     /** Renk ekseni açık bağla mı sınırlandı, yoksa "hepsi" mi? */
@@ -146,6 +148,14 @@ export function planMasters(input: {
   colors: PlanColor[];
   families: PlanFamily[];
   packagings: PlanPackaging[];
+  /**
+   * Form × ambalaj uyumluluğu: formId → izinli ambalaj kimlikleri.
+   *
+   * Bir form için giriş yoksa o form serinin TÜM ambalajlarıyla eşleşir.
+   * Giriş varsa yalnız kesişim üretilir — "Airbrush · SPREY 400ML" gibi
+   * anlamsız kombinasyonlar burada elenir.
+   */
+  familyPackagings?: Map<number, Set<number>>;
   /** Katalogda hâlihazırda bulunan küp anahtarları. */
   existingKeys: Set<string>;
   /** Katalogda hâlihazırda kullanılan internal SKU'lar — kod ayrıştırma için. */
@@ -180,22 +190,22 @@ export function planMasters(input: {
       : input.colors.filter(c => c.seriesId === null || c.seriesId === series.id);
     const readinessList = series.readiness.length > 0 ? series.readiness : ["konsantre" as const];
 
-    breakdown.push({
-      seriesId: series.id,
-      seriesName: series.name,
-      colors: colors.length,
-      families: series.familyIds.length,
-      packagings: series.packagingIds.length,
-      readiness: readinessList.length,
-      total: colors.length * series.familyIds.length * series.packagingIds.length * readinessList.length,
-      colorsExplicit: explicit !== null,
-    });
+
+    // Form × ambalaj çiftlerinin gerçek sayısı — kırılımda gösterilir.
+    let pairCount = 0;
 
     for (const color of colors) {
       for (const familyId of series.familyIds) {
         const family = familyById.get(familyId);
         if (!family) continue;
-        for (const packagingId of series.packagingIds) {
+        // Form × ambalaj kısıtı: tanımlıysa kesişim, değilse serinin hepsi.
+        const allowed = input.familyPackagings?.get(familyId);
+        const familyPackagingIds = allowed
+          ? series.packagingIds.filter(id => allowed.has(id))
+          : series.packagingIds;
+        pairCount += familyPackagingIds.length;
+
+        for (const packagingId of familyPackagingIds) {
           const packaging = packagingById.get(packagingId);
           if (!packaging) continue;
           for (const readiness of readinessList) {
@@ -249,6 +259,21 @@ export function planMasters(input: {
         }
       }
     }
+
+    // Çift sayısı her renk için tekrar sayıldı; renk sayısına bölerek
+    // form×ambalaj çiftinin kendisini bul.
+    const pairs = colors.length > 0 ? pairCount / colors.length : 0;
+    breakdown.push({
+      seriesId: series.id,
+      seriesName: series.name,
+      colors: colors.length,
+      families: series.familyIds.length,
+      packagings: series.packagingIds.length,
+      pairs,
+      readiness: readinessList.length,
+      total: colors.length * pairs * readinessList.length,
+      colorsExplicit: explicit !== null,
+    });
   }
 
   const conflicts = Array.from(skuOwner.entries())

@@ -122,6 +122,30 @@ export function uniqueSkuSegments(
 }
 
 /**
+ * Ambalaj adı hazırlık (r2u) bilgisini mi taşıyor?
+ *
+ * "30 ml (ReadyToUse)" bir AMBALAJ değil, 30 ml ambalajın kullanıma hazır
+ * halidir. Hazırlık zaten ayrı bir eksen (`masterProducts.readiness`); böyle
+ * bir satır ambalaj listesinde durursa aynı ürün iki kez üretilir:
+ * "30 ML + r2u" ve "30 ml (ReadyToUse) + r2u".
+ */
+export function looksLikeReadyToUse(name: string | null | undefined): boolean {
+  // Rakamlar korunur: "R2U" harf kelimelerine bölününce ("r","u") kaybolurdu.
+  const flat = asciiFold(String(name ?? ""))
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+  return /readytouse|r2u|kullanimahazir|hazir/.test(flat);
+}
+
+/**
+ * Ambalaj adı sprey mi? Sprey kutusu yalnız sprey formunda anlamlıdır;
+ * form × ambalaj uyumluluğu tohumlanırken kullanılır.
+ */
+export function looksLikeSpray(name: string | null | undefined): boolean {
+  return codeWords(name).some(w => w === "sprey" || w === "spray" || w === "aerosol");
+}
+
+/**
  * Master kimliği: temel kod + form eki + ambalaj eki + hazırlık eki.
  * Örn. aoccndred1822 + ab + 100 + r2u → "aoccndred1822ab100r2u"
  */

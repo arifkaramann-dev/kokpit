@@ -1188,9 +1188,32 @@ export const seriesColors = mysqlTable(
   t => [unique("seriesColors_uq").on(t.seriesId, t.colorId), index("seriesColors_color_idx").on(t.colorId)],
 );
 
+/**
+ * Form × ambalaj uyumluluğu.
+ *
+ * Küp seri×ambalaj ve seri×form eksenlerinde seyrekti ama form ile ambalaj
+ * ARASINDA kısıt yoktu: seride hem "Airbrush" formu hem "SPREY 400ML" ambalajı
+ * varsa "Airbrush · SPREY 400ML" master'ı üretiliyordu. Sprey kutusu yalnız
+ * sprey formunda, rötuş kutusu yalnız rötuşta anlamlıdır.
+ *
+ * Form için satır yoksa o form serinin tüm ambalajlarıyla eşleşir — geçiş
+ * dönemi bozulmasın diye.
+ */
+export const familyPackagings = mysqlTable(
+  "familyPackagings",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    familyId: int("familyId").notNull(),
+    packagingId: int("packagingId").notNull(),
+  },
+  t => [unique("familyPackagings_uq").on(t.familyId, t.packagingId)],
+);
+
 export type SeriesPackaging = typeof seriesPackagings.$inferSelect;
 export type SeriesFamily = typeof seriesFamilies.$inferSelect;
 export type SeriesColor = typeof seriesColors.$inferSelect;
+export type FamilyPackaging = typeof familyPackagings.$inferSelect;
 
 /* ---- Formüller: çok seviyeli, özyinelemeli BOM -------------------------- */
 
