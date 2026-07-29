@@ -147,9 +147,22 @@ export async function seedCatalogDimensions(): Promise<SeedCounts> {
     if (row) packagingIdByName.set(row.name.trim().toLowerCase(), id);
   }
   const familyIdByCode = families.map;
+  // Renk adı → kimlik. Seri colorOptions'ı ada göre eşleşir.
+  const colorIdByName = new Map<string, number>();
+  for (const [code, id] of Array.from(colors.map.entries())) {
+    const row = colorRows.find(c => c.code === code);
+    if (row) colorIdByName.set(row.name.trim().toLowerCase(), id);
+  }
+  const notrColorId = colors.map.get(NOTR_COLOR_CODE) ?? null;
 
   let seriesLinks = 0;
-  for (const s of series as { id: number; name: string; category: string | null; packagingOptions: unknown }[]) {
+  for (const s of series as {
+    id: number;
+    name: string;
+    category: string | null;
+    packagingOptions: unknown;
+    colorOptions: unknown;
+  }[]) {
     const fromJson = parseLabels(s.packagingOptions)
       .map(label => packagingIdByName.get(label.trim().toLowerCase()))
       .filter((v): v is number => typeof v === "number");
@@ -170,6 +183,20 @@ export async function seedCatalogDimensions(): Promise<SeedCounts> {
       : [familyIdByCode.get("airbrush"), familyIdByCode.get("paint")];
     const clean = familyIds.filter((v): v is number => typeof v === "number");
     if (clean.length > 0) await db.setSeriesFamilies(s.id, clean);
+
+    // Seri × renk: ambalajdaki mantığın aynısı. Seride colorOptions tanımlıysa
+    // YALNIZ o renkler üretilir. Eskiden bu bağ hiç kurulmuyordu ve renk
+    // ekseni "hepsi" kalıyordu: CANDY için 31 rengin tamamı çarpıma girip
+    // 744 master çıkıyordu. Renksiz/nötr her seride bulunur (renksiz kalemler
+    // ona bağlanır).
+    const seriesColorIds = parseLabels(s.colorOptions)
+      .map(label => colorIdByName.get(label.trim().toLowerCase()))
+      .filter((v): v is number => typeof v === "number");
+    if (seriesColorIds.length > 0) {
+      const withNotr = new Set(seriesColorIds);
+      if (notrColorId) withNotr.add(notrColorId);
+      await db.setSeriesColors(s.id, Array.from(withNotr));
+    }
   }
 
   return {

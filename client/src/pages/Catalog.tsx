@@ -1,4 +1,5 @@
 import CatalogRevenue from "@/components/CatalogRevenue";
+import SeriesMatrix from "@/components/SeriesMatrix";
 import MissingImages from "@/components/MissingImages";
 import UnboundOrderItems from "@/components/UnboundOrderItems";
 import { Badge } from "@/components/ui/badge";
@@ -46,9 +47,22 @@ export default function Catalog() {
 
   const [selectedSeries, setSelectedSeries] = useState<Set<number>>(new Set());
   const [withR2u, setWithR2u] = useState(false);
-  const [preview, setPreview] = useState<{ kind: string; willCreate: number; sample: string[] } | null>(
-    null,
-  );
+  type Breakdown = {
+    seriesId: number;
+    seriesName: string;
+    colors: number;
+    families: number;
+    packagings: number;
+    readiness: number;
+    total: number;
+    colorsExplicit: boolean;
+  };
+  const [preview, setPreview] = useState<{
+    kind: string;
+    willCreate: number;
+    sample: string[];
+    breakdown?: Breakdown[];
+  } | null>(null);
 
   const seed = trpc.katalog.seedDimensions.useMutation({
     onSuccess: r => {
@@ -83,7 +97,12 @@ export default function Catalog() {
   const genMasters = trpc.katalog.generateMasters.useMutation({
     onSuccess: r => {
       if (r.dryRun) {
-        setPreview({ kind: "master", willCreate: r.willCreate, sample: r.sample });
+        setPreview({
+          kind: "master",
+          willCreate: r.willCreate,
+          sample: r.sample,
+          breakdown: r.breakdown,
+        });
         if (r.willCreate === 0) toast.info("Üretilecek yeni master yok — hepsi zaten var.");
         else if (r.conflictNote) toast.info(r.conflictNote, { duration: 12000 });
         return;
@@ -512,9 +531,9 @@ export default function Catalog() {
         </div>
       </Card>
 
-      {/* Önizleme */}
+      {/* Önizleme — sayı tek başına yanıltıcı, kırılım da gösterilir */}
       {preview && preview.willCreate > 0 && (
-        <Card className="space-y-2 border-primary/30 bg-primary/5 p-4">
+        <Card className="space-y-3 border-primary/30 bg-primary/5 p-4">
           <p className="text-sm font-medium">
             {preview.willCreate} {preview.kind === "master" ? "master ürün" : "ilan"} oluşturulacak — ilk
             {" "}
@@ -527,8 +546,39 @@ export default function Catalog() {
               </Badge>
             ))}
           </div>
+
+          {(preview.breakdown?.length ?? 0) > 0 && (
+            <div className="space-y-1.5 border-t pt-3">
+              <p className="text-xs font-medium text-muted-foreground">
+                Sayı nereden geliyor
+              </p>
+              {preview.breakdown?.map(b => (
+                <div key={b.seriesId} className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="w-28 shrink-0 font-medium">{b.seriesName}</span>
+                  <span className="font-mono">
+                    {b.colors} renk × {b.families} form × {b.packagings} ambalaj ×{" "}
+                    {b.readiness} hazırlık = <strong>{b.total}</strong>
+                  </span>
+                  {!b.colorsExplicit && (
+                    <Badge variant="destructive" className="text-[10px]">
+                      renk sınırı yok
+                    </Badge>
+                  )}
+                </div>
+              ))}
+              {preview.breakdown?.some(b => !b.colorsExplicit) && (
+                <p className="pt-1 text-xs text-amber-600">
+                  Renk sınırı olmayan seriye <strong>tüm renkler</strong> giriyor — RAL kodları da
+                  CANDY'ye dahil oluyor. Aşağıdaki matristen her seriye kendi renklerini seçin.
+                </p>
+              )}
+            </div>
+          )}
         </Card>
       )}
+
+      {/* Seri × renk/form/ambalaj matrisi */}
+      <SeriesMatrix />
 
       {/* 4 — Kapasite */}
       <Card className="space-y-3 p-5">

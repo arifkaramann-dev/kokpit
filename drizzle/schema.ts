@@ -1165,8 +1165,32 @@ export const seriesFamilies = mysqlTable(
   t => [unique("seriesFamilies_uq").on(t.seriesId, t.familyId)],
 );
 
+/**
+ * Seri × renk uyumluluğu.
+ *
+ * `colors.seriesId` tek bir seriye işaret eden nullable bir alandı: bir renk ya
+ * TEK seriye ait olabiliyor ya da (NULL ise) HEPSİNE. Tohumlamada hiçbir renge
+ * seri atanmadığı için pratikte bütün renkler bütün serilere düşüyordu —
+ * CANDY için master üretince RAL kodları da dahil 31 rengin hepsi çarpıma
+ * giriyor ve 744 master çıkıyordu.
+ *
+ * Ambalaj ve formda olduğu gibi çoka-çok bağ doğru şekildir: "Candy Red" hem
+ * CANDY hem VİVİD'de olabilir, "Renksiz" her seride olmalıdır.
+ */
+export const seriesColors = mysqlTable(
+  "seriesColors",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    seriesId: int("seriesId").notNull(),
+    colorId: int("colorId").notNull(),
+  },
+  t => [unique("seriesColors_uq").on(t.seriesId, t.colorId), index("seriesColors_color_idx").on(t.colorId)],
+);
+
 export type SeriesPackaging = typeof seriesPackagings.$inferSelect;
 export type SeriesFamily = typeof seriesFamilies.$inferSelect;
+export type SeriesColor = typeof seriesColors.$inferSelect;
 
 /* ---- Formüller: çok seviyeli, özyinelemeli BOM -------------------------- */
 

@@ -27,6 +27,15 @@ export type PlanSeries = {
   packagingIds: number[];
   /** Bu seride üretilen form kimlikleri (seriesFamilies). */
   familyIds: number[];
+  /**
+   * Bu seride üretilen renk kimlikleri (seriesColors).
+   *
+   * BOŞ BIRAKILIRSA eski kural işler: `colors.seriesId` seriyle eşleşen ya da
+   * NULL olan renkler. O kural pratikte "hepsi" demekti — tohumlama hiçbir
+   * renge seri atamıyordu ve CANDY için 31 rengin tamamı çarpıma giriyordu.
+   * Açık liste verildiğinde yalnız o renkler üretilir.
+   */
+  colorIds?: number[];
   /** Bu seri r2u (kullanıma hazır) olarak da üretiliyor mu? */
   readiness: Readiness[];
 };
@@ -69,6 +78,24 @@ export type MasterPlan = {
    * SKU eki iyileştirilmeli, kullanıcı görsün diye.
    */
   conflicts: { internalSku: string; coords: string[] }[];
+  /**
+   * Seri başına eksen kırılımı: "31 renk × 2 form × 6 ambalaj × 2 hazırlık".
+   *
+   * Toplam sayı tek başına yanıltıcı: 744 rakamını görüp neyin şiştiğini
+   * anlamak mümkün değildi. Kırılım hangi eksenin daraltılması gerektiğini
+   * doğrudan gösterir.
+   */
+  breakdown: {
+    seriesId: number;
+    seriesName: string;
+    colors: number;
+    families: number;
+    packagings: number;
+    readiness: number;
+    total: number;
+    /** Renk ekseni açık bağla mı sınırlandı, yoksa "hepsi" mi? */
+    colorsExplicit: boolean;
+  }[];
 };
 
 /**
@@ -135,6 +162,7 @@ export function planMasters(input: {
 
   const create: PlannedMaster[] = [];
   const existing: PlannedMaster[] = [];
+  const breakdown: MasterPlan["breakdown"] = [];
   const skuOwner = new Map<string, string[]>();
   const seenKeys = new Set<string>();
   // Bu çalıştırmada üretilmiş kodlar — ayrıştırma bunlara bakar.
@@ -144,9 +172,24 @@ export function planMasters(input: {
 
   for (const series of input.series) {
     if (wanted && !wanted.has(series.id)) continue;
-    // Renk: seriye özel renkler + tüm serilerde geçerli olanlar.
-    const colors = input.colors.filter(c => c.seriesId === null || c.seriesId === series.id);
+    // Renk: açık seri×renk bağı varsa YALNIZ o renkler. Bağ yoksa eski kural
+    // (seriye özel + tüm serilerde geçerli) — geçiş dönemi için.
+    const explicit = series.colorIds && series.colorIds.length > 0 ? new Set(series.colorIds) : null;
+    const colors = explicit
+      ? input.colors.filter(c => explicit.has(c.id))
+      : input.colors.filter(c => c.seriesId === null || c.seriesId === series.id);
     const readinessList = series.readiness.length > 0 ? series.readiness : ["konsantre" as const];
+
+    breakdown.push({
+      seriesId: series.id,
+      seriesName: series.name,
+      colors: colors.length,
+      families: series.familyIds.length,
+      packagings: series.packagingIds.length,
+      readiness: readinessList.length,
+      total: colors.length * series.familyIds.length * series.packagingIds.length * readinessList.length,
+      colorsExplicit: explicit !== null,
+    });
 
     for (const color of colors) {
       for (const familyId of series.familyIds) {
@@ -212,7 +255,7 @@ export function planMasters(input: {
     .filter(([, coords]) => coords.length > 1)
     .map(([internalSku, coords]) => ({ internalSku, coords }));
 
-  return { create, existing, conflicts };
+  return { create, existing, conflicts, breakdown };
 }
 
 /* ------------------------------ İlanlar ---------------------------------- */

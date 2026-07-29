@@ -255,6 +255,76 @@ describe("planMasters — seyrek küp", () => {
   });
 });
 
+describe("planMasters — seri × renk bağı", () => {
+  // Gerçek hata: tohumlama hiçbir renge seri atamadığı için her renk her
+  // seriye düşüyor, CANDY için 31 rengin tamamı çarpıma girip 744 master
+  // çıkıyordu.
+  it("açık renk bağı verilirse yalnız o renkler üretilir", () => {
+    const plan = planMasters({
+      series: [{ ...candy, colorIds: [1] }],
+      colors,
+      families,
+      packagings,
+      existingKeys: new Set(),
+    });
+    expect(plan.create.every(m => m.colorId === 1)).toBe(true);
+    // 1 renk × 1 form × 2 ambalaj × 2 hazırlık
+    expect(plan.create).toHaveLength(4);
+  });
+
+  it("bağ yoksa eski kural işler — geçiş dönemi bozulmaz", () => {
+    const plan = planMasters({
+      series: [candy],
+      colors,
+      families,
+      packagings,
+      existingKeys: new Set(),
+    });
+    expect(plan.create).toHaveLength(12);
+  });
+
+  it("boş renk listesi bağ sayılmaz", () => {
+    const plan = planMasters({
+      series: [{ ...candy, colorIds: [] }],
+      colors,
+      families,
+      packagings,
+      existingKeys: new Set(),
+    });
+    expect(plan.create).toHaveLength(12);
+  });
+
+  it("kırılım sayının nereden geldiğini söyler", () => {
+    const plan = planMasters({
+      series: [candy],
+      colors,
+      families,
+      packagings,
+      existingKeys: new Set(),
+    });
+    expect(plan.breakdown[0]).toMatchObject({
+      seriesName: "CANDY",
+      colors: 3,
+      families: 1,
+      packagings: 2,
+      readiness: 2,
+      total: 12,
+      colorsExplicit: false,
+    });
+  });
+
+  it("açık bağ kırılımda işaretlenir", () => {
+    const plan = planMasters({
+      series: [{ ...candy, colorIds: [1, 2] }],
+      colors,
+      families,
+      packagings,
+      existingKeys: new Set(),
+    });
+    expect(plan.breakdown[0]).toMatchObject({ colors: 2, colorsExplicit: true, total: 8 });
+  });
+});
+
 describe("planMasters — SKU çakışması üretimi durdurmaz", () => {
   // Gerçek hata: "30 ML PET" ve "30 ML CAM" ikisi de hacimden "30" eki alıyor.
   // Aynı seri+renk+form altında internal SKU birebir aynı çıkıyor ve master
