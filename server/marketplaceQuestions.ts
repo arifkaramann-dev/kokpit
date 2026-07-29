@@ -54,29 +54,56 @@ const SYSTEM_PROMPT =
 export type DraftResult = { answer: string; confident: boolean; reason: string };
 
 /**
+ * v3 ürün bağlamı: master'ın ilanlarındaki metinler.
+ *
+ * İçerik ilan katmanında yaşar (kullanım alanına göre farklı anlatım); cevap
+ * için birincil ilan, yoksa ilk ilan kullanılır.
+ */
+async function masterContext(masterId: number): Promise<string | null> {
+  const listings = (await db.listListingsByMaster(masterId)) as Record<string, unknown>[];
+  if (listings.length === 0) return null;
+  const l = listings.find(x => Number(x.isPrimary ?? 0) === 1) ?? listings[0];
+  const parts = [
+    `Ürün: ${String(l.title ?? "")}`,
+    l.shortDescription ? `Açıklama: ${String(l.shortDescription)}` : null,
+    l.applicationText ? `Uygulama: ${String(l.applicationText)}` : null,
+    l.longDescription ? `Detay: ${String(l.longDescription)}` : null,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join("\n") : null;
+}
+
+/** Eski `products` kaydından bağlam — v3'e taşınmamış sorular için. */
+async function legacyProductContext(productId?: number | null): Promise<string | null> {
+  if (!productId) return null;
+  const product = await db.getProduct(productId);
+  if (!product) return null;
+  return [
+    `Ürün: ${product.name}`,
+    product.usageGuide ? `Kullanım kılavuzu: ${product.usageGuide}` : null,
+    product.applicationText ? `Uygulama: ${product.applicationText}` : null,
+    product.shortDescription ? `Açıklama: ${product.shortDescription}` : null,
+    product.safetyNotes ? `Güvenlik: ${product.safetyNotes}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/**
  * Bir soru için AI cevap taslağı üretir. Ürün seçiliyse cevap o ürünün
- * kılavuzundan beslenir. `confident` yalnızca güvenli/otomatik gönderilebilir
+ * içeriğinden beslenir. `confident` yalnızca güvenli/otomatik gönderilebilir
  * cevaplarda true döner.
  */
 export async function generateQuestionAnswer(q: {
   questionText: string;
   productId?: number | null;
+  masterId?: number | null;
   productName?: string | null;
 }): Promise<DraftResult> {
-  const product = q.productId ? await db.getProduct(q.productId) : null;
-  const context = product
-    ? [
-        `Ürün: ${product.name}`,
-        product.usageGuide ? `Kullanım kılavuzu: ${product.usageGuide}` : null,
-        product.applicationText ? `Uygulama: ${product.applicationText}` : null,
-        product.shortDescription ? `Açıklama: ${product.shortDescription}` : null,
-        product.safetyNotes ? `Güvenlik: ${product.safetyNotes}` : null,
-      ]
-        .filter(Boolean)
-        .join("\n")
-    : q.productName
-      ? `Ürün: ${q.productName}`
-      : "Ürün bilgisi yok.";
+  // v3 bağı varsa ilan içeriğinden beslenir; yoksa eski ürün kaydına düşer.
+  const context =
+    (q.masterId ? await masterContext(q.masterId) : null) ??
+    (await legacyProductContext(q.productId)) ??
+    (q.productName ? `Ürün: ${q.productName}` : "Ürün bilgisi yok.");
 
   const response = await invokeLLM({
     messages: [

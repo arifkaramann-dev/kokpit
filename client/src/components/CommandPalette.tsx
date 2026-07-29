@@ -66,7 +66,8 @@ export default function CommandPalette() {
   }, []);
 
   // Veriyi yalnızca palet açıkken çek (önbelleğe düşerse anında gelir).
-  const { data: products } = trpc.products.list.useQuery(undefined, { enabled: open });
+  // v3 kataloğu — arama ürün kartına götürür.
+  const { data: catalog } = trpc.katalog.sellableList.useQuery(undefined, { enabled: open });
   const { data: orders } = trpc.orders.list.useQuery({ limit: 200 }, { enabled: open });
   const { data: customers } = trpc.customers.list.useQuery(undefined, { enabled: open });
   const { data: materials } = trpc.materials.list.useQuery(undefined, { enabled: open });
@@ -117,13 +118,17 @@ export default function CommandPalette() {
           </CommandGroup>
         )}
 
-        {(products ?? []).length > 0 && (
+        {(catalog ?? []).length > 0 && (
           <CommandGroup heading="Ürünler">
-            {(products ?? []).slice(0, 8).map(p => (
-              <CommandItem key={`p-${p.id}`} value={`ürün ${p.name} ${p.series ?? ""} ${p.barcode ?? ""}`} onSelect={() => go("/urunler")}>
+            {(catalog ?? []).slice(0, 8).map(p => (
+              <CommandItem
+                key={`p-${p.masterId}`}
+                value={`ürün ${p.name} ${p.internalSku}`}
+                onSelect={() => go(`/urun/${p.masterId}`)}
+              >
                 <Package className="h-4 w-4" />
                 <span className="ml-2">{p.name}</span>
-                <span className="ml-auto text-xs text-muted-foreground">{formatTL(p.salePrice)}</span>
+                <span className="ml-auto text-xs text-muted-foreground">{formatTL(p.basePrice)}</span>
               </CommandItem>
             ))}
           </CommandGroup>

@@ -246,7 +246,37 @@ export function resolveLogistics(input: {
 
 /* ---- Görsel mirası ------------------------------------------------------ */
 
-export type ImageRow = { url: string; sortOrder: number };
+export type ImageRow = {
+  /** Dış adres; boşsa `id` üzerinden kendi sunucumuzdan servis edilir. */
+  url: string | null;
+  /** Yüklenen görselin satır kimliği — servis adresini üretmek için. */
+  id?: number;
+  sortOrder: number;
+};
+
+/** Yüklenen görselin kendi sunucumuzdaki yolu. */
+export const masterImagePath = (id: number): string => `/api/img/master/${id}`;
+
+/**
+ * Satırdan görsel adresi: dış adres varsa o, yoksa kendi servis yolumuz.
+ * İkisi de yoksa null — boş satır pazaryerine gönderilmez.
+ */
+export function imageUrlOf(row: ImageRow): string | null {
+  const external = row.url?.trim();
+  if (external) return external;
+  return row.id ? masterImagePath(row.id) : null;
+}
+
+/**
+ * Göreli yolu mutlak adrese çevirir — pazaryeri yalnız mutlak adres kabul eder.
+ * Zaten mutlak olan (http/https) dokunulmadan geçer.
+ */
+export function absoluteImageUrl(url: string, publicBaseUrl: string): string {
+  if (/^https?:\/\//i.test(url)) return url;
+  const base = publicBaseUrl.trim().replace(/\/+$/, "");
+  if (!base) return url;
+  return `${base}${url.startsWith("/") ? "" : "/"}${url}`;
+}
 
 /**
  * İlan görselleri: ilanın kendi görseli varsa o, yoksa master'dan devralınır.
@@ -259,12 +289,15 @@ export function resolveImages(input: {
   listingImages: ImageRow[];
   masterImages: ImageRow[];
   limit?: number;
+  /** Verilirse göreli yollar mutlak adrese çevrilir (pazaryeri gönderimi). */
+  publicBaseUrl?: string;
 }): string[] {
   const source = input.listingImages.length > 0 ? input.listingImages : input.masterImages;
   const urls = [...source]
     .sort((a, b) => a.sortOrder - b.sortOrder)
-    .map(i => i.url.trim())
-    .filter(Boolean);
+    .map(imageUrlOf)
+    .filter((u): u is string => Boolean(u))
+    .map(u => (input.publicBaseUrl ? absoluteImageUrl(u, input.publicBaseUrl) : u));
   // Aynı görsel iki kez gönderilirse pazaryeri kartı tekrarlı gösterir.
   const unique = Array.from(new Set(urls));
   return input.limit ? unique.slice(0, input.limit) : unique;

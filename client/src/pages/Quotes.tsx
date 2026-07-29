@@ -61,7 +61,13 @@ const STATUS: Record<QuoteStatus, { label: string; cls: string }> = {
   converted: { label: "Siparişe dönüştü", cls: "bg-violet-500/15 text-violet-600" },
 };
 
-type ItemRow = { productName: string; quantity: string; unitPrice: string };
+type ItemRow = {
+  productName: string;
+  quantity: string;
+  unitPrice: string;
+  /** v3 katalog bağı — listeden seçilince dolar. */
+  masterId: number | null;
+};
 
 const emptyForm = {
   customerName: "",
@@ -79,6 +85,7 @@ function parseItemRows(items: ItemRow[]) {
       productName: r.productName.trim(),
       quantity: parseFloat(r.quantity) || 1,
       unitPrice: parseFloat(r.unitPrice) || 0,
+      masterId: r.masterId,
     }));
 }
 
@@ -87,7 +94,9 @@ export default function Quotes() {
   const confirm = useConfirm();
   const [, setLocation] = useLocation();
   const { data: quotes, isLoading } = trpc.quotes.list.useQuery();
-  const { data: products } = trpc.products.list.useQuery();
+  // v3 kataloğu: teklif satırı ürüne masterId ile bağlanır (siparişe
+  // dönüşünce bağ korunur).
+  const { data: catalog } = trpc.katalog.sellableList.useQuery();
   const { data: customersList } = trpc.customers.list.useQuery();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editQuote, setEditQuote] = useState<QuoteRow | null>(null);
@@ -171,6 +180,7 @@ export default function Quotes() {
           productName: i.productName,
           quantity: String(parseFloat(String(i.quantity))),
           unitPrice: String(parseFloat(String(i.unitPrice))),
+          masterId: i.masterId ?? null,
         })),
       }));
     } catch {
@@ -333,7 +343,7 @@ export default function Quotes() {
                       size="sm"
                       className="h-7 px-2 text-xs"
                       onClick={() =>
-                        setForm(f => ({ ...f, items: [...f.items, { productName: "", quantity: "1", unitPrice: "" }] }))
+                        setForm(f => ({ ...f, items: [...f.items, { productName: "", quantity: "1", unitPrice: "", masterId: null }] }))
                       }
                     >
                       <Plus className="h-3.5 w-3.5 mr-1" /> Satır Ekle
@@ -354,12 +364,12 @@ export default function Quotes() {
                             value={row.productName}
                             placeholder="Ürün adı"
                             title={
-                              row.productName.trim() && !products?.some(p => p.name === row.productName.trim())
+                              row.productName.trim() && row.masterId == null
                                 ? "Katalogla eşleşmedi — serbest kalem olarak kaydedilir (stok düşümü ve ürün raporu dışında kalır)"
                                 : undefined
                             }
                             className={
-                              row.productName.trim() && !products?.some(p => p.name === row.productName.trim())
+                              row.productName.trim() && row.masterId == null
                                 ? "border-amber-400 focus-visible:ring-amber-400"
                                 : undefined
                             }
@@ -367,13 +377,14 @@ export default function Quotes() {
                               const name = e.target.value;
                               setForm(f => {
                                 const items = [...f.items];
-                                const matched = products?.find(p => p.name === name);
+                                const matched = catalog?.find(p => p.name === name);
                                 items[idx] = {
                                   ...items[idx],
                                   productName: name,
+                                  masterId: matched?.masterId ?? null,
                                   unitPrice:
                                     matched && !items[idx].unitPrice
-                                      ? String(parseFloat(matched.salePrice))
+                                      ? String(matched.basePrice)
                                       : items[idx].unitPrice,
                                 };
                                 return { ...f, items };
@@ -419,8 +430,8 @@ export default function Quotes() {
                         </div>
                       ))}
                       <datalist id="quote-product-options">
-                        {products?.map(p => (
-                          <option key={p.id} value={p.name} />
+                        {catalog?.map(p => (
+                          <option key={p.masterId} value={p.name} />
                         ))}
                       </datalist>
                       <p className="text-sm font-medium text-right">Toplam: {formatTL(itemsTotal)}</p>

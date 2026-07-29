@@ -64,6 +64,11 @@ const orderItemInput = z.object({
   productName: z.string().min(1),
   quantity: z.number().positive(),
   unitPrice: z.number().min(0),
+  /**
+   * v3 ürün bağı. Elden sipariş girerken katalogdan seçilirse dolu gelir ve
+   * doğrudan yazılır — ad üzerinden tahmin edilmez.
+   */
+  masterId: z.number().nullish(),
 });
 
 const orderInput = z.object({

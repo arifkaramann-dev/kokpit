@@ -8,7 +8,9 @@ import { systemRouter } from "../_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { TRPCError } from "@trpc/server";
 import * as db from "../db";
+import { resolveImages } from "../masterFields";
 import { itemsTotal, summarizeItems, toItemRows } from "../orderUtils";
+import { buildStoreProduct, buildStorefront, type StoreGroup } from "../storefrontCatalog";
 import { extractInvoice } from "../_core/claude";
 import { executeAssistantCommand, generateOrderNo, generateQuoteNo } from "../assistant";
 import { buildSaleTitle, deriveCombos, parseSetCount, planGenerationSync, renameVariantTitle } from "../productUtils";
@@ -899,6 +901,8 @@ export const questionsRouter = router({
         customerName: z.string().nullable().optional(),
         questionText: z.string().min(1),
         productId: z.number().nullable().optional(),
+        /** v3 ürün bağı — cevap taslağı ilan içeriğinden beslenir. */
+        masterId: z.number().nullable().optional(),
         productName: z.string().nullable().optional(),
       }),
     )
@@ -923,6 +927,7 @@ export const questionsRouter = router({
       const { answer } = await generateQuestionAnswer({
         questionText: q.questionText,
         productId: q.productId,
+        masterId: q.masterId,
         productName: q.productName,
       });
       await db.updateMarketplaceQuestion(input.id, { answerDraft: answer });
@@ -1070,6 +1075,149 @@ Türkçe yaz. Sektörel terimleri doğru kullan (bazkat, 1K/2K, astar, vernik, o
 
 
 // Kendi web mağazası (Tema B) — HERKESE AÇIK uçlar (giriş gerektirmez).
+/** Decimal (string) alanları sayıya çevirir. */
+const storeNum = (v: unknown): number => {
+  const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
+  return Number.isFinite(n) ? n : 0;
+};
+
+/**
+ * Vitrin verisini v3 kataloğundan yükler.
+ *
+ * Web kanalına hiç yayın yapılmamışsa null döner ve çağıran ESKİ modele
+ * düşer. Böylece katalog taşınırken canlı mağaza bir an bile boş kalmaz;
+ * ilk yayın yapıldığı anda vitrin kendiliğinden v3'e geçer.
+ */
+async function loadV3Storefront(): Promise<StoreGroup[] | null> {
+  const channels = (await db.listSalesChannels()) as { id: number; code: string }[];
+  const web = channels.find(c => c.code === "web");
+  if (!web) return null;
+
+  const [channelListings, listings, masters, colors, packagings, series, lImages, mImages] =
+    await Promise.all([
+      db.listChannelListings(),
+      db.listListings(),
+      db.listMasterProducts(),
+      db.listColors(),
+      db.listPackagings(),
+      db.listProductSeries(),
+      db.listListingImages(),
+      db.listMasterImages(),
+    ]);
+
+  const publications = (channelListings as Record<string, unknown>[])
+    .filter(c => c.channelId === web.id)
+    .map(c => ({
+      listingId: c.listingId as number,
+      masterId: c.masterId as number,
+      price: storeNum(c.price),
+      discountPercent: storeNum(c.discountPercent),
+      status: c.status as "taslak" | "canli" | "durduruldu",
+    }));
+  if (publications.every(p => p.status !== "canli")) return null;
+
+  const storeListings = (listings as Record<string, unknown>[]).map(l => ({
+    id: l.id as number,
+    masterId: l.masterId as number,
+    isPrimary: Number(l.isPrimary ?? 0) === 1,
+    title: String(l.title ?? ""),
+    slug: (l.slug as string | null) ?? null,
+    shortDescription: (l.shortDescription as string | null) ?? null,
+    longDescription: (l.longDescription as string | null) ?? null,
+    applicationText: (l.applicationText as string | null) ?? null,
+    status: l.status as "taslak" | "aktif" | "arsiv",
+  }));
+
+  // Görsel: ilanın kendi görseli yoksa master'ınki devralınır.
+  const byListing = new Map<number, { url: string | null; id?: number; sortOrder: number }[]>();
+  for (const i of lImages as { listingId: number; url: string; sortOrder: number }[]) {
+    byListing.set(i.listingId, [
+      ...(byListing.get(i.listingId) ?? []),
+      { url: i.url, sortOrder: Number(i.sortOrder ?? 0) },
+    ]);
+  }
+  const byMaster = new Map<number, { url: string | null; id?: number; sortOrder: number }[]>();
+  for (const i of mImages as { id: number; masterId: number; url: string | null; sortOrder: number }[]) {
+    byMaster.set(i.masterId, [
+      ...(byMaster.get(i.masterId) ?? []),
+      { id: i.id, url: i.url, sortOrder: Number(i.sortOrder ?? 0) },
+    ]);
+  }
+  const imagesOf = new Map<number, string[]>();
+  for (const l of storeListings) {
+    const urls = resolveImages({
+      listingImages: byListing.get(l.id) ?? [],
+      masterImages: byMaster.get(l.masterId) ?? [],
+      limit: 8,
+    });
+    if (urls.length > 0 && !imagesOf.has(l.masterId)) imagesOf.set(l.masterId, urls);
+  }
+
+  return buildStorefront({
+    masters: (masters as Record<string, unknown>[]).map(m => ({
+      id: m.id as number,
+      seriesId: m.seriesId as number,
+      colorId: m.colorId as number,
+      familyId: m.familyId as number,
+      packagingId: m.packagingId as number,
+      baseCode: (m.baseCode as string | null) ?? null,
+      internalSku: String(m.internalSku ?? ""),
+      status: m.status as "taslak" | "aktif" | "arsiv",
+      basePrice: storeNum(m.basePrice),
+      discountPercent: storeNum(m.discountPercent),
+      buildableQty: Number(m.buildableQty ?? 0),
+      stockQty: Number(m.stockQty ?? 0),
+    })),
+    listings: storeListings,
+    publications,
+    colors: new Map(
+      (colors as { id: number; name: string; hex: string | null }[]).map(c => [
+        c.id,
+        { name: c.name, hex: c.hex },
+      ]),
+    ),
+    packagings: new Map(
+      (packagings as { id: number; name: string; volumeMl: string }[]).map(p => [
+        p.id,
+        { name: p.name, volumeMl: storeNum(p.volumeMl) },
+      ]),
+    ),
+    series: new Map((series as { id: number; name: string }[]).map(s => [s.id, s.name])),
+    imagesOf,
+  });
+}
+
+/**
+ * v3 vitrin kartını eski vitrin biçimine çevirir.
+ *
+ * Vitrin sayfası (`Storefront.tsx`) eski alan adlarını bekliyor. Geçiş
+ * boyunca iki ayrı render yolu tutmak yerine sunucu tek biçim döner.
+ */
+function toStoreWire(g: StoreGroup) {
+  return {
+    id: g.id,
+    name: g.name,
+    series: g.series,
+    shortDescription: g.shortDescription,
+    // Vitrin JSON dizi bekliyor (eski `products.imageUrls` alanı da öyleydi).
+    imageUrls: g.imageUrls.length > 0 ? JSON.stringify(g.imageUrls) : null,
+    mockupUrl: null as string | null,
+    minPrice: g.minPrice,
+    maxPrice: g.maxPrice,
+    inStock: g.inStock,
+    options: g.options.map(o => ({
+      id: o.masterId,
+      name: o.packagingName,
+      packaging: o.packagingName,
+      colorCode: g.colorName || null,
+      colorHex: g.colorHex,
+      salePrice: o.salePrice,
+      discountPercent: o.discountPercent,
+      inStock: o.inStock,
+    })),
+  };
+}
+
 export const storefrontRouter = router({
   // Vitrin: satışta ve fiyatı olan ürünler (yalnızca gerekli alanlar dışa açılır).
   /**
@@ -1086,6 +1234,12 @@ export const storefrontRouter = router({
    * olmayan ana ürün tek seçenekli grup olarak doğrudan satılır.
    */
   products: publicProcedure.query(async () => {
+    // Önce v3: web kanalına yayın yapılmışsa vitrin oradan beslenir.
+    // Çıktı eski biçime uyarlanır — vitrin sayfası tek şekil görür, geçiş
+    // sırasında iki ayrı render yolu tutmak gerekmez.
+    const v3 = await loadV3Storefront();
+    if (v3) return v3.map(toStoreWire);
+
     const products = await db.listProducts();
     const sellable = products.filter(
       p => p.status === "satista" && parseFloat(String(p.salePrice)) > 0,
@@ -1149,6 +1303,41 @@ export const storefrontRouter = router({
     return groups.sort((a, b) => a.name.localeCompare(b.name, "tr"));
   }),
   product: publicProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
+    const v3 = await loadV3Storefront();
+    if (v3) {
+      const listings = (await db.listListings()) as Record<string, unknown>[];
+      const found = buildStoreProduct({
+        masterId: input.id,
+        groups: v3,
+        listings: listings.map(l => ({
+          id: l.id as number,
+          masterId: l.masterId as number,
+          isPrimary: Number(l.isPrimary ?? 0) === 1,
+          title: String(l.title ?? ""),
+          slug: (l.slug as string | null) ?? null,
+          shortDescription: (l.shortDescription as string | null) ?? null,
+          longDescription: (l.longDescription as string | null) ?? null,
+          applicationText: (l.applicationText as string | null) ?? null,
+          status: l.status as "taslak" | "aktif" | "arsiv",
+        })),
+      });
+      if (!found) throw new TRPCError({ code: "NOT_FOUND", message: "Ürün bulunamadı" });
+      const option = found.options.find(o => o.masterId === input.id) ?? found.options[0];
+      return {
+        id: input.id,
+        name: found.name,
+        series: found.series,
+        salePrice: option.salePrice,
+        discountPercent: option.discountPercent,
+        shortDescription: found.shortDescription,
+        description: found.description,
+        usageGuide: found.usageGuide,
+        imageUrls: found.imageUrls.length > 0 ? JSON.stringify(found.imageUrls) : null,
+        mockupUrl: null,
+        inStock: option.inStock,
+      };
+    }
+
     const p = await db.getProduct(input.id);
     // Taslak ürün de vitrine açılmamalı — kart hazırlanırken müşteriye görünüyordu.
     if (!p || p.status !== "satista") throw new TRPCError({ code: "NOT_FOUND", message: "Ürün bulunamadı" });
@@ -1187,19 +1376,47 @@ export const storefrontRouter = router({
       }),
     )
     .mutation(async ({ input }) => {
-      const products = await db.listProducts();
-      const byId = new Map(products.map(p => [p.id, p]));
-      const lines: { productName: string; quantity: number; unitPrice: number }[] = [];
+      // Fiyat SUNUCUDA doğrulanır — istemciden gelen fiyata güvenilmez.
+      // v3 vitrindeyse sipariş satırı doğrudan master'a bağlanır; böylece
+      // web siparişi de üretim planına ve getiri raporuna girer.
+      const v3 = await loadV3Storefront();
+      const lines: {
+        productName: string;
+        quantity: number;
+        unitPrice: number;
+        masterId?: number | null;
+      }[] = [];
       let subtotal = 0;
-      for (const it of input.items) {
-        const p = byId.get(it.productId);
-        if (!p || p.status === "arsiv") continue;
-        const base = parseFloat(String(p.salePrice)) || 0;
-        const disc = parseFloat(String(p.discountPercent)) || 0;
-        const unit = +(base * (1 - disc / 100)).toFixed(2);
-        if (unit <= 0) continue;
-        lines.push({ productName: p.name, quantity: it.quantity, unitPrice: unit });
-        subtotal += unit * it.quantity;
+
+      if (v3) {
+        const optionOf = new Map(
+          v3.flatMap(g => g.options.map(o => [o.masterId, { option: o, group: g }] as const)),
+        );
+        for (const it of input.items) {
+          const hit = optionOf.get(it.productId);
+          if (!hit || hit.option.netPrice <= 0) continue;
+          const name = [hit.group.name, hit.option.packagingName].filter(Boolean).join(" · ");
+          lines.push({
+            productName: name,
+            quantity: it.quantity,
+            unitPrice: hit.option.netPrice,
+            masterId: it.productId,
+          });
+          subtotal += hit.option.netPrice * it.quantity;
+        }
+      } else {
+        const products = await db.listProducts();
+        const byId = new Map(products.map(p => [p.id, p]));
+        for (const it of input.items) {
+          const p = byId.get(it.productId);
+          if (!p || p.status === "arsiv") continue;
+          const base = parseFloat(String(p.salePrice)) || 0;
+          const disc = parseFloat(String(p.discountPercent)) || 0;
+          const unit = +(base * (1 - disc / 100)).toFixed(2);
+          if (unit <= 0) continue;
+          lines.push({ productName: p.name, quantity: it.quantity, unitPrice: unit });
+          subtotal += unit * it.quantity;
+        }
       }
       if (lines.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Sepette geçerli ürün yok" });
 
@@ -1229,7 +1446,12 @@ export const storefrontRouter = router({
       );
       await db.replaceOrderItems(
         orderId,
-        lines.map(l => ({ productName: l.productName, quantity: l.quantity, unitPrice: String(l.unitPrice) })) as never,
+        lines.map(l => ({
+          productName: l.productName,
+          quantity: l.quantity,
+          unitPrice: String(l.unitPrice),
+          masterId: l.masterId ?? null,
+        })) as never,
       );
       await notifyOwner({
         kind: "magaza-siparis",
