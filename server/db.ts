@@ -2767,7 +2767,13 @@ export async function updateFormula(id: number, data: Partial<InsertFormula>) {
 
 export async function setFormulaInputs(
   formulaId: number,
-  rows: { inputMaterialId: number; qtyPerBase: number; note?: string | null }[],
+  rows: {
+    inputMaterialId: number;
+    qtyPerBase: number;
+    /** NULL = miktar kalemin kendi biriminde. */
+    unit?: string | null;
+    note?: string | null;
+  }[],
 ) {
   const db = await requireDb();
   await db.delete(formulaInputs).where(eq(formulaInputs.formulaId, formulaId));
@@ -2776,6 +2782,7 @@ export async function setFormulaInputs(
       formulaId,
       inputMaterialId: row.inputMaterialId,
       qtyPerBase: String(row.qtyPerBase),
+      unit: row.unit ?? null,
       note: row.note ?? null,
     } as InsertFormulaInput);
   }

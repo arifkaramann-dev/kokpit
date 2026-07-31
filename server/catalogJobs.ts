@@ -13,6 +13,7 @@
 
 import { computeCapacity, listingQty } from "./capacity";
 import * as db from "./db";
+import { loadCapacityInputs } from "./capacityInputs";
 import { planFormulaBindings, type MatchableFormula } from "./formulaMatch";
 import type { CapacityFormula, CapacityMaterial, MaterialType } from "./capacity";
 
@@ -36,68 +37,18 @@ export async function runCapacityRecompute(): Promise<{
   zeroed: number;
   cycles: number;
 }> {
-  const [materials, formulas, formulaInputs, packagings, packagingInputs, masters] =
-    await Promise.all([
-      db.listMaterials(),
-      db.listFormulas(),
-      db.listFormulaInputs(),
-      db.listPackagings(),
-      db.listPackagingInputs(),
-      db.listMasterProducts(),
-    ]);
+  const data = await loadCapacityInputs();
+  const rawMasters = data.rawMasters;
 
-  if ((masters as unknown[]).length === 0) {
+  if (rawMasters.length === 0) {
     return { masters: 0, written: 0, dirtied: 0, zeroed: 0, cycles: 0 };
   }
 
-  const inputsByFormula = new Map<number, { inputMaterialId: number; qtyPerBase: number }[]>();
-  for (const fi of formulaInputs as { formulaId: number; inputMaterialId: number; qtyPerBase: string }[]) {
-    inputsByFormula.set(fi.formulaId, [
-      ...(inputsByFormula.get(fi.formulaId) ?? []),
-      { inputMaterialId: fi.inputMaterialId, qtyPerBase: num(fi.qtyPerBase) },
-    ]);
-  }
-  const packInputsById = new Map<number, { materialId: number; qtyPerUnit: number }[]>();
-  for (const pi of packagingInputs as { packagingId: number; materialId: number; qtyPerUnit: string }[]) {
-    packInputsById.set(pi.packagingId, [
-      ...(packInputsById.get(pi.packagingId) ?? []),
-      { materialId: pi.materialId, qtyPerUnit: num(pi.qtyPerUnit) },
-    ]);
-  }
-
-  const rawMasters = masters as Record<string, unknown>[];
   const report = computeCapacity({
-    materials: (materials as Record<string, unknown>[]).map(
-      (m): CapacityMaterial => ({
-        id: m.id as number,
-        name: String(m.name ?? ""),
-        type: (m.type as MaterialType) ?? "hammadde",
-        stockQty: m.stockQty as string,
-        reservedQty: m.reservedQty as string,
-        safetyQty: m.safetyQty as string,
-      }),
-    ),
-    formulas: (formulas as Record<string, unknown>[]).map(
-      (f): CapacityFormula => ({
-        id: f.id as number,
-        outputType: f.outputType as "yari_mamul" | "mamul",
-        outputMaterialId: (f.outputMaterialId as number | null) ?? null,
-        baseQty: f.baseQty as string,
-        wastePercent: f.wastePercent as string,
-        inputs: inputsByFormula.get(f.id as number) ?? [],
-      }),
-    ),
-    packagings: (packagings as Record<string, unknown>[]).map(p => ({
-      id: p.id as number,
-      materialId: (p.materialId as number | null) ?? null,
-      inputs: packInputsById.get(p.id as number) ?? [],
-    })),
-    masters: rawMasters.map(m => ({
-      id: m.id as number,
-      formulaId: (m.formulaId as number | null) ?? null,
-      formulaScale: m.formulaScale as string,
-      packagingId: (m.packagingId as number | null) ?? null,
-    })),
+    materials: data.materials,
+    formulas: data.formulas,
+    packagings: data.packagings,
+    masters: data.masters,
   });
 
   const capById = new Map(rawMasters.map(m => [m.id as number, Number(m.virtualStockCap ?? 10)]));

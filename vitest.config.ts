@@ -14,6 +14,13 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["server/**/*.test.ts", "server/**/*.spec.ts"],
+    // shared/ hem sunucu hem arayüz tarafından kullanılır; testleri kapsam
+    // dışında kalırsa iki tarafı birden besleyen mantık sessizce bozulur.
+    include: [
+      "server/**/*.test.ts",
+      "server/**/*.spec.ts",
+      "shared/**/*.test.ts",
+      "shared/**/*.spec.ts",
+    ],
   },
 });

@@ -29,6 +29,7 @@ import {
 import { mapToTrendyolCards } from "../cardMapping";
 import { cubeKey, planListings, planMasters, type Readiness } from "../catalogPlan";
 import { runCapacityRecompute } from "../catalogJobs";
+import { loadCapacityInputs } from "../capacityInputs";
 import {
   flattenCategories,
   searchCategories,
@@ -37,7 +38,8 @@ import {
 } from "../categorySuggest";
 import { syncAllChannels, syncChannel } from "../channelSyncWorker";
 import { generateContentBlock, templateContentBlock } from "../contentAi";
-import { computeMasterCosts, marginOf } from "../costing";
+import { computeMasterCosts, marginOf, resolveUnitCosts, type CostMaterial } from "../costing";
+import { qtyInMaterialUnit } from "@shared/units";
 import { planFormulaBindings, type MatchableFormula } from "../formulaMatch";
 import {
   pickBlock,
@@ -215,74 +217,6 @@ const num = (v: unknown): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
-/**
- * Kapasite hesabı için gereken her şeyi tek seferde okur.
- * 5.000 kalemde tam yeniden hesap milisaniyeler sürer; artımlı
- * geçersizleştirme kurmak bu ölçekte gereksiz karmaşıklık olur.
- */
-async function loadCapacityInputs() {
-  const [materials, formulas, formulaInputs, packagings, packagingInputs, masters] =
-    await Promise.all([
-      db.listMaterials(),
-      db.listFormulas(),
-      db.listFormulaInputs(),
-      db.listPackagings(),
-      db.listPackagingInputs(),
-      db.listMasterProducts(),
-    ]);
-
-  const inputsByFormula = new Map<number, { inputMaterialId: number; qtyPerBase: number }[]>();
-  for (const fi of formulaInputs as { formulaId: number; inputMaterialId: number; qtyPerBase: string }[]) {
-    inputsByFormula.set(fi.formulaId, [
-      ...(inputsByFormula.get(fi.formulaId) ?? []),
-      { inputMaterialId: fi.inputMaterialId, qtyPerBase: num(fi.qtyPerBase) },
-    ]);
-  }
-
-  const packInputsById = new Map<number, { materialId: number; qtyPerUnit: number }[]>();
-  for (const pi of packagingInputs as { packagingId: number; materialId: number; qtyPerUnit: string }[]) {
-    packInputsById.set(pi.packagingId, [
-      ...(packInputsById.get(pi.packagingId) ?? []),
-      { materialId: pi.materialId, qtyPerUnit: num(pi.qtyPerUnit) },
-    ]);
-  }
-
-  return {
-    materials: (materials as Record<string, unknown>[]).map(
-      (m): CapacityMaterial => ({
-        id: m.id as number,
-        name: String(m.name ?? ""),
-        type: (m.type as MaterialType) ?? "hammadde",
-        stockQty: m.stockQty as string,
-        reservedQty: m.reservedQty as string,
-        safetyQty: m.safetyQty as string,
-      }),
-    ),
-    formulas: (formulas as Record<string, unknown>[]).map(
-      (f): CapacityFormula => ({
-        id: f.id as number,
-        outputType: f.outputType as "yari_mamul" | "mamul",
-        outputMaterialId: (f.outputMaterialId as number | null) ?? null,
-        baseQty: f.baseQty as string,
-        wastePercent: f.wastePercent as string,
-        inputs: inputsByFormula.get(f.id as number) ?? [],
-      }),
-    ),
-    packagings: (packagings as Record<string, unknown>[]).map(p => ({
-      id: p.id as number,
-      materialId: (p.materialId as number | null) ?? null,
-      inputs: packInputsById.get(p.id as number) ?? [],
-    })),
-    masters: (masters as Record<string, unknown>[]).map(m => ({
-      id: m.id as number,
-      formulaId: (m.formulaId as number | null) ?? null,
-      formulaScale: m.formulaScale as string,
-      packagingId: (m.packagingId as number | null) ?? null,
-    })),
-    rawMasters: masters as Record<string, unknown>[],
-    rawMaterials: materials as Record<string, unknown>[],
-  };
-}
 
 export const katalogRouter = router({
   /* ---- Boyutlar --------------------------------------------------------- */
@@ -1402,43 +1336,107 @@ export const katalogRouter = router({
 
   /** Reçeteler + girdileri + hangi master'lara bağlı oldukları. */
   formulas: protectedProcedure.query(async () => {
-    const [formulas, inputs, masters, scopeRows] = await Promise.all([
+    const [formulas, inputs, masters, scopeRows, materials] = await Promise.all([
       db.listFormulas(),
       db.listFormulaInputs(),
       db.listMasterProducts(),
       db.listFormulaScopes(),
+      db.listMaterials(),
     ]);
     const scopeMap = buildScopeMap(scopeRows as never);
-    type InputRow = { id: number; formulaId: number; inputMaterialId: number; qtyPerBase: string };
+    type InputRow = {
+      id: number;
+      formulaId: number;
+      inputMaterialId: number;
+      qtyPerBase: string;
+      unit: string | null;
+    };
     const byFormula = new Map<number, InputRow[]>();
     for (const i of inputs as InputRow[]) {
       byFormula.set(i.formulaId, [...(byFormula.get(i.formulaId) ?? []), i]);
     }
+
+    /*
+     * Reçete maliyeti SUNUCUDA hesaplanır.
+     *
+     * Önce istemcide `miktar × birimFiyat` olarak hesaplanıyordu; birim
+     * dönüşümü olmadığı için kg fiyatlı kaleme gram miktarı girildiğinde
+     * rozet 1000 kat şişik çıkıyordu. Hesabın maliyet motoruyla aynı yerden
+     * gelmesi, iki ekranın aynı ürüne iki farklı maliyet yazmasını önler.
+     */
+    const costMaterials = (materials as Record<string, unknown>[]).map(m => ({
+      id: m.id as number,
+      name: String(m.name ?? ""),
+      type: (m.type as CostMaterial["type"]) ?? "hammadde",
+      unitCost: (m.unitCost as string | null) ?? null,
+      unit: (m.unit as string | null) ?? null,
+    }));
+    const materialById = new Map(costMaterials.map(m => [m.id, m]));
+    const capacityFormulas = formulas.map(f => ({
+      id: f.id,
+      outputType: f.outputType as "yari_mamul" | "mamul",
+      outputMaterialId: f.outputMaterialId,
+      baseQty: f.baseQty,
+      baseUnit: f.baseUnit,
+      wastePercent: f.wastePercent,
+      inputs: (byFormula.get(f.id) ?? []).map(i => ({
+        inputMaterialId: i.inputMaterialId,
+        qtyPerBase: num(i.qtyPerBase),
+        unit: i.unit,
+      })),
+    }));
+    const resolvedUnitCost = resolveUnitCosts(costMaterials, capacityFormulas);
+
+    /** Bir baz partinin hammadde maliyeti + çevrilemeyen birimler. */
+    const batchCostOf = (formulaId: number, wastePercent: unknown) => {
+      const yieldRatio = 1 - Math.min(Math.max(num(wastePercent), 0), 99) / 100;
+      const mismatches: string[] = [];
+      let total = 0;
+      for (const row of byFormula.get(formulaId) ?? []) {
+        const mat = materialById.get(row.inputMaterialId);
+        if (mat?.type === "masraf") continue;
+        const conv = qtyInMaterialUnit(num(row.qtyPerBase), row.unit, mat?.unit);
+        if (conv.mismatch && mat) mismatches.push(mat.name);
+        total += conv.qty * (resolvedUnitCost.get(row.inputMaterialId) ?? 0);
+      }
+      if (yieldRatio > 0) total /= yieldRatio;
+      return { batchCost: Math.round(total * 10000) / 10000, mismatches };
+    };
     const usage = new Map<number, number>();
     for (const m of masters as { formulaId: number | null }[]) {
       if (m.formulaId != null) usage.set(m.formulaId, (usage.get(m.formulaId) ?? 0) + 1);
     }
-    return formulas.map(f => ({
-      id: f.id,
-      name: f.name,
-      outputType: f.outputType,
-      outputMaterialId: f.outputMaterialId,
-      seriesId: f.seriesId,
-      colorId: f.colorId,
-      familyId: f.familyId,
-      readiness: f.readiness,
-      baseQty: f.baseQty,
-      baseUnit: f.baseUnit,
-      wastePercent: f.wastePercent,
-      notes: f.notes,
-      // Çoklu kapsam: boş eksen "hepsi" demektir.
-      seriesIds: scopeMap.get(f.id)?.seri ?? [],
-      colorIds: scopeMap.get(f.id)?.renk ?? [],
-      familyIds: scopeMap.get(f.id)?.form ?? [],
-      readinessList: scopeMap.get(f.id)?.hazirlik ?? [],
-      inputs: byFormula.get(f.id) ?? [],
-      masterCount: usage.get(f.id) ?? 0,
-    }));
+    return formulas.map(f => {
+      const { batchCost, mismatches } = batchCostOf(f.id, f.wastePercent);
+      const base = num(f.baseQty);
+      return {
+        id: f.id,
+        name: f.name,
+        outputType: f.outputType,
+        outputMaterialId: f.outputMaterialId,
+        seriesId: f.seriesId,
+        colorId: f.colorId,
+        familyId: f.familyId,
+        readiness: f.readiness,
+        baseQty: f.baseQty,
+        baseUnit: f.baseUnit,
+        wastePercent: f.wastePercent,
+        notes: f.notes,
+        // Çoklu kapsam: boş eksen "hepsi" demektir.
+        seriesIds: scopeMap.get(f.id)?.seri ?? [],
+        colorIds: scopeMap.get(f.id)?.renk ?? [],
+        familyIds: scopeMap.get(f.id)?.form ?? [],
+        readinessList: scopeMap.get(f.id)?.hazirlik ?? [],
+        inputs: byFormula.get(f.id) ?? [],
+        masterCount: usage.get(f.id) ?? 0,
+        /** Bir baz partinin hammadde maliyeti (fire dahil). */
+        batchCost,
+        /** Baz birim başına maliyet — ambalaj hacmiyle çarpılınca ürün maliyeti. */
+        costPerBaseUnit: base > 0 ? Math.round((batchCost / base) * 10000) / 10000 : 0,
+        /** Birimi çevrilemeyen satırların kalemleri — sayı güvenilmez. */
+        unitMismatches: mismatches,
+      };
+    });
   }),
 
   saveFormula: protectedProcedure
@@ -1470,6 +1468,8 @@ export const katalogRouter = router({
             z.object({
               inputMaterialId: z.number(),
               qtyPerBase: z.number().min(0),
+              /** Miktarın birimi; boş bırakılırsa kalemin kendi birimi sayılır. */
+              unit: z.string().nullable().optional(),
               note: z.string().nullable().optional(),
             }),
           )
