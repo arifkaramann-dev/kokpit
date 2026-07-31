@@ -78,13 +78,15 @@ export function previewPairs(input: {
   const unconstrained: PreviewReport["unconstrainedFamilies"] = [];
 
   for (const family of input.families) {
+    // planMasters ile AYNI yorum: giriş varsa kesişim (boş küme dahil —
+    // boş küme o formu üretim dışı bırakmanın yoludur), giriş yoksa hepsi.
+    // Önizlemenin üretimden farklı düşünmesi, önizlemenin anlamını yok eder.
     const allowed = input.familyPackagings?.get(family.id);
-    const list =
-      allowed && allowed.size > 0
-        ? input.packagings.filter(p => allowed.has(p.id))
-        : input.packagings;
+    const list = allowed
+      ? input.packagings.filter(p => allowed.has(p.id))
+      : input.packagings;
 
-    if (!allowed || allowed.size === 0) {
+    if (!allowed) {
       unconstrained.push({
         familyId: family.id,
         familyName: family.name ?? `#${family.id}`,

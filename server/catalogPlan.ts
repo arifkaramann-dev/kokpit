@@ -199,6 +199,8 @@ export function planMasters(input: {
         const family = familyById.get(familyId);
         if (!family) continue;
         // Form × ambalaj kısıtı: tanımlıysa kesişim, değilse serinin hepsi.
+        // Boş küme BİLEREK "hiçbir ambalaj" demektir (bkz. catalog.test.ts) —
+        // bir formu üretim dışı bırakmanın yolu budur.
         const allowed = input.familyPackagings?.get(familyId);
         const familyPackagingIds = allowed
           ? series.packagingIds.filter(id => allowed.has(id))

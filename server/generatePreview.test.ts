@@ -71,3 +71,32 @@ describe("suggestFamilyPackagings", () => {
     expect(s.find(x => x.familyName === "Airbrush")?.packagingIds).toEqual([10, 11, 12]);
   });
 });
+
+/*
+ * planMasters ile aynı boş-küme yorumu.
+ *
+ * `masterAudit.allowed()` ve `previewPairs` boş kümeyi "kısıt yok" sayıyordu;
+ * `planMasters` ise `allowed ?` yazdığı için boş kümeyi "hiçbir ambalaj"
+ * sayıyor ve aynı seri üç yerde üç farklı sonuç veriyordu.
+ */
+describe("boş kural kümesi", () => {
+  it("planMasters ile aynı: boş küme o formu üretim dışı bırakır", () => {
+    const r = previewPairs({
+      families: [{ id: 1, name: "Airbrush" }],
+      packagings: [{ id: 10, name: "30 ML", volumeMl: 30 }],
+      familyPackagings: new Map([[1, new Set<number>()]]),
+    });
+    expect(r.pairs).toHaveLength(0);
+    expect(r.unconstrainedFamilies).toHaveLength(0);
+  });
+
+  it("kuralı hiç olmayan form tüm ambalajlarla eşleşir", () => {
+    const r = previewPairs({
+      families: [{ id: 1, name: "Airbrush" }],
+      packagings: [{ id: 10, name: "30 ML", volumeMl: 30 }],
+      familyPackagings: new Map(),
+    });
+    expect(r.pairs).toHaveLength(1);
+    expect(r.unconstrainedFamilies).toHaveLength(1);
+  });
+});
