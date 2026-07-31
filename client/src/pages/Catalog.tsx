@@ -1,3 +1,4 @@
+import CatalogAudit from "@/components/CatalogAudit";
 import CatalogRevenue from "@/components/CatalogRevenue";
 import ProductTree from "@/components/ProductTree";
 import SeriesMatrix from "@/components/SeriesMatrix";
@@ -456,6 +457,9 @@ export default function Catalog() {
           )}
         </Card>
       )}
+
+      {/* Katalog denetimi — kurallara uymayan eski ürünler */}
+      <CatalogAudit />
 
       {/* Seri × renk/form/ambalaj matrisi */}
       <SeriesMatrix />

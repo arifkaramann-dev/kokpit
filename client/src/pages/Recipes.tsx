@@ -56,10 +56,10 @@ export default function Recipes() {
     name: "",
     outputType: "mamul" as "mamul" | "yari_mamul",
     outputMaterialId: ANY,
-    seriesId: ANY,
-    colorId: ANY,
-    familyId: ANY,
-    readiness: ANY,
+    seriesIds: [] as number[],
+    colorIds: [] as number[],
+    familyIds: [] as number[],
+    readinessList: [] as string[],
     baseQty: "1000",
     baseUnit: "ml",
     wastePercent: "0",
@@ -111,10 +111,10 @@ export default function Recipes() {
       name: "",
       outputType: "mamul",
       outputMaterialId: ANY,
-      seriesId: ANY,
-      colorId: ANY,
-      familyId: ANY,
-      readiness: ANY,
+      seriesIds: [],
+      colorIds: [],
+      familyIds: [],
+      readinessList: [],
       baseQty: "1000",
       baseUnit: "ml",
       wastePercent: "0",
@@ -130,10 +130,13 @@ export default function Recipes() {
       name: f.name,
       outputType: f.outputType,
       outputMaterialId: f.outputMaterialId != null ? String(f.outputMaterialId) : ANY,
-      seriesId: f.seriesId != null ? String(f.seriesId) : ANY,
-      colorId: f.colorId != null ? String(f.colorId) : ANY,
-      familyId: f.familyId != null ? String(f.familyId) : ANY,
-      readiness: f.readiness ?? ANY,
+      // Çoklu kapsam varsa o; yoksa eski tek değerli kolon tek elemanlı
+      // listeye çevrilir — eski reçeteler bozulmaz.
+      seriesIds: f.seriesIds.length > 0 ? f.seriesIds : f.seriesId != null ? [f.seriesId] : [],
+      colorIds: f.colorIds.length > 0 ? f.colorIds : f.colorId != null ? [f.colorId] : [],
+      familyIds: f.familyIds.length > 0 ? f.familyIds : f.familyId != null ? [f.familyId] : [],
+      readinessList:
+        f.readinessList.length > 0 ? f.readinessList : f.readiness != null ? [f.readiness] : [],
       baseQty: String(parseFloat(String(f.baseQty)) || 1000),
       baseUnit: f.baseUnit,
       wastePercent: String(parseFloat(String(f.wastePercent)) || 0),
@@ -162,10 +165,19 @@ export default function Recipes() {
       name: form.name.trim(),
       outputType: form.outputType,
       outputMaterialId: numOrNull(form.outputMaterialId),
-      seriesId: numOrNull(form.seriesId),
-      colorId: numOrNull(form.colorId),
-      familyId: numOrNull(form.familyId),
-      readiness: form.readiness === ANY ? null : (form.readiness as "konsantre" | "r2u"),
+      // Tek değerli kolonlar geriye dönük uyum için yazılır: kapsamda tek
+      // değer varsa oraya da düşer, çoklu ise boş kalır ve kapsam kazanır.
+      seriesId: form.seriesIds.length === 1 ? form.seriesIds[0] : null,
+      colorId: form.colorIds.length === 1 ? form.colorIds[0] : null,
+      familyId: form.familyIds.length === 1 ? form.familyIds[0] : null,
+      readiness:
+        form.readinessList.length === 1
+          ? (form.readinessList[0] as "konsantre" | "r2u")
+          : null,
+      seriesIds: form.seriesIds,
+      colorIds: form.colorIds,
+      familyIds: form.familyIds,
+      readinessList: form.readinessList as ("konsantre" | "r2u")[],
       baseQty: parseFloat(form.baseQty) || 1000,
       baseUnit: form.baseUnit,
       wastePercent: parseFloat(form.wastePercent) || 0,
@@ -389,34 +401,62 @@ export default function Recipes() {
                   Boş bırakılan eksen "hepsi" demektir. Genel bir seri reçetesi yazıp yalnız birkaç
                   rengi özelleştirebilirsiniz — en özel reçete kazanır.
                 </p>
-                <div className="grid grid-cols-2 gap-2">
-                  <AxisSelect
+                <div className="space-y-3">
+                  <AxisPicker
                     label="Seri"
-                    value={form.seriesId}
-                    onChange={v => setForm(f => ({ ...f, seriesId: v }))}
-                    options={(series ?? []).map(s => ({ value: String(s.id), label: s.name }))}
+                    selected={form.seriesIds}
+                    onChange={v => setForm(f => ({ ...f, seriesIds: v }))}
+                    options={(series ?? []).map(s => ({ id: s.id, label: s.name }))}
                   />
-                  <AxisSelect
+                  <AxisPicker
                     label="Renk"
-                    value={form.colorId}
-                    onChange={v => setForm(f => ({ ...f, colorId: v }))}
-                    options={(dims?.colors ?? []).map(c => ({ value: String(c.id), label: c.name }))}
+                    selected={form.colorIds}
+                    onChange={v => setForm(f => ({ ...f, colorIds: v }))}
+                    options={(dims?.colors ?? []).map(c => ({ id: c.id, label: c.name, hex: c.hex }))}
                   />
-                  <AxisSelect
+                  <AxisPicker
                     label="Form"
-                    value={form.familyId}
-                    onChange={v => setForm(f => ({ ...f, familyId: v }))}
-                    options={(dims?.families ?? []).map(x => ({ value: String(x.id), label: x.name }))}
+                    selected={form.familyIds}
+                    onChange={v => setForm(f => ({ ...f, familyIds: v }))}
+                    options={(dims?.families ?? []).map(x => ({ id: x.id, label: x.name }))}
                   />
-                  <AxisSelect
-                    label="Hazırlık"
-                    value={form.readiness}
-                    onChange={v => setForm(f => ({ ...f, readiness: v }))}
-                    options={[
-                      { value: "konsantre", label: "Konsantre" },
-                      { value: "r2u", label: "Kullanıma hazır (r2u)" },
-                    ]}
-                  />
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Label className="text-xs">Hazırlık</Label>
+                      <span className="text-[11px] text-muted-foreground">
+                        {form.readinessList.length === 0 ? "hepsi" : `${form.readinessList.length} seçili`}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        { v: "konsantre", label: "Konsantre" },
+                        { v: "r2u", label: "Kullanıma hazır (r2u)" },
+                      ].map(o => {
+                        const active = form.readinessList.includes(o.v);
+                        return (
+                          <button
+                            key={o.v}
+                            type="button"
+                            onClick={() =>
+                              setForm(f => ({
+                                ...f,
+                                readinessList: active
+                                  ? f.readinessList.filter(x => x !== o.v)
+                                  : [...f.readinessList, o.v],
+                              }))
+                            }
+                            className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
+                              active
+                                ? "border-primary bg-primary text-primary-foreground"
+                                : "text-muted-foreground hover:text-foreground"
+                            }`}
+                          >
+                            {o.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
@@ -539,33 +579,79 @@ export default function Recipes() {
   );
 }
 
-function AxisSelect({
+/**
+ * Eksen seçici — ÇOKLU.
+ *
+ * Tek seçimliydi: "bu reçete CANDY'nin kırmızısına uygulanır" yazılabiliyor
+ * ama "kırmızı VE bordo VE vişne" yazılamıyordu; aynı reçeteyi üç kez
+ * kopyalamak gerekiyordu ve kopyalar zamanla birbirinden kayıyordu — v3'ün
+ * en baştan çözmeye çalıştığı sorunun ta kendisi.
+ *
+ * Hiçbir şey seçilmezse eksen "hepsi" demektir (eski davranış).
+ */
+function AxisPicker({
   label,
-  value,
+  selected,
   onChange,
   options,
 }: {
   label: string;
-  value: string;
-  onChange: (v: string) => void;
-  options: { value: string; label: string }[];
+  selected: number[];
+  onChange: (v: number[]) => void;
+  options: { id: number; label: string; hex?: string | null }[];
 }) {
+  const toggle = (id: number) =>
+    onChange(selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id]);
+
   return (
     <div className="space-y-1">
-      <Label className="text-xs">{label}</Label>
-      <Select value={value} onValueChange={onChange}>
-        <SelectTrigger className="h-8 text-xs">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={ANY}>Hepsi</SelectItem>
-          {options.map(o => (
-            <SelectItem key={o.value} value={o.value}>
+      <div className="flex items-center gap-2">
+        <Label className="text-xs">{label}</Label>
+        <span className="text-[11px] text-muted-foreground">
+          {selected.length === 0 ? "hepsi" : `${selected.length} seçili`}
+        </span>
+        {selected.length > 0 && (
+          <button
+            type="button"
+            onClick={() => onChange([])}
+            className="text-[11px] text-muted-foreground underline hover:text-foreground"
+          >
+            temizle
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => onChange(options.map(o => o.id))}
+          className="ml-auto text-[11px] text-muted-foreground underline hover:text-foreground"
+        >
+          tümünü seç
+        </button>
+      </div>
+      <div className="flex max-h-28 flex-wrap gap-1.5 overflow-y-auto rounded-lg border p-2">
+        {options.map(o => {
+          const active = selected.includes(o.id);
+          return (
+            <button
+              key={o.id}
+              type="button"
+              onClick={() => toggle(o.id)}
+              className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
+                active
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {o.hex && (
+                <span
+                  className="inline-block h-3 w-3 shrink-0 rounded-full border"
+                  style={{ backgroundColor: o.hex }}
+                />
+              )}
               {o.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

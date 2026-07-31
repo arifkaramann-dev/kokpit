@@ -53,6 +53,7 @@ import {
   type ChannelAttributeDef,
   type ImageRow,
 } from "../masterFields";
+import { findInvalidMasters, planCleanup } from "../masterAudit";
 import { masterHealth, rollupBySeries } from "../masterHealth";
 import {
   computeMasterRevenue,
@@ -105,6 +106,87 @@ async function loadChannelCategories(channelCode: string): Promise<FlatCategory[
   const rows = flattenCategories(raw);
   categoryCache.set(channelCode, { at: Date.now(), rows });
   return rows;
+}
+
+/**
+ * `formulaScopes` satırlarını eşleştiricinin beklediği biçime çevirir.
+ * Bir eksende satır yoksa alan tanımsız kalır → eksen serbest ("hepsi").
+ */
+function buildScopeMap(
+  rows: { formulaId: number; kind: "seri" | "renk" | "form" | "hazirlik"; valueId: number }[],
+): Map<number, { seri?: number[]; renk?: number[]; form?: number[]; hazirlik?: Readiness[] }> {
+  const out = new Map<
+    number,
+    { seri?: number[]; renk?: number[]; form?: number[]; hazirlik?: Readiness[] }
+  >();
+  for (const r of rows) {
+    const entry = out.get(r.formulaId) ?? {};
+    if (r.kind === "hazirlik") {
+      entry.hazirlik = [...(entry.hazirlik ?? []), r.valueId === 1 ? "r2u" : "konsantre"];
+    } else {
+      entry[r.kind] = [...(entry[r.kind] ?? []), r.valueId];
+    }
+    out.set(r.formulaId, entry);
+  }
+  return out;
+}
+
+/**
+ * Katalog denetimi — bugünkü uyumluluk kurallarına uymayan master'ları bulur.
+ *
+ * İki uç (denetim ve temizlik) aynı hesabı kullanmalı: önizlemede temiz
+ * görünüp temizlikte başka bir şey silinmesin.
+ */
+async function runMasterAudit() {
+  const [masters, colors, families, packagings, sp, sf, sc, fp, history] = await Promise.all([
+    db.listMasterProducts(),
+    db.listColors(),
+    db.listProductFamilies(),
+    db.listPackagings(),
+    db.listSeriesPackagings(),
+    db.listSeriesFamilies(),
+    db.listSeriesColors(),
+    db.listFamilyPackagings(),
+    db.listMastersWithHistory(),
+  ]);
+
+  const group = (rows: Record<string, unknown>[], key: string, val: string) => {
+    const map = new Map<number, Set<number>>();
+    for (const r of rows) {
+      const k = r[key] as number;
+      const set = map.get(k) ?? new Set<number>();
+      set.add(r[val] as number);
+      map.set(k, set);
+    }
+    return map;
+  };
+  const inactive = (rows: Record<string, unknown>[]) =>
+    new Set(rows.filter(r => Number(r.isActive ?? 1) === 0).map(r => r.id as number));
+
+  const violations = findInvalidMasters({
+    masters: (masters as Record<string, unknown>[]).map(m => ({
+      id: m.id as number,
+      internalSku: String(m.internalSku ?? ""),
+      seriesId: m.seriesId as number,
+      colorId: m.colorId as number,
+      familyId: m.familyId as number,
+      packagingId: m.packagingId as number,
+      readiness: m.readiness as "konsantre" | "r2u",
+      status: m.status as "taslak" | "aktif" | "arsiv",
+    })),
+    rules: {
+      seriesPackagings: group(sp as never, "seriesId", "packagingId"),
+      seriesFamilies: group(sf as never, "seriesId", "familyId"),
+      seriesColors: group(sc as never, "seriesId", "colorId"),
+      familyPackagings: group(fp as never, "familyId", "packagingId"),
+      inactiveColors: inactive(colors as never),
+      inactiveFamilies: inactive(families as never),
+      inactivePackagings: inactive(packagings as never),
+    },
+    historyIds: history,
+  });
+
+  return { total: (masters as unknown[]).length, violations, plan: planCleanup(violations) };
 }
 
 /** productSeries JSON alanındaki {label,value} veya düz metin dizisini çözer. */
@@ -366,6 +448,68 @@ export const katalogRouter = router({
       return { ok: true };
     }),
 
+  /**
+   * Katalog denetimi: bugünkü kurallara UYMAYAN master'lar.
+   *
+   * Uyumluluk kuralları sonradan sıkılaştı (form × ambalaj kısıtı, seri × renk
+   * bağı, pasif boyut). Kural değişince önce üretilmiş master'lar yerinde
+   * kalıyordu: "Sprey · 100 ml" gibi hiç var olmayan bir ürün katalogda
+   * duruyor, listeyi ve raporları kirletiyordu.
+   */
+  auditMasters: protectedProcedure.query(async () => {
+    const { total, plan, violations } = await runMasterAudit();
+    return {
+      total,
+      invalid: violations.length,
+      deletable: plan.deletable.length,
+      archivable: plan.archivable.length,
+      byReason: plan.byReason,
+      sample: violations.slice(0, 30),
+    };
+  }),
+
+  /**
+   * Denetimde çıkan master'ları temizler.
+   *
+   * Geçmişi olan (ilanı ya da satışı bulunan) master SİLİNMEZ, arşivlenir:
+   * silmek ciro raporunu ve pazaryeri eşleşmesini koparırdı. `dryRun` ile
+   * ne olacağı önce görünür — 540 kaydın üstünde tek tıkla iş yapılmaz.
+   */
+  cleanupMasters: protectedProcedure
+    .input(z.object({ dryRun: z.boolean().default(true) }))
+    .mutation(async ({ input }) => {
+      const { total, plan, violations } = await runMasterAudit();
+      const summary = {
+        total,
+        invalid: violations.length,
+        byReason: plan.byReason,
+        sample: violations.slice(0, 30),
+      };
+      if (input.dryRun) {
+        return {
+          dryRun: true,
+          deleted: 0,
+          archived: 0,
+          willDelete: plan.deletable.length,
+          willArchive: plan.archivable.length,
+          ...summary,
+        };
+      }
+
+      for (const v of plan.deletable) await db.deleteMasterProduct(v.masterId);
+      for (const v of plan.archivable) {
+        await db.updateMasterProduct(v.masterId, { status: "arsiv" } as never);
+      }
+      return {
+        dryRun: false,
+        deleted: plan.deletable.length,
+        archived: plan.archivable.length,
+        willDelete: plan.deletable.length,
+        willArchive: plan.archivable.length,
+        ...summary,
+      };
+    }),
+
   /* ---- Master üretimi --------------------------------------------------- */
 
   /**
@@ -415,17 +559,30 @@ export const katalogRouter = router({
         colorBySeries.set(r.seriesId, [...(colorBySeries.get(r.seriesId) ?? []), r.colorId]);
       }
 
+      // Pasife alınan boyut ÜRETİME GİRMEZ. Eskiden `isActive` hiç
+      // okunmuyordu: "pasife al" düğmesi satırı işaretliyor ama master
+      // üretimi onu yine kullanıyordu.
+      const inactivePack = new Set(
+        (packagings as { id: number; isActive: number }[]).filter(p => p.isActive === 0).map(p => p.id),
+      );
+      const inactiveFam = new Set(
+        (families as { id: number; isActive: number }[]).filter(f => f.isActive === 0).map(f => f.id),
+      );
+      const inactiveColor = new Set(
+        (colors as { id: number; isActive: number }[]).filter(c => c.isActive === 0).map(c => c.id),
+      );
+
       const planSeries = (series as { id: number; name: string; prefix: string | null }[])
-        .filter(s => (packBySeries.get(s.id)?.length ?? 0) > 0 && (famBySeries.get(s.id)?.length ?? 0) > 0)
         .map(s => ({
           id: s.id,
           name: s.name,
           prefix: s.prefix,
-          packagingIds: packBySeries.get(s.id) ?? [],
-          familyIds: famBySeries.get(s.id) ?? [],
-          colorIds: colorBySeries.get(s.id) ?? [],
+          packagingIds: (packBySeries.get(s.id) ?? []).filter(id => !inactivePack.has(id)),
+          familyIds: (famBySeries.get(s.id) ?? []).filter(id => !inactiveFam.has(id)),
+          colorIds: (colorBySeries.get(s.id) ?? []).filter(id => !inactiveColor.has(id)),
           readiness: input.readiness as Readiness[],
-        }));
+        }))
+        .filter(s => s.packagingIds.length > 0 && s.familyIds.length > 0);
 
       if (planSeries.length === 0) {
         throw new TRPCError({
@@ -437,7 +594,15 @@ export const katalogRouter = router({
 
       const plan = planMasters({
         series: planSeries,
-        colors: (colors as { id: number; code: string; name: string; seriesId: number | null }[]).map(c => ({
+        colors: (colors as {
+          id: number;
+          code: string;
+          name: string;
+          seriesId: number | null;
+          isActive: number;
+        }[])
+          .filter(c => c.isActive !== 0)
+          .map(c => ({
           id: c.id,
           code: c.code,
           name: c.name,
@@ -1237,11 +1402,13 @@ export const katalogRouter = router({
 
   /** Reçeteler + girdileri + hangi master'lara bağlı oldukları. */
   formulas: protectedProcedure.query(async () => {
-    const [formulas, inputs, masters] = await Promise.all([
+    const [formulas, inputs, masters, scopeRows] = await Promise.all([
       db.listFormulas(),
       db.listFormulaInputs(),
       db.listMasterProducts(),
+      db.listFormulaScopes(),
     ]);
+    const scopeMap = buildScopeMap(scopeRows as never);
     type InputRow = { id: number; formulaId: number; inputMaterialId: number; qtyPerBase: string };
     const byFormula = new Map<number, InputRow[]>();
     for (const i of inputs as InputRow[]) {
@@ -1264,6 +1431,11 @@ export const katalogRouter = router({
       baseUnit: f.baseUnit,
       wastePercent: f.wastePercent,
       notes: f.notes,
+      // Çoklu kapsam: boş eksen "hepsi" demektir.
+      seriesIds: scopeMap.get(f.id)?.seri ?? [],
+      colorIds: scopeMap.get(f.id)?.renk ?? [],
+      familyIds: scopeMap.get(f.id)?.form ?? [],
+      readinessList: scopeMap.get(f.id)?.hazirlik ?? [],
       inputs: byFormula.get(f.id) ?? [],
       masterCount: usage.get(f.id) ?? 0,
     }));
@@ -1276,10 +1448,19 @@ export const katalogRouter = router({
         name: z.string().min(1),
         outputType: z.enum(["yari_mamul", "mamul"]).default("mamul"),
         outputMaterialId: z.number().nullable().optional(),
+        // Tek değerli eksenler — geriye dönük uyum.
         seriesId: z.number().nullable().optional(),
         colorId: z.number().nullable().optional(),
         familyId: z.number().nullable().optional(),
         readiness: z.enum(["konsantre", "r2u"]).nullable().optional(),
+        /**
+         * Çoklu kapsam. Boş dizi = o eksende sınır yok ("hepsi").
+         * Doluysa tek değerli kolonun yerine geçer.
+         */
+        seriesIds: z.array(z.number()).optional(),
+        colorIds: z.array(z.number()).optional(),
+        familyIds: z.array(z.number()).optional(),
+        readinessList: z.array(z.enum(["konsantre", "r2u"])).optional(),
         baseQty: z.number().positive().default(1000),
         baseUnit: z.string().default("ml"),
         wastePercent: z.number().min(0).max(99).default(0),
@@ -1331,6 +1512,23 @@ export const katalogRouter = router({
         ? (await db.updateFormula(input.id, payload as never), input.id)
         : await db.createFormula(payload as never);
       await db.setFormulaInputs(id, input.inputs);
+
+      // Çoklu kapsam. Alan hiç gönderilmediyse mevcut kapsama dokunulmaz;
+      // gönderildiyse (boş dizi dahil) o eksen sıfırlanır.
+      const scopes: { kind: "seri" | "renk" | "form" | "hazirlik"; valueId: number }[] = [];
+      for (const v of input.seriesIds ?? []) scopes.push({ kind: "seri", valueId: v });
+      for (const v of input.colorIds ?? []) scopes.push({ kind: "renk", valueId: v });
+      for (const v of input.familyIds ?? []) scopes.push({ kind: "form", valueId: v });
+      for (const v of input.readinessList ?? []) {
+        scopes.push({ kind: "hazirlik", valueId: v === "r2u" ? 1 : 0 });
+      }
+      const touched =
+        input.seriesIds !== undefined ||
+        input.colorIds !== undefined ||
+        input.familyIds !== undefined ||
+        input.readinessList !== undefined;
+      if (touched) await db.setFormulaScopes(id, scopes);
+
       return { id };
     }),
 
@@ -1342,11 +1540,13 @@ export const katalogRouter = router({
   bindFormulas: protectedProcedure
     .input(z.object({ rebindExisting: z.boolean().default(false), dryRun: z.boolean().default(true) }))
     .mutation(async ({ input }) => {
-      const [formulas, masters, packagings] = await Promise.all([
+      const [formulas, masters, packagings, scopeRows] = await Promise.all([
         db.listFormulas(),
         db.listMasterProducts(),
         db.listPackagings(),
+        db.listFormulaScopes(),
       ]);
+      const scopesByFormula = buildScopeMap(scopeRows as never);
       const volumeById = new Map(
         (packagings as { id: number; volumeMl: string }[]).map(p => [p.id, num(p.volumeMl)]),
       );
@@ -1369,6 +1569,7 @@ export const katalogRouter = router({
             colorId: (f.colorId as number | null) ?? null,
             familyId: (f.familyId as number | null) ?? null,
             readiness: (f.readiness as Readiness | null) ?? null,
+            scopes: scopesByFormula.get(f.id as number),
             baseQty: num(f.baseQty),
           }),
         ),

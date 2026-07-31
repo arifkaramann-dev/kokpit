@@ -67,6 +67,7 @@ import {
   familyPackagings,
   formulas,
   formulaInputs,
+  formulaScopes,
   masterProducts,
   listings,
   listingImages,
@@ -2726,6 +2727,23 @@ export async function listFormulas() {
   return db.select().from(formulas);
 }
 
+/** Reçete kapsamı (çoklu seçim) — bir eksende satır yoksa "hepsi". */
+export async function listFormulaScopes() {
+  const db = await requireDb();
+  return db.select().from(formulaScopes);
+}
+
+export async function setFormulaScopes(
+  formulaId: number,
+  scopes: { kind: "seri" | "renk" | "form" | "hazirlik"; valueId: number }[],
+) {
+  const db = await requireDb();
+  await db.delete(formulaScopes).where(eq(formulaScopes.formulaId, formulaId));
+  for (const s of scopes) {
+    await db.insert(formulaScopes).values({ formulaId, kind: s.kind, valueId: s.valueId });
+  }
+}
+
 export async function listFormulaInputs() {
   const db = await requireDb();
   return db.select().from(formulaInputs);
@@ -2780,6 +2798,42 @@ export async function createMasterProduct(data: InsertMasterProduct) {
   const db = await requireDb();
   const [r] = await db.insert(masterProducts).values(data);
   return Number(r.insertId);
+}
+
+/**
+ * Master'ı ve ona bağlı ilan/yayın/görsel kayıtlarını siler.
+ *
+ * Yalnız GEÇMİŞİ OLMAYAN master için çağrılmalı (bkz. `masterAudit`).
+ * Satışı olan bir ürünü silmek ciro raporunu ve pazaryeri eşleşmesini
+ * koparırdı; onlar arşivlenir.
+ */
+export async function deleteMasterProduct(id: number) {
+  const db = await requireDb();
+  const rows = await db.select({ id: listings.id }).from(listings).where(eq(listings.masterId, id));
+  const listingIds = rows.map(r => r.id);
+  if (listingIds.length > 0) {
+    await db.delete(listingImages).where(inArray(listingImages.listingId, listingIds));
+  }
+  await db.delete(channelListings).where(eq(channelListings.masterId, id));
+  await db.delete(listings).where(eq(listings.masterId, id));
+  await db.delete(masterImages).where(eq(masterImages.masterId, id));
+  await db.delete(masterProducts).where(eq(masterProducts.id, id));
+}
+
+/** Master'ları ilanı ya da satışı olanlar — silinemez, arşivlenir. */
+export async function listMastersWithHistory(): Promise<Set<number>> {
+  const db = await requireDb();
+  const [pub, sold] = await Promise.all([
+    db.select({ masterId: channelListings.masterId }).from(channelListings),
+    db
+      .select({ masterId: orderItems.masterId })
+      .from(orderItems)
+      .where(isNotNull(orderItems.masterId)),
+  ]);
+  const out = new Set<number>();
+  for (const r of pub) out.add(r.masterId);
+  for (const r of sold) if (r.masterId != null) out.add(r.masterId);
+  return out;
 }
 
 export async function updateMasterProduct(id: number, data: Partial<InsertMasterProduct>) {

@@ -22,6 +22,16 @@ export type MatchableFormula = {
   colorId: number | null;
   familyId: number | null;
   readiness: Readiness | null;
+  /**
+   * Çoklu kapsam (formulaScopes). Bir eksende değer varsa TEK değerli
+   * kolonun yerine geçer; boşsa kolon (o da boşsa "hepsi") kullanılır.
+   */
+  scopes?: {
+    seri?: number[];
+    renk?: number[];
+    form?: number[];
+    hazirlik?: Readiness[];
+  };
   baseQty: number;
 };
 
@@ -59,23 +69,30 @@ export function matchFormula(
     // BOM'un ara katmanıdır, ürüne doğrudan bağlanmaz.
     if (f.outputType !== "mamul") continue;
 
+    // Eksen kontrolü: çoklu kapsam varsa üyelik, yoksa tek değerli kolon,
+    // o da boşsa eksen serbest ("hepsi").
+    const axis = <T>(list: T[] | undefined, single: T | null, actual: T): boolean | null => {
+      if (list && list.length > 0) return list.includes(actual);
+      if (single !== null) return single === actual;
+      return null; // serbest — puana katkı yok
+    };
+
     let score = 0;
-    if (f.seriesId !== null) {
-      if (f.seriesId !== master.seriesId) continue;
+    let rejected = false;
+    for (const hit of [
+      axis(f.scopes?.seri, f.seriesId, master.seriesId),
+      axis(f.scopes?.renk, f.colorId, master.colorId),
+      axis(f.scopes?.form, f.familyId, master.familyId),
+      axis(f.scopes?.hazirlik, f.readiness, master.readiness),
+    ]) {
+      if (hit === null) continue;
+      if (!hit) {
+        rejected = true;
+        break;
+      }
       score++;
     }
-    if (f.colorId !== null) {
-      if (f.colorId !== master.colorId) continue;
-      score++;
-    }
-    if (f.familyId !== null) {
-      if (f.familyId !== master.familyId) continue;
-      score++;
-    }
-    if (f.readiness !== null) {
-      if (f.readiness !== master.readiness) continue;
-      score++;
-    }
+    if (rejected) continue;
 
     if (!best || score > best.specificity || (score === best.specificity && f.id < best.formula.id)) {
       best = { formula: f, specificity: score };
