@@ -19,9 +19,10 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { formatTL, num } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
 import { Beaker, Link2, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 /** Boş eksen "hepsi" demektir — Select boş değer kabul etmediği için sentinel. */
@@ -103,7 +104,21 @@ export default function Recipes() {
   });
 
   const materialName = new Map((materials ?? []).map(m => [m.id, m.name]));
+  const materialCost = new Map((materials ?? []).map(m => [m.id, num(m.unitCost)]));
   const semiFinished = (materials ?? []).filter(m => m.type === "yari_mamul");
+
+  const recipeCosts = useMemo(() => {
+    const costMap = new Map<number, number>();
+    (formulas ?? []).forEach(f => {
+      let total = 0;
+      (f.inputs as { inputMaterialId: number; qtyPerBase: string }[]).forEach(i => {
+        const unitCost = materialCost.get(i.inputMaterialId) ?? 0;
+        total += num(i.qtyPerBase) * unitCost;
+      });
+      costMap.set(f.id, total);
+    });
+    return costMap;
+  }, [formulas, materialCost]);
 
   function openNew() {
     setEditId(null);
@@ -229,7 +244,9 @@ export default function Recipes() {
             </Card>
           )}
 
-          {(formulas ?? []).map(f => (
+          {(formulas ?? []).map(f => {
+            const cost = recipeCosts.get(f.id) ?? 0;
+            return (
             <Card key={f.id} className="space-y-2 p-4">
               <div className="flex flex-wrap items-center gap-2">
                 <p className="font-semibold">{f.name}</p>
@@ -247,6 +264,9 @@ export default function Recipes() {
                     {f.masterCount} master
                   </Badge>
                 )}
+                <Badge className="ml-2 bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-300">
+                  {formatTL(cost)}
+                </Badge>
                 <span className="flex-1" />
                 <Button variant="outline" size="sm" className="h-8" onClick={() => openEdit(f)}>
                   <Pencil className="mr-1 h-3.5 w-3.5" /> Düzenle
@@ -265,7 +285,8 @@ export default function Recipes() {
                 ))}
               </div>
             </Card>
-          ))}
+            );
+          })}
         </TabsContent>
 
         <TabsContent value="kalemler" className="space-y-3 pt-3">
