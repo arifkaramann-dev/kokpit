@@ -25,7 +25,14 @@ import { toast } from "sonner";
  * seri "tüm renkler" demektir ve bu ekranda açıkça uyarılır — sessizce
  * şişmesin.
  */
-export default function SeriesMatrix() {
+/**
+ * Seri kurulumu — hangi renk/form/ambalaj hangi seriye bağlı.
+ *
+ * `seriesId` verilirse kendi seri seçicisini gizler ve yalnız o seriyi
+ * düzenler. Sihirbaz bunu kullanır: kullanıcının kurulum için ayrı sayfaya
+ * gidip geri dönmesi, akışın en çok şikayet edilen yeriydi.
+ */
+export default function SeriesMatrix({ seriesId: lockedSeriesId }: { seriesId?: number } = {}) {
   const utils = trpc.useUtils();
   const { data: dims } = trpc.katalog.dimensions.useQuery();
   const { data: series } = trpc.series.list.useQuery();
@@ -41,7 +48,8 @@ export default function SeriesMatrix() {
   });
 
   const [seriesId, setSeriesId] = useState<string>("");
-  const activeId = Number(seriesId) || series?.[0]?.id || 0;
+  // Dışarıdan seri verildiyse o kilitlenir; verilmediyse kendi seçicisi çalışır.
+  const activeId = lockedSeriesId ?? (Number(seriesId) || series?.[0]?.id || 0);
 
   const colors = dims?.colors ?? [];
   const families = dims?.families ?? [];
@@ -95,18 +103,20 @@ export default function SeriesMatrix() {
     <Card className="space-y-4 p-5">
       <div className="flex flex-wrap items-center gap-3">
         <h2 className="text-sm font-semibold">Seri Uyumluluğu</h2>
-        <Select value={String(activeId)} onValueChange={setSeriesId}>
-          <SelectTrigger className="w-48">
-            <SelectValue placeholder="Seri seçin" />
-          </SelectTrigger>
-          <SelectContent>
-            {(series ?? []).map(s => (
-              <SelectItem key={s.id} value={String(s.id)}>
-                {s.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {lockedSeriesId == null && (
+          <Select value={String(activeId)} onValueChange={setSeriesId}>
+            <SelectTrigger className="w-48">
+              <SelectValue placeholder="Seri seçin" />
+            </SelectTrigger>
+            <SelectContent>
+              {(series ?? []).map(s => (
+                <SelectItem key={s.id} value={String(s.id)}>
+                  {s.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         {dirty && (
           <Button
             size="sm"

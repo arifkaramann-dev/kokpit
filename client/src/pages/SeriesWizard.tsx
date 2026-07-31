@@ -10,7 +10,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { formatTL } from "@/lib/format";
+import CatalogAudit from "@/components/CatalogAudit";
+import SeriesMatrix from "@/components/SeriesMatrix";
 import { trpc } from "@/lib/trpc";
 import {
   ArrowLeft,
@@ -241,6 +242,12 @@ export default function SeriesWizard() {
         </Card>
       )}
 
+      {/* Seri kurulumu burada, akışın içinde. Ayrı sayfaya gidip geri dönmek
+          bu sihirbazın çözmeye çalıştığı sorunun ta kendisiydi. */}
+      {step === 0 && seriesId && (
+        <SeriesMatrix seriesId={Number(seriesId)} />
+      )}
+
       {/* ── Adım 1: önizleme ───────────────────────────────────────────── */}
       {step === 1 && preview && (
         <div className="space-y-3">
@@ -302,6 +309,22 @@ export default function SeriesWizard() {
               görünmüyor, sorun yok.
             </Card>
           )}
+
+          {/*
+            Kuralı düzeltmek YETMİYOR: generateMasters yalnız üretir, hiç
+            silmez. Daha önce kuralsızken açılmış "Rötuş · SPREY 400ML" gibi
+            varyantlar yerinde kalır. Temizlik aracı Katalog'un ayrı bir
+            sekmesindeydi; kullanıcı kuralı düzeltip geri dönünce hataların
+            durduğunu görüp "düzelmedi" diyordu. Araç artık burada.
+          */}
+          <div className="space-y-1">
+            <p className="text-xs text-muted-foreground">
+              Kuralı değiştirmek yalnız <strong>bundan sonra</strong> üretilecekleri etkiler. Daha
+              önce kuralsızken açılmış varyantlar katalogda durmaya devam eder — aşağıdan
+              temizleyin.
+            </p>
+            <CatalogAudit />
+          </div>
 
           <Card className="overflow-hidden p-0">
             <div className="max-h-72 overflow-y-auto">
