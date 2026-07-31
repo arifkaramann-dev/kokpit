@@ -341,6 +341,57 @@ export function listingQty(buildable: number, cap: number): number {
   return Math.max(0, Math.min(buildable, Math.max(0, cap)));
 }
 
+/**
+ * Ürünün nasıl satıldığı. Tek bir kural bütün katalogda çalışmıyor:
+ * çok satanlar rafta hazır durur, geri kalanı sipariş gelince üretilir,
+ * bazıları da hammadde stokta olmasa bile termin sözüyle satılır.
+ */
+export type SalesMode =
+  /** Eldeki hammaddeden üretilebilir adet — v3'ün varsayılanı. */
+  | "siparis_uzerine"
+  /** Rafta duran mamul adedi; hammadde kapasitesine bakılmaz. */
+  | "stoktan"
+  /** Hammadde yoksa da satışta: termin süresiyle satılır. */
+  | "tedarikli";
+
+export type ListingQtyInput = {
+  salesMode?: SalesMode | null;
+  /** Hammaddeden üretilebilir adet. */
+  buildable: Num;
+  /** İlana yazılabilecek tavan. */
+  cap: Num;
+  /** Raftaki mamul adedi (yalnız `stoktan` modunda kullanılır). */
+  stockQty?: Num;
+  /** Açık siparişlere ayrılmış mamul. */
+  reservedQty?: Num;
+};
+
+/**
+ * Satış moduna göre ilana yazılacak miktar.
+ *
+ * ── Neden gerekti ─────────────────────────────────────────────────────────
+ * Miktar yalnızca `buildable`den türetiliyordu: reçetesi bağlanmamış ya da
+ * hammaddesi biten her ürün 0 yazıyor, ilan kapanıyordu. Bu, "önce üret sonra
+ * sat" demek — oysa rafta hazır duran ürünün hammaddesi tükenmiş olabilir ve
+ * hâlâ satılabilir; tersine, hammaddesi olmayan ama 3 günde tedarik edilen bir
+ * ürünü satışa kapatmak sipariş kaybettirir.
+ */
+export function listingQtyFor(input: ListingQtyInput): number {
+  const cap = Math.max(0, num(input.cap));
+  switch (input.salesMode ?? "siparis_uzerine") {
+    case "stoktan": {
+      // Raftaki mamul: hammadde kapasitesi burada bağlayıcı değil.
+      const onHand = num(input.stockQty) - num(input.reservedQty);
+      return Math.max(0, Math.min(Math.floor(onHand), cap || Math.floor(onHand)));
+    }
+    case "tedarikli":
+      // Hammaddeden bağımsız: termin süresi sözüyle satışta kalır.
+      return cap;
+    default:
+      return listingQty(num(input.buildable), cap);
+  }
+}
+
 export type BottleneckRow = {
   materialId: number;
   materialName: string;

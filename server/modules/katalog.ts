@@ -6,6 +6,7 @@
  * (catalogPlan, catalogCodes, capacity); burada yalnız veri okuma/yazma var.
  */
 
+import type { SalesMode } from "../capacity";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
@@ -14,6 +15,7 @@ import {
   bottleneckReport,
   computeCapacity,
   listingQty,
+  listingQtyFor,
   type CapacityFormula,
   type CapacityMaterial,
   type MaterialType,
@@ -1450,6 +1452,41 @@ export const katalogRouter = router({
    * Ambalaj kalemleri hacimle ÖLÇEKLENMEZ: 400 ml kutu, 30 ml şişenin 13
    * katı değildir. Bu yüzden reçetede değil, ambalaj tanımında dururlar.
    */
+  /**
+   * Satış modunu değiştirir — ilan miktarının hangi kuraldan çıkacağını belirler.
+   *
+   * Tek kural bütün katalogda çalışmıyor: çok satanlar rafta hazır durur,
+   * geri kalanı sipariş gelince üretilir, bazıları hammadde stokta olmasa
+   * bile termin sözüyle satılır. Miktar yalnız kapasiteden türeyince
+   * reçetesi bağlanmamış her ürün ilanda 0 yazıp satışa kapanıyordu.
+   */
+  setSalesMode: protectedProcedure
+    .input(
+      z.object({
+        masterIds: z.array(z.number()).min(1),
+        salesMode: z.enum(["siparis_uzerine", "stoktan", "tedarikli"]),
+        /** `tedarikli` modda vaat edilen termin; diğer modlarda yok sayılır. */
+        leadTimeDays: z.number().int().min(0).max(365).optional(),
+        /** `stoktan` modda raftaki mamul adedi. */
+        stockQty: z.number().int().min(0).optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const patch: Record<string, unknown> = {
+        salesMode: input.salesMode,
+        leadTimeDays: input.salesMode === "tedarikli" ? (input.leadTimeDays ?? 0) : 0,
+      };
+      if (input.salesMode === "stoktan" && input.stockQty != null) {
+        patch.stockQty = input.stockQty;
+      }
+      for (const id of input.masterIds) {
+        await db.updateMasterProduct(id, patch as never);
+      }
+      // İlan miktarı moda bağlı; kanal gönderimi için yeniden hesapla.
+      await runCapacityRecompute();
+      return { updated: input.masterIds.length, salesMode: input.salesMode };
+    }),
+
   packagingCosts: protectedProcedure.query(async () => {
     const [packagings, packInputs, materials] = await Promise.all([
       db.listPackagings(),
@@ -1821,9 +1858,22 @@ export const katalogRouter = router({
         buildable: Number(m.buildableQty ?? 0),
         cost: cost?.totalCost ?? 0,
         unknownInputs: cost?.unknownInputs ?? [],
+        unitMismatches: cost?.unitMismatches ?? [],
         price,
         ...marginOf(price, cost?.totalCost ?? 0),
         health,
+        // Satış modu ve ondan çıkan ilan miktarı: ürünün üretime takılmadan
+        // satılıp satılamayacağını satırda görmek için.
+        salesMode: (m.salesMode as SalesMode | null) ?? "siparis_uzerine",
+        leadTimeDays: Number(m.leadTimeDays ?? 0),
+        stockQty: Number(m.stockQty ?? 0),
+        listingQty: listingQtyFor({
+          salesMode: m.salesMode as SalesMode | null,
+          buildable: Number(m.buildableQty ?? 0),
+          cap: Number(m.virtualStockCap ?? 10),
+          stockQty: Number(m.stockQty ?? 0),
+          reservedQty: Number(m.reservedQty ?? 0),
+        }),
       };
     });
 
@@ -2988,6 +3038,9 @@ export const katalogRouter = router({
             discountPercent: num(m.discountPercent),
             buildableQty: Number(m.buildableQty ?? 0),
             virtualStockCap: Number(m.virtualStockCap ?? 10),
+            salesMode: (m.salesMode as SalesMode | null) ?? null,
+            stockQty: Number(m.stockQty ?? 0),
+            reservedQty: Number(m.reservedQty ?? 0),
             desi: logistics.desi,
             vatRate: logistics.vatRate,
             seriesId: m.seriesId as number,

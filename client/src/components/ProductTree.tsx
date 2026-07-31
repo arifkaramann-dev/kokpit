@@ -4,7 +4,16 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { formatTL } from "@/lib/format";
 import { ChevronDown, ChevronRight } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { trpc } from "@/lib/trpc";
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 import { useLocation } from "wouter";
 
 /**
@@ -37,7 +46,19 @@ export type TrackRow = {
   price: number;
   profit: number;
   health: { score: number; missing: string[]; listingCount: number; liveCount: number };
+  salesMode: "siparis_uzerine" | "stoktan" | "tedarikli";
+  leadTimeDays: number;
+  stockQty: number;
+  /** İlana yazılacak miktar — satış moduna göre hesaplanmış. */
+  listingQty: number;
 };
+
+/** Satış modu etiketleri; kısa tutuldu, satıra sığması gerekiyor. */
+const SALES_MODES = [
+  { value: "siparis_uzerine", label: "Sipariş üzerine", hint: "Eldeki hammaddeden üretilebilir adet" },
+  { value: "stoktan", label: "Stoktan", hint: "Raftaki mamul adedi — hammaddeye bakılmaz" },
+  { value: "tedarikli", label: "Tedarikli", hint: "Hammadde yokken de satışta, termin sözüyle" },
+] as const;
 
 export default function ProductTree({
   rows,
@@ -47,7 +68,21 @@ export default function ProductTree({
   onlyProblem: boolean;
 }) {
   const [, setLocation] = useLocation();
+  const utils = trpc.useUtils();
   const [search, setSearch] = useState("");
+
+  /*
+   * Satış modu satır içinde değiştirilir. Ayrı bir ekrana göndermek, bu
+   * kararın alındığı yerden (ürünün neden satılamadığını gördüğün yerden)
+   * koparırdı — zaten 5-6 pencere gezme şikayetinin kaynağı bu.
+   */
+  const setSalesMode = trpc.katalog.setSalesMode.useMutation({
+    onSuccess: r => {
+      utils.katalog.invalidate();
+      toast.success(`${r.updated} varyantın satış modu güncellendi`);
+    },
+    onError: e => toast.error(e.message),
+  });
   const [openColors, setOpenColors] = useState<Set<string>>(new Set());
   const [openSeries, setOpenSeries] = useState<Set<number>>(new Set());
 
@@ -214,6 +249,37 @@ export default function ProductTree({
                             </span>
                           </button>
 
+                          {/* Toplu satış modu: bir rengin 36 varyantını tek tek
+                              ayarlamak pratikte yapılmaz, o yüzden renk
+                              başlığından hepsine birden uygulanır. */}
+                          {open && (
+                            <div
+                              className="flex flex-wrap items-center gap-1.5 border-t bg-muted/30 px-3 py-1.5 pl-12 text-[11px]"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              <span className="text-muted-foreground">
+                                Bu rengin {c.variants.length} varyantını:
+                              </span>
+                              {SALES_MODES.map(m => (
+                                <button
+                                  key={m.value}
+                                  type="button"
+                                  title={m.hint}
+                                  disabled={setSalesMode.isPending}
+                                  onClick={() =>
+                                    setSalesMode.mutate({
+                                      masterIds: c.variants.map(v => v.masterId),
+                                      salesMode: m.value as never,
+                                    })
+                                  }
+                                  className="rounded-full border px-2 py-0.5 font-medium text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
+                                >
+                                  {m.label}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+
                           {!open && c.missing.length > 0 && (
                             <p className="px-3 pb-2 pl-12 text-[11px] text-muted-foreground">
                               {c.missing.slice(0, 3).join(" · ")}
@@ -231,6 +297,7 @@ export default function ProductTree({
                                     <th className="p-2 text-right">Maliyet</th>
                                     <th className="p-2 text-right">Fiyat</th>
                                     <th className="p-2 text-right">Kâr</th>
+                                    <th className="p-2 text-left">Satış</th>
                                     <th className="p-2 text-right">İlan</th>
                                     <th className="p-2 text-left">Eksik</th>
                                   </tr>
@@ -272,6 +339,31 @@ export default function ProductTree({
                                       </td>
                                       <td className="p-2 text-right">
                                         {v.price > 0 ? formatTL(v.profit) : "—"}
+                                      </td>
+                                      <td className="p-2" onClick={e => e.stopPropagation()}>
+                                        <Select
+                                          value={v.salesMode}
+                                          onValueChange={mode =>
+                                            setSalesMode.mutate({
+                                              masterIds: [v.masterId],
+                                              salesMode: mode as never,
+                                            })
+                                          }
+                                        >
+                                          <SelectTrigger className="h-7 w-36 text-[11px]">
+                                            <SelectValue />
+                                          </SelectTrigger>
+                                          <SelectContent>
+                                            {SALES_MODES.map(m => (
+                                              <SelectItem key={m.value} value={m.value}>
+                                                {m.label}
+                                              </SelectItem>
+                                            ))}
+                                          </SelectContent>
+                                        </Select>
+                                        <span className="block text-[10px] text-muted-foreground">
+                                          ilanda {v.listingQty} adet
+                                        </span>
                                       </td>
                                       <td className="p-2 text-right">
                                         {v.health.liveCount}/{v.health.listingCount}

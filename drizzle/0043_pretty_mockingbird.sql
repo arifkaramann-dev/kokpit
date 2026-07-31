@@ -1,0 +1,2 @@
+ALTER TABLE `masterProducts` ADD `salesMode` enum('siparis_uzerine','stoktan','tedarikli') DEFAULT 'siparis_uzerine' NOT NULL;--> statement-breakpoint
+ALTER TABLE `masterProducts` ADD `leadTimeDays` int DEFAULT 0 NOT NULL;

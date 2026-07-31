@@ -13,6 +13,7 @@
  *    N11 gönderimi engellenmemeli
  */
 
+import type { SalesMode } from "./capacity";
 import { chunkItems, planChannelSync, toChannelPayload, type SyncItem } from "./channelSync";
 import * as db from "./db";
 import { isCiceksepetiConfigured, pushCiceksepetiStockPrice } from "./ciceksepeti";
@@ -111,6 +112,9 @@ export async function syncChannel(
       discountPercent: num(m.discountPercent),
       buildableQty: Number(m.buildableQty ?? 0),
       virtualStockCap: Number(m.virtualStockCap ?? 10),
+      salesMode: (m.salesMode as SalesMode | null) ?? null,
+      stockQty: Number(m.stockQty ?? 0),
+      reservedQty: Number(m.reservedQty ?? 0),
     })),
     channelId,
   });
