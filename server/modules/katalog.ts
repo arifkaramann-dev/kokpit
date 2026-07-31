@@ -58,6 +58,7 @@ import {
   type ImageRow,
 } from "../masterFields";
 import { findInvalidMasters, planCleanup } from "../masterAudit";
+import { previewPairs, suggestFamilyPackagings } from "../generatePreview";
 import { masterHealth, rollupBySeries } from "../masterHealth";
 import {
   computeMasterRevenue,
@@ -446,6 +447,51 @@ export const katalogRouter = router({
       };
     }),
 
+  /**
+   * Form × ambalaj kuralını otomatik önerir ve isteğe bağlı uygular.
+   *
+   * Kural sistemde vardı ama TANIMSIZ form serinin BÜTÜN ambalajlarıyla
+   * eşleştiği için sprey 30/100/250 ml de üretiyordu. Kuralın var olması
+   * yetmiyor; kullanıcının onu gireceği anı sistemin söylemesi gerekiyor.
+   */
+  suggestFamilyPackagings: protectedProcedure
+    .input(z.object({ apply: z.boolean().default(false) }))
+    .mutation(async ({ input }) => {
+      const [families, packagings] = await Promise.all([
+        db.listProductFamilies(),
+        db.listPackagings(),
+      ]);
+
+      const suggestions = suggestFamilyPackagings({
+        families: (families as { id: number; name: string }[]).map(f => ({
+          id: f.id,
+          name: f.name,
+        })),
+        packagings: (packagings as { id: number; name: string; volumeMl: string }[]).map(p => ({
+          id: p.id,
+          name: p.name,
+          volumeMl: num(p.volumeMl),
+        })),
+      });
+
+      const packagingName = new Map(
+        (packagings as { id: number; name: string }[]).map(p => [p.id, p.name]),
+      );
+      const detailed = suggestions.map(s => ({
+        ...s,
+        packagingNames: s.packagingIds.map(id => packagingName.get(id) ?? `#${id}`),
+      }));
+
+      // Boş öneri kuralı silmek demek olurdu; o formu olduğu gibi bırak.
+      const applicable = detailed.filter(s => s.packagingIds.length > 0);
+      if (!input.apply) return { applied: false, suggestions: detailed };
+
+      for (const s of applicable) {
+        await db.setFamilyPackagings(s.familyId, s.packagingIds);
+      }
+      return { applied: true, count: applicable.length, suggestions: detailed };
+    }),
+
   /* ---- Master üretimi --------------------------------------------------- */
 
   /**
@@ -584,6 +630,25 @@ export const katalogRouter = router({
           : null;
 
       if (input.dryRun) {
+        /*
+         * Önizleme okunabilir olmalı. Önce yalnız 20 iç SKU dönüyordu
+         * (`aoccndyesilab30`); o diziden "Sprey · 30 ml" çiftinin saçma
+         * olduğunu görmek imkânsızdı. Kullanıcı onaylıyor, sonra katalogda
+         * varyantların çoğunun çöp olduğunu fark ediyordu.
+         */
+        const preview = previewPairs({
+          families: (families as { id: number; name: string }[]).map(f => ({
+            id: f.id,
+            name: f.name,
+          })),
+          packagings: (packagings as { id: number; name: string; volumeMl: string }[]).map(p => ({
+            id: p.id,
+            name: p.name,
+            volumeMl: num(p.volumeMl),
+          })),
+          familyPackagings: fpMap,
+        });
+
         return {
           dryRun: true,
           willCreate: plan.create.length,
@@ -592,6 +657,12 @@ export const katalogRouter = router({
           created: 0,
           conflictNote,
           breakdown: plan.breakdown,
+          /** Üretilecek form × ambalaj çiftleri — okunabilir adlarla. */
+          pairs: preview.pairs,
+          /** Gözle bakınca yanlış görünen çiftler; üretim engellenmez, uyarılır. */
+          suspects: preview.suspects,
+          /** Kuralı hiç girilmemiş formlar — "hepsi" ile eşleşiyorlar. */
+          unconstrainedFamilies: preview.unconstrainedFamilies,
         };
       }
 

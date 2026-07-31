@@ -61,6 +61,7 @@ import {
   Wallet,
   Warehouse,
   Layers,
+  Wand2,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -87,6 +88,7 @@ const menuGroups = [
       { icon: Package, label: "Ürünler", path: "/katalog" },
       { icon: FileText, label: "İçerik Blokları", path: "/icerik" },
       { icon: Store, label: "Toplu Yayın", path: "/yayin" },
+      { icon: Wand2, label: "Yeni Seri Sihirbazı", path: "/sihirbaz" },
       { icon: FlaskConical, label: "Ürün Geliştirme", path: "/gelistirme" },
       { icon: BadgePercent, label: "Fiyat & Kâr", path: "/fiyat" },
     ],

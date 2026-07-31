@@ -15,6 +15,7 @@ import Crm from "@/pages/Crm";
 import Customers from "@/pages/Customers";
 import Expenses from "@/pages/Expenses";
 import Development from "@/pages/Development";
+import SeriesWizard from "@/pages/SeriesWizard";
 import ProductOutput from "@/pages/ProductOutput";
 import Home from "@/pages/Home";
 import Ledgers from "@/pages/Ledgers";
@@ -74,6 +75,7 @@ function AdminApp() {
         <Route path={"/urun/:id"} component={MasterCard} />
         <Route path={"/sorular"} component={Questions} />
         <Route path={"/gelistirme"} component={Development} />
+        <Route path={"/sihirbaz"} component={SeriesWizard} />
         <Route path={"/urun-ciktisi/:id"} component={ProductOutput} />
         <Route path={"/uretim"} component={Production} />
         {/* Maliyet & Kâr hesaplayıcısı Fiyat Motoru'na sekme olarak taşındı; eski bağlantılar kırılmasın. */}
