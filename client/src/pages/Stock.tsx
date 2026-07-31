@@ -72,6 +72,9 @@ export default function Stock() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<MaterialRow | null>(null);
   const [form, setForm] = useState(emptyForm);
+  // Diyalog içinden tedarikçi açma — akış kesilmesin.
+  const [newSupplierOpen, setNewSupplierOpen] = useState(false);
+  const [newSupplierName, setNewSupplierName] = useState("");
   const [stockDialog, setStockDialog] = useState<{ material: MaterialRow; type: "in" | "out" } | null>(null);
   const [stockQty, setStockQty] = useState("");
   const [stockNote, setStockNote] = useState("");
@@ -148,6 +151,36 @@ export default function Stock() {
     }
     return list;
   }, [materials, filter, search]);
+
+  const utilsStock = trpc.useUtils();
+  const createSupplier = trpc.suppliers.create.useMutation({
+    onSuccess: (_r, vars) => {
+      utilsStock.suppliers.list.invalidate().then(() => {
+        // Yeni tedarikçi listeye düşer düşmez seçili hale getirilir.
+        utilsStock.suppliers.list.fetch().then(list => {
+          const hit = (list ?? []).find(x => x.name === vars.name);
+          if (hit) setForm(f => ({ ...f, supplierId: String(hit.id) }));
+        });
+      });
+      setNewSupplierOpen(false);
+      setNewSupplierName("");
+      toast.success("Tedarikçi eklendi ve seçildi");
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  /** Diyalogdaki canlı stok değeri: miktar × birim maliyet. */
+  const stockValue = useMemo(() => {
+    const qty = parseFloat(form.stockQty) || 0;
+    const unitCost = parseFloat(form.unitCost) || 0;
+    const critical = parseFloat(form.criticalQty) || 0;
+    return {
+      qty,
+      unitCost,
+      total: qty * unitCost,
+      criticalTotal: critical * unitCost,
+    };
+  }, [form.stockQty, form.unitCost, form.criticalQty]);
 
   const criticalCount = useMemo(
     () => ((materials as MaterialRow[]) ?? []).filter(m => num(m.stockQty) <= num(m.criticalQty)).length,
@@ -510,24 +543,94 @@ export default function Stock() {
                 />
               </div>
             </div>
+            {/* Stok değeri canlı: "1000 gr × 1,90 ₺ = 1.900 ₺" — rakamı
+                girerken tutarı görmek yanlış birim/fiyat hatasını anında
+                yakalatıyor. */}
+            <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+              {stockValue.qty > 0 && stockValue.unitCost > 0 ? (
+                <>
+                  <span className="font-mono">
+                    {formatQty(stockValue.qty)} {form.unit} × {formatTL(stockValue.unitCost)}/
+                    {form.unit}
+                  </span>{" "}
+                  = <strong>{formatTL(stockValue.total)}</strong>
+                  {stockValue.criticalTotal > 0 && (
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      · kritik eşik değeri {formatTL(stockValue.criticalTotal)}
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span className="text-muted-foreground">
+                  Stok ve birim maliyet girilince toplam değer burada görünür.
+                </span>
+              )}
+            </div>
+
             <div className="space-y-1.5">
-              <Label>Tedarikçi</Label>
-              <Select
-                value={form.supplierId || "__none__"}
-                onValueChange={v => setForm(f => ({ ...f, supplierId: v === "__none__" ? "" : v }))}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Tedarikçi seç (opsiyonel)" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">— Tedarikçi yok —</SelectItem>
-                  {(supplierList ?? []).map(s => (
-                    <SelectItem key={s.id} value={String(s.id)}>
-                      {s.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex items-center gap-2">
+                <Label>Tedarikçi</Label>
+                {/* Tedarikçi yoksa akış kesiliyordu: kullanıcı diyaloğu
+                    kapatıp Tedarikçiler sayfasına gidip geri dönüyordu. */}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="ml-auto h-6 px-2 text-xs"
+                  onClick={() => setNewSupplierOpen(v => !v)}
+                >
+                  <Plus className="mr-1 h-3 w-3" />
+                  {newSupplierOpen ? "Vazgeç" : "Yeni tedarikçi"}
+                </Button>
+              </div>
+
+              {newSupplierOpen ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input
+                    autoFocus
+                    value={newSupplierName}
+                    onChange={e => setNewSupplierName(e.target.value)}
+                    placeholder="Tedarikçi adı"
+                    className="min-w-48 flex-1"
+                    onKeyDown={e => {
+                      if (e.key === "Enter" && newSupplierName.trim()) {
+                        e.preventDefault();
+                        createSupplier.mutate({ name: newSupplierName.trim() });
+                      }
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    disabled={!newSupplierName.trim() || createSupplier.isPending}
+                    onClick={() => createSupplier.mutate({ name: newSupplierName.trim() })}
+                  >
+                    Ekle ve seç
+                  </Button>
+                </div>
+              ) : (
+                <Select
+                  value={form.supplierId || "__none__"}
+                  onValueChange={v => setForm(f => ({ ...f, supplierId: v === "__none__" ? "" : v }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Tedarikçi seç (opsiyonel)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— Tedarikçi yok —</SelectItem>
+                    {(supplierList ?? []).map(s => (
+                      <SelectItem key={s.id} value={String(s.id)}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+
+              {(supplierList ?? []).length === 0 && !newSupplierOpen && (
+                <p className="text-[11px] text-muted-foreground">
+                  Kayıtlı tedarikçi yok — "Yeni tedarikçi" ile buradan ekleyebilirsiniz.
+                </p>
+              )}
             </div>
             <div className="space-y-1.5">
               <Label>Notlar</Label>

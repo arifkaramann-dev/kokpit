@@ -1265,6 +1265,37 @@ export type InsertFormula = typeof formulas.$inferInsert;
  * `materialId` indeksi ters aramayı verir: "bu hammaddeyi hangi reçeteler
  * kullanıyor" → darboğaz analizi ve stok değişiminde etkilenen master'lar.
  */
+/**
+ * Reçete kapsamı — çoklu seçim.
+ *
+ * `formulas.seriesId/colorId/familyId/readiness` eksen başına TEK değer
+ * tutuyordu: "bu reçete CANDY'nin kırmızısına uygulanır" yazılabiliyor ama
+ * "kırmızı VE bordo VE vişne" yazılamıyordu. Aynı reçeteyi üç kez kopyalamak
+ * gerekiyordu ve kopyalar zamanla birbirinden kayıyordu — v3'ün en baştan
+ * çözmeye çalıştığı sorunun ta kendisi.
+ *
+ * Bir eksende satır yoksa o eksen "hepsi" demektir (eski davranış). Satır
+ * varsa reçete yalnız o değerlere uygulanır. Tek değerli eski kayıtlar
+ * `formulas` kolonlarında durmaya devam eder; eşleştirici ikisini de okur.
+ */
+export const formulaScopes = mysqlTable(
+  "formulaScopes",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    formulaId: int("formulaId").notNull(),
+    kind: mysqlEnum("kind", ["seri", "renk", "form", "hazirlik"]).notNull(),
+    /** Boyut kimliği. `hazirlik` için 0=konsantre, 1=r2u. */
+    valueId: int("valueId").notNull(),
+  },
+  t => [
+    unique("formulaScopes_uq").on(t.formulaId, t.kind, t.valueId),
+    index("formulaScopes_formula_idx").on(t.formulaId),
+  ],
+);
+
+export type FormulaScope = typeof formulaScopes.$inferSelect;
+
 export const formulaInputs = mysqlTable(
   "formulaInputs",
   {

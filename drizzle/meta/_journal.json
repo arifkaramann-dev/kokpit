@@ -288,6 +288,13 @@
       "when": 1785351028663,
       "tag": "0040_lively_frank_castle",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "5",
+      "when": 1785480914718,
+      "tag": "0041_tricky_bloodaxe",
+      "breakpoints": true
     }
   ]
 }

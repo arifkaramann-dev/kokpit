@@ -30,6 +30,52 @@ const m = (id: number, p: Partial<MatchableMaster> = {}): MatchableMaster => ({
   ...p,
 });
 
+describe("matchFormula — çoklu kapsam", () => {
+  // Eksen başına TEK değer tutuluyordu: "kırmızı VE bordo" yazılamıyor,
+  // aynı reçeteyi kopyalamak gerekiyordu ve kopyalar zamanla kayıyordu.
+  it("kapsamdaki renklerin hepsine uyar", () => {
+    const formula = f(50, { scopes: { renk: [RED, BLUE] } });
+    expect(matchFormula(m(1, { colorId: RED }), [formula])?.formula.id).toBe(50);
+    expect(matchFormula(m(2, { colorId: BLUE }), [formula])?.formula.id).toBe(50);
+  });
+
+  it("kapsam dışındaki renge uymaz", () => {
+    const formula = f(50, { scopes: { renk: [RED] } });
+    expect(matchFormula(m(1, { colorId: BLUE }), [formula])).toBeNull();
+  });
+
+  it("boş kapsam eksen serbest demektir", () => {
+    const formula = f(50, { scopes: { renk: [] } });
+    expect(matchFormula(m(1, { colorId: BLUE }), [formula])?.formula.id).toBe(50);
+  });
+
+  it("kapsam tek değerli kolonu ezer", () => {
+    // Kolon kırmızı diyor ama kapsam maviyi de içeriyor.
+    const formula = f(50, { colorId: RED, scopes: { renk: [RED, BLUE] } });
+    expect(matchFormula(m(1, { colorId: BLUE }), [formula])?.formula.id).toBe(50);
+  });
+
+  it("çok eksenli kapsam hepsini birden ister", () => {
+    const formula = f(50, { scopes: { seri: [CANDY], renk: [RED, BLUE] } });
+    expect(matchFormula(m(1, { seriesId: CANDY, colorId: RED }), [formula])?.formula.id).toBe(50);
+    expect(matchFormula(m(2, { seriesId: METEOR, colorId: RED }), [formula])).toBeNull();
+  });
+
+  it("kapsam özgüllüğe sayılır — daha dar reçete kazanır", () => {
+    const generic = f(50);
+    const scoped = f(51, { scopes: { renk: [RED] } });
+    const hit = matchFormula(m(1, { colorId: RED }), [generic, scoped]);
+    expect(hit?.formula.id).toBe(51);
+    expect(hit?.specificity).toBe(1);
+  });
+
+  it("hazırlık kapsamı çalışır", () => {
+    const formula = f(50, { scopes: { hazirlik: ["r2u"] } });
+    expect(matchFormula(m(1, { readiness: "r2u" }), [formula])?.formula.id).toBe(50);
+    expect(matchFormula(m(2, { readiness: "konsantre" }), [formula])).toBeNull();
+  });
+});
+
 describe("matchFormula — en özel reçete kazanır", () => {
   it("boş eksen her değere uyar", () => {
     const hit = matchFormula(m(1), [f(50)]);
