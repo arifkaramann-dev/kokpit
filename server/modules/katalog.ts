@@ -1439,6 +1439,113 @@ export const katalogRouter = router({
     });
   }),
 
+  /**
+   * Ambalaj maliyeti — şişe + kapak + etiket + koli.
+   *
+   * `packagingInputs` tablosu baştan beri vardı ve kapasite/maliyet motorları
+   * onu okuyordu, ama veriyi girecek hiçbir ekran yazılmamıştı. Bu yüzden
+   * 30 ml şişe ile 400 ml sprey kutusunun farklı maliyeti sisteme
+   * girilemiyordu; ambalaj maliyeti fiilen sıfır sayılıyordu.
+   *
+   * Ambalaj kalemleri hacimle ÖLÇEKLENMEZ: 400 ml kutu, 30 ml şişenin 13
+   * katı değildir. Bu yüzden reçetede değil, ambalaj tanımında dururlar.
+   */
+  packagingCosts: protectedProcedure.query(async () => {
+    const [packagings, packInputs, materials] = await Promise.all([
+      db.listPackagings(),
+      db.listPackagingInputs(),
+      db.listMaterials(),
+    ]);
+
+    const costMaterials = (materials as Record<string, unknown>[]).map(m => ({
+      id: m.id as number,
+      name: String(m.name ?? ""),
+      type: (m.type as CostMaterial["type"]) ?? "hammadde",
+      unitCost: (m.unitCost as string | null) ?? null,
+      unit: (m.unit as string | null) ?? null,
+    }));
+    const materialById = new Map(costMaterials.map(m => [m.id, m]));
+
+    type PackInputRow = {
+      id: number;
+      packagingId: number;
+      materialId: number;
+      qtyPerUnit: string;
+      unit: string | null;
+    };
+    const byPackaging = new Map<number, PackInputRow[]>();
+    for (const pi of packInputs as PackInputRow[]) {
+      byPackaging.set(pi.packagingId, [...(byPackaging.get(pi.packagingId) ?? []), pi]);
+    }
+
+    return (packagings as Record<string, unknown>[]).map(p => {
+      const id = p.id as number;
+      const rows = byPackaging.get(id) ?? [];
+      const mismatches: string[] = [];
+      let cost = 0;
+
+      // Ana kap ambalaj tanımının kendi alanında; adet başına 1 sayılır.
+      const containerId = (p.materialId as number | null) ?? null;
+      if (containerId != null) {
+        const mat = materialById.get(containerId);
+        if (mat?.type !== "masraf") cost += num(mat?.unitCost);
+      }
+
+      for (const row of rows) {
+        const mat = materialById.get(row.materialId);
+        if (mat?.type === "masraf") continue;
+        const conv = qtyInMaterialUnit(num(row.qtyPerUnit), row.unit, mat?.unit);
+        if (conv.mismatch && mat) mismatches.push(mat.name);
+        cost += conv.qty * num(mat?.unitCost);
+      }
+
+      return {
+        id,
+        code: String(p.code ?? ""),
+        name: String(p.name ?? ""),
+        volumeMl: num(p.volumeMl),
+        isActive: Number(p.isActive ?? 1) === 1,
+        containerMaterialId: containerId,
+        containerName: containerId != null ? (materialById.get(containerId)?.name ?? null) : null,
+        containerCost: containerId != null ? num(materialById.get(containerId)?.unitCost) : 0,
+        inputs: rows.map(r => ({
+          id: r.id,
+          materialId: r.materialId,
+          qtyPerUnit: num(r.qtyPerUnit),
+          unit: r.unit,
+        })),
+        /** Bir adet ambalajın toplam maliyeti (kap + kapak + etiket + koli). */
+        unitCost: Math.round(cost * 10000) / 10000,
+        unitMismatches: mismatches,
+      };
+    });
+  }),
+
+  savePackagingInputs: protectedProcedure
+    .input(
+      z.object({
+        packagingId: z.number(),
+        inputs: z
+          .array(
+            z.object({
+              materialId: z.number(),
+              qtyPerUnit: z.number().min(0),
+              unit: z.string().nullable().optional(),
+            }),
+          )
+          .default([]),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      await db.setPackagingInputs(
+        input.packagingId,
+        input.inputs.filter(i => i.qtyPerUnit > 0),
+      );
+      // Ambalaj maliyeti değişti: master maliyetleri ve kapasite yeniden çıkar.
+      await runCapacityRecompute();
+      return { ok: true, count: input.inputs.length };
+    }),
+
   saveFormula: protectedProcedure
     .input(
       z.object({
