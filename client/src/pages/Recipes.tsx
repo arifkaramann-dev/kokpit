@@ -19,10 +19,11 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { formatTL, num } from "@/lib/format";
+import { formatTL } from "@/lib/format";
+import { compatibleUnits, normalizeUnit } from "@shared/units";
 import { trpc } from "@/lib/trpc";
-import { Beaker, Link2, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Beaker, Link2, Loader2, Pencil, Plus, Trash2, TriangleAlert } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 
 /** Boş eksen "hepsi" demektir — Select boş değer kabul etmediği için sentinel. */
@@ -35,7 +36,8 @@ const MATERIAL_TYPES = [
   { value: "masraf", label: "Masraf", desc: "Kapasiteyi kısıtlamaz" },
 ] as const;
 
-type InputRow = { materialId: string; qtyPerBase: string };
+/** `unit` boş = kalemin kendi birimi (eski kayıtlarla aynı davranış). */
+type InputRow = { materialId: string; qtyPerBase: string; unit: string };
 
 /**
  * Reçete Defteri (v3) — çok seviyeli BOM.
@@ -66,7 +68,7 @@ export default function Recipes() {
     wastePercent: "0",
     notes: "",
   });
-  const [rows, setRows] = useState<InputRow[]>([{ materialId: "", qtyPerBase: "" }]);
+  const [rows, setRows] = useState<InputRow[]>([{ materialId: "", qtyPerBase: "", unit: "" }]);
 
   const setType = trpc.katalog.setMaterialType.useMutation({
     onSuccess: () => {
@@ -104,21 +106,8 @@ export default function Recipes() {
   });
 
   const materialName = new Map((materials ?? []).map(m => [m.id, m.name]));
-  const materialCost = new Map((materials ?? []).map(m => [m.id, num(m.unitCost)]));
+  const materialUnit = new Map((materials ?? []).map(m => [m.id, m.unit]));
   const semiFinished = (materials ?? []).filter(m => m.type === "yari_mamul");
-
-  const recipeCosts = useMemo(() => {
-    const costMap = new Map<number, number>();
-    (formulas ?? []).forEach(f => {
-      let total = 0;
-      (f.inputs as { inputMaterialId: number; qtyPerBase: string }[]).forEach(i => {
-        const unitCost = materialCost.get(i.inputMaterialId) ?? 0;
-        total += num(i.qtyPerBase) * unitCost;
-      });
-      costMap.set(f.id, total);
-    });
-    return costMap;
-  }, [formulas, materialCost]);
 
   function openNew() {
     setEditId(null);
@@ -135,7 +124,7 @@ export default function Recipes() {
       wastePercent: "0",
       notes: "",
     });
-    setRows([{ materialId: "", qtyPerBase: "" }]);
+    setRows([{ materialId: "", qtyPerBase: "", unit: "" }]);
     setOpen(true);
   }
 
@@ -159,11 +148,14 @@ export default function Recipes() {
     });
     setRows(
       f.inputs.length > 0
-        ? (f.inputs as { inputMaterialId: number; qtyPerBase: string }[]).map(i => ({
-            materialId: String(i.inputMaterialId),
-            qtyPerBase: String(parseFloat(i.qtyPerBase)),
-          }))
-        : [{ materialId: "", qtyPerBase: "" }],
+        ? (f.inputs as { inputMaterialId: number; qtyPerBase: string; unit: string | null }[]).map(
+            i => ({
+              materialId: String(i.inputMaterialId),
+              qtyPerBase: String(parseFloat(i.qtyPerBase)),
+              unit: i.unit ?? "",
+            }),
+          )
+        : [{ materialId: "", qtyPerBase: "", unit: "" }],
     );
     setOpen(true);
   }
@@ -172,7 +164,11 @@ export default function Recipes() {
     if (!form.name.trim()) return toast.error("Reçete adı gerekli");
     const inputs = rows
       .filter(r => r.materialId && parseFloat(r.qtyPerBase) > 0)
-      .map(r => ({ inputMaterialId: Number(r.materialId), qtyPerBase: parseFloat(r.qtyPerBase) }));
+      .map(r => ({
+        inputMaterialId: Number(r.materialId),
+        qtyPerBase: parseFloat(r.qtyPerBase),
+        unit: r.unit || null,
+      }));
     if (inputs.length === 0) return toast.error("En az bir girdi satırı gerekli");
     const numOrNull = (v: string) => (v === ANY ? null : Number(v));
     save.mutate({
@@ -257,7 +253,6 @@ export default function Recipes() {
           )}
 
           {(formulas ?? []).map(f => {
-            const cost = recipeCosts.get(f.id) ?? 0;
             return (
             <Card key={f.id} className="space-y-2 p-4">
               <div className="flex flex-wrap items-center gap-2">
@@ -277,21 +272,43 @@ export default function Recipes() {
                   </Badge>
                 )}
                 <Badge className="ml-2 bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-300">
-                  {formatTL(cost)}
+                  {formatTL(f.batchCost)} / parti
                 </Badge>
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {formatTL(f.costPerBaseUnit)}/{f.baseUnit}
+                </span>
                 <span className="flex-1" />
                 <Button variant="outline" size="sm" className="h-8" onClick={() => openEdit(f)}>
                   <Pencil className="mr-1 h-3.5 w-3.5" /> Düzenle
                 </Button>
               </div>
+
+              {f.unitMismatches.length > 0 && (
+                <div className="flex items-start gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs">
+                  <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+                  <span>
+                    <strong>{f.unitMismatches.join(", ")}</strong> satırının birimi kalemin birimine
+                    çevrilemiyor (örn. gr ↔ ml). Maliyet bu satır için güvenilmez — birimi düzeltin.
+                  </span>
+                </div>
+              )}
+
               <div className="space-y-0.5 text-sm">
-                {(f.inputs as { id: number; inputMaterialId: number; qtyPerBase: string }[]).map(i => (
+                {(
+                  f.inputs as {
+                    id: number;
+                    inputMaterialId: number;
+                    qtyPerBase: string;
+                    unit: string | null;
+                  }[]
+                ).map(i => (
                   <div key={i.id} className="flex items-center gap-2">
                     <span className="flex-1 truncate">
                       {materialName.get(i.inputMaterialId) ?? `#${i.inputMaterialId}`}
                     </span>
                     <span className="tabular-nums text-muted-foreground">
-                      {parseFloat(i.qtyPerBase)}
+                      {parseFloat(i.qtyPerBase)}{" "}
+                      {i.unit ?? materialUnit.get(i.inputMaterialId) ?? ""}
                     </span>
                   </div>
                 ))}
@@ -522,13 +539,18 @@ export default function Recipes() {
                   variant="outline"
                   size="sm"
                   className="h-7 px-2 text-xs"
-                  onClick={() => setRows(r => [...r, { materialId: "", qtyPerBase: "" }])}
+                  onClick={() => setRows(r => [...r, { materialId: "", qtyPerBase: "", unit: "" }])}
                 >
                   <Plus className="mr-1 h-3.5 w-3.5" /> Satır
                 </Button>
               </div>
-              {rows.map((row, idx) => (
-                <div key={idx} className="grid grid-cols-[1fr_110px_28px] items-center gap-1.5">
+              {rows.map((row, idx) => {
+                const rowMat = (materials ?? []).find(m => String(m.id) === row.materialId);
+                // Yalnız aynı aileden birimler önerilir: gr↔kg çevrilir,
+                // gr↔ml çevrilemez (yoğunluk bilgisi gerekir).
+                const unitChoices = rowMat ? compatibleUnits(rowMat.unit) : [];
+                return (
+                <div key={idx} className="grid grid-cols-[1fr_90px_84px_28px] items-center gap-1.5">
                   <Select
                     value={row.materialId}
                     onValueChange={v =>
@@ -559,6 +581,24 @@ export default function Recipes() {
                       setRows(rs => rs.map((r, i) => (i === idx ? { ...r, qtyPerBase: e.target.value } : r)))
                     }
                   />
+                  <Select
+                    value={row.unit || (rowMat ? normalizeUnit(rowMat.unit) : "")}
+                    onValueChange={v =>
+                      setRows(rs => rs.map((r, i) => (i === idx ? { ...r, unit: v } : r)))
+                    }
+                    disabled={!rowMat}
+                  >
+                    <SelectTrigger className="text-xs">
+                      <SelectValue placeholder="birim" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {unitChoices.map(u => (
+                        <SelectItem key={u} value={u}>
+                          {u}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <Button
                     type="button"
                     variant="ghost"
@@ -569,10 +609,13 @@ export default function Recipes() {
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </div>
-              ))}
+                );
+              })}
               <p className="text-[11px] text-muted-foreground">
-                Miktarlar baz miktar için girilir. Ambalaj kalemlerini (şişe, kapak, etiket) ambalaj
-                tanımına ekleyin — hacimle ölçeklenmemeleri gerekir.
+                Miktarlar baz miktar için girilir. <strong>Birimi kendiniz seçebilirsiniz</strong> —
+                kalem kilo başına fiyatlı olsa da reçeteye gram yazabilirsiniz, maliyet doğru çevrilir.
+                Ambalaj kalemlerini (şişe, kapak, etiket) ambalaj tanımına ekleyin — hacimle
+                ölçeklenmemeleri gerekir.
               </p>
             </div>
 

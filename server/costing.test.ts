@@ -239,3 +239,98 @@ describe("rollupBySeries — seri bazlı takip", () => {
     expect(rows[0].notBuildable).toBe(1);
   });
 });
+
+/* ── Birim dönüşümü ───────────────────────────────────────────────────────
+ *
+ * Katalogda "Airbrush · 100 ml" için ₺124.500 maliyet görünüyordu. Sebep:
+ * reçete satırı gram cinsinden yazılmıştı ama kalem kilo başına fiyatlıydı ve
+ * kod ikisini birimsiz çarpıyordu. Bu blok o hatayı yerine çiviler.
+ */
+
+const PIGMENT_KG = 50;
+
+describe("maliyet — reçete satırı ile kalem birimi farklı olduğunda", () => {
+  const kiloFiyatli: CostMaterial[] = [
+    // Pigment kilo başına ₺500, stokta kg cinsinden tutuluyor.
+    { id: PIGMENT_KG, name: "Pigment (kg)", type: "hammadde", unitCost: 500, unit: "kg" },
+  ];
+
+  /** 1000 ml boya = 250 gr pigment. Doğru maliyet: 0,25 kg × 500 = ₺125. */
+  const receteGram: CapacityFormula = {
+    id: 200,
+    outputType: "mamul",
+    outputMaterialId: null,
+    baseQty: 1000,
+    baseUnit: "ml",
+    inputs: [{ inputMaterialId: PIGMENT_KG, qtyPerBase: 250, unit: "gr" }],
+  };
+
+  it("gram yazılmış satırı kilo fiyatına çevirir — 1000× hatası biter", () => {
+    const [cost] = computeMasterCosts({
+      masters: [{ id: 1, formulaId: 200, formulaScale: 1, packagingId: null }],
+      materials: kiloFiyatli,
+      formulas: [receteGram],
+      packagings: [],
+    });
+    expect(cost.materialCost).toBeCloseTo(125);
+    expect(cost.unitMismatches).toEqual([]);
+  });
+
+  it("ambalaj hacmine göre ölçeklenir ama birim çevrimi bozulmaz", () => {
+    // 100 ml şişe = baz hacmin onda biri → ₺12,50
+    const [cost] = computeMasterCosts({
+      masters: [{ id: 1, formulaId: 200, formulaScale: 0.1, packagingId: null }],
+      materials: kiloFiyatli,
+      formulas: [receteGram],
+      packagings: [],
+    });
+    expect(cost.materialCost).toBeCloseTo(12.5);
+  });
+
+  it("birimsiz eski satır eski davranışı korur", () => {
+    const eski: CapacityFormula = {
+      ...receteGram,
+      inputs: [{ inputMaterialId: PIGMENT_KG, qtyPerBase: 0.25 }],
+    };
+    const [cost] = computeMasterCosts({
+      masters: [{ id: 1, formulaId: 200, formulaScale: 1, packagingId: null }],
+      materials: kiloFiyatli,
+      formulas: [eski],
+      packagings: [],
+    });
+    expect(cost.materialCost).toBeCloseTo(125);
+  });
+
+  it("çevrilemeyen birimi bildirir, sayıyı sessizce bozmaz", () => {
+    const uyumsuz: CapacityFormula = {
+      ...receteGram,
+      inputs: [{ inputMaterialId: PIGMENT_KG, qtyPerBase: 250, unit: "ml" }],
+    };
+    const [cost] = computeMasterCosts({
+      masters: [{ id: 1, formulaId: 200, formulaScale: 1, packagingId: null }],
+      materials: kiloFiyatli,
+      formulas: [uyumsuz],
+      packagings: [],
+    });
+    expect(cost.unitMismatches).toEqual(["Pigment (kg)"]);
+  });
+
+  it("yarı mamul birim maliyeti çıktının kendi biriminde çıkar", () => {
+    // Reçete 1000 ml üretiyor ama harç stokta lt cinsinden tutuluyor:
+    // 250 gr × ₺500/kg = ₺125 → 1 lt için ₺125, 1 ml için değil.
+    const HARC_LT = 51;
+    const harcLt: CapacityFormula = {
+      id: 201,
+      outputType: "yari_mamul",
+      outputMaterialId: HARC_LT,
+      baseQty: 1000,
+      baseUnit: "ml",
+      inputs: [{ inputMaterialId: PIGMENT_KG, qtyPerBase: 250, unit: "gr" }],
+    };
+    const unit = resolveUnitCosts(
+      [...kiloFiyatli, { id: HARC_LT, name: "Harç", type: "yari_mamul", unitCost: 0, unit: "lt" }],
+      [harcLt],
+    );
+    expect(unit.get(HARC_LT)).toBeCloseTo(125);
+  });
+});

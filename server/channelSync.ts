@@ -9,7 +9,7 @@
  * Bu dosya kuyruktan gönderim yükünü ÜRETİR (saf); ağ çağrısını çağıran yapar.
  */
 
-import { listingQty } from "./capacity";
+import { listingQtyFor, type SalesMode } from "./capacity";
 
 const num = (v: unknown): number => {
   const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
@@ -35,6 +35,11 @@ export type SyncMaster = {
   discountPercent: number;
   buildableQty: number;
   virtualStockCap: number;
+  /** İlan miktarının hangi kurala göre çıkacağı. */
+  salesMode?: SalesMode | null;
+  /** Raftaki mamul — `stoktan` modunda miktarın kaynağı. */
+  stockQty?: number;
+  reservedQty?: number;
 };
 
 /** Pazaryerine gidecek tek kalem — kanal biçimine çevrilmeden önce. */
@@ -94,7 +99,15 @@ export function planChannelSync(input: {
     // Arşivlenen ürün stoğu sıfırlanarak gönderilir — ilan silinmez ama
     // satışa kapanır. Silmek geçmiş satış verisini de götürürdü.
     const arsiv = master.status === "arsiv";
-    const quantity = arsiv ? 0 : listingQty(master.buildableQty, master.virtualStockCap);
+    const quantity = arsiv
+      ? 0
+      : listingQtyFor({
+          salesMode: master.salesMode,
+          buildable: master.buildableQty,
+          cap: master.virtualStockCap,
+          stockQty: master.stockQty,
+          reservedQty: master.reservedQty,
+        });
 
     const listPrice = l.price > 0 ? l.price : master.basePrice;
     if (listPrice <= 0) {

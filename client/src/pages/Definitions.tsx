@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useConfirm } from "@/components/ConfirmDialog";
+import PackagingCost from "@/components/PackagingCost";
 import { trpc } from "@/lib/trpc";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
@@ -26,6 +27,8 @@ import { toast } from "sonner";
 import { useLocation } from "wouter";
 
 type Kind = "colors" | "families" | "packagings" | "useCases";
+/** Sekme değeri; KIND_META tablo sekmeleri içindir, bu ayrı bir içerik. */
+const PACKAGING_COST_TAB = "packagingCost";
 const NONE = "__none__";
 
 const KIND_META: Record<Kind, { title: string; desc: string }> = {
@@ -63,7 +66,11 @@ export default function Definitions() {
   const { data: series } = trpc.series.list.useQuery();
   const { data: materials } = trpc.materials.list.useQuery();
 
-  const [kind, setKind] = useState<Kind>("colors");
+  // Sekme değeri tablo sekmelerinden biri ya da ambalaj maliyeti olabilir;
+  // `kind` yalnız tablo sekmelerinde anlamlıdır.
+  const [tab, setTab] = useState<string>("colors");
+  const kind = (tab === PACKAGING_COST_TAB ? "packagings" : tab) as Kind;
+  const setKind = (k: Kind) => setTab(k);
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [form, setForm] = useState({
@@ -156,13 +163,18 @@ export default function Definitions() {
         </p>
       </div>
 
-      <Tabs value={kind} onValueChange={v => setKind(v as Kind)}>
+      <Tabs value={tab} onValueChange={v => setTab(v)}>
         <TabsList className="flex-wrap">
           <TabsTrigger value="colors">Renkler</TabsTrigger>
           <TabsTrigger value="families">Formlar</TabsTrigger>
           <TabsTrigger value="packagings">Ambalajlar</TabsTrigger>
+          <TabsTrigger value={PACKAGING_COST_TAB}>Ambalaj Maliyeti</TabsTrigger>
           <TabsTrigger value="useCases">Kullanım Alanları</TabsTrigger>
         </TabsList>
+
+        <TabsContent value={PACKAGING_COST_TAB} className="pt-3">
+          <PackagingCost />
+        </TabsContent>
 
         {(Object.keys(KIND_META) as Kind[]).map(k => (
           <TabsContent key={k} value={k} className="space-y-3 pt-3">

@@ -82,6 +82,7 @@ import {
   InsertPackaging,
   InsertUseCase,
   InsertFormula,
+  InsertPackagingInput,
   InsertFormulaInput,
   InsertMasterProduct,
   InsertListing,
@@ -2749,6 +2750,26 @@ export async function listFormulaInputs() {
   return db.select().from(formulaInputs);
 }
 
+/**
+ * Bir ambalajın malzeme listesini toptan değiştirir (kapak, etiket, koli…).
+ * Ana kap `packagings.materialId`de durur ve buraya girmez.
+ */
+export async function setPackagingInputs(
+  packagingId: number,
+  rows: { materialId: number; qtyPerUnit: number; unit?: string | null }[],
+) {
+  const db = await requireDb();
+  await db.delete(packagingInputs).where(eq(packagingInputs.packagingId, packagingId));
+  for (const row of rows) {
+    await db.insert(packagingInputs).values({
+      packagingId,
+      materialId: row.materialId,
+      qtyPerUnit: String(row.qtyPerUnit),
+      unit: row.unit ?? null,
+    } as InsertPackagingInput);
+  }
+}
+
 export async function listPackagingInputs() {
   const db = await requireDb();
   return db.select().from(packagingInputs);
@@ -2767,7 +2788,13 @@ export async function updateFormula(id: number, data: Partial<InsertFormula>) {
 
 export async function setFormulaInputs(
   formulaId: number,
-  rows: { inputMaterialId: number; qtyPerBase: number; note?: string | null }[],
+  rows: {
+    inputMaterialId: number;
+    qtyPerBase: number;
+    /** NULL = miktar kalemin kendi biriminde. */
+    unit?: string | null;
+    note?: string | null;
+  }[],
 ) {
   const db = await requireDb();
   await db.delete(formulaInputs).where(eq(formulaInputs.formulaId, formulaId));
@@ -2776,6 +2803,7 @@ export async function setFormulaInputs(
       formulaId,
       inputMaterialId: row.inputMaterialId,
       qtyPerBase: String(row.qtyPerBase),
+      unit: row.unit ?? null,
       note: row.note ?? null,
     } as InsertFormulaInput);
   }

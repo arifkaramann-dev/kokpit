@@ -1096,6 +1096,8 @@ export const packagingInputs = mysqlTable(
     packagingId: int("packagingId").notNull(),
     materialId: int("materialId").notNull(),
     qtyPerUnit: decimal("qtyPerUnit", { precision: 12, scale: 4 }).notNull().default("1"),
+    /** Miktarın birimi — NULL = kalemin kendi birimi. Bkz. formulaInputs.unit. */
+    unit: varchar("unit", { length: 16 }),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
   t => [
@@ -1304,6 +1306,15 @@ export const formulaInputs = mysqlTable(
     formulaId: int("formulaId").notNull(),
     inputMaterialId: int("inputMaterialId").notNull(),
     qtyPerBase: decimal("qtyPerBase", { precision: 12, scale: 4 }).notNull(),
+    /**
+     * Miktarın birimi (gr, kg, ml, lt, adet). NULL = kalemin kendi birimi.
+     *
+     * Boyacı gram yazar, satın alma kilo alır. Birim yazılmadığı sürece kod
+     * miktarı kalemin biriminde sayıyordu; kg fiyatlı bir pigmente gram
+     * miktarı girildiğinde maliyet 1000 kat şişiyordu. NULL bırakılan eski
+     * satırlar eski davranışı korur, yeni satırlar birimini kendi taşır.
+     */
+    unit: varchar("unit", { length: 16 }),
     note: text("note"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
@@ -1353,7 +1364,24 @@ export const masterProducts = mysqlTable(
     // İlana yazılacak üst sınır: push = min(buildableQty, virtualStockCap).
     virtualStockCap: int("virtualStockCap").notNull().default(10),
 
-    // Mamul stok — siparişe göre üretimde kullanılmaz, toptan satış için hazır.
+    /**
+     * Ürünün nasıl satıldığı — ilan miktarını bu belirler.
+     *
+     * `siparis_uzerine` (varsayılan): eldeki hammaddeden üretilebilir adet.
+     * `stoktan`: raftaki mamul adedi; hammadde kapasitesine bakılmaz.
+     * `tedarikli`: hammadde yokken bile satışta, termin süresiyle satılır.
+     *
+     * Tek kural bütün katalogda çalışmıyordu: miktar yalnız kapasiteden
+     * türeyince reçetesi bağlanmamış ya da hammaddesi biten her ürün ilanda
+     * 0 yazıp kapanıyordu — "önce üret sonra sat" demek.
+     */
+    salesMode: mysqlEnum("salesMode", ["siparis_uzerine", "stoktan", "tedarikli"])
+      .notNull()
+      .default("siparis_uzerine"),
+    /** `tedarikli` modda müşteriye vaat edilen termin (gün). */
+    leadTimeDays: int("leadTimeDays").notNull().default(0),
+
+    // Mamul stok — `stoktan` modunda ilan miktarının kaynağıdır.
     stockQty: int("stockQty").notNull().default(0),
     reservedQty: int("reservedQty").notNull().default(0),
     criticalQty: int("criticalQty").notNull().default(0),

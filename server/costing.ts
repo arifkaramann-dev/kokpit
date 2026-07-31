@@ -11,6 +11,7 @@
  */
 
 import type { CapacityFormula, CapacityPackaging } from "./capacity";
+import { qtyInMaterialUnit } from "@shared/units";
 
 const num = (v: unknown): number => {
   const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
@@ -23,12 +24,15 @@ export type CostMaterial = {
   type: "hammadde" | "yari_mamul" | "ambalaj" | "masraf";
   /** Birim maliyet — hammadde/ambalaj için satın alma fiyatı. */
   unitCost: number | string | null;
+  /** `unitCost`in hangi birim başına olduğu (gr, kg, ml, lt, adet). */
+  unit?: string | null;
 };
 
 export type CostMaster = {
   id: number;
   formulaId: number | null;
-  formulaScale: number | string;
+  /** Ambalaj hacmi / reçete baz hacmi. Boşsa 1 sayılır. */
+  formulaScale: number | string | null | undefined;
   packagingId: number | null;
 };
 
@@ -41,6 +45,11 @@ export type MasterCost = {
   totalCost: number;
   /** Maliyeti bilinmeyen kalemler — sayı eksik hesaplanmış demektir. */
   unknownInputs: string[];
+  /**
+   * Birimi kalemin birimine çevrilemeyen satırlar (gr ↔ ml gibi). Miktar
+   * olduğu gibi kullanıldı; sayı güvenilmez, kullanıcı düzeltmeli.
+   */
+  unitMismatches: string[];
 };
 
 /**
@@ -52,6 +61,7 @@ export function resolveUnitCosts(
   formulas: CapacityFormula[],
 ): Map<number, number> {
   const unit = new Map<number, number>();
+  const materialById = new Map(materials.map(m => [m.id, m]));
   for (const m of materials) unit.set(m.id, Math.max(0, num(m.unitCost)));
 
   const formulaByOutput = new Map<number, CapacityFormula>();
@@ -84,10 +94,20 @@ export function resolveUnitCosts(
     if (base > 0 && yieldRatio > 0) {
       let batch = 0;
       for (const inp of f.inputs) {
-        batch += num(inp.qtyPerBase) * (unit.get(inp.inputMaterialId) ?? 0);
+        // Satır "250 gr" yazıyor olabilir ama kalem kg başına fiyatlanmıştır;
+        // çevirmeden çarpmak 1000 katlık maliyet hatası üretir.
+        const inputMat = materialById.get(inp.inputMaterialId);
+        const { qty } = qtyInMaterialUnit(num(inp.qtyPerBase), inp.unit, inputMat?.unit);
+        batch += qty * (unit.get(inp.inputMaterialId) ?? 0);
       }
+      // Reçete 1000 ml üretiyor olabilir ama yarı mamul stokta lt tutuluyorsa
+      // birim maliyet çıktının KENDİ biriminde olmalı, reçetenin baz biriminde
+      // değil — yoksa hata bir üst kademeye taşınır.
+      const outMat = materialById.get(out);
+      const { qty: baseInOutUnit } = qtyInMaterialUnit(base, f.baseUnit, outMat?.unit);
+      const denom = (baseInOutUnit || base) * yieldRatio;
       // Fire, aynı çıktı için daha çok girdi harcandığı anlamına gelir.
-      unit.set(out, batch / (base * yieldRatio));
+      if (denom > 0) unit.set(out, batch / denom);
     }
     for (const dep of dependents.get(out) ?? []) {
       const set = deps.get(dep)!;
@@ -116,6 +136,7 @@ export function computeMasterCosts(input: {
 
   return input.masters.map((master): MasterCost => {
     const unknown = new Set<string>();
+    const mismatched = new Set<string>();
     let materialCost = 0;
     let packagingCost = 0;
 
@@ -129,13 +150,19 @@ export function computeMasterCosts(input: {
         if (mat?.type === "masraf") continue;
         const u = unit.get(inp.inputMaterialId) ?? 0;
         if (u <= 0 && mat) unknown.add(mat.name);
-        materialCost += num(inp.qtyPerBase) * scale * u * (yieldRatio > 0 ? 1 / yieldRatio : 1);
+        const conv = qtyInMaterialUnit(num(inp.qtyPerBase), inp.unit, mat?.unit);
+        if (conv.mismatch && mat) mismatched.add(mat.name);
+        materialCost += conv.qty * scale * u * (yieldRatio > 0 ? 1 / yieldRatio : 1);
       }
     }
 
     const pack = master.packagingId != null ? packById.get(master.packagingId) : undefined;
     if (pack) {
-      const items = [
+      const items: {
+        materialId: number;
+        qtyPerUnit: number | string | null | undefined;
+        unit?: string | null;
+      }[] = [
         ...(pack.materialId != null ? [{ materialId: pack.materialId, qtyPerUnit: 1 }] : []),
         ...(pack.inputs ?? []),
       ];
@@ -144,7 +171,9 @@ export function computeMasterCosts(input: {
         if (mat?.type === "masraf") continue;
         const u = unit.get(item.materialId) ?? 0;
         if (u <= 0 && mat) unknown.add(mat.name);
-        packagingCost += num(item.qtyPerUnit) * u;
+        const conv = qtyInMaterialUnit(num(item.qtyPerUnit), item.unit, mat?.unit);
+        if (conv.mismatch && mat) mismatched.add(mat.name);
+        packagingCost += conv.qty * u;
       }
     }
 
@@ -155,6 +184,7 @@ export function computeMasterCosts(input: {
       packagingCost: round(packagingCost),
       totalCost: round(materialCost + packagingCost),
       unknownInputs: Array.from(unknown),
+      unitMismatches: Array.from(mismatched),
     };
   });
 }

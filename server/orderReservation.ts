@@ -14,6 +14,7 @@
  */
 
 import * as db from "./db";
+import { loadCapacityInputs } from "./capacityInputs";
 import type { CapacityFormula, CapacityMaterial, CapacityPackaging } from "./capacity";
 import { planProduction, resolveOrderLines } from "./productionPlan";
 
@@ -32,69 +33,6 @@ export type ReservationOutcome = {
   unmatchedLines: string[];
 };
 
-/** Kapasite/plan hesabı için gereken veriyi tek seferde okur. */
-async function loadPlanInputs() {
-  const [materials, formulas, formulaInputs, packagings, packagingInputs, masters] =
-    await Promise.all([
-      db.listMaterials(),
-      db.listFormulas(),
-      db.listFormulaInputs(),
-      db.listPackagings(),
-      db.listPackagingInputs(),
-      db.listMasterProducts(),
-    ]);
-
-  const inputsByFormula = new Map<number, { inputMaterialId: number; qtyPerBase: number }[]>();
-  for (const fi of formulaInputs as { formulaId: number; inputMaterialId: number; qtyPerBase: string }[]) {
-    inputsByFormula.set(fi.formulaId, [
-      ...(inputsByFormula.get(fi.formulaId) ?? []),
-      { inputMaterialId: fi.inputMaterialId, qtyPerBase: num(fi.qtyPerBase) },
-    ]);
-  }
-  const packInputsById = new Map<number, { materialId: number; qtyPerUnit: number }[]>();
-  for (const pi of packagingInputs as { packagingId: number; materialId: number; qtyPerUnit: string }[]) {
-    packInputsById.set(pi.packagingId, [
-      ...(packInputsById.get(pi.packagingId) ?? []),
-      { materialId: pi.materialId, qtyPerUnit: num(pi.qtyPerUnit) },
-    ]);
-  }
-
-  return {
-    materials: (materials as Record<string, unknown>[]).map(
-      (m): CapacityMaterial => ({
-        id: m.id as number,
-        name: String(m.name ?? ""),
-        type: (m.type as CapacityMaterial["type"]) ?? "hammadde",
-        stockQty: m.stockQty as string,
-        reservedQty: m.reservedQty as string,
-        safetyQty: m.safetyQty as string,
-      }),
-    ),
-    formulas: (formulas as Record<string, unknown>[]).map(
-      (f): CapacityFormula => ({
-        id: f.id as number,
-        outputType: f.outputType as "yari_mamul" | "mamul",
-        outputMaterialId: (f.outputMaterialId as number | null) ?? null,
-        baseQty: f.baseQty as string,
-        wastePercent: f.wastePercent as string,
-        inputs: inputsByFormula.get(f.id as number) ?? [],
-      }),
-    ),
-    packagings: (packagings as Record<string, unknown>[]).map(
-      (p): CapacityPackaging => ({
-        id: p.id as number,
-        materialId: (p.materialId as number | null) ?? null,
-        inputs: packInputsById.get(p.id as number) ?? [],
-      }),
-    ),
-    masters: (masters as Record<string, unknown>[]).map(m => ({
-      id: m.id as number,
-      formulaId: (m.formulaId as number | null) ?? null,
-      formulaScale: num(m.formulaScale),
-      packagingId: (m.packagingId as number | null) ?? null,
-    })),
-  };
-}
 
 /** Bir siparişin hammadde ihtiyacını satırlarından hesaplar. */
 async function orderRequirements(orderId: number) {
@@ -146,10 +84,14 @@ async function orderRequirements(orderId: number) {
     demandMap.set(r.masterId, (demandMap.get(r.masterId) ?? 0) + r.line.quantity);
   }
 
-  const data = await loadPlanInputs();
+  const data = await loadCapacityInputs();
   const plan = planProduction({
     demand: Array.from(demandMap.entries()).map(([masterId, qty]) => ({ masterId, qty })),
-    ...data,
+    materials: data.materials,
+    formulas: data.formulas,
+    packagings: data.packagings,
+    // Üretim planı ölçeği sayı bekler; yükleyici ham decimal metnini taşır.
+    masters: data.masters.map(m => ({ ...m, formulaScale: num(m.formulaScale) })),
   });
 
   return {

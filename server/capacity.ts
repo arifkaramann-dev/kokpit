@@ -23,6 +23,8 @@
  * değil, "hiç yapabilir miyim" sorusunda doğrudur — kritik olan da odur.
  */
 
+import { qtyInMaterialUnit } from "@shared/units";
+
 export type MaterialType = "hammadde" | "yari_mamul" | "ambalaj" | "masraf";
 
 type Num = number | string | null | undefined;
@@ -34,6 +36,8 @@ export type CapacityMaterial = {
   stockQty: Num;
   reservedQty?: Num;
   safetyQty?: Num;
+  /** Stok ve fiyatın hangi birimde tutulduğu (gr, kg, ml, lt, adet). */
+  unit?: string | null;
 };
 
 export type CapacityFormula = {
@@ -43,8 +47,11 @@ export type CapacityFormula = {
   outputMaterialId: number | null;
   /** Reçete kaç birim çıktı için yazıldı (ölçeklemenin paydası). */
   baseQty: Num;
+  /** `baseQty`nin birimi — çıktı kaleminin biriminden farklı olabilir. */
+  baseUnit?: string | null;
   wastePercent?: Num;
-  inputs: { inputMaterialId: number; qtyPerBase: Num }[];
+  /** `unit` boşsa miktar kalemin kendi biriminde kabul edilir (eski kayıtlar). */
+  inputs: { inputMaterialId: number; qtyPerBase: Num; unit?: string | null }[];
 };
 
 export type CapacityPackaging = {
@@ -52,7 +59,7 @@ export type CapacityPackaging = {
   /** Ana kap (şişe/kutu) — adet başına 1. */
   materialId: number | null;
   /** Kapak, etiket, koli — hacimle ölçeklenmeyen sabit kalemler. */
-  inputs?: { materialId: number; qtyPerUnit: Num }[];
+  inputs?: { materialId: number; qtyPerUnit: Num; unit?: string | null }[];
 };
 
 export type CapacityMaster = {
@@ -201,7 +208,14 @@ export function computeCapacity(input: {
     let sawInput = false;
 
     for (const inp of f.inputs) {
-      const needPerUnit = (num(inp.qtyPerBase) * scale) / yieldRatio;
+      // Stok kalemin biriminde tutulur; satır başka birimde yazılmış olabilir.
+      // Çevirmeden bölmek kapasiteyi 1000 kat yanlış gösterir.
+      const lineQty = qtyInMaterialUnit(
+        num(inp.qtyPerBase),
+        inp.unit,
+        materialById.get(inp.inputMaterialId)?.unit,
+      ).qty;
+      const needPerUnit = (lineQty * scale) / yieldRatio;
       if (needPerUnit <= 0) continue; // sıfır miktarlı satır kısıt değil
       sawInput = true;
       const have = available.get(inp.inputMaterialId);
@@ -286,12 +300,16 @@ export function computeCapacity(input: {
     // Ambalaj: şişe/kapak/etiket hacimle ölçeklenmez, adet başına sabittir.
     const pack = master.packagingId != null ? packagingById.get(master.packagingId) : undefined;
     if (pack) {
-      const packItems: { materialId: number; qtyPerUnit: Num }[] = [
+      const packItems: { materialId: number; qtyPerUnit: Num; unit?: string | null }[] = [
         ...(pack.materialId != null ? [{ materialId: pack.materialId, qtyPerUnit: 1 }] : []),
         ...(pack.inputs ?? []),
       ];
       for (const item of packItems) {
-        const per = num(item.qtyPerUnit);
+        const per = qtyInMaterialUnit(
+          num(item.qtyPerUnit),
+          item.unit,
+          materialById.get(item.materialId)?.unit,
+        ).qty;
         if (per <= 0) continue;
         const have = available.get(item.materialId) ?? 0;
         const canMake = Math.max(0, Math.floor(have / per));
@@ -321,6 +339,57 @@ export function computeCapacity(input: {
 export function listingQty(buildable: number, cap: number): number {
   if (buildable <= 0) return 0;
   return Math.max(0, Math.min(buildable, Math.max(0, cap)));
+}
+
+/**
+ * Ürünün nasıl satıldığı. Tek bir kural bütün katalogda çalışmıyor:
+ * çok satanlar rafta hazır durur, geri kalanı sipariş gelince üretilir,
+ * bazıları da hammadde stokta olmasa bile termin sözüyle satılır.
+ */
+export type SalesMode =
+  /** Eldeki hammaddeden üretilebilir adet — v3'ün varsayılanı. */
+  | "siparis_uzerine"
+  /** Rafta duran mamul adedi; hammadde kapasitesine bakılmaz. */
+  | "stoktan"
+  /** Hammadde yoksa da satışta: termin süresiyle satılır. */
+  | "tedarikli";
+
+export type ListingQtyInput = {
+  salesMode?: SalesMode | null;
+  /** Hammaddeden üretilebilir adet. */
+  buildable: Num;
+  /** İlana yazılabilecek tavan. */
+  cap: Num;
+  /** Raftaki mamul adedi (yalnız `stoktan` modunda kullanılır). */
+  stockQty?: Num;
+  /** Açık siparişlere ayrılmış mamul. */
+  reservedQty?: Num;
+};
+
+/**
+ * Satış moduna göre ilana yazılacak miktar.
+ *
+ * ── Neden gerekti ─────────────────────────────────────────────────────────
+ * Miktar yalnızca `buildable`den türetiliyordu: reçetesi bağlanmamış ya da
+ * hammaddesi biten her ürün 0 yazıyor, ilan kapanıyordu. Bu, "önce üret sonra
+ * sat" demek — oysa rafta hazır duran ürünün hammaddesi tükenmiş olabilir ve
+ * hâlâ satılabilir; tersine, hammaddesi olmayan ama 3 günde tedarik edilen bir
+ * ürünü satışa kapatmak sipariş kaybettirir.
+ */
+export function listingQtyFor(input: ListingQtyInput): number {
+  const cap = Math.max(0, num(input.cap));
+  switch (input.salesMode ?? "siparis_uzerine") {
+    case "stoktan": {
+      // Raftaki mamul: hammadde kapasitesi burada bağlayıcı değil.
+      const onHand = num(input.stockQty) - num(input.reservedQty);
+      return Math.max(0, Math.min(Math.floor(onHand), cap || Math.floor(onHand)));
+    }
+    case "tedarikli":
+      // Hammaddeden bağımsız: termin süresi sözüyle satışta kalır.
+      return cap;
+    default:
+      return listingQty(num(input.buildable), cap);
+  }
 }
 
 export type BottleneckRow = {
