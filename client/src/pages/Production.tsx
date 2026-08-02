@@ -31,6 +31,7 @@ import {
   Factory,
   History,
   ListPlus,
+  Loader2,
   PackageSearch,
 } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
@@ -101,6 +102,48 @@ export default function Production() {
     onSuccess: () => utils.tasks.list.invalidate(),
   });
 
+  /*
+   * "Üretmediğini satamama" durumunu kaldıran düğme.
+   *
+   * İlan miktarı varsayılan olarak hammaddeden üretilebilir adetten gelir;
+   * reçetesi bağlanmamış ya da hammaddesi biten ürün ilanda 0 yazıp satışa
+   * kapanıyor. İş modeli sipariş üzerine üretim olduğu için bu doğrudan
+   * sipariş kaybı — kaç ürünün böyle kapandığını görmek bile mümkün değildi.
+   */
+  const { data: closedPreview } = trpc.katalog.masters.useQuery(undefined, {
+    select: rows =>
+      (rows ?? []).filter(
+        m =>
+          m.status !== "arsiv" &&
+          Number(m.buildableQty ?? 0) <= 0 &&
+          m.salesMode !== "tedarikli" &&
+          m.salesMode !== "stoktan",
+      ).length,
+  });
+
+  const keepSellable = trpc.katalog.keepSellable.useMutation({
+    onSuccess: r => {
+      utils.katalog.invalidate();
+      toast.success(
+        `${r.updated} ürün satışta tutuldu — hammadde bitse de ilan kapanmayacak (termin süresiyle satılır).`,
+        { duration: 10000 },
+      );
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  const produceQueue = trpc.katalog.produceBriefing.useMutation({
+    onSuccess: r => {
+      invalidateAll();
+      toast.success(
+        `${r.produced} üründe ${r.units} adet üretim işlendi` +
+          (r.shortages.length > 0 ? ` · eksik stokla: ${r.shortages.slice(0, 4).join(", ")}` : ""),
+        { duration: 12000 },
+      );
+    },
+    onError: e => toast.error(e.message, { duration: 10000 }),
+  });
+
   const catalogById = useMemo(
     () => new Map((catalog ?? []).map(c => [c.masterId, c])),
     [catalog],
@@ -169,9 +212,65 @@ export default function Production() {
         </Card>
       )}
 
+      {/* Satışa kapanan ürünler — iş modeli sipariş üzerine üretim olduğu için
+          hammadde yokluğu ilanı kapatmamalı. */}
+      {(closedPreview ?? 0) > 0 && (
+        <Card className="flex flex-wrap items-center gap-2 border-amber-500/30 bg-amber-500/5 p-4 text-sm">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
+          <span className="min-w-56 flex-1">
+            <strong>{closedPreview} ürün</strong> hammadde kapasitesi 0 olduğu için ilanda 0 adet
+            yazıyor ve fiilen satışa kapalı. Sipariş üzerine üretiyorsanız bunları termin süresiyle
+            satışta tutabilirsiniz.
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={keepSellable.isPending}
+            onClick={() => keepSellable.mutate({ dryRun: false, leadTimeDays: 3 })}
+          >
+            {keepSellable.isPending && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
+            Satışta tut (3 gün termin)
+          </Button>
+        </Card>
+      )}
+
       {/* 1. Üretim kuyruğu */}
       <Card className="space-y-3 p-5">
-        <h2 className="text-sm font-semibold">Üretim Kuyruğu</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-sm font-semibold">Üretim Kuyruğu</h2>
+          {queueRows.length > 0 && (
+            <>
+              <span className="text-xs text-muted-foreground">
+                Tek tek üretmek zorunda değilsiniz — kuyruğun tamamını bir kerede işleyebilirsiniz.
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                className="ml-auto h-7"
+                disabled={produceQueue.isPending}
+                onClick={async () => {
+                  const items = queueRows
+                    .map(r => ({ masterId: r.masterId, qty: Math.ceil(r.suggested) }))
+                    .filter(i => i.qty > 0);
+                  const units = items.reduce((s, i) => s + i.qty, 0);
+                  const ok = await confirm({
+                    title: "Kuyruğun tamamını üret",
+                    description: `${items.length} üründe toplam ${units} adet üretim kaydedilecek ve reçeteye göre hammadde düşülecek. Hammaddesi yetmeyen kalemler eksiye düşer.`,
+                    confirmText: "Tümünü üret",
+                  });
+                  if (ok) produceQueue.mutate({ items });
+                }}
+              >
+                {produceQueue.isPending ? (
+                  <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Factory className="mr-1 h-3.5 w-3.5" />
+                )}
+                Kuyruğun tamamını üret
+              </Button>
+            </>
+          )}
+        </div>
         {queueRows.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             Kuyruk boş — açık siparişlerin tamamı stoktan karşılanabiliyor.

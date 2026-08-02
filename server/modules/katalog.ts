@@ -70,7 +70,7 @@ import {
   rollupRevenueBySeries,
   windowStart,
 } from "../masterRevenue";
-import { planProduction, resolveOrderLines } from "../productionPlan";
+import { buildFormulation, planProduction, resolveOrderLines } from "../productionPlan";
 import { planPublications, summarizeSkips } from "../publishPlan";
 import { GENERIC_USE_CASE_CODE, seedCatalogDimensions } from "../seedCatalog";
 import { fetchHepsiburadaCategories } from "../hepsiburada";
@@ -3942,6 +3942,9 @@ export const katalogRouter = router({
           orders: [],
           lines: [],
           demand: [],
+          // Dolu dönüşle aynı alanlar: iki dal arasında biçim farkı olursa
+          // istemci her alanda "belki yok" kontrolü yapmak zorunda kalır.
+          formulation: [] as ReturnType<typeof buildFormulation>,
           plan: { needs: [], shortages: [], steps: [], missingFormula: [], canProduce: true },
           unmatched: [],
         };
@@ -4027,6 +4030,26 @@ export const katalogRouter = router({
         };
       });
 
+      /*
+       * Tezgâh formülasyonu — üretimin asıl istenen çıktısı.
+       *
+       * Toplam malzeme dökümü satın alma için doğru ama boyayı yapan kişi
+       * için işe yaramaz: sekiz rengin pigmenti tek satırda toplanır. Ürün
+       * bazında "şu kadar için şunu tart" listesi, üretim kaydı tutmadan da
+       * işi yürütmenin yolu.
+       */
+      const formulaNames = new Map(
+        (await db.listFormulas()).map(f => [f.id as number, String(f.name ?? "")]),
+      );
+      const formulation = buildFormulation({
+        demand: demand.map(d => ({ masterId: d.masterId, qty: d.qty })),
+        masters: data.masters.map(m => ({ ...m, formulaScale: num(m.formulaScale) })),
+        formulas: data.formulas,
+        packagings: data.packagings,
+        materials: data.materials,
+        formulaNames,
+      });
+
       return {
         orders: openOrders.map(o => ({ id: o.id, orderNo: o.orderNo, customerName: o.customerName, status: o.status })),
         lines: resolved.map(r => ({
@@ -4038,11 +4061,148 @@ export const katalogRouter = router({
           via: r.via,
         })),
         demand: demand.sort((a, b) => b.qty - a.qty),
+        formulation,
         plan,
         unmatched: resolved
           .filter(r => r.masterId == null)
           .map(r => ({ id: r.line.id, orderId: r.line.orderId, productName: r.line.productName, quantity: r.line.quantity })),
       };
+    }),
+
+  /**
+   * Brifingdeki ürünlerin tamamını tek işlemde "üretildi" olarak işler.
+   *
+   * ── Neden ────────────────────────────────────────────────────────────────
+   * Ürün başına "üret" tıklamak, kalemi seçmek, adedi yazmak ve onaylamak
+   * gerçek bir iş yüküydü: yüzlerce ürünlü bir katalogda günde onlarca kez
+   * yapılması imkânsız. Sonuç, kimsenin üretim kaydı tutmaması ve hammadde
+   * stoğunun gerçeği yansıtmamasıydı.
+   *
+   * Burada gün sonunda tek düğme: açık siparişlerin tamamı için hammadde
+   * düşülür ve her ürün için bir emir kaydı yazılır. Eksik hammadde varsayılan
+   * olarak İŞLEMİ DURDURMAZ (`force`), çünkü fiilen üretim yapılmıştır —
+   * stoğun eksiye düşmesi, kaydı hiç tutmamaktan iyidir ve eksikler
+   * raporlanır.
+   */
+  produceBriefing: protectedProcedure
+    .input(
+      z.object({
+        items: z.array(z.object({ masterId: z.number(), qty: z.number().positive() })).min(1).max(500),
+        note: z.string().max(500).nullish(),
+        /** Kapalıysa eksik hammadde varsa hiçbir şey yazılmaz. */
+        allowShortage: z.boolean().default(true),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const data = await loadCapacityInputs();
+      const masters = (data.masters as Record<string, unknown>[]).map(m => ({
+        id: m.id as number,
+        formulaId: (m.formulaId as number | null) ?? null,
+        formulaScale: num(m.formulaScale) || 1,
+        packagingId: (m.packagingId as number | null) ?? null,
+      }));
+      const materials = data.rawMaterials.map(m => ({
+        id: m.id as number,
+        name: String(m.name ?? ""),
+        type: (m.type as MaterialType) ?? "hammadde",
+        stockQty: num(m.stockQty),
+        reservedQty: num(m.reservedQty),
+      }));
+
+      // Toplam plan: hammadde tek seferde düşülür, yarı mamuller bir kez
+      // patlatılır — ürün ürün düşmek yarı mamul stoğunu iki kez saydırırdı.
+      const plan = planProduction({
+        demand: input.items,
+        masters,
+        formulas: data.formulas,
+        packagings: data.packagings,
+        materials,
+      });
+
+      if (plan.shortages.length > 0 && !input.allowShortage) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Hammadde yetersiz: ${plan.shortages
+            .slice(0, 5)
+            .map(n => `${n.name} (eksik ${Math.ceil(n.missing)})`)
+            .join(" · ")}`,
+        });
+      }
+
+      for (const n of plan.needs) {
+        if (n.needed > 0) {
+          await db.adjustStock(n.materialId, "out", n.needed, "Üretim brifingi");
+        }
+      }
+
+      const note = [
+        input.note?.trim() || "Üretim brifingi",
+        plan.shortages.length > 0
+          ? `Eksik stokla: ${plan.shortages.map(n => n.name).slice(0, 6).join(", ")}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      for (const item of input.items) {
+        await db.recordMasterProductionRun(item.masterId, Math.round(item.qty), note);
+      }
+
+      await runCapacityRecompute();
+      return {
+        produced: input.items.length,
+        units: input.items.reduce((s, i) => s + i.qty, 0),
+        deducted: plan.needs.length,
+        shortages: plan.shortages.map(n => n.name),
+        missingFormula: plan.missingFormula.length,
+      };
+    }),
+
+  /**
+   * "Üretmediğini satamama" durumunu kaldırır.
+   *
+   * İlan miktarı varsayılan olarak eldeki hammaddeden üretilebilir adetten
+   * gelir; reçetesi bağlanmamış ya da hammaddesi biten her ürün ilanda 0 yazıp
+   * satışa kapanıyor. Oysa iş modeli sipariş üzerine üretim: 3 günde tedarik
+   * edilebilen bir ürünü satışa kapatmak doğrudan sipariş kaybı.
+   *
+   * Bu uç seçilen (ya da kapanmış olan tüm) ürünleri `tedarikli` moduna alır:
+   * hammadde bağımsız, termin sözüyle satışta kalırlar.
+   */
+  keepSellable: protectedProcedure
+    .input(
+      z.object({
+        /** Boşsa: kapasitesi 0 olduğu için ilanı kapanan tüm aktif ürünler. */
+        masterIds: z.array(z.number()).default([]),
+        leadTimeDays: z.number().int().min(0).max(365).default(3),
+        virtualStockCap: z.number().int().min(1).max(10000).optional(),
+        dryRun: z.boolean().default(true),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const masters = (await db.listMasterProducts()) as Record<string, unknown>[];
+      const targets =
+        input.masterIds.length > 0
+          ? masters.filter(m => input.masterIds.includes(m.id as number))
+          : masters.filter(
+              m =>
+                m.status !== "arsiv" &&
+                Number(m.buildableQty ?? 0) <= 0 &&
+                m.salesMode !== "tedarikli" &&
+                m.salesMode !== "stoktan",
+            );
+
+      if (input.dryRun) {
+        return { dryRun: true as const, updated: 0, willUpdate: targets.length };
+      }
+      for (const m of targets) {
+        await db.updateMasterProduct(m.id as number, {
+          salesMode: "tedarikli",
+          leadTimeDays: input.leadTimeDays,
+          ...(input.virtualStockCap != null ? { virtualStockCap: input.virtualStockCap } : {}),
+        } as never);
+      }
+      await runCapacityRecompute();
+      return { dryRun: false as const, updated: targets.length, willUpdate: targets.length };
     }),
 
   /**

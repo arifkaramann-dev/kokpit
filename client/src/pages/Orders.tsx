@@ -1,4 +1,5 @@
 import { useConfirm } from "@/components/ConfirmDialog";
+import QuickSale from "@/components/QuickSale";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -59,6 +60,7 @@ import {
   RefreshCw,
   Search,
   Settings,
+  ShoppingBag,
   ShoppingCart,
   Truck,
   Trash2,
@@ -243,7 +245,9 @@ export default function Orders() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editOrder, setEditOrder] = useState<OrderRow | null>(null);
   const [form, setForm] = useState(emptyForm);
-  const [manualSale, setManualSale] = useState(false);
+  // Elden satış artık kendi kasa ekranında (QuickSale) — bu diyalog yalnız
+  // sipariş oluşturma/düzenleme içindir.
+  const [quickSaleOpen, setQuickSaleOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [payFilter, setPayFilter] = useState<"all" | "unpaid" | "paid">("all");
   const [channelFilter, setChannelFilter] = useState<string>("all");
@@ -654,16 +658,7 @@ export default function Orders() {
 
   function openCreate() {
     setEditOrder(null);
-    setManualSale(false);
     setForm(emptyForm);
-    setDialogOpen(true);
-  }
-
-  function openManualSale() {
-    setEditOrder(null);
-    setManualSale(true);
-    // Elden satış genelde peşin → ödendi varsayılır.
-    setForm({ ...emptyForm, channel: "elden", customerName: "Elden Satış", paymentStatus: "paid" });
     setDialogOpen(true);
   }
 
@@ -739,8 +734,6 @@ export default function Orders() {
       paymentMethod: form.paymentMethod || null,
       // Kalem girildiyse toplam ve özet sunucuda satırlardan hesaplanır.
       ...(itemRows.length > 0 ? { items: itemRows } : {}),
-      // Elden satışlar doğrudan "Tamamlandı" sütununa düşer.
-      ...(manualSale && !editOrder ? { status: "done" as const } : {}),
     };
     if (editOrder) {
       updateOrder.mutate({ id: editOrder.id, data: payload });
@@ -818,6 +811,8 @@ export default function Orders() {
 
   return (
     <div className="space-y-4">
+      <QuickSale open={quickSaleOpen} onOpenChange={setQuickSaleOpen} />
+
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Siparişler</h1>
@@ -871,8 +866,8 @@ export default function Orders() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button variant="outline" onClick={openManualSale}>
-            <Plus className="h-4 w-4 mr-1" /> Elden Satış
+          <Button variant="outline" onClick={() => setQuickSaleOpen(true)}>
+            <ShoppingBag className="h-4 w-4 mr-1" /> Elden Satış
           </Button>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
@@ -882,7 +877,7 @@ export default function Orders() {
           </DialogTrigger>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
-              <DialogTitle>{editOrder ? "Siparişi Düzenle" : manualSale ? "Elden Satış Ekle" : "Yeni Sipariş"}</DialogTitle>
+              <DialogTitle>{editOrder ? "Siparişi Düzenle" : "Yeni Sipariş"}</DialogTitle>
             </DialogHeader>
             <div className="space-y-3">
               <div className="space-y-1.5">

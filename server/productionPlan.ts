@@ -300,3 +300,109 @@ export function planProduction(input: {
     canProduce: shortages.length === 0 && missingFormula.length === 0,
   };
 }
+
+/* ------------------------- Tezgâh formülasyonu ---------------------------- */
+
+export type FormulationLine = {
+  materialId: number;
+  name: string;
+  type: CapacityMaterial["type"];
+  /** Reçetede yazan miktar (baz için). */
+  perBase: number;
+  /** Bir adet ürün için — ambalaj hacmine ölçeklenmiş. */
+  perUnit: number;
+  /** Sipariş adedi için toplam. */
+  total: number;
+  unit: string | null;
+};
+
+export type MasterFormulation = {
+  masterId: number;
+  qty: number;
+  formulaId: number | null;
+  formulaName: string | null;
+  /** Reçete bazının kaçta kaçı bir ürüne giriyor (250 ml / 1 lt = 0,25). */
+  scale: number;
+  wastePercent: number;
+  lines: FormulationLine[];
+  /** Şişe, kapak, etiket — hacimle ölçeklenmez, adet başına sabit. */
+  packagingLines: FormulationLine[];
+};
+
+/**
+ * Tezgâhta okunacak formülasyon: "bu üründen 12 adet için neyi kaç gram tart".
+ *
+ * `planProduction` toplam malzeme ihtiyacını verir — satın alma için doğru
+ * ama boya yapan kişi için işe yaramaz: 8 farklı rengin pigmenti tek satırda
+ * toplanmış olur. Üretim brifingi ÜRÜN BAZINDA reçete ister; bu fonksiyon onu
+ * verir ve yarı mamulleri patlatMAZ (tezgâhta harç zaten hazır alınır,
+ * hazır değilse `planProduction.steps` onu ayrıca söyler).
+ */
+export function buildFormulation(input: {
+  demand: { masterId: number; qty: number }[];
+  masters: PlanMaster[];
+  formulas: CapacityFormula[];
+  packagings: CapacityPackaging[];
+  materials: CapacityMaterial[];
+  formulaNames?: Map<number, string>;
+}): MasterFormulation[] {
+  const masterById = new Map(input.masters.map(m => [m.id, m]));
+  const formulaById = new Map(input.formulas.map(f => [f.id, f]));
+  const packById = new Map(input.packagings.map(p => [p.id, p]));
+  const materialById = new Map(input.materials.map(m => [m.id, m]));
+
+  return input.demand.map(d => {
+    const master = masterById.get(d.masterId);
+    const f = master?.formulaId != null ? formulaById.get(master.formulaId) : undefined;
+    const scale = num(master?.formulaScale) || 1;
+    const wastePercent = f ? Math.min(Math.max(num(f.wastePercent), 0), 99) : 0;
+    const yieldRatio = 1 - wastePercent / 100;
+
+    const round = (n: number) => Math.round(n * 10000) / 10000;
+    const lines: FormulationLine[] = (f?.inputs ?? []).map(inp => {
+      const mat = materialById.get(inp.inputMaterialId);
+      const perBase = num(inp.qtyPerBase);
+      const perUnit = yieldRatio > 0 ? (perBase * scale) / yieldRatio : perBase * scale;
+      return {
+        materialId: inp.inputMaterialId,
+        name: mat?.name ?? `#${inp.inputMaterialId}`,
+        type: mat?.type ?? "hammadde",
+        perBase: round(perBase),
+        perUnit: round(perUnit),
+        total: round(perUnit * d.qty),
+        // Satır birimi yoksa kalemin kendi birimi geçerlidir (eski kayıtlar).
+        unit: inp.unit ?? mat?.unit ?? null,
+      };
+    });
+
+    const pack = master?.packagingId != null ? packById.get(master.packagingId) : undefined;
+    const packagingItems = [
+      ...(pack?.materialId != null ? [{ materialId: pack.materialId, qtyPerUnit: 1, unit: null }] : []),
+      ...(pack?.inputs ?? []),
+    ];
+    const packagingLines: FormulationLine[] = packagingItems.map(item => {
+      const mat = materialById.get(item.materialId);
+      const perUnit = num(item.qtyPerUnit);
+      return {
+        materialId: item.materialId,
+        name: mat?.name ?? `#${item.materialId}`,
+        type: mat?.type ?? "ambalaj",
+        perBase: perUnit,
+        perUnit: round(perUnit),
+        total: round(perUnit * d.qty),
+        unit: item.unit ?? mat?.unit ?? null,
+      };
+    });
+
+    return {
+      masterId: d.masterId,
+      qty: d.qty,
+      formulaId: master?.formulaId ?? null,
+      formulaName: f ? (input.formulaNames?.get(f.id) ?? null) : null,
+      scale,
+      wastePercent,
+      lines,
+      packagingLines,
+    };
+  });
+}

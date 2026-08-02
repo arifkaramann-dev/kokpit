@@ -1,3 +1,4 @@
+import { useConfirm } from "@/components/ConfirmDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -7,13 +8,17 @@ import {
   AlertTriangle,
   CheckCircle2,
   ClipboardList,
+  Factory,
   FlaskConical,
   HelpCircle,
+  Loader2,
   Package,
   Printer,
   ShoppingCart,
 } from "lucide-react";
+import { useState } from "react";
 import { useLocation } from "wouter";
+import { toast } from "sonner";
 
 /**
  * Üretim Brifingi — günlük döngünün ana ekranı.
@@ -26,10 +31,34 @@ import { useLocation } from "wouter";
  */
 export default function Briefing() {
   const [, setLocation] = useLocation();
+  const utils = trpc.useUtils();
+  const confirm = useConfirm();
   const { data, isLoading } = trpc.katalog.briefing.useQuery({ orderIds: [] });
+  const [showFormulation, setShowFormulation] = useState(true);
 
   const plan = data?.plan;
   const hazir = plan?.canProduce === true && (data?.demand.length ?? 0) > 0;
+
+  /*
+   * "Hepsini üretildi işaretle" — üretim kaydının iş yükünü kaldıran düğme.
+   *
+   * Ürün başına seç-yaz-onayla döngüsü yüzlerce ürünlü katalogda yapılamıyor,
+   * bu yüzden kimse üretim kaydı tutmuyor ve hammadde stoğu gerçeği
+   * yansıtmıyordu. Gün sonunda tek tıkla brifingdeki her şey düşülür.
+   */
+  const produce = trpc.katalog.produceBriefing.useMutation({
+    onSuccess: r => {
+      utils.katalog.invalidate();
+      utils.materials.invalidate();
+      utils.dashboard.summary.invalidate();
+      toast.success(
+        `${r.produced} üründe ${r.units} adet üretim işlendi · ${r.deducted} kalem hammadde düşüldü` +
+          (r.shortages.length > 0 ? ` · eksik stokla: ${r.shortages.slice(0, 4).join(", ")}` : ""),
+        { duration: 12000 },
+      );
+    },
+    onError: e => toast.error(e.message, { duration: 10000 }),
+  });
 
   return (
     <div className="space-y-4">
@@ -88,7 +117,45 @@ export default function Briefing() {
             <Button variant="outline" onClick={() => window.print()}>
               <Printer className="mr-1 h-4 w-4" /> Yazdır
             </Button>
+            {(data?.demand.length ?? 0) > 0 && (
+              <Button
+                disabled={produce.isPending}
+                onClick={async () => {
+                  const units = data?.demand.reduce((s, d) => s + d.qty, 0) ?? 0;
+                  const short = plan?.shortages.length ?? 0;
+                  const ok = await confirm({
+                    title: "Hepsini üretildi olarak işle",
+                    description:
+                      `${data?.demand.length} üründe toplam ${units} adet üretim kaydedilecek ve reçeteye göre hammadde düşülecek.` +
+                      (short > 0
+                        ? ` ${short} kalemde stok yetersiz — üretim yine kaydedilir, o kalemler eksiye düşer.`
+                        : ""),
+                    confirmText: "Üretildi işaretle",
+                  });
+                  if (!ok) return;
+                  produce.mutate({
+                    items: (data?.demand ?? []).map(d => ({ masterId: d.masterId, qty: d.qty })),
+                  });
+                }}
+              >
+                {produce.isPending ? (
+                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                ) : (
+                  <Factory className="mr-1 h-4 w-4" />
+                )}
+                Hepsini üretildi işaretle
+              </Button>
+            )}
           </Card>
+
+          {/* Üretim kaydı zorunlu değil: bu ekran kayıt tutulmadan da işi
+              yürütür. Kullanıcının bunu bilmesi gerekiyor, yoksa "üretmediğimi
+              satamıyorum" korkusuyla gereksiz kayıt tutuyor. */}
+          <p className="text-xs text-muted-foreground">
+            Üretim kaydı <strong>zorunlu değildir</strong> — aşağıdaki formülasyonla üretip
+            gönderebilirsiniz. Kayıt yalnız hammadde stoğunun gerçeği yansıtması içindir; satış
+            hiçbir durumda üretim kaydına bağlı değildir.
+          </p>
 
           {/* Eşleşmeyen satırlar — sessizce düşmemeli */}
           {(data?.unmatched.length ?? 0) > 0 && (
@@ -170,6 +237,100 @@ export default function Briefing() {
               </table>
             </div>
           </Card>
+
+          {/* 1b — Tezgâh formülasyonu: "şu kadar için şunu tart" */}
+          {(data?.formulation.length ?? 0) > 0 && (
+            <Card className="space-y-3 p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <FlaskConical className="h-4 w-4 text-primary" />
+                <p className="font-semibold">Üretim Formülasyonu</p>
+                <span className="text-xs text-muted-foreground">
+                  Reçete, sipariş adedine ölçeklenmiş halde — tezgâhta okunacak liste
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="ml-auto h-7"
+                  onClick={() => setShowFormulation(v => !v)}
+                >
+                  {showFormulation ? "Gizle" : "Göster"}
+                </Button>
+              </div>
+
+              {showFormulation && (
+                <div className="grid gap-3 lg:grid-cols-2">
+                  {(data?.formulation ?? []).map(f => {
+                    const d = (data?.demand ?? []).find(x => x.masterId === f.masterId);
+                    return (
+                      <div key={f.masterId} className="space-y-2 rounded-lg border p-3">
+                        <div className="flex items-start gap-2">
+                          <span
+                            className="mt-0.5 inline-block h-5 w-5 shrink-0 rounded border shadow-inner"
+                            style={{ backgroundColor: d?.colorHex ?? "#ccc" }}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium">
+                              {[d?.series, d?.colorName, d?.packaging].filter(Boolean).join(" · ")}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                              {f.qty} adet
+                              {f.formulaName ? ` · ${f.formulaName}` : ""}
+                              {f.scale !== 1 &&
+                                ` · reçetenin ${String(Math.round(f.scale * 1000) / 1000).replace(".", ",")} katı`}
+                              {f.wastePercent > 0 && ` · fire %${f.wastePercent}`}
+                            </p>
+                          </div>
+                          <span className="text-lg font-bold tabular-nums">{f.qty}</span>
+                        </div>
+
+                        {f.lines.length === 0 ? (
+                          <p className="text-xs text-amber-600">
+                            Reçete bağlı değil — bu ürünün formülasyonu çıkarılamıyor.
+                          </p>
+                        ) : (
+                          <table className="w-full text-xs">
+                            <thead className="text-[10px] text-muted-foreground">
+                              <tr>
+                                <th className="pb-1 text-left">Kalem</th>
+                                <th className="pb-1 text-right">Adet başı</th>
+                                <th className="pb-1 text-right">Toplam</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {f.lines.map(l => (
+                                <tr key={l.materialId} className="border-t">
+                                  <td className="py-1">{l.name}</td>
+                                  <td className="py-1 text-right tabular-nums text-muted-foreground">
+                                    {formatQty(l.perUnit)} {l.unit ?? ""}
+                                  </td>
+                                  <td className="py-1 text-right font-semibold tabular-nums">
+                                    {formatQty(l.total)} {l.unit ?? ""}
+                                  </td>
+                                </tr>
+                              ))}
+                              {/* Ambalaj ayrı gösterilir: hacimle ölçeklenmez,
+                                  adet başına sabittir — tezgâhta karıştırılmamalı. */}
+                              {f.packagingLines.map(l => (
+                                <tr key={`p${l.materialId}`} className="border-t text-muted-foreground">
+                                  <td className="py-1">{l.name}</td>
+                                  <td className="py-1 text-right tabular-nums">
+                                    {formatQty(l.perUnit)} {l.unit ?? "adet"}
+                                  </td>
+                                  <td className="py-1 text-right tabular-nums">
+                                    {formatQty(l.total)} {l.unit ?? "adet"}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
+          )}
 
           {/* 2 — Önce üretilecek yarı mamuller */}
           {(plan?.steps.length ?? 0) > 0 && (
