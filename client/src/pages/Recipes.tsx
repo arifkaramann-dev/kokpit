@@ -22,9 +22,40 @@ import { Textarea } from "@/components/ui/textarea";
 import { formatTL } from "@/lib/format";
 import { compatibleUnits, normalizeUnit } from "@shared/units";
 import { trpc } from "@/lib/trpc";
-import { Beaker, Link2, Loader2, Pencil, Plus, Trash2, TriangleAlert } from "lucide-react";
+import {
+  Beaker,
+  CheckCircle2,
+  Link2,
+  Loader2,
+  Package,
+  Pencil,
+  Plus,
+  Ruler,
+  Stethoscope,
+  Trash2,
+  TriangleAlert,
+} from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+
+/** Şirket standardı: reçeteler 1 litre için yazılır (server/formulaBase.ts). */
+const BASE_VOLUME_ML = 1000;
+
+/**
+ * Reçete bazının ml karşılığı; hacimsel değilse null.
+ * Sunucudaki `baseInMl` ile aynı kural — rozet ile denetim ayrışmasın.
+ */
+function baseVolumeMl(baseQty: unknown, baseUnit: unknown): number | null {
+  const qty = parseFloat(String(baseQty ?? ""));
+  if (!Number.isFinite(qty) || qty <= 0) return null;
+  const raw = String(baseUnit ?? "").trim();
+  if (!raw) return qty; // birimsiz eski kayıt: ml kabul
+  const code = normalizeUnit(raw);
+  if (code === "ml") return qty;
+  if (code === "cl") return qty * 10;
+  if (code === "lt") return qty * 1000;
+  return null;
+}
 
 /** Boş eksen "hepsi" demektir — Select boş değer kabul etmediği için sentinel. */
 const ANY = "__any__";
@@ -83,6 +114,42 @@ export default function Recipes() {
       utils.katalog.invalidate();
       setOpen(false);
       toast.success(editId ? "Reçete güncellendi" : "Reçete kaydedildi");
+    },
+    onError: e => toast.error(e.message, { duration: 8000 }),
+  });
+
+  // Reçete/ambalaj sağlık denetimi — "fiyat neden saçma çıkıyor?"nun cevabı.
+  const { data: audit } = trpc.katalog.recipeAudit.useQuery();
+
+  const normalize = trpc.katalog.normalizeFormulaBase.useMutation({
+    onSuccess: r => {
+      utils.katalog.invalidate();
+      if (r.dryRun) {
+        toast.info(
+          r.willConvert === 0
+            ? "Tüm mamul reçeteleri zaten 1 litre bazında."
+            : `${r.willConvert} reçete 1 litre bazına çevrilecek. Oranlar korunur, litre başına maliyet değişmez.` +
+                (r.skipped.length > 0 ? ` · ${r.skipped.length} reçete hacimsel olmadığı için atlanacak.` : ""),
+          { duration: 10000 },
+        );
+        return;
+      }
+      toast.success(
+        `${r.converted} reçete 1 litre bazına çevrildi · ${r.rebound} ürünün ölçeği tazelendi` +
+          (r.skipped.length > 0 ? ` · ${r.skipped.length} reçete atlandı (hacimsel değil)` : ""),
+        { duration: 10000 },
+      );
+    },
+    onError: e => toast.error(e.message, { duration: 8000 }),
+  });
+
+  const movePackaging = trpc.katalog.movePackagingLineToPackagings.useMutation({
+    onSuccess: r => {
+      utils.katalog.invalidate();
+      toast.success(
+        `Kalem reçeteden çıkarıldı ve ${r.packagings.length} ambalaj tanımına eklendi — artık hacimle ölçeklenmiyor.`,
+        { duration: 9000 },
+      );
     },
     onError: e => toast.error(e.message, { duration: 8000 }),
   });
@@ -215,6 +282,14 @@ export default function Recipes() {
       <Tabs defaultValue="receteler">
         <TabsList>
           <TabsTrigger value="receteler">Reçeteler</TabsTrigger>
+          <TabsTrigger value="saglik">
+            Sağlık Denetimi
+            {(audit?.issues.length ?? 0) > 0 && (
+              <span className="ml-1.5 rounded-full bg-amber-500/20 px-1.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
+                {audit?.issues.length}
+              </span>
+            )}
+          </TabsTrigger>
           <TabsTrigger value="kalemler">Kalem Türleri</TabsTrigger>
         </TabsList>
 
@@ -223,7 +298,7 @@ export default function Recipes() {
             <Link2 className="h-4 w-4 text-primary" />
             <span className="flex-1 text-sm">
               Master ürünler koordinatına uyan reçeteye otomatik bağlanır — en özel reçete kazanır
-              (renk bazlı, seri bazlını yener).
+              (renk bazlı, seri bazlını yener). Ölçek = ambalaj hacmi ÷ reçete bazı.
             </span>
             <Button
               variant="outline"
@@ -233,11 +308,49 @@ export default function Recipes() {
             >
               Önce Göster
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={bind.isPending}
+              title="Bağlı ürünler dahil tüm ölçekleri reçetenin güncel bazına göre tazeler"
+              onClick={() => bind.mutate({ dryRun: false, rebindExisting: true })}
+            >
+              Ölçekleri Tazele
+            </Button>
             <Button size="sm" disabled={bind.isPending} onClick={() => bind.mutate({ dryRun: false })}>
               {bind.isPending && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
               Reçeteleri Bağla
             </Button>
           </Card>
+
+          {/* 1 litre kuralı: baz reçete defteriyle aynı olmazsa her ambalajın
+              ölçeği kayar (500 ml bazda 250 ml ürün 0,5 alır, doğrusu 0,25). */}
+          {(audit?.counts.baz_litre_degil ?? 0) > 0 && (
+            <Card className="flex flex-wrap items-center gap-2 border-amber-500/40 bg-amber-500/5 p-4">
+              <Ruler className="h-4 w-4 shrink-0 text-amber-600" />
+              <span className="flex-1 text-sm">
+                <strong>{audit?.counts.baz_litre_degil} reçete 1 litre bazında değil.</strong>{" "}
+                Ölçek ambalaj hacmi ÷ baz olduğu için 250 ml ürün 0,25 yerine yanlış katsayı
+                alıyor. Çevrim oranları korur — litre başına maliyet değişmez.
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={normalize.isPending}
+                onClick={() => normalize.mutate({ dryRun: true })}
+              >
+                Önce Göster
+              </Button>
+              <Button
+                size="sm"
+                disabled={normalize.isPending}
+                onClick={() => normalize.mutate({ dryRun: false })}
+              >
+                {normalize.isPending && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
+                1 Litre Bazına Çevir
+              </Button>
+            </Card>
+          )}
 
           {isLoading && <div className="h-24 animate-pulse rounded-xl bg-muted" />}
 
@@ -253,6 +366,9 @@ export default function Recipes() {
           )}
 
           {(formulas ?? []).map(f => {
+            // Baz 1 litre mi? Mamul reçetesinde ölçeğin doğru çıkmasının şartı.
+            const baseMl = baseVolumeMl(f.baseQty, f.baseUnit);
+            const baseOff = f.outputType === "mamul" && baseMl !== BASE_VOLUME_ML;
             return (
             <Card key={f.id} className="space-y-2 p-4">
               <div className="flex flex-wrap items-center gap-2">
@@ -262,10 +378,23 @@ export default function Recipes() {
                     ? `Yarı mamul → ${materialName.get(f.outputMaterialId ?? -1) ?? "?"}`
                     : "Mamul"}
                 </Badge>
-                <span className="text-xs text-muted-foreground">
+                <span
+                  className={`text-xs ${baseOff ? "font-medium text-amber-600" : "text-muted-foreground"}`}
+                  title={
+                    baseOff
+                      ? "Reçeteler 1 litre için yazılmalı — baz farklıysa ambalaj ölçeği kayar."
+                      : undefined
+                  }
+                >
                   {parseFloat(String(f.baseQty))} {f.baseUnit} baz
+                  {baseOff && " ⚠ 1 lt değil"}
                   {parseFloat(String(f.wastePercent)) > 0 && ` · fire %${parseFloat(String(f.wastePercent))}`}
                 </span>
+                {f.outputType === "mamul" && baseMl != null && baseMl > 0 && (
+                  <span className="text-[11px] text-muted-foreground">
+                    · 250 ml ürün ölçeği {String(Math.round((250 / baseMl) * 1000) / 1000).replace(".", ",")}
+                  </span>
+                )}
                 {f.outputType === "mamul" && (
                   <Badge variant="outline" className="text-[10px]">
                     {f.masterCount} master
@@ -316,6 +445,104 @@ export default function Recipes() {
             </Card>
             );
           })}
+        </TabsContent>
+
+        {/* ── Sağlık denetimi ────────────────────────────────────────────── */}
+        <TabsContent value="saglik" className="space-y-3 pt-3">
+          <Card className="space-y-1 p-4 text-sm text-muted-foreground">
+            Maliyet motoru doğru çalışıyor; fiyat saçma çıkıyorsa sebep neredeyse her zaman
+            <strong className="text-foreground"> veriyi besleyen bir hata</strong>: reçeteye konmuş
+            şişe, 1 litre olmayan baz, hacmi girilmemiş ambalaj. Burası onları isimleriyle sayar.
+          </Card>
+
+          {audit && audit.issues.length === 0 ? (
+            <Card className="flex items-center justify-center gap-2 p-10 text-sm text-muted-foreground">
+              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+              Reçete ve ambalaj verisinde maliyeti bozan bir hata yok.
+            </Card>
+          ) : (
+            <div className="space-y-2">
+              {(audit?.issues ?? []).map((issue, i) => (
+                <Card
+                  key={`${issue.kind}-${issue.formulaId ?? 0}-${issue.materialId ?? 0}-${issue.packagingId ?? 0}-${i}`}
+                  className={`flex flex-wrap items-start gap-2 p-3.5 text-sm ${
+                    issue.severity === "yuksek"
+                      ? "border-destructive/30 bg-destructive/5"
+                      : "border-amber-500/30 bg-amber-500/5"
+                  }`}
+                >
+                  {issue.kind === "ambalaj_recetede" ? (
+                    <Package className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                  ) : issue.kind === "baz_litre_degil" ? (
+                    <Ruler className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                  ) : (
+                    <TriangleAlert
+                      className={`mt-0.5 h-4 w-4 shrink-0 ${issue.severity === "yuksek" ? "text-destructive" : "text-amber-600"}`}
+                    />
+                  )}
+                  <div className="min-w-56 flex-1">
+                    <p>{issue.message}</p>
+                    {issue.affectedMasters > 0 && (
+                      <p className="mt-0.5 text-[11px] text-muted-foreground">
+                        {issue.affectedMasters} ürünü etkiliyor
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Her hatanın yanında onu kapatan aksiyon dursun — teşhis
+                      koyup kullanıcıyı çözümü aramaya bırakmak işe yaramıyor. */}
+                  {issue.kind === "ambalaj_recetede" && issue.formulaId && issue.materialId && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8"
+                      disabled={movePackaging.isPending}
+                      onClick={() =>
+                        movePackaging.mutate({
+                          formulaId: issue.formulaId!,
+                          materialId: issue.materialId!,
+                          dryRun: false,
+                        })
+                      }
+                    >
+                      Ambalaja Taşı
+                    </Button>
+                  )}
+                  {issue.kind === "baz_litre_degil" && issue.formulaId && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8"
+                      disabled={normalize.isPending}
+                      onClick={() =>
+                        normalize.mutate({ dryRun: false, formulaIds: [issue.formulaId!] })
+                      }
+                    >
+                      1 Litreye Çevir
+                    </Button>
+                  )}
+                  {issue.kind === "olcek_eskimis" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8"
+                      disabled={bind.isPending}
+                      onClick={() => bind.mutate({ dryRun: false, rebindExisting: true })}
+                    >
+                      Ölçekleri Tazele
+                    </Button>
+                  )}
+                  {(issue.kind === "ambalaj_hacimsiz" || issue.kind === "ambalaj_maliyetsiz") && (
+                    <Button size="sm" variant="outline" className="h-8" asChild>
+                      <a href="/tanimlar">Ambalajı Düzelt</a>
+                    </Button>
+                  )}
+                </Card>
+              ))}
+            </div>
+          )}
+
+          {!audit && <div className="h-24 animate-pulse rounded-xl bg-muted" />}
         </TabsContent>
 
         <TabsContent value="kalemler" className="space-y-3 pt-3">
@@ -488,6 +715,16 @@ export default function Recipes() {
                   onChange={e => setForm(f => ({ ...f, baseUnit: e.target.value }))}
                   placeholder="ml"
                 />
+                {form.outputType === "mamul" &&
+                  baseVolumeMl(form.baseQty, form.baseUnit) !== BASE_VOLUME_ML && (
+                    <button
+                      type="button"
+                      className="text-[11px] text-amber-600 underline"
+                      onClick={() => setForm(f => ({ ...f, baseQty: "1000", baseUnit: "ml" }))}
+                    >
+                      1 litreye ayarla (miktarları elle ölçekleyin)
+                    </button>
+                  )}
               </div>
               <div className="space-y-1.5">
                 <Label>Fire %</Label>

@@ -13,6 +13,8 @@
  * kopyalama yerine çözümleme ile yapılmasının reçete tarafındaki karşılığı.
  */
 
+import { scaleForPackaging } from "./formulaBase";
+
 export type Readiness = "konsantre" | "r2u";
 
 export type MatchableFormula = {
@@ -33,6 +35,8 @@ export type MatchableFormula = {
     hazirlik?: Readiness[];
   };
   baseQty: number;
+  /** `baseQty`nin birimi. Boşsa ml kabul edilir (eski kayıtlar). */
+  baseUnit?: string | null;
 };
 
 export type MatchableMaster = {
@@ -43,6 +47,12 @@ export type MatchableMaster = {
   readiness: Readiness;
   packagingVolumeMl: number;
   currentFormulaId: number | null;
+  /**
+   * Master'da yazılı ölçek. Reçetenin bazı değiştiğinde (500 ml → 1 lt) formül
+   * bağı aynı kalır ama ölçek eskir; bunu bilmeden "zaten bağlı" deyip geçmek
+   * ölçeği sonsuza kadar yanlış bırakırdı.
+   */
+  currentScale?: number | null;
 };
 
 export type FormulaBinding = {
@@ -108,6 +118,10 @@ export function matchFormula(
  * `formulaScale` = ambalaj hacmi / reçete baz hacmi. Reçete baz hacim için
  * yazıldığından tek reçete tüm boyutları besler; ölçek burada hesaplanır.
  * Hacimsiz ambalajlarda (rötuş kutusu) ölçek 1 kalır.
+ *
+ * Baz BİRİMİ artık hesaba katılıyor (`scaleForPackaging`): "1 lt" bazlı bir
+ * reçetede eskiden 250 / 1 = 250 ölçek çıkıyor ve maliyet 1000 katına
+ * fırlıyordu. Şirket standardı 1 litre baz olduğu için doğru sonuç 0,25.
  */
 export function planFormulaBindings(input: {
   masters: MatchableMaster[];
@@ -125,10 +139,15 @@ export function planFormulaBindings(input: {
       unmatched.push(master.id);
       continue;
     }
-    const base = hit.formula.baseQty > 0 ? hit.formula.baseQty : 1;
-    const scale = master.packagingVolumeMl > 0 ? master.packagingVolumeMl / base : 1;
-    // Zaten aynı formüle aynı ölçekle bağlıysa yazma.
-    if (master.currentFormulaId === hit.formula.id) continue;
+    const scale = scaleForPackaging(
+      master.packagingVolumeMl,
+      hit.formula.baseQty,
+      hit.formula.baseUnit,
+    );
+    // Zaten aynı formüle AYNI ÖLÇEKLE bağlıysa yazma; ölçek kaymışsa düzelt.
+    const scaleUnchanged =
+      master.currentScale == null || Math.abs(master.currentScale - scale) < 1e-6;
+    if (master.currentFormulaId === hit.formula.id && scaleUnchanged) continue;
     bindings.push({
       masterId: master.id,
       formulaId: hit.formula.id,

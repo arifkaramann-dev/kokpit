@@ -66,6 +66,12 @@ function AdminApp() {
         <Route path={"/formuller"}>
           <Redirect to="/recete" replace />
         </Route>
+        {/* "/receteler" hiç var olmadı ama iki ekran oraya link veriyordu ve
+            kullanıcı 404 görüyordu. Linkler düzeltildi; yer imi/eski bağlantı
+            da sessizce doğru sayfaya düşsün. */}
+        <Route path={"/receteler"}>
+          <Redirect to="/recete" replace />
+        </Route>
         <Route path={"/brifing"} component={Briefing} />
         <Route path={"/katalog"} component={Catalog} />
         <Route path={"/icerik"} component={ContentBlocks} />

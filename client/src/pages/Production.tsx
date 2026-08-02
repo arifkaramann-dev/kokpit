@@ -315,7 +315,7 @@ export default function Production() {
               <Card className="flex items-center gap-2 border-destructive/30 bg-destructive/5 p-3 text-sm">
                 <AlertTriangle className="h-4 w-4 shrink-0 text-destructive" />
                 Bu ürünün reçetesi bağlı değil — hammadde ihtiyacı hesaplanamıyor.
-                <Link href="/receteler" className="font-medium underline">
+                <Link href="/recete" className="font-medium underline">
                   Reçeteler
                 </Link>
               </Card>
