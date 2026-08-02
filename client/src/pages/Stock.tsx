@@ -28,17 +28,55 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatQty, formatTL, MATERIAL_CATEGORIES, num, UNITS } from "@/lib/format";
 import { useConfirm } from "@/components/ConfirmDialog";
+import MaterialImport from "@/components/MaterialImport";
 import { trpc } from "@/lib/trpc";
-import { AlertTriangle, ArrowDownToLine, ArrowUpFromLine, History, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { normalizeUnit } from "@shared/units";
+import {
+  AlertTriangle,
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  FileSpreadsheet,
+  History,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
+
+/**
+ * Birim seçeneği — kullanıcı "gr mı ml mi" diye düşünmesin diye ne işe
+ * yaradığı yazılı. Yanlış birim en pahalı hammadde hatası: kg fiyatlı kaleme
+ * gram miktarı girilince maliyet 1000 katına çıkıyor.
+ */
+const UNIT_HINTS: Record<string, string> = {
+  gr: "gram — pigment, toz katkı",
+  kg: "kilogram — çuvalla alınan",
+  ml: "mililitre — küçük hacim",
+  lt: "litre — boya, solvent, tiner",
+  adet: "adet — şişe, kapak, etiket",
+};
+
+/**
+ * Kalem türü. `type` reçete motorunun temel ayrımı; hammadde formunda
+ * görünmüyordu ve herkes "hammadde" olarak kalıyordu — ambalaj kalemleri de
+ * dahil, ki bu maliyeti bozan hataların en sık kaynağı.
+ */
+const MATERIAL_TYPES = [
+  { value: "hammadde", label: "Hammadde", desc: "Satın alınır, reçeteye girer" },
+  { value: "ambalaj", label: "Ambalaj", desc: "Şişe, kapak, etiket, koli — hacimle ölçeklenmez" },
+  { value: "yari_mamul", label: "Yarı mamul", desc: "Kendi reçetesi olan ara ürün" },
+  { value: "masraf", label: "Masraf", desc: "Kapasiteyi kısıtlamaz" },
+] as const;
 
 type MaterialRow = {
   id: number;
   name: string;
   category: string;
   unit: string;
+  type?: "hammadde" | "yari_mamul" | "ambalaj" | "masraf";
   stockQty: string;
   criticalQty: string;
   unitCost: string;
@@ -50,6 +88,7 @@ const emptyForm = {
   name: "",
   category: "pigment",
   unit: "gr",
+  type: "hammadde" as MaterialRow["type"],
   stockQty: "",
   criticalQty: "",
   unitCost: "",
@@ -81,6 +120,7 @@ export default function Stock() {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [reorderOpen, setReorderOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [, setLocation] = useLocation();
   const { data: reorder } = trpc.materials.reorderSuggestions.useQuery();
   // Hareket geçmişi + "hangi ürünlerde kullanılıyor" dialogu.
@@ -182,6 +222,42 @@ export default function Stock() {
     };
   }, [form.stockQty, form.unitCost, form.criticalQty]);
 
+  /*
+   * "Paketten hesapla": fatura "18 kg teneke 34.200 ₺" der, sistem birim
+   * maliyet ister. Kullanıcı bunu kafadan bölerken virgül kaydırıyor ve
+   * maliyet 10 kat şişiyordu. İki kutu + otomatik bölme o hatayı kapatıyor.
+   */
+  const [packQty, setPackQty] = useState("");
+  const [packPrice, setPackPrice] = useState("");
+  const packUnitCost = useMemo(() => {
+    const q = parseFloat(packQty.replace(",", ".")) || 0;
+    const p = parseFloat(packPrice.replace(",", ".")) || 0;
+    return q > 0 && p > 0 ? p / q : 0;
+  }, [packQty, packPrice]);
+
+  /** Aynı adda kalem var mı? Mükerrer hammadde reçeteleri sessizce böler. */
+  const duplicateName = useMemo(() => {
+    const key = form.name.trim().toLocaleLowerCase("tr-TR").replace(/\s+/g, " ");
+    if (!key) return null;
+    return (
+      ((materials as MaterialRow[]) ?? []).find(
+        m =>
+          m.id !== editing?.id &&
+          m.name.trim().toLocaleLowerCase("tr-TR").replace(/\s+/g, " ") === key,
+      ) ?? null
+    );
+  }, [form.name, materials, editing]);
+
+  /** Ad "100 ml şişe" gibiyse birim büyük ihtimalle "adet"tir — sessizce uyar. */
+  const unitHint = useMemo(() => {
+    const name = form.name.toLocaleLowerCase("tr-TR");
+    const looksCountable = /(şişe|sise|kapak|etiket|koli|kutu|tabanca|maske|eldiven|bidon)/.test(name);
+    if (looksCountable && normalizeUnit(form.unit) !== "adet") {
+      return `"${form.name.trim()}" adetli bir kalem gibi duruyor — birimi "adet" yapmayı düşünün.`;
+    }
+    return null;
+  }, [form.name, form.unit]);
+
   const criticalCount = useMemo(
     () => ((materials as MaterialRow[]) ?? []).filter(m => num(m.stockQty) <= num(m.criticalQty)).length,
     [materials],
@@ -197,9 +273,16 @@ export default function Stock() {
     [materials],
   );
 
+  function resetPackCalc() {
+    setPackQty("");
+    setPackPrice("");
+  }
+
   function openCreate() {
     setEditing(null);
     setForm(emptyForm);
+    setNewSupplierOpen(false);
+    resetPackCalc();
     setDialogOpen(true);
   }
 
@@ -209,12 +292,15 @@ export default function Stock() {
       name: m.name,
       category: m.category,
       unit: m.unit,
+      type: m.type ?? "hammadde",
       stockQty: m.stockQty,
       criticalQty: m.criticalQty,
       unitCost: m.unitCost,
       supplierId: m.supplierId ? String(m.supplierId) : "",
       notes: m.notes ?? "",
     });
+    setNewSupplierOpen(false);
+    resetPackCalc();
     setDialogOpen(true);
   }
 
@@ -223,10 +309,17 @@ export default function Stock() {
       toast.error("Malzeme adı gerekli");
       return;
     }
+    // Mükerrer kalem reçeteleri ikiye böler ve stok iki yerde birikir; yeni
+    // kayıtta aynı adı sessizce kabul etmek yerine düzenlemeye yönlendir.
+    if (!editing && duplicateName) {
+      toast.error(`"${duplicateName.name}" zaten kayıtlı — onu düzenleyin.`, { duration: 7000 });
+      return;
+    }
     const payload = {
       name: form.name.trim(),
       category: form.category,
-      unit: form.unit,
+      unit: normalizeUnit(form.unit) || form.unit,
+      type: form.type,
       stockQty: parseFloat(form.stockQty) || 0,
       criticalQty: parseFloat(form.criticalQty) || 0,
       unitCost: parseFloat(form.unitCost) || 0,
@@ -249,10 +342,17 @@ export default function Stock() {
             Pigment, solvent, ambalaj ve diğer malzemelerinizi takip edin.
           </p>
         </div>
-        <Button onClick={openCreate}>
-          <Plus className="h-4 w-4 mr-1" /> Yeni Hammadde
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => setImportOpen(true)}>
+            <FileSpreadsheet className="h-4 w-4 mr-1" /> Excel ile Yükle
+          </Button>
+          <Button onClick={openCreate}>
+            <Plus className="h-4 w-4 mr-1" /> Yeni Hammadde
+          </Button>
+        </div>
       </div>
+
+      <MaterialImport open={importOpen} onOpenChange={setImportOpen} />
 
       {criticalCount > 0 && (
         <Card className="p-3 border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 flex items-center gap-2">
@@ -388,7 +488,17 @@ export default function Stock() {
                     </div>
                   </TableCell>
                   <TableCell>
-                    <Badge variant="secondary">{m.category}</Badge>
+                    <div className="flex flex-wrap items-center gap-1">
+                      <Badge variant="secondary">{m.category}</Badge>
+                      {/* Tür yalnız "hammadde" değilse gösterilir: reçete
+                          motorunun davranışı buna göre değişiyor, görünmez
+                          kalması maliyet hatalarının sık kaynağıydı. */}
+                      {m.type && m.type !== "hammadde" && (
+                        <Badge variant="outline" className="text-[10px]">
+                          {MATERIAL_TYPES.find(t => t.value === m.type)?.label ?? m.type}
+                        </Badge>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell className="text-right">
                     <span className={isCritical ? "font-semibold text-amber-600" : ""}>
@@ -463,7 +573,7 @@ export default function Stock() {
 
       {/* Hammadde ekleme/düzenleme dialogu */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{editing ? "Hammaddeyi Düzenle" : "Yeni Hammadde"}</DialogTitle>
           </DialogHeader>
@@ -471,11 +581,28 @@ export default function Stock() {
             <div className="space-y-1.5">
               <Label>Malzeme Adı *</Label>
               <Input
+                autoFocus={!editing}
                 value={form.name}
                 onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                placeholder="Örn. Siyah Pigment, 100ml Cam Şişe"
+                placeholder="Örn. Siyah Pigment, 100 ml Cam Şişe"
+                className={!editing && duplicateName ? "border-destructive" : undefined}
               />
+              {!editing && duplicateName && (
+                <p className="flex items-center gap-1 text-xs text-destructive">
+                  <AlertTriangle className="h-3 w-3 shrink-0" />
+                  Bu isimde bir kalem zaten var ({formatQty(duplicateName.stockQty)}{" "}
+                  {duplicateName.unit}).
+                  <button
+                    type="button"
+                    className="underline"
+                    onClick={() => openEdit(duplicateName)}
+                  >
+                    Onu düzenle
+                  </button>
+                </p>
+              )}
             </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Kategori</Label>
@@ -491,26 +618,62 @@ export default function Stock() {
                     ))}
                   </SelectContent>
                 </Select>
+                <p className="text-[11px] text-muted-foreground">Raporlama/gruplama içindir.</p>
               </div>
               <div className="space-y-1.5">
-                <Label>Birim</Label>
-                <Select value={form.unit} onValueChange={v => setForm(f => ({ ...f, unit: v }))}>
+                <Label>Kalem Türü</Label>
+                <Select
+                  value={form.type ?? "hammadde"}
+                  onValueChange={v => setForm(f => ({ ...f, type: v as MaterialRow["type"] }))}
+                >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {UNITS.map(u => (
-                      <SelectItem key={u} value={u}>
-                        {u}
+                    {MATERIAL_TYPES.map(t => (
+                      <SelectItem key={t.value} value={t.value}>
+                        {t.label}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                <p className="text-[11px] text-muted-foreground">
+                  {MATERIAL_TYPES.find(t => t.value === (form.type ?? "hammadde"))?.desc}
+                </p>
               </div>
             </div>
+
+            <div className="space-y-1.5">
+              <Label>Birim *</Label>
+              <Select value={form.unit} onValueChange={v => setForm(f => ({ ...f, unit: v }))}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {UNITS.map(u => (
+                    <SelectItem key={u} value={u}>
+                      {UNIT_HINTS[u] ?? u}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {/* Birim hem stoğun hem FİYATIN birimidir; ikisinin ayrı olduğunu
+                  sanmak en sık yapılan hata (kg alıp gr fiyatı yazmak). */}
+              <p className="text-[11px] text-muted-foreground">
+                Hem stok hem birim maliyet bu birimden yazılır: <strong>1 {form.unit}</strong> kaça
+                mal oluyor?
+              </p>
+              {unitHint && (
+                <p className="flex items-center gap-1 text-[11px] text-amber-600">
+                  <AlertTriangle className="h-3 w-3 shrink-0" />
+                  {unitHint}
+                </p>
+              )}
+            </div>
+
             <div className="grid grid-cols-3 gap-3">
               <div className="space-y-1.5">
-                <Label>Mevcut Stok</Label>
+                <Label>Mevcut Stok ({form.unit})</Label>
                 <Input
                   type="number"
                   min="0"
@@ -521,7 +684,7 @@ export default function Stock() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label>Kritik Eşik</Label>
+                <Label>Kritik Eşik ({form.unit})</Label>
                 <Input
                   type="number"
                   min="0"
@@ -530,9 +693,10 @@ export default function Stock() {
                   onChange={e => setForm(f => ({ ...f, criticalQty: e.target.value }))}
                   placeholder="0"
                 />
+                <p className="text-[11px] text-muted-foreground">Altına düşünce uyarır.</p>
               </div>
               <div className="space-y-1.5">
-                <Label>Birim Maliyet (₺, KDV hariç)</Label>
+                <Label>1 {form.unit} maliyeti (₺)</Label>
                 <Input
                   type="number"
                   min="0"
@@ -541,8 +705,54 @@ export default function Stock() {
                   onChange={e => setForm(f => ({ ...f, unitCost: e.target.value }))}
                   placeholder="0,00"
                 />
+                <p className="text-[11px] text-muted-foreground">KDV hariç.</p>
               </div>
             </div>
+
+            {/* Paketten hesapla: fatura "18 kg — 34.200 ₺" der, sistem birim
+                fiyat ister. Bölmeyi kafadan yaparken virgül kayıyordu. */}
+            <details className="rounded-lg border bg-muted/20 p-3">
+              <summary className="cursor-pointer text-xs font-medium">
+                Faturadaki paket fiyatından hesapla
+              </summary>
+              <div className="mt-2 grid grid-cols-[1fr_1fr_auto] items-end gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">Paket miktarı ({form.unit})</Label>
+                  <Input
+                    value={packQty}
+                    onChange={e => setPackQty(e.target.value)}
+                    placeholder="18"
+                    inputMode="decimal"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Paket fiyatı (₺)</Label>
+                  <Input
+                    value={packPrice}
+                    onChange={e => setPackPrice(e.target.value)}
+                    placeholder="34200"
+                    inputMode="decimal"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={packUnitCost <= 0}
+                  onClick={() => {
+                    setForm(f => ({ ...f, unitCost: String(Math.round(packUnitCost * 10000) / 10000) }));
+                    toast.success(`Birim maliyet ${formatTL(packUnitCost)}/${form.unit} yapıldı`);
+                  }}
+                >
+                  Uygula
+                </Button>
+              </div>
+              {packUnitCost > 0 && (
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  = <strong className="text-foreground">{formatTL(packUnitCost)}</strong> / {form.unit}
+                </p>
+              )}
+            </details>
+
             {/* Stok değeri canlı: "1000 gr × 1,90 ₺ = 1.900 ₺" — rakamı
                 girerken tutarı görmek yanlış birim/fiyat hatasını anında
                 yakalatıyor. */}

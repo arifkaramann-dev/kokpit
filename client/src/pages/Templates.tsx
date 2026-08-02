@@ -7,8 +7,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import { LibraryBig, Loader2, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
@@ -273,19 +275,16 @@ function SeriesManager() {
     onError: e => toast.error(e.message),
   });
 
-  function submit() {
-    if (!form.name.trim()) return toast.error("Seri adı gerekli");
-    // Satır bazlı metni temiz bir diziye çevirir (boş satırları atar).
-    const toLines = (v: string): string[] =>
-      v
-        .split(/[\n,]/)
-        .map(x => x.trim())
-        .filter(Boolean);
-    const surfaces = toLines(form.applicationSurfaces);
-    // Ambalaj: her satır hem label hem value (örn. "50ml").
-    const packaging = toLines(form.packagingOptions).map(x => ({ label: x, value: x }));
-    // Renk: her satır "Etiket #hex" (hex opsiyonel). value = etiketten üretilir.
-    const colors = form.colorOptions
+  // Satır bazlı metni temiz bir diziye çevirir (boş satırları atar).
+  const toLines = (v: string): string[] =>
+    v
+      .split(/[\n,]/)
+      .map(x => x.trim())
+      .filter(Boolean);
+
+  /** Renk satırı: "Etiket #hex" (hex opsiyonel). value = etiketten üretilir. */
+  const parseColorLines = (v: string) =>
+    v
       .split("\n")
       .map(l => l.trim())
       .filter(Boolean)
@@ -296,6 +295,20 @@ function SeriesManager() {
         const value = label.toUpperCase().replace(/\s+/g, "-").replace(/[^A-Z0-9-]/g, "");
         return { label, value: value || label, hex };
       });
+
+  // Canlı önizleme: "kaç varyant üretilecek" sorusunun cevabı kaydetmeden
+  // görünsün — 8 renk × 4 ambalaj yazıp 32 varyantla karşılaşmak sürpriz olmasın.
+  const packagingLines = toLines(form.packagingOptions);
+  const colorLines = parseColorLines(form.colorOptions);
+  const variantCount =
+    packagingLines.length > 0 ? Math.max(1, colorLines.length) * packagingLines.length : 0;
+
+  function submit() {
+    if (!form.name.trim()) return toast.error("Seri adı gerekli");
+    const surfaces = toLines(form.applicationSurfaces);
+    // Ambalaj: her satır hem label hem value (örn. "50ml").
+    const packaging = packagingLines.map(x => ({ label: x, value: x }));
+    const colors = colorLines;
     const payload = {
       name: form.name.trim(),
       profitMargin: parseFloat(form.profitMargin.replace(",", ".")) || 0,
@@ -347,17 +360,32 @@ function SeriesManager() {
         <div className="space-y-1.5">
           {(seriesList ?? []).map(s => (
             <div key={s.id} className="flex items-start gap-2 rounded-lg border p-2.5">
-              <div className="flex-1 min-w-0">
+              <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium">
                   {s.name}
                   <span className="ml-2 text-xs text-muted-foreground">
                     Kâr %{parseFloat(String(s.profitMargin))} · KDV %{parseFloat(String(s.vatRate))}
                     {s.category ? ` · ${s.category}` : ""}
+                    {(s as { prefix?: string | null }).prefix
+                      ? ` · ${(s as { prefix?: string | null }).prefix}`
+                      : ""}
                   </span>
                 </p>
-                {s.longDescription && (
-                  <p className="text-xs text-muted-foreground line-clamp-1">{s.longDescription}</p>
-                )}
+                {/* Serinin neyi beslediği listeden görünsün: metin yazılmış mı,
+                    şablonu kurulmuş mu — düzenlemeyi açmadan anlaşılsın. */}
+                <div className="mt-1 flex flex-wrap gap-1">
+                  <Badge
+                    variant="outline"
+                    className={`text-[10px] ${s.longDescription ? "" : "text-muted-foreground"}`}
+                  >
+                    {s.longDescription ? "metinler hazır" : "metin yok"}
+                  </Badge>
+                  {seriesVariantSummary(s) && (
+                    <Badge variant="outline" className="text-[10px]">
+                      {seriesVariantSummary(s)}
+                    </Badge>
+                  )}
+                </div>
               </div>
               <Button
                 variant="ghost"
@@ -432,197 +460,317 @@ function SeriesManager() {
         </div>
       )}
 
+      {/*
+        Seri düzenleme — sekmeli.
+
+        Tek sütunda 12 alan alt alta diziliydi: kâr oranını değiştirmek için
+        beş ekran kaydırmak, SSS metnini görmek için sonuna inmek gerekiyordu
+        ve hangi alanın neyi beslediği hiçbir yerde yazmıyordu. Sekmeler işi
+        üç net soruya ayırıyor: seri nedir · ne yazacağız · nasıl türeteceğiz.
+      */}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogContent className="flex max-h-[90vh] flex-col overflow-hidden sm:max-w-3xl">
           <DialogHeader>
-            <DialogTitle>{editingId ? "Seriyi Düzenle" : "Yeni Seri"}</DialogTitle>
+            <DialogTitle className="flex flex-wrap items-center gap-2">
+              {editingId ? "Seriyi Düzenle" : "Yeni Seri"}
+              {form.name.trim() && <Badge variant="secondary">{form.name.trim()}</Badge>}
+              {editingId && (
+                <span className="text-xs font-normal text-muted-foreground">
+                  Kâr %{form.profitMargin || 0} · KDV %{form.vatRate || 0}
+                  {variantCount > 0 && ` · sihirbaz ${variantCount} varyant üretir`}
+                </span>
+              )}
+            </DialogTitle>
           </DialogHeader>
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Seri Adı *</Label>
-                <Input
-                  value={form.name}
-                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder="Örn. CANDY, METEOR"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Kategori</Label>
-                <Input
-                  value={form.category}
-                  onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
-                  placeholder="Boya, Sprey, Yardımcı Ürünler"
-                />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Kod Ön Eki (prefix)</Label>
-              <Input
-                value={form.prefix}
-                maxLength={10}
-                onChange={e => setForm(f => ({ ...f, prefix: e.target.value.toUpperCase() }))}
-                placeholder="Örn. CND (otomatik ürün kodu: CND0042)"
-              />
-              <p className="text-xs text-muted-foreground">
-                Geliştirme sihirbazı bu ön ek + 4 haneli sıra no ile otomatik ürün kodu üretir.
-              </p>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label>Kâr Oranı %</Label>
-                <Input
-                  type="number"
-                  min="0"
-                  value={form.profitMargin}
-                  onChange={e => setForm(f => ({ ...f, profitMargin: e.target.value }))}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>KDV %</Label>
-                <Input
-                  type="number"
-                  min="0"
-                  max="100"
-                  value={form.vatRate}
-                  onChange={e => setForm(f => ({ ...f, vatRate: e.target.value }))}
-                />
-              </div>
-            </div>
-            {/* Seri bazlı AI içerik üretimi. İçerik seri bazlıdır; varyantlar
-                (renk/gramaj) bu metinleri paylaşır — varyant başına AI çağrısı yok. */}
-            <div className="rounded-lg border bg-primary/5 p-3 flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium flex items-center gap-1.5">
-                  <Sparkles className="h-4 w-4 text-primary" /> AI ile içerik üret
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Kısa/uzun açıklama, uygulama metni ve SSS'yi tek seferde üretir. Varyantlar bu metinleri devralır.
-                </p>
-              </div>
-              <Button
-                size="sm"
-                disabled={!editingId || generateContent.isPending}
-                onClick={() => editingId && generateContent.mutate({ id: editingId })}
-                title={editingId ? "" : "Önce seriyi kaydedin"}
-              >
-                {generateContent.isPending ? (
-                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                ) : (
-                  <Sparkles className="h-4 w-4 mr-1" />
-                )}
-                AI ile Üret
-              </Button>
-            </div>
-            {!editingId && (
-              <p className="text-xs text-muted-foreground -mt-1">
-                AI üretimi için önce seriyi kaydedin, sonra düzenleyerek "AI ile Üret" deyin.
-              </p>
-            )}
 
-            <div className="space-y-1.5">
-              <Label>Kısa Açıklama</Label>
-              <Textarea
-                rows={2}
-                value={form.shortDescription}
-                onChange={e => setForm(f => ({ ...f, shortDescription: e.target.value }))}
-                placeholder="Web sitesinde ürünün yanında görünen kısa tanıtım metni"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Uzun Açıklama</Label>
-              <Textarea
-                rows={5}
-                value={form.longDescription}
-                onChange={e => setForm(f => ({ ...f, longDescription: e.target.value }))}
-                placeholder="Bu serinin ürünlerine önerilecek detaylı pazarlama metni"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Uygulama Metni</Label>
-              <Textarea
-                rows={4}
-                value={form.applicationText}
-                onChange={e => setForm(f => ({ ...f, applicationText: e.target.value }))}
-                placeholder="Bu serinin ürünlerine önerilecek uygulama talimatı"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>SSS / Blog</Label>
-              <Textarea
-                rows={5}
-                value={form.faqContent}
-                onChange={e => setForm(f => ({ ...f, faqContent: e.target.value }))}
-                placeholder="Uygulama ve ürün hakkında sıkça sorulan sorular — web sitesinde kullanılır (seri bazlı)"
-              />
-            </div>
+          <Tabs defaultValue="temel" className="flex min-h-0 flex-1 flex-col">
+            <TabsList className="w-full justify-start">
+              <TabsTrigger value="temel">Temel &amp; Fiyat</TabsTrigger>
+              <TabsTrigger value="icerik">Pazarlama Metinleri</TabsTrigger>
+              <TabsTrigger value="varyant">Varyant Şablonu</TabsTrigger>
+            </TabsList>
 
-            <div className="rounded-lg border border-dashed p-3 space-y-3">
-              <p className="text-xs font-medium text-primary">Ürün Motoru v2 — Şablonlar</p>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>Ambalaj Boyutları</Label>
-                  <Textarea
-                    rows={4}
-                    value={form.packagingOptions}
-                    onChange={e => setForm(f => ({ ...f, packagingOptions: e.target.value }))}
-                    placeholder={"Her satıra bir ambalaj:\n50ml\n100ml\n250ml"}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Geliştirme sihirbazında üretilecek varyantlar bu listeden seçilir.
+            <div className="min-h-0 flex-1 overflow-y-auto pt-3">
+              {/* ── Temel & fiyat ─────────────────────────────────────────── */}
+              <TabsContent value="temel" className="mt-0 space-y-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label>Seri Adı *</Label>
+                    <Input
+                      autoFocus
+                      value={form.name}
+                      onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                      placeholder="Örn. CANDY, METEOR"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Kategori</Label>
+                    <Input
+                      value={form.category}
+                      onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
+                      placeholder="Boya, Sprey, Yardımcı Ürünler"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Pazaryeri kategorisi önerisinde kullanılır.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="space-y-1.5">
+                    <Label>Kod Ön Eki</Label>
+                    <Input
+                      value={form.prefix}
+                      maxLength={10}
+                      onChange={e => setForm(f => ({ ...f, prefix: e.target.value.toUpperCase() }))}
+                      placeholder="CND"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Ürün kodu: <strong>{(form.prefix || "CND").toUpperCase()}0042</strong>
+                    </p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Kâr Oranı %</Label>
+                    <Input
+                      type="number"
+                      min="0"
+                      value={form.profitMargin}
+                      onChange={e => setForm(f => ({ ...f, profitMargin: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>KDV %</Label>
+                    <Input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={form.vatRate}
+                      onChange={e => setForm(f => ({ ...f, vatRate: e.target.value }))}
+                    />
+                  </div>
+                </div>
+
+                {/* Kâr oranı soyut bir sayı; örnek maliyet üzerinden fiyat
+                    göstermek "%45 az mı çok mu" sorusunu somutlaştırıyor. */}
+                <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+                  <p className="text-xs text-muted-foreground">Fiyat önerisi böyle çıkar</p>
+                  <p className="mt-1">
+                    Maliyet <strong>100,00 ₺</strong> → satış{" "}
+                    <strong>
+                      {(100 * (1 + (parseFloat(form.profitMargin.replace(",", ".")) || 0) / 100)).toFixed(2)} ₺
+                    </strong>{" "}
+                    <span className="text-muted-foreground">
+                      (KDV dahil{" "}
+                      {(
+                        100 *
+                        (1 + (parseFloat(form.profitMargin.replace(",", ".")) || 0) / 100) *
+                        (1 + (parseFloat(form.vatRate.replace(",", ".")) || 0) / 100)
+                      ).toFixed(2)}{" "}
+                      ₺)
+                    </span>
                   </p>
                 </div>
+              </TabsContent>
+
+              {/* ── Pazarlama metinleri ───────────────────────────────────── */}
+              <TabsContent value="icerik" className="mt-0 space-y-3">
+                {/* İçerik seri bazlıdır; varyantlar (renk/gramaj) bu metinleri
+                    paylaşır — varyant başına AI çağrısı yok. */}
+                <div className="flex items-center justify-between gap-3 rounded-lg border bg-primary/5 p-3">
+                  <div>
+                    <p className="flex items-center gap-1.5 text-sm font-medium">
+                      <Sparkles className="h-4 w-4 text-primary" /> AI ile içerik üret
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Dört metni tek seferde yazar; varyantlar bunları devralır. Üretilen metin
+                      doğrudan kaydedilmez — gözden geçirip "Kaydet" demeniz gerekir.
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    disabled={!editingId || generateContent.isPending}
+                    onClick={() => editingId && generateContent.mutate({ id: editingId })}
+                    title={editingId ? "" : "Önce seriyi kaydedin"}
+                  >
+                    {generateContent.isPending ? (
+                      <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="mr-1 h-4 w-4" />
+                    )}
+                    AI ile Üret
+                  </Button>
+                </div>
+                {!editingId && (
+                  <p className="-mt-1 text-xs text-muted-foreground">
+                    AI üretimi için önce seriyi kaydedin, sonra düzenleyerek "AI ile Üret" deyin.
+                  </p>
+                )}
+
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <Label>Kısa Açıklama</Label>
+                      <CharCount value={form.shortDescription} />
+                    </div>
+                    <Textarea
+                      rows={6}
+                      className="font-normal"
+                      value={form.shortDescription}
+                      onChange={e => setForm(f => ({ ...f, shortDescription: e.target.value }))}
+                      placeholder="Ürünün yanında görünen kısa tanıtım"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <Label>Uzun Açıklama</Label>
+                      <CharCount value={form.longDescription} />
+                    </div>
+                    <Textarea
+                      rows={6}
+                      value={form.longDescription}
+                      onChange={e => setForm(f => ({ ...f, longDescription: e.target.value }))}
+                      placeholder="İlan ve web sitesi için detaylı pazarlama metni"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <Label>Uygulama Metni</Label>
+                      <CharCount value={form.applicationText} />
+                    </div>
+                    <Textarea
+                      rows={6}
+                      value={form.applicationText}
+                      onChange={e => setForm(f => ({ ...f, applicationText: e.target.value }))}
+                      placeholder="Nasıl uygulanır — adım adım"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <Label>SSS / Blog</Label>
+                      <CharCount value={form.faqContent} />
+                    </div>
+                    <Textarea
+                      rows={6}
+                      value={form.faqContent}
+                      onChange={e => setForm(f => ({ ...f, faqContent: e.target.value }))}
+                      placeholder="Sıkça sorulan sorular — web sitesinde kullanılır"
+                    />
+                  </div>
+                </div>
+              </TabsContent>
+
+              {/* ── Varyant şablonu ───────────────────────────────────────── */}
+              <TabsContent value="varyant" className="mt-0 space-y-3">
+                <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+                  Sihirbaz varyantları <strong>Renk × Ambalaj</strong> matrisi olarak üretir.
+                  {variantCount > 0 ? (
+                    <>
+                      {" "}
+                      Şu an: <strong>{colorLines.length || 1} renk × {packagingLines.length || 1} ambalaj ={" "}
+                      {variantCount} varyant</strong>.
+                    </>
+                  ) : (
+                    " Aşağıya en az bir ambalaj yazın."
+                  )}
+                </div>
+
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <Label>Ambalaj Boyutları</Label>
+                      <span className="text-[11px] text-muted-foreground">
+                        {packagingLines.length} satır
+                      </span>
+                    </div>
+                    <Textarea
+                      rows={7}
+                      value={form.packagingOptions}
+                      onChange={e => setForm(f => ({ ...f, packagingOptions: e.target.value }))}
+                      placeholder={"Her satıra bir ambalaj:\n50ml\n100ml\n250ml"}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <Label>Renk Seçenekleri</Label>
+                      <span className="text-[11px] text-muted-foreground">
+                        {colorLines.length} satır
+                      </span>
+                    </div>
+                    <Textarea
+                      rows={7}
+                      value={form.colorOptions}
+                      onChange={e => setForm(f => ({ ...f, colorOptions: e.target.value }))}
+                      placeholder={"Her satıra bir renk (hex opsiyonel):\nMavi #1a2b5c\nKırmızı #d32f2f"}
+                    />
+                    {/* Yazılan hex'leri göstermek, kopyalanan renk kodunun
+                        gerçekten okunup okunmadığını anında belli ediyor. */}
+                    {colorLines.length > 0 && (
+                      <div className="flex flex-wrap gap-1 pt-0.5">
+                        {colorLines.slice(0, 24).map((c, i) => (
+                          <span
+                            key={i}
+                            className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]"
+                          >
+                            {c.hex && (
+                              <span
+                                className="inline-block h-2.5 w-2.5 rounded-full border"
+                                style={{ backgroundColor: c.hex }}
+                              />
+                            )}
+                            {c.label}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 <div className="space-y-1.5">
                   <Label>Uygulanabilir Yüzeyler</Label>
                   <Textarea
-                    rows={4}
+                    rows={3}
                     value={form.applicationSurfaces}
                     onChange={e => setForm(f => ({ ...f, applicationSurfaces: e.target.value }))}
                     placeholder={"Her satıra bir yüzey:\nAraç\n3D Baskı\nAhşap"}
                   />
                   <p className="text-xs text-muted-foreground">
-                    "Hedef Yüzey / Kullanım" seçenekleri buradan gelir.
+                    "Hedef Yüzey / Kullanım" seçenekleri buradan gelir. Varyant sayısını
+                    etkilemez.
                   </p>
                 </div>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Renk Seçenekleri</Label>
-                <Textarea
-                  rows={4}
-                  value={form.colorOptions}
-                  onChange={e => setForm(f => ({ ...f, colorOptions: e.target.value }))}
-                  placeholder={"Her satıra bir renk (hex opsiyonel):\nMavi #1a2b5c\nKırmızı #d32f2f\nYeşil"}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Varyantlar <b>Renk × Ambalaj</b> matrisi olarak üretilir. Örn. 3 renk × 2 ambalaj = 6 varyant.
-                  Renk yazmazsanız yalnızca ambalaja göre üretilir.
-                </p>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Kullanım Kılavuzu Şablonu</Label>
-                <Textarea
-                  rows={3}
-                  value={form.guideTemplate}
-                  onChange={e => setForm(f => ({ ...f, guideTemplate: e.target.value }))}
-                  placeholder="Değişkenler: {{renk}}, {{seri}}, {{ambalaj}}"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Etiket İçerik Şablonu</Label>
-                <Textarea
-                  rows={3}
-                  value={form.labelTemplate}
-                  onChange={e => setForm(f => ({ ...f, labelTemplate: e.target.value }))}
-                  placeholder="Değişkenler: {{renk}}, {{seri}}, {{ambalaj}}"
-                />
-              </div>
+
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label>Kullanım Kılavuzu Şablonu</Label>
+                    <Textarea
+                      rows={4}
+                      value={form.guideTemplate}
+                      onChange={e => setForm(f => ({ ...f, guideTemplate: e.target.value }))}
+                      placeholder="Değişkenler: {{renk}}, {{seri}}, {{ambalaj}}"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Etiket İçerik Şablonu</Label>
+                    <Textarea
+                      rows={4}
+                      value={form.labelTemplate}
+                      onChange={e => setForm(f => ({ ...f, labelTemplate: e.target.value }))}
+                      placeholder="Değişkenler: {{renk}}, {{seri}}, {{ambalaj}}"
+                    />
+                  </div>
+                </div>
+              </TabsContent>
             </div>
-          </div>
-          <DialogFooter>
+          </Tabs>
+
+          <DialogFooter className="border-t pt-3">
             <Button variant="outline" onClick={() => setOpen(false)}>
               İptal
             </Button>
             <Button disabled={create.isPending || update.isPending} onClick={submit}>
+              {(create.isPending || update.isPending) && (
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+              )}
               Kaydet
             </Button>
           </DialogFooter>
@@ -630,4 +778,38 @@ function SeriesManager() {
       </Dialog>
     </Card>
   );
+}
+
+/**
+ * Karakter sayacı — pazaryeri açıklamalarında sınır var ve metni yazarken
+ * ne kadar yer kaldığını görmek, yayınlarken kırpılmasından iyi.
+ */
+function CharCount({ value }: { value: string }) {
+  const n = value.trim().length;
+  if (n === 0) return <span className="text-[11px] text-muted-foreground">boş</span>;
+  return <span className="text-[11px] text-muted-foreground">{n} karakter</span>;
+}
+
+/**
+ * Serinin varyant şablonu özeti ("3 renk × 2 ambalaj"). Listede görünmesi,
+ * hangi serinin sihirbaza hazır olduğunu düzenlemeyi açmadan gösteriyor.
+ */
+function seriesVariantSummary(s: unknown): string | null {
+  const arr = (v: unknown): unknown[] => {
+    if (Array.isArray(v)) return v;
+    if (typeof v === "string" && v.trim()) {
+      try {
+        const p = JSON.parse(v);
+        return Array.isArray(p) ? p : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  };
+  const row = s as { colorOptions?: unknown; packagingOptions?: unknown };
+  const colors = arr(row.colorOptions).length;
+  const packs = arr(row.packagingOptions).length;
+  if (packs === 0) return null;
+  return `${Math.max(1, colors)} renk × ${packs} ambalaj = ${Math.max(1, colors) * packs} varyant`;
 }

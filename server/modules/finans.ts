@@ -13,6 +13,7 @@ import { extractInvoice } from "../_core/claude";
 import { executeAssistantCommand, generateOrderNo, generateQuoteNo } from "../assistant";
 import { buildSaleTitle, deriveCombos, parseSetCount, renameVariantTitle } from "../productUtils";
 import { computePrice, extractJson, parseFeatures, pickReferenceProduct, scoreReference, suggestSku } from "../autofill";
+import { findMissingInfo } from "@shared/missingInfo";
 import { computeReorderSuggestions, summarizeReorder } from "../reorder";
 import { importUrunKayit } from "../importSeed";
 import { answerTrendyolQuestion, syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf, TrendyolLabelNotAllowedError, isTrendyolConfigured } from "../trendyol";
@@ -242,6 +243,70 @@ export const customersRouter = router({
   profile: protectedProcedure.input(z.object({ name: z.string() })).query(({ input }) => db.customerProfile(input.name)),
   // Tüm müşterilerin cari bakiyesi (küçük harf ada göre).
   balances: protectedProcedure.query(() => db.customerBalances()),
+
+  /**
+   * Kargo/fatura için eksik müşteri bilgileri + hazır talep mesajı.
+   *
+   * Bu eksikler bugüne kadar ancak kargo etiketi basılırken ya da fatura
+   * kesilirken ortaya çıkıyordu — yani gönderim günü, sipariş beklerken.
+   * Önceden listeleyip müşteriye tek mesajla sormak o beklemeyi kaldırır.
+   */
+  missingInfo: protectedProcedure
+    .input(
+      z
+        .object({
+          /** Fatura için vergi bilgisi de istensin mi. */
+          requireTax: z.boolean().default(false),
+          /** Pazaryeri siparişleri dahil (adres oradan gelir, genelde gereksiz). */
+          includeMarketplace: z.boolean().default(false),
+        })
+        .default({ requireTax: false, includeMarketplace: false }),
+    )
+    .query(async ({ input }) => {
+      const [orders, customers, settings] = await Promise.all([
+        db.listOrders(),
+        db.listCustomers(),
+        db.getSettings(),
+      ]);
+
+      const rows = findMissingInfo(
+        (orders as Record<string, unknown>[]).map(o => ({
+          id: o.id as number,
+          orderNo: String(o.orderNo ?? ""),
+          customerName: String(o.customerName ?? ""),
+          customerId: (o.customerId as number | null) ?? null,
+          customerPhone: (o.customerPhone as string | null) ?? null,
+          customerAddress: (o.customerAddress as string | null) ?? null,
+          channel: (o.channel as string | null) ?? null,
+          status: String(o.status ?? ""),
+          totalAmount: (o.totalAmount as string) ?? "0",
+        })),
+        (customers as Record<string, unknown>[]).map(c => ({
+          id: c.id as number,
+          name: String(c.name ?? ""),
+          phone: (c.phone as string | null) ?? null,
+          email: (c.email as string | null) ?? null,
+          address: (c.address as string | null) ?? null,
+          taxOffice: (c.taxOffice as string | null) ?? null,
+          taxNumber: (c.taxNumber as string | null) ?? null,
+          eInvoice: (c.eInvoice as string | null) ?? null,
+        })),
+        {
+          requireTax: input.requireTax,
+          includeMarketplace: input.includeMarketplace,
+          companyName: settings.companyName || undefined,
+        },
+      );
+
+      return {
+        rows,
+        summary: {
+          customers: rows.length,
+          orders: rows.reduce((s, r) => s + r.orders.length, 0),
+          reachable: rows.filter(r => r.waLink != null).length,
+        },
+      };
+    }),
 });
 
 

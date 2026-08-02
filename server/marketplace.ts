@@ -145,5 +145,26 @@ async function runSyncAll(): Promise<SyncResult[]> {
     }
   }
 
+  /*
+   * Yeni sipariş satırlarını ürüne bağla.
+   *
+   * Bağ `replaceOrderItems` sırasında da kuruluyor, ama yalnız O ANDA kanal
+   * kodu tanınıyorsa. İlan sonradan yayınlandığında ya da kod eşleşmesi
+   * sonradan mümkün hale geldiğinde eski satırlar bağsız kalıyor ve üretim
+   * planına, stok düşümüne, getiri raporuna hiç girmiyordu — kullanıcı bunu
+   * ancak "7 bağlanmamış satır" uyarısını görüp elle bağlayarak kapatabiliyordu.
+   * Her senkron sonrası çalıştırmak birikmeyi baştan engelliyor.
+   *
+   * Senkron sonucunu bozmamalı: bağlama hatası siparişlerin çekilmediği
+   * anlamına gelmez, sessizce loglanır.
+   */
+  try {
+    const { backfillOrderBinding } = await import("./db");
+    const bind = await backfillOrderBinding();
+    if (bind.bound > 0) console.info(`[pazaryeri] ${bind.bound} sipariş satırı ürüne bağlandı`);
+  } catch (error) {
+    console.warn("[pazaryeri] otomatik ürün bağlama başarısız:", error);
+  }
+
   return results;
 }

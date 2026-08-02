@@ -46,6 +46,12 @@ export default function Catalog() {
   const [, setLocation] = useLocation();
   const [onlyProblem, setOnlyProblem] = useState(false);
 
+  // Diğer ekranlar sekmeye doğrudan link verebilsin: /katalog?sekme=baglar
+  const urlTab =
+    typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("sekme")
+      : null;
+
   const [selectedSeries, setSelectedSeries] = useState<Set<number>>(new Set());
   type Breakdown = {
     seriesId: number;
@@ -188,7 +194,14 @@ export default function Catalog() {
 
       {isLoading && <div className="h-32 animate-pulse rounded-xl bg-muted" />}
 
-      <Tabs defaultValue={(masters?.length ?? 0) > 0 ? "liste" : "kurulum"}>
+      {/* Sekme URL'den seçilebilir (?sekme=baglar): başka ekranlardan gelen
+          "Bağla" bağlantısı doğrudan ilgili sekmeyi açsın, kullanıcı altı
+          sekme arasından doğru olanı aramasın. */}
+      <Tabs
+        defaultValue={
+          urlTab ?? ((masters?.length ?? 0) > 0 ? "liste" : "kurulum")
+        }
+      >
         <TabsList>
           <TabsTrigger value="liste">Ürün Listesi</TabsTrigger>
           <TabsTrigger value="seriler">Seri Takibi</TabsTrigger>

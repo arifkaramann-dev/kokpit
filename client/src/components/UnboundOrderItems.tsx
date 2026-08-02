@@ -8,7 +8,23 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -19,9 +35,19 @@ import {
 } from "@/components/ui/table";
 import { formatDate, formatQty } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
-import { CheckCircle2, Link2, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { CheckCircle2, Link2, Loader2, PackagePlus } from "lucide-react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
+
+type UnboundRow = {
+  id: number;
+  orderId: number;
+  orderNo: string | null;
+  productName: string;
+  channelRef: string | null;
+  quantity: string;
+  createdAt: Date | string;
+};
 
 /**
  * Bağlanmamış sipariş satırları — elle bağlama iş listesi.
@@ -57,8 +83,12 @@ export default function UnboundOrderItems() {
     onError: e => toast.error(e.message),
   });
 
+  // "Ürün yoksa oluştur": katalogda karşılığı olmayan pazaryeri ürünleri
+  // aksi halde sonsuza kadar bağsız kalıyor ve hiçbir rapora girmiyordu.
+  const [createFor, setCreateFor] = useState<UnboundRow | null>(null);
+
   if (isLoading) return <div className="h-32 animate-pulse rounded-xl bg-muted" />;
-  const rows = items ?? [];
+  const rows = (items ?? []) as UnboundRow[];
 
   return (
     <div className="space-y-3">
@@ -113,10 +143,21 @@ export default function UnboundOrderItems() {
                   </TableCell>
                   <TableCell className="text-right">{formatQty(r.quantity)}</TableCell>
                   <TableCell>
-                    <MasterPicker
-                      options={catalog ?? []}
-                      onPick={masterId => bind.mutate({ itemId: r.id, masterId })}
-                    />
+                    <div className="flex items-center gap-1.5">
+                      <MasterPicker
+                        options={catalog ?? []}
+                        onPick={masterId => bind.mutate({ itemId: r.id, masterId })}
+                      />
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8"
+                        title="Katalogda karşılığı yok — ürünü aç ve bu satırı ona bağla"
+                        onClick={() => setCreateFor(r)}
+                      >
+                        <PackagePlus className="mr-1 h-3.5 w-3.5" /> Ürün aç
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -124,7 +165,192 @@ export default function UnboundOrderItems() {
           </Table>
         </Card>
       )}
+
+      <CreateMasterDialog row={createFor} onClose={() => setCreateFor(null)} />
     </div>
+  );
+}
+
+/**
+ * Bağsız satırdan ürün açma.
+ *
+ * Küp koordinatı (seri × renk × form × ambalaj) sorulmak zorunda: pazaryeri
+ * başlığından renk ve ambalajı güvenilir biçimde çıkarmak mümkün değil ve
+ * yanlış tahmin, yanlış reçeteye bağlanmış bir ürün demek. Ama tahmin
+ * EDİLEBİLİR olanlar (ambalaj hacmi, isim) ön dolduruluyor.
+ *
+ * Mükerrer koruması sunucuda: aynı kanal kodu ya da aynı küp varsa yeni ürün
+ * açılmaz, mevcuda bağlanır.
+ */
+function CreateMasterDialog({ row, onClose }: { row: UnboundRow | null; onClose: () => void }) {
+  const utils = trpc.useUtils();
+  const { data: dims } = trpc.katalog.dimensions.useQuery();
+  const { data: series } = trpc.series.list.useQuery();
+
+  const [seriesId, setSeriesId] = useState("");
+  const [colorId, setColorId] = useState("");
+  const [familyId, setFamilyId] = useState("");
+  const [packagingId, setPackagingId] = useState("");
+  const [price, setPrice] = useState("");
+
+  // Ambalajı isimden tahmin et: "... 100 ml ..." yazan bir başlıkta 100 ml
+  // ambalajı seçmek neredeyse her zaman doğru ve en sık yapılan seçim.
+  useEffect(() => {
+    if (!row) return;
+    setPrice("");
+    const packs = dims?.packagings ?? [];
+    const match = row.productName.match(/(\d+(?:[.,]\d+)?)\s*(ml|lt|l)\b/i);
+    if (match) {
+      const qty = parseFloat(match[1].replace(",", "."));
+      const ml = /^l/i.test(match[2]) ? qty * 1000 : qty;
+      const hit = packs.find(p => Math.abs(Number(p.volumeMl ?? 0) - ml) < 0.5);
+      if (hit) setPackagingId(String(hit.id));
+    }
+  }, [row, dims]);
+
+  const create = trpc.katalog.createMasterFromOrderLine.useMutation({
+    onSuccess: r => {
+      utils.katalog.invalidate();
+      utils.orders.invalidate();
+      toast.success(
+        r.created
+          ? `Ürün açıldı ve ${r.bound} satır bağlandı. Kanal kodu kaydedildi — bu üründen gelen sonraki siparişler kendiliğinden bağlanacak.`
+          : `Zaten kayıtlı ürün bulundu (${r.reason === "kanal_kodu" ? "aynı kanal kodu" : "aynı renk/ambalaj"}) — yeni ürün açılmadı, ${r.bound} satır ona bağlandı.`,
+        { duration: 10000 },
+      );
+      onClose();
+    },
+    onError: e => toast.error(e.message, { duration: 9000 }),
+  });
+
+  const ready = seriesId && colorId && familyId && packagingId;
+
+  return (
+    <Dialog open={row != null} onOpenChange={o => !o && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Bu satır için ürün aç</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <Card className="space-y-1 p-3 text-sm">
+            <p className="font-medium">{row?.productName}</p>
+            <p className="text-xs text-muted-foreground">
+              {row?.orderNo ?? `#${row?.orderId}`} · kanal kodu{" "}
+              <span className="font-mono">{row?.channelRef ?? "yok"}</span>
+            </p>
+          </Card>
+
+          <p className="text-xs text-muted-foreground">
+            Ürünü katalog koordinatına yerleştirin. Aynı koordinatta ya da aynı kanal kodunda
+            ürün varsa <strong>yenisi açılmaz</strong>, mevcuda bağlanır.
+          </p>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Seri *</Label>
+              <Select value={seriesId} onValueChange={setSeriesId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Seri seç" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(series ?? []).map(s => (
+                    <SelectItem key={s.id} value={String(s.id)}>
+                      {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Renk *</Label>
+              <Select value={colorId} onValueChange={setColorId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Renk seç" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(dims?.colors ?? []).map(c => (
+                    <SelectItem key={c.id} value={String(c.id)}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Ürün tipi *</Label>
+              <Select value={familyId} onValueChange={setFamilyId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Tip seç" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(dims?.families ?? []).map(f => (
+                    <SelectItem key={f.id} value={String(f.id)}>
+                      {f.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Ambalaj *</Label>
+              <Select value={packagingId} onValueChange={setPackagingId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Ambalaj seç" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(dims?.packagings ?? []).map(p => (
+                    <SelectItem key={p.id} value={String(p.id)}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Taban fiyat (₺)</Label>
+            <Input
+              type="number"
+              min="0"
+              step="0.01"
+              value={price}
+              onChange={e => setPrice(e.target.value)}
+              placeholder="Boş bırakılırsa siparişteki birim fiyat kullanılır"
+            />
+          </div>
+
+          <p className="text-[11px] text-muted-foreground">
+            Ürün <strong>tedarikli</strong> satış moduyla açılır: reçetesi bağlanmadan da satışta
+            kalır, "üretmediğini satamama" durumu doğmaz. Reçeteyi sonra Reçeteler'den bağlayın.
+          </p>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            İptal
+          </Button>
+          <Button
+            disabled={!ready || create.isPending}
+            onClick={() =>
+              row &&
+              create.mutate({
+                itemId: row.id,
+                seriesId: Number(seriesId),
+                colorId: Number(colorId),
+                familyId: Number(familyId),
+                packagingId: Number(packagingId),
+                basePrice: price ? parseFloat(price) : undefined,
+              })
+            }
+          >
+            {create.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
+            Ürünü aç ve bağla
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

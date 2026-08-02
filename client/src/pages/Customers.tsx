@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import MissingCustomerInfo from "@/components/MissingCustomerInfo";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatTL } from "@/lib/format";
 import { useConfirm } from "@/components/ConfirmDialog";
@@ -104,6 +105,12 @@ export default function Customers() {
   const [detail, setDetail] = useState<CustomerRow | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [search, setSearch] = useState("");
+  // Sekme rozetindeki sayı: eksik bilgi görünür olmazsa kimse bakmıyor.
+  const { data: missing } = trpc.customers.missingInfo.useQuery({
+    requireTax: false,
+    includeMarketplace: false,
+  });
+  const missingCount = missing?.summary.customers;
 
   const createCustomer = trpc.customers.create.useMutation({
     onSuccess: () => {
@@ -235,6 +242,29 @@ export default function Customers() {
         </Button>
       </div>
 
+      {/*
+        "Eksik Bilgiler" ayrı sekmede: kargo/fatura için eksik adres-telefon-VKN
+        müşteri listesinin içinde kaybolan bir uyarı olarak durunca kimse fark
+        etmiyor, oysa gönderimi bekleten şey tam olarak o.
+      */}
+      <Tabs defaultValue="liste">
+        <TabsList>
+          <TabsTrigger value="liste">Müşteri Listesi</TabsTrigger>
+          <TabsTrigger value="eksik">
+            Eksik Bilgiler
+            {(missingCount ?? 0) > 0 && (
+              <span className="ml-1.5 rounded-full bg-amber-500/20 px-1.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
+                {missingCount}
+              </span>
+            )}
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="eksik" className="pt-3">
+          <MissingCustomerInfo />
+        </TabsContent>
+
+        <TabsContent value="liste" className="space-y-4 pt-3">
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative max-w-sm flex-1 min-w-[180px]">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -363,6 +393,8 @@ export default function Customers() {
           </Card>
         ))}
       </div>
+        </TabsContent>
+      </Tabs>
 
       <Dialog open={!!detail} onOpenChange={o => !o && setDetail(null)}>
         <DialogContent className="sm:max-w-2xl max-h-[88vh] overflow-y-auto">

@@ -377,7 +377,7 @@ export default function SeriesWizard() {
                 {bind.isPending && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
                 Reçeteleri otomatik bağla
               </Button>
-              <Button size="sm" variant="outline" onClick={() => setLocation("/receteler")}>
+              <Button size="sm" variant="outline" onClick={() => setLocation("/recete")}>
                 Reçete yaz
               </Button>
               <Button size="sm" variant="outline" onClick={() => setLocation("/tanimlar")}>

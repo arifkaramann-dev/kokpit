@@ -13,6 +13,7 @@ import {
   executeAssistantCommand,
 } from "./assistant";
 import * as db from "./db";
+import { FIELD_LABELS, findMissingInfo } from "@shared/missingInfo";
 
 /**
  * Asistanın tool-use ajanı (Faz 1'in açık vaadi): tek intent çözmek yerine
@@ -33,6 +34,91 @@ import * as db from "./db";
 type PendingAction = { tool: string; args: Record<string, unknown>; summary: string; expiresAt: number };
 const pendingByConversation = new Map<string, PendingAction>();
 const PENDING_TTL_MS = 10 * 60 * 1000;
+
+/* ------------------------------ Konuşma hafızası ------------------------------ */
+
+/**
+ * Sohbet geçmişi — asistanın soruları birbirine bağlayabilmesi için.
+ *
+ * ── Neden ─────────────────────────────────────────────────────────────────
+ * Her mesaj `messages: [{ role: "user", content: transcript }]` ile sıfırdan
+ * başlıyordu. Sonuç: bot tek soru cevaplayan bir uç noktaydı. "Bülent'in
+ * borcu ne kadar?" → cevap → "peki ondan tahsilat aldım 500 lira" → hangi
+ * müşteriden bahsedildiği bilinmiyor. İnsanlar böyle konuşmuyor; her mesajda
+ * bağlamı tekrar yazmak zorunda kalmak botun kullanılmamasının ana sebebiydi.
+ *
+ * ── Sınırlar ──────────────────────────────────────────────────────────────
+ * Bellekte tutulur (Render yeniden başlarsa sıfırlanır) — sohbet geçmişi
+ * kalıcı olması gereken bir veri değil ve DB'ye yazmak her mesaja iki sorgu
+ * ekler. Son `MAX_HISTORY_TURNS` tur ve `HISTORY_TTL_MS` süresiyle sınırlı:
+ * token maliyeti sohbet uzadıkça sınırsız büyümemeli, ve saatler önce kalmış
+ * bir konu bugünkü soruyu yanlış yönlendirmemeli.
+ */
+type Conversation = { messages: Anthropic.MessageParam[]; touchedAt: number };
+const historyByConversation = new Map<string, Conversation>();
+const HISTORY_TTL_MS = 2 * 60 * 60 * 1000;
+/** Bir tur = kullanıcı mesajı + asistan cevabı. */
+const MAX_HISTORY_TURNS = 12;
+/** Aynı anda tutulan sohbet sayısı — bellek sınırsız büyümesin. */
+const MAX_CONVERSATIONS = 200;
+
+/** Test ve ajan döngüsü için: sohbetin taşınabilir geçmişi. */
+export function getHistory(key: string): Anthropic.MessageParam[] {
+  const row = historyByConversation.get(key);
+  if (!row) return [];
+  if (Date.now() - row.touchedAt > HISTORY_TTL_MS) {
+    historyByConversation.delete(key);
+    return [];
+  }
+  return row.messages;
+}
+
+/**
+ * Turu geçmişe yazar. Yalnız DÜZ METİN saklanır: araç çağrısı blokları
+ * (`tool_use`/`tool_result`) sonraki isteğe taşınırsa eşleşmeyen id'ler API
+ * hatası verir, üstelik araç sonuçları (işletme özeti gibi) hızla bayatlar —
+ * ajan onları her turda yeniden çekmeli.
+ */
+export function rememberTurn(key: string, userText: string, assistantText: string) {
+  const row = historyByConversation.get(key) ?? { messages: [], touchedAt: Date.now() };
+  row.messages.push({ role: "user", content: userText });
+  if (assistantText.trim()) row.messages.push({ role: "assistant", content: assistantText });
+  // Baştan kırp; ilk mesajın "user" olması gerektiği için çift sayıda at.
+  const maxMessages = MAX_HISTORY_TURNS * 2;
+  if (row.messages.length > maxMessages) {
+    row.messages.splice(0, row.messages.length - maxMessages);
+    while (row.messages.length > 0 && row.messages[0].role !== "user") row.messages.shift();
+  }
+  row.touchedAt = Date.now();
+  historyByConversation.set(key, row);
+
+  if (historyByConversation.size > MAX_CONVERSATIONS) {
+    // En eski dokunulan sohbeti düşür (basit LRU).
+    let oldestKey: string | null = null;
+    let oldest = Infinity;
+    for (const [k, v] of Array.from(historyByConversation.entries())) {
+      if (v.touchedAt < oldest) {
+        oldest = v.touchedAt;
+        oldestKey = k;
+      }
+    }
+    if (oldestKey) historyByConversation.delete(oldestKey);
+  }
+}
+
+/** Sohbeti sıfırlar — "unut/yeni konu" komutu ve testler için. */
+export function clearConversation(key: string) {
+  historyByConversation.delete(key);
+  pendingByConversation.delete(key);
+}
+
+/** Kullanıcı açıkça "baştan başla" dediğinde geçmiş temizlenir. */
+const RESET_WORDS = ["yeni konu", "unut", "sıfırla", "sifirla", "baştan başla", "bastan basla"];
+
+export function isResetCommand(text: string): boolean {
+  const norm = text.trim().toLocaleLowerCase("tr-TR").replace(/[.!?,;]+$/g, "");
+  return RESET_WORDS.includes(norm);
+}
 
 const CONFIRM_WORDS = ["evet", "onayla", "onaylıyorum", "tamam", "olur", "yap", "uygula"];
 const CANCEL_WORDS = ["hayır", "hayir", "iptal", "vazgeç", "vazgec", "dur", "yapma"];
@@ -249,6 +335,65 @@ const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: "eksik_bilgi_listesi",
+    description:
+      "Kargo ve fatura için eksik müşteri bilgilerini listeler: açık siparişi olup adresi, telefonu veya vergi bilgisi eksik olan müşteriler ve her biri için müşteriye gönderilecek hazır talep mesajı. Kullanıcı 'kimin bilgisi eksik', 'eksik bilgileri müşteriden iste', 'kargo/fatura için ne eksik' benzeri bir şey sorduğunda bunu çağır. Müşteriden bilgi GELDİĞİNDE kaydetmek için cari_olustur aracını kullan.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        vergiBilgisiDe: {
+          type: "boolean",
+          description: "Fatura için VKN/TCKN ve vergi dairesi de sorulsun mu (kurumsal satış)",
+        },
+      },
+      required: [],
+    },
+    safety: "guvenli",
+    run: async args => {
+      const [orders, customers, settings] = await Promise.all([
+        db.listOrders(),
+        db.listCustomers(),
+        db.getSettings(),
+      ]);
+      const rows = findMissingInfo(
+        (orders as Record<string, unknown>[]).map(o => ({
+          id: o.id as number,
+          orderNo: String(o.orderNo ?? ""),
+          customerName: String(o.customerName ?? ""),
+          customerId: (o.customerId as number | null) ?? null,
+          customerPhone: (o.customerPhone as string | null) ?? null,
+          customerAddress: (o.customerAddress as string | null) ?? null,
+          channel: (o.channel as string | null) ?? null,
+          status: String(o.status ?? ""),
+          totalAmount: (o.totalAmount as string) ?? "0",
+        })),
+        (customers as Record<string, unknown>[]).map(c => ({
+          id: c.id as number,
+          name: String(c.name ?? ""),
+          phone: (c.phone as string | null) ?? null,
+          email: (c.email as string | null) ?? null,
+          address: (c.address as string | null) ?? null,
+          taxOffice: (c.taxOffice as string | null) ?? null,
+          taxNumber: (c.taxNumber as string | null) ?? null,
+        })),
+        { requireTax: args.vergiBilgisiDe === true, companyName: settings.companyName || undefined },
+      );
+      if (rows.length === 0) return "Açık siparişlerin tamamında kargo ve fatura bilgisi tam. 👍";
+      return [
+        `${rows.length} müşteride eksik bilgi var:`,
+        ...rows.slice(0, 15).map(r => {
+          const labels = r.missing.map(m => FIELD_LABELS[m]).join(", ");
+          const nos = r.orders.map(o => o.orderNo).join(", ");
+          return `• ${r.customerName} (${nos}) — eksik: ${labels}${r.phone ? ` · tel ${r.phone}` : " · TELEFON DA YOK"}`;
+        }),
+        "",
+        "Hazır talep mesajı (ilk müşteri için):",
+        rows[0].message,
+      ].join("\n");
+    },
+    describe: () => "Eksik kargo/fatura bilgilerini listele",
+  },
+  {
     name: "cari_olustur",
     description:
       "Yeni müşteri (cari) kartı açar veya mevcut kartın bilgilerini tamamlar: ad + fatura/muhasebe bilgileri (vergi dairesi, VKN/TCKN, e-fatura durumu), adres, telefon, e-posta. Kullanıcı 'cari oluştur / müşteri kartı aç / vergi dairesi-VKN ekle' dediğinde bunu kullan. Aynı isimde kayıt varsa yenisini açmaz, verilen alanları günceller. eInvoice: mükellefse 'efatura', değilse 'earsiv', bilinmiyorsa boş bırak.",
@@ -304,6 +449,8 @@ const SYSTEM_PROMPT = [
   "Kesin emin olmadığın müşteri/ürün adlarını olduğu gibi araca ver — eşleştirmeyi sistem yapar.",
   "Müşteri kartı (cari) açabilir, vergi dairesi / VKN-TCKN / e-fatura durumu / adres gibi fatura bilgilerini cari_olustur ile kaydedebilirsin — 'bende böyle bir araç yok' deme.",
   "Para, adet ve tarihleri Türk formatında yaz (1.250,50 TL gibi). Bilmediğin şeyi bilmediğini söyle.",
+  "SOHBET SÜRÜYOR: önceki mesajlar sana verilir. 'ondan', 'o siparişi', 'peki bu ay' gibi ifadeleri geçmişten çöz; kullanıcıya bağlamı tekrar sorma. Emin olamıyorsan kısaca teyit et.",
+  "Kargo/fatura için eksik müşteri bilgisi (adres, telefon, VKN/TCKN, vergi dairesi) sorulduğunda eksik_bilgi_listesi aracını çağır; gelen bilgiyi cari_olustur ile kaydet.",
 ].join("\n");
 
 /* ------------------------------ Onay katmanı ------------------------------ */
@@ -330,6 +477,13 @@ async function isAgentEnabled(): Promise<boolean> {
  * conversationKey: uygulama içi sohbet için "app", WhatsApp için telefon no.
  */
 export async function runAssistant(transcript: string, conversationKey: string): Promise<{ message: string }> {
+  // 0) "Yeni konu / unut": geçmişi kasten sıfırlamanın yolu olmalı, yoksa
+  //    yanlış anlaşılmış bir bağlam sohbetin sonuna kadar peşini bırakmaz.
+  if (isResetCommand(transcript)) {
+    clearConversation(conversationKey);
+    return { message: "Tamam, sıfırdan başlıyoruz. Ne yapalım?" };
+  }
+
   // 1) Bekleyen onay var mı?
   const pending = pendingByConversation.get(conversationKey);
   if (pending) {
@@ -342,14 +496,20 @@ export async function runAssistant(transcript: string, conversationKey: string):
         const tool = toolMap.get(pending.tool);
         if (!tool) return { message: "Bekleyen işlem artık geçerli değil." };
         try {
-          return { message: await tool.run(pending.args) };
+          const message = await tool.run(pending.args);
+          // Onaylanan işlem de geçmişe girer: "az önce ne yaptık" sorusunun
+          // cevabı sohbette kalmalı.
+          rememberTurn(conversationKey, transcript, message);
+          return { message };
         } catch (error) {
           return { message: `İşlem uygulanamadı: ${error instanceof Error ? error.message : "bilinmeyen hata"}` };
         }
       }
       if (decision === "cancel") {
         pendingByConversation.delete(conversationKey);
-        return { message: "Tamam, vazgeçtim — hiçbir şey kaydedilmedi. 👍" };
+        const message = "Tamam, vazgeçtim — hiçbir şey kaydedilmedi. 👍";
+        rememberTurn(conversationKey, transcript, message);
+        return { message };
       }
       // Onay bekleyen işlem varken başka bir şey yazıldıysa bekleyeni düşür,
       // yeni mesajı normal akışta işle (kullanıcı konuyu değiştirdi).
@@ -377,7 +537,12 @@ async function runAgentLoop(transcript: string, conversationKey: string): Promis
     input_schema: t.input_schema,
   }));
 
-  const messages: Anthropic.MessageParam[] = [{ role: "user", content: transcript }];
+  // Geçmiş + bu mesaj: ajan "ondan", "o siparişi", "peki ya bu ay" gibi
+  // bağlama dayalı ifadeleri çözebilsin.
+  const messages: Anthropic.MessageParam[] = [
+    ...getHistory(conversationKey),
+    { role: "user", content: transcript },
+  ];
   const doneMessages: string[] = [];
 
   for (let turn = 0; turn < MAX_TURNS; turn++) {
@@ -400,7 +565,9 @@ async function runAgentLoop(transcript: string, conversationKey: string): Promis
       // Ajan bitirdi: yapılan işler + son metin.
       const parts = [...doneMessages];
       if (text) parts.push(text);
-      return { message: parts.join("\n\n") || "Anlaşıldı." };
+      const message = parts.join("\n\n") || "Anlaşıldı.";
+      rememberTurn(conversationKey, transcript, message);
+      return { message };
     }
 
     messages.push({ role: "assistant", content: response.content });
@@ -425,7 +592,11 @@ async function runAgentLoop(transcript: string, conversationKey: string): Promis
         const parts = [...doneMessages];
         if (text) parts.push(text);
         parts.push(`Şunu yapacağım:\n➡️ ${summary}\n\nOnaylıyor musun? (evet / hayır)`);
-        return { message: parts.join("\n\n") };
+        const message = parts.join("\n\n");
+        // Onay sorusu da geçmişe girsin: kullanıcı "evet" yerine yeni bir şey
+        // yazarsa ajan neyi teklif ettiğini hatırlasın.
+        rememberTurn(conversationKey, transcript, message);
+        return { message };
       }
       try {
         const out = await tool.run(args);
@@ -443,5 +614,8 @@ async function runAgentLoop(transcript: string, conversationKey: string): Promis
     messages.push({ role: "user", content: results });
   }
 
-  return { message: doneMessages.join("\n\n") || "İşlem tamamlanamadı, daha kısa bir komutla tekrar dener misin?" };
+  const message =
+    doneMessages.join("\n\n") || "İşlem tamamlanamadı, daha kısa bir komutla tekrar dener misin?";
+  rememberTurn(conversationKey, transcript, message);
+  return { message };
 }

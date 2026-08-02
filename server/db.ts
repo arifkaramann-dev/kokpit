@@ -1508,6 +1508,37 @@ export async function bindOrderItem(itemId: number, masterId: number | null) {
   await db.update(orderItems).set({ masterId }).where(eq(orderItems.id, itemId));
 }
 
+/** Tek sipariş satırı — "bu satır hangi ürüne bağlanacak" akışı için. */
+export async function getOrderItem(itemId: number) {
+  const db = await requireDb();
+  const [row] = await db.select().from(orderItems).where(eq(orderItems.id, itemId)).limit(1);
+  return row ?? null;
+}
+
+/**
+ * Aynı kanal kodunu taşıyan TÜM bağsız satırları tek master'a bağlar.
+ *
+ * Ürün bir kez açıldığında geçmiş siparişler de raporlara girsin: aynı
+ * barkodlu 12 satırı tek tek bağlamak kimsenin yapmayacağı bir iş.
+ * Bağlı satırlara dokunulmaz — elle düzeltilmiş bir bağ bozulmamalı.
+ */
+export async function bindOrderItemsByChannelRef(
+  channelRef: string,
+  masterId: number,
+): Promise<number> {
+  const db = await requireDb();
+  const ref = channelRef.trim();
+  if (!ref) return 0;
+  const rows = await db
+    .select({ id: orderItems.id })
+    .from(orderItems)
+    .where(and(eq(orderItems.channelRef, ref), isNull(orderItems.masterId)));
+  for (const r of rows) {
+    await db.update(orderItems).set({ masterId }).where(eq(orderItems.id, r.id));
+  }
+  return rows.length;
+}
+
 /** Bağı olmayan kalemler — "elle bağla" iş listesi. */
 export async function listUnboundOrderItems(limit = 200) {
   const db = await requireDb();

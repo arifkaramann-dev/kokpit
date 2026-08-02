@@ -14,6 +14,11 @@ import { executeAssistantCommand, generateOrderNo, generateQuoteNo } from "../as
 import { buildSaleTitle, deriveCombos, parseSetCount, renameVariantTitle, splitExistingCombos } from "../productUtils";
 import { computePrice, extractJson, parseFeatures, pickReferenceProduct, scoreReference, suggestSku } from "../autofill";
 import { computeReorderSuggestions, summarizeReorder } from "../reorder";
+import {
+  materialMatrixToParsed,
+  planMaterialImport,
+  type MaterialIORecord,
+} from "@shared/materialIO";
 import { importUrunKayit } from "../importSeed";
 import { answerTrendyolQuestion, syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf, TrendyolLabelNotAllowedError, isTrendyolConfigured } from "../trendyol";
 import { isHepsiburadaConfigured } from "../hepsiburada";
@@ -64,6 +69,12 @@ const materialInput = z.object({
   name: z.string().min(1),
   category: z.string().min(1).default("diğer"),
   unit: z.string().min(1).default("gr"),
+  /**
+   * Kalem türü — çok seviyeli reçetenin temel ayrımı. Form'da yoktu ve her
+   * kalem "hammadde" kalıyordu; ambalaj kalemleri de dahil, ki reçeteye
+   * girdiklerinde hacimle ölçeklenip maliyeti bozuyorlar.
+   */
+  type: z.enum(["hammadde", "yari_mamul", "ambalaj", "masraf"]).optional(),
   stockQty: z.number().min(0).default(0),
   criticalQty: z.number().min(0).default(0),
   unitCost: z.number().min(0).default(0),
@@ -240,6 +251,114 @@ export const materialsRouter = router({
   movements: protectedProcedure.input(z.object({ materialId: z.number() })).query(({ input }) => db.listStockMovements(input.materialId)),
   // Hammaddenin geçtiği reçeteler: kritik stok "hangi ürünleri etkiliyor" analizi.
   usage: protectedProcedure.input(z.object({ materialId: z.number() })).query(({ input }) => db.listMaterialUsage(input.materialId)),
+
+  /**
+   * Excel/CSV ile toplu hammadde yükleme — oluştur-veya-güncelle.
+   *
+   * Plan istemcide çıkarılır (kullanıcı diff'i görüp onaylar) ama BURADA
+   * yeniden kurulur: istemciden gelen plana güvenmek, kullanıcının önizlemede
+   * gördüğünden başka bir şeyin yazılabilmesi demek olurdu. Aynı dosya, aynı
+   * saf fonksiyon, aynı sonuç.
+   *
+   * Stok değişimi `adjustStock` üzerinden yürür ki hareket defteri ayrışmasın:
+   * ürün stoğunu tabloda sessizce değiştirmek, "bu stok nereden geldi"
+   * sorusunu cevapsız bırakır.
+   */
+  bulkImport: protectedProcedure
+    .input(
+      z.object({
+        /** Dosyanın ham hücre matrisi (ilk satır başlık). */
+        matrix: z.array(z.array(z.string())).min(2).max(5001),
+        matchBy: z.enum(["ad", "id"]).default("ad"),
+        /** Tanınmayan tedarikçileri açsın mı? */
+        createSuppliers: z.boolean().default(true),
+        dryRun: z.boolean().default(true),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const [materials, suppliers] = await Promise.all([db.listMaterials(), db.listSuppliers()]);
+      const supplierRows = (suppliers as { id: number; name: string }[]).map(s => ({
+        id: s.id,
+        name: s.name,
+      }));
+
+      const { parsed, error } = materialMatrixToParsed(input.matrix);
+      if (!parsed) throw new TRPCError({ code: "BAD_REQUEST", message: error ?? "Dosya okunamadı." });
+
+      const records = (materials as Record<string, unknown>[]).map(
+        (m): MaterialIORecord => ({
+          id: m.id as number,
+          name: String(m.name ?? ""),
+          category: String(m.category ?? ""),
+          unit: String(m.unit ?? ""),
+          type: (m.type as MaterialIORecord["type"]) ?? "hammadde",
+          stockQty: m.stockQty as string,
+          criticalQty: m.criticalQty as string,
+          unitCost: m.unitCost as string,
+          supplierId: (m.supplierId as number | null) ?? null,
+          notes: (m.notes as string | null) ?? null,
+        }),
+      );
+
+      const plan = planMaterialImport(records, parsed, {
+        matchBy: input.matchBy,
+        suppliers: supplierRows,
+      });
+
+      if (input.dryRun) return { dryRun: true as const, created: 0, updated: 0, plan };
+
+      // Yeni tedarikçiler önce açılır ki satırlar onlara bağlanabilsin.
+      const supplierIdByName = new Map(
+        supplierRows.map(s => [s.name.trim().toLocaleLowerCase("tr-TR"), s.id]),
+      );
+      if (input.createSuppliers) {
+        for (const name of plan.newSuppliers) {
+          const key = name.trim().toLocaleLowerCase("tr-TR");
+          if (supplierIdByName.has(key)) continue;
+          const id = await db.createSupplier({ name: name.trim() } as never);
+          supplierIdByName.set(key, Number(id));
+        }
+      }
+      const resolveSupplier = (name: string | null) =>
+        name ? (supplierIdByName.get(name.trim().toLocaleLowerCase("tr-TR")) ?? null) : null;
+
+      const decimals = ["stockQty", "criticalQty", "unitCost"];
+      const byId = new Map(records.map(m => [m.id, m]));
+
+      let updated = 0;
+      for (const u of plan.updates) {
+        const data: Record<string, unknown> = { ...u.data };
+        const supplierId = resolveSupplier(u.newSupplier);
+        if (supplierId != null) data.supplierId = supplierId;
+
+        // Stok, tablodaki sayıyı ezmek yerine hareket olarak işlenir —
+        // "hangi stok nereden geldi" sorusu cevapsız kalmasın.
+        const targetStock = data.stockQty;
+        delete data.stockQty;
+        if (Object.keys(data).length > 0) {
+          await db.updateMaterial(u.id, toDecimalFields(data, decimals) as never);
+        }
+        if (typeof targetStock === "number") {
+          const current = parseFloat(String(byId.get(u.id)?.stockQty ?? "0")) || 0;
+          const diff = Math.round((targetStock - current) * 10000) / 10000;
+          if (diff !== 0) {
+            await db.adjustStock(u.id, diff > 0 ? "in" : "out", Math.abs(diff), "Excel ile toplu güncelleme");
+          }
+        }
+        updated++;
+      }
+
+      let created = 0;
+      for (const c of plan.creates) {
+        const data: Record<string, unknown> = { ...c.data };
+        const supplierId = resolveSupplier(c.newSupplier);
+        if (supplierId != null) data.supplierId = supplierId;
+        await db.createMaterial(toDecimalFields(data, decimals) as never);
+        created++;
+      }
+
+      return { dryRun: false as const, created, updated, plan };
+    }),
 });
 
 
