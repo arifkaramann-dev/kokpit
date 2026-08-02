@@ -300,6 +300,60 @@ opsiyonel), N11-Çiçeksepeti API anahtarları, uptime monitörü kurulumu
 Sırada (kod): görsellerin S3'e taşınması (0.3), routers/db modül bölünmesi (0.4),
 asistanın tool-use ajanına dönüşümü, pazaryeri soru-cevap kuyruğu.
 
+**Patron notları sprint'i ✔ yapıldı (02.08.2026, 10 başlık):** ekran görüntüleriyle
+bildirilen sorunlar baştan sona kapatıldı. Dal:
+`claude/hammadde-recipe-improvements-sscnxn`. 797 test, 0 tip hatası, build ✓.
+
+- **Reçete bazı 1 litreye oturtuldu (7):** "250 ml ürün 0,5 · 100 ml 0,2 ölçek
+  alıyor" şikâyetinin sebebi reçetelerin 500 ml bazlı yazılmış olmasıydı
+  (ölçek = ambalaj hacmi ÷ baz). `server/formulaBase.ts` (saf, 16 test):
+  `planBaseNormalization` reçeteyi 1 lt bazına çevirir — baz ve tüm girdiler
+  aynı çarpanla ölçeklendiği için litre başına maliyet DEĞİŞMEZ. Reçeteler
+  sayfasında "1 Litre Bazına Çevir" (önizlemeli). Ayrıca `formulaMatch` artık
+  baz BİRİMİNİ hesaba katıyor: "1 lt" bazlı reçetede 250/1 = 250 ölçek çıkıyordu
+  (1000 katlık sessiz hata) ve yeniden bağlamada ölçek karşılaştırması eklendi.
+- **5 maliyet çağrısında `unit` düşüyordu:** getiri, fiyat tablosu, ürün kartı,
+  üretim önizlemesi, ciro raporu — birim dönüşümü devre dışı kalıyor, kg fiyatlı
+  kaleme gram miktarı 1000 kat şişik hesaplanıyordu. Hepsi
+  `loadCapacityInputs().costMaterials`e bağlandı.
+- **Reçete/ambalaj sağlık denetimi (6):** `server/recipeAudit.ts` (saf, 11 test)
+  maliyeti bozan 6 veri hatasını isimleriyle bulur (reçeteye konmuş ambalaj
+  kalemi, 1 lt olmayan baz, eskimiş ölçek, hacimsiz ambalaj, maliyetsiz ambalaj,
+  çevrilemeyen birim). Reçeteler → "Sağlık Denetimi" sekmesinde her hatanın
+  yanında onu kapatan aksiyon: Ambalaja Taşı / 1 Litreye Çevir / Ölçekleri Tazele.
+- **/receteler 404 (4):** SeriesWizard + Üretim'deki iki link /recete'ye
+  düzeltildi, eski yol için yönlendirme eklendi.
+- **Excel ile toplu hammadde (1):** `shared/materialIO.ts` (saf, 20 test) +
+  `materials.bulkImport` + `MaterialImport` diyaloğu. Şablon/mevcut liste indirme,
+  satır satır eski→yeni diff önizlemesi. Dosyada olmayan sütuna dokunulmaz,
+  sayı hücresinde BOŞ = "dokunma" (zam listesi stokları sıfırlamasın). Plan
+  sunucuda yeniden kurulur — onaylanan önizlemeden başkası yazılamaz.
+- **Hammadde formu (2):** mükerrer ad tespiti, "paketten hesapla" (18 kg /
+  34.200 ₺ → birim maliyet), kalem türü (hammadde/ambalaj/yarı mamul/masraf)
+  forma ve listeye eklendi.
+- **Seri düzenleme (3):** tek sütunda 12 alan → üç sekme (Temel & Fiyat ·
+  Pazarlama Metinleri · Varyant Şablonu), canlı fiyat ve varyant sayısı önizlemesi.
+- **Sipariş ↔ ürün bağı (5):** `katalog.createMasterFromOrderLine` — bağsız
+  satırdan ürün açar. Mükerrer koruması üç kademeli (kanal kodu → küp koordinatı
+  → yeni). Kanal kodu ilanla kaydedildiği için sonraki siparişler kendiliğinden
+  bağlanır; aynı kodlu TÜM geçmiş satırlar tek işlemde bağlanır. Her pazaryeri
+  senkronundan sonra otomatik `backfillOrderBinding`.
+- **Elden satış kasa ekranı (8):** `QuickSale` — aranabilir ürün seçici (fiyat +
+  ürün bağı otomatik), adet artı/eksi, canlı toplam, tek kutuda "150" veya "%10"
+  indirim (kalemlere oransal dağıtılır), tek tık ödeme yöntemi + veresiye.
+- **Üretim iş yükü (9):** `buildFormulation` (saf, 7 test) ürün bazında tezgâh
+  formülasyonu üretir ("12 adet için şunu şu kadar tart"), ambalaj ayrı bölümde.
+  `katalog.produceBriefing` brifingin/kuyruğun tamamını TEK tıkla üretildi
+  işaretler. `katalog.keepSellable` kapasitesi 0 olduğu için ilanı kapanan
+  ürünleri `tedarikli` moduna alır — "üretmediğini satamama" durumu kalktı.
+  Brifing ekranı üretim kaydının zorunlu OLMADIĞINI açıkça yazıyor.
+- **Eksik bilgi + asistan hafızası (10):** `shared/missingInfo.ts` (saf, 15 test)
+  kargo/fatura için eksik bilgileri bulur ve hazır talep mesajı üretir
+  ("Bursa" gibi yetersiz adresi dolu saymaz); Müşteriler → "Eksik Bilgiler"
+  sekmesi + asistan aracı. Asistan/WhatsApp botuna konuşma geçmişi eklendi
+  (12 tur, 2 saat TTL, LRU) — artık "peki ondan 500 tahsil ettim" çalışıyor;
+  "yeni konu/unut" ile sıfırlanır.
+
 ## Açık işler / sırada ne var (takım denetimi: 15.07.2026, kanıtlı liste todo.md sonunda)
 Sağlık: `pnpm check` 0 hata, 74/74 test geçiyor, kod içi TODO/FIXME borcu yok.
 
