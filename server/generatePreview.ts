@@ -16,7 +16,7 @@
  * Saf modül: veritabanı gerektirmez.
  */
 
-import { looksLikeSpray } from "./catalogCodes";
+import { looksLikeReadyToUse, looksLikeSpray } from "./catalogCodes";
 
 export type PreviewFamily = { id: number; name: string | null };
 export type PreviewPackaging = { id: number; name: string | null; volumeMl: number };
@@ -105,6 +105,17 @@ export function previewPairs(input: {
       };
       pairs.push(item);
 
+      // Adında "ReadyToUse" geçen ambalaj mükerrerdir: aynı hacmin hem düz
+      // hem r2u kaydı açılmış demektir. R2U artık ürün TİPİ olduğu için bu
+      // ambalajın var olmaması gerekir — üretime girerse kopya SKU doğurur.
+      if (looksLikeReadyToUse(p.name)) {
+        suspects.push({
+          ...item,
+          reason: "Ambalaj mükerrer — R2U ürün tipidir, ambalaj adına gömülmemeli",
+        });
+        continue;
+      }
+
       const packIsSpray = isSprayPackaging(p);
       if (familyIsSpray && !packIsSpray) {
         suspects.push({
@@ -137,6 +148,8 @@ export function suggestFamilyPackagings(input: {
   return input.families.map(family => {
     const familyIsSpray = looksLikeSpray(family.name);
     const ids = input.packagings
+      // Mükerrer (ReadyToUse) ambalajı kurala yazmak kopyayı kalıcılaştırırdı.
+      .filter(p => !looksLikeReadyToUse(p.name))
       .filter(p => isSprayPackaging(p) === familyIsSpray)
       .map(p => p.id);
     return {

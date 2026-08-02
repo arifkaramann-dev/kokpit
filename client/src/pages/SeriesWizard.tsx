@@ -297,7 +297,7 @@ export default function SeriesWizard() {
               önce kuralsızken açılmış varyantlar katalogda durmaya devam eder — aşağıdan
               temizleyin.
             </p>
-            <CatalogAudit />
+            <CatalogAudit hideWhenClean />
           </div>
 
           <Card className="overflow-hidden p-0">

@@ -17,7 +17,7 @@ import { toast } from "sonner";
  * Geçmişi olan (ilanı ya da satışı bulunan) master SİLİNMEZ, arşivlenir:
  * silmek ciro raporunu ve pazaryeri eşleşmesini koparırdı.
  */
-export default function CatalogAudit() {
+export default function CatalogAudit({ hideWhenClean = false }: { hideWhenClean?: boolean } = {}) {
   const utils = trpc.useUtils();
   const confirm = useConfirm();
   const { data, isLoading } = trpc.katalog.auditMasters.useQuery();
@@ -37,6 +37,13 @@ export default function CatalogAudit() {
   if (!data) return null;
 
   if (data.invalid === 0) {
+    /*
+     * Sihirbaz içinde "Katalog temiz" yeşil onayı YANILTICI olur: bu denetim
+     * yalnız seri/form/ambalaj bağlarını bilir, ürün TİPİ modelini bilmez.
+     * Kurallar hiç girilmemişken her kayıt kuralları "geçer" ve ekran her şey
+     * yolundaymış gibi görünür — oysa katalog eski modelde durmaktadır.
+     */
+    if (hideWhenClean) return null;
     return (
       <Card className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
         <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />

@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Checkbox } from "@/components/ui/checkbox";
 import { formatTL } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
 import {
@@ -48,7 +47,6 @@ export default function Catalog() {
   const [onlyProblem, setOnlyProblem] = useState(false);
 
   const [selectedSeries, setSelectedSeries] = useState<Set<number>>(new Set());
-  const [withR2u, setWithR2u] = useState(false);
   type Breakdown = {
     seriesId: number;
     seriesName: string;
@@ -326,8 +324,9 @@ export default function Catalog() {
       <Card className="space-y-3 p-5">
         <StepHeader n={2} title="Master ürünleri üret" done={(masters?.length ?? 0) > 0} />
         <p className="text-sm text-muted-foreground">
-          Master'lar seri × renk × form × ambalaj × hazırlık kesişiminden üretilir — kartezyen
-          çarpımdan değil. Serinin ambalaj/form uyumluluğu tanımlı değilse o seri atlanır.
+          Master'lar seri × renk × <strong className="text-foreground">ürün tipi</strong> × ambalaj
+          kesişiminden üretilir — kartezyen çarpımdan değil. Serinin ambalaj/tip uyumluluğu tanımlı
+          değilse o seri atlanır. R2U ayrı bir ürün tipidir, ayrı bir eksen değil.
         </p>
         <div className="flex flex-wrap gap-1.5">
           {(series ?? []).map(s => {
@@ -352,10 +351,6 @@ export default function Catalog() {
             );
           })}
         </div>
-        <label className="flex w-fit cursor-pointer items-center gap-2 text-sm">
-          <Checkbox checked={withR2u} onCheckedChange={c => setWithR2u(c === true)} />
-          Kullanıma hazır (r2u) sürümleri de üret
-        </label>
         <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
@@ -363,7 +358,7 @@ export default function Catalog() {
             onClick={() =>
               genMasters.mutate({
                 seriesIds: Array.from(selectedSeries),
-                readiness: withR2u ? ["konsantre", "r2u"] : ["konsantre"],
+                readiness: ["konsantre"],
                 dryRun: true,
               })
             }
@@ -376,7 +371,7 @@ export default function Catalog() {
               onClick={() =>
                 genMasters.mutate({
                   seriesIds: Array.from(selectedSeries),
-                  readiness: withR2u ? ["konsantre", "r2u"] : ["konsantre"],
+                  readiness: ["konsantre"],
                   dryRun: false,
                 })
               }
