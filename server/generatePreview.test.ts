@@ -100,3 +100,33 @@ describe("boş kural kümesi", () => {
     expect(r.unconstrainedFamilies).toHaveLength(1);
   });
 });
+
+/*
+ * Mükerrer ambalaj: "30 ml (ReadyToUse)" ile "30 ML" aynı fiziksel şişedir.
+ * R2U ürün tipi olduğu için ambalaj adına gömülmemeli; üretime girerse
+ * kopya SKU doğurur. Sihirbaz önizlemesi bunu "uygun" gösteriyordu.
+ */
+describe("mükerrer ReadyToUse ambalajı", () => {
+  const fams = [{ id: 1, name: "Boya" }];
+  const packs = [
+    { id: 10, name: "30 ML", volumeMl: 30 },
+    { id: 11, name: "30 ml (ReadyToUse)", volumeMl: 30 },
+  ];
+
+  it("şüpheli olarak işaretlenir", () => {
+    const r = previewPairs({ families: fams, packagings: packs });
+    expect(r.suspects).toHaveLength(1);
+    expect(r.suspects[0].packagingName).toBe("30 ml (ReadyToUse)");
+    expect(r.suspects[0].reason).toContain("mükerrer");
+  });
+
+  it("düz ambalaj şüpheli sayılmaz", () => {
+    const r = previewPairs({ families: fams, packagings: packs });
+    expect(r.suspects.map(s => s.packagingName)).not.toContain("30 ML");
+  });
+
+  it("otomatik kural önerisi mükerrer ambalajı yazmaz", () => {
+    const s = suggestFamilyPackagings({ families: fams, packagings: packs });
+    expect(s[0].packagingIds).toEqual([10]);
+  });
+});

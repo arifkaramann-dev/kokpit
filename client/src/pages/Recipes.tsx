@@ -458,43 +458,14 @@ export default function Recipes() {
                     onChange={v => setForm(f => ({ ...f, familyIds: v }))}
                     options={(dims?.families ?? []).map(x => ({ id: x.id, label: x.name }))}
                   />
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <Label className="text-xs">Hazırlık</Label>
-                      <span className="text-[11px] text-muted-foreground">
-                        {form.readinessList.length === 0 ? "hepsi" : `${form.readinessList.length} seçili`}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {[
-                        { v: "konsantre", label: "Konsantre" },
-                        { v: "r2u", label: "Kullanıma hazır (r2u)" },
-                      ].map(o => {
-                        const active = form.readinessList.includes(o.v);
-                        return (
-                          <button
-                            key={o.v}
-                            type="button"
-                            onClick={() =>
-                              setForm(f => ({
-                                ...f,
-                                readinessList: active
-                                  ? f.readinessList.filter(x => x !== o.v)
-                                  : [...f.readinessList, o.v],
-                              }))
-                            }
-                            className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
-                              active
-                                ? "border-primary bg-primary text-primary-foreground"
-                                : "text-muted-foreground hover:text-foreground"
-                            }`}
-                          >
-                            {o.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
+                  {/*
+                    "Hazırlık" ekseni kaldırıldı. R2U artık bir ürün TİPİDİR
+                    ("R2U Boya"), master üzerinde taşınan bir bayrak değil.
+                    Eksen burada dursaydı r2u'ya kapsanan bir reçete hiçbir
+                    master'la eşleşmez, sessizce bağlanmadan kalırdı — üstelik
+                    kullanıcı reçeteyi doğru yazdığını sanırdı.
+                    R2U reçetesi için yukarıdan "R2U Boya" formunu seçin.
+                  */}
                 </div>
               </div>
             )}
