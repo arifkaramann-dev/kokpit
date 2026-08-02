@@ -43,13 +43,32 @@ const DEFAULT_CHANNELS = [
 ];
 
 /** Kullanıcının belirttiği pazarlama eksenleri + mevcut "zemin" şablonları. */
+/**
+ * Pazarlama kimlikleri — aynı SKU'nun farklı satış adları.
+ *
+ * Bunlar ürün DEĞİLDİR: "Jant Boyası Kırmızı 100 ml" ile "Kask Boyası Kırmızı
+ * 100 ml" aynı şişedir, aynı stoktan düşer, aynı reçeteye bağlıdır. Yalnız
+ * ilan başlığı, SEO metni ve pazaryeri kartı farklıdır.
+ *
+ * `airbrush` özellikle burada: Airbrush boyanın sıvısı normal boyayla AYNI
+ * olduğu için ürün tipi olmaktan çıkarıldı. Pazarlama kimliği olarak var
+ * olmazsa o satış kanalı tamamen kaybolurdu — oysa katalogdaki en bilinen
+ * satış adı o.
+ */
 const EXTRA_USE_CASES = [
+  { code: "airbrush", name: "Airbrush" },
   { code: "3d_baski", name: "3D Baskı" },
   { code: "rapala", name: "Rapala / Olta" },
   { code: "otomotiv", name: "Otomotiv" },
+  { code: "jant", name: "Jant" },
+  { code: "kask", name: "Kask" },
+  { code: "kaliper", name: "Kaliper" },
+  { code: "motosiklet", name: "Motosiklet" },
   { code: "bisiklet", name: "Bisiklet" },
   { code: "maket", name: "Maket & Figür" },
   { code: "rc", name: "RC Araba" },
+  { code: "metal", name: "Metal Yüzey" },
+  { code: "plastik", name: "Plastik Yüzey" },
 ];
 
 export type SeedCounts = {

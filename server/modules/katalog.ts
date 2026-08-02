@@ -59,6 +59,7 @@ import {
 } from "../masterFields";
 import { findInvalidMasters, planCleanup } from "../masterAudit";
 import { previewPairs, suggestFamilyPackagings } from "../generatePreview";
+import { normalizeName, planRestructure } from "../catalogRestructure";
 import { masterHealth, rollupBySeries } from "../masterHealth";
 import {
   computeMasterRevenue,
@@ -490,6 +491,119 @@ export const katalogRouter = router({
         await db.setFamilyPackagings(s.familyId, s.packagingIds);
       }
       return { applied: true, count: applicable.length, suggestions: detailed };
+    }),
+
+  /**
+   * Katalog yeniden yapılandırma — ürün tipi eksenini düzeltir.
+   *
+   * Katalog 300 varyanta şişmişti çünkü tek bir kavram (R2U) üç ayrı yerde
+   * yaşıyordu: master'daki `readiness` bayrağı, "(ReadyToUse)" adlı ayrı bir
+   * ambalaj kaydı, ve ürün tipinde hiç. Oysa R2U ürünün tipidir (farklı sıvı,
+   * farklı reçete); buna karşılık "Airbrush" AYNI sıvıdır — o pazarlama
+   * kimliği; rötuş de ayrı sıvı değil, kapağında fırça olan ayrı ambalajdır.
+   *
+   * Hedef model dışarıdan verilir; bu uç onu uygular. `dryRun` varsayılan
+   * olarak açıktır: 165 kaydı arşivleyen bir işlem önizlemesiz çalışmamalı.
+   */
+  restructureCatalog: protectedProcedure
+    .input(
+      z.object({
+        dryRun: z.boolean().default(true),
+        types: z
+          .array(
+            z.object({
+              name: z.string().min(1),
+              skuSegment: z.string().min(1).max(8),
+              packagingNames: z.array(z.string().min(1)).default([]),
+            }),
+          )
+          .min(1),
+        /** Adında bunlardan biri geçen ambalaj pasife alınır. */
+        retirePackagingPatterns: z.array(z.string()).default(["readytouse"]),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const [families, packagings, masters] = await Promise.all([
+        db.listProductFamilies(),
+        db.listPackagings(),
+        db.listMasterProducts(),
+      ]);
+
+      const toPlanInput = () => ({
+        families: (families as Record<string, unknown>[]).map(f => ({
+          id: f.id as number,
+          name: String(f.name ?? ""),
+          isActive: Number(f.isActive ?? 1) === 1,
+        })),
+        packagings: (packagings as Record<string, unknown>[]).map(p => ({
+          id: p.id as number,
+          name: String(p.name ?? ""),
+          isActive: Number(p.isActive ?? 1) === 1,
+        })),
+        masters: (masters as Record<string, unknown>[]).map(m => ({
+          id: m.id as number,
+          internalSku: String(m.internalSku ?? ""),
+          familyId: m.familyId as number,
+          packagingId: m.packagingId as number,
+          readiness: (m.readiness as "konsantre" | "r2u") ?? "konsantre",
+          status: (m.status as "taslak" | "aktif" | "arsiv") ?? "taslak",
+        })),
+        target: input.types,
+        retirePackagingPatterns: input.retirePackagingPatterns,
+      });
+
+      const plan = planRestructure(toPlanInput());
+      if (input.dryRun) return { dryRun: true as const, ...plan, applied: 0 };
+
+      // 1) Eksik ürün tiplerini aç. Kod alanı zorunlu; addan türetilir.
+      for (const f of plan.familiesToCreate) {
+        await db.createDimension("families", {
+          code: normalizeName(f.name).replace(/\s+/g, "-").slice(0, 32) || f.skuSegment,
+          name: f.name,
+          skuSegment: f.skuSegment,
+        });
+      }
+
+      // 2) Hedefte olmayan tipleri pasife al — silmek geçmişi koparırdı.
+      for (const f of plan.familiesToRetire) {
+        await db.updateDimension("families", f.id, { isActive: 0 });
+      }
+
+      // 3) Mükerrer ambalajları pasife al.
+      for (const p of plan.packagingsToRetire) {
+        await db.updateDimension("packagings", p.id, { isActive: 0 });
+      }
+
+      // 4) Kuralı yaz. Yeni açılan tiplerin kimliği artık okunabilir.
+      const freshFamilies = (await db.listProductFamilies()) as Record<string, unknown>[];
+      const idByName = new Map(
+        freshFamilies.map(f => [normalizeName(String(f.name ?? "")), f.id as number]),
+      );
+      const packById = new Map(
+        (packagings as Record<string, unknown>[]).map(p => [p.id as number, p]),
+      );
+      let rulesWritten = 0;
+      for (const rule of plan.rules) {
+        const familyId = idByName.get(normalizeName(rule.familyName));
+        if (familyId == null) continue;
+        const ids = rule.packagingIds.filter(id => packById.has(id));
+        await db.setFamilyPackagings(familyId, ids);
+        rulesWritten++;
+      }
+
+      // 5) Uymayan master'ları ARŞİVLE (silme değil: geri alınabilir olmalı).
+      for (const m of plan.mastersToArchive) {
+        await db.updateMasterProduct(m.id, { status: "arsiv" } as never);
+      }
+
+      await runCapacityRecompute();
+
+      return {
+        dryRun: false as const,
+        ...plan,
+        applied: plan.mastersToArchive.length,
+        rulesWritten,
+      };
     }),
 
   /* ---- Master üretimi --------------------------------------------------- */

@@ -175,10 +175,15 @@ export default function ProductTree({
         </Button>
       </div>
 
+      {/* Metin tek <p> içinde: Card `flex flex-col gap-6` olduğu için çıplak
+          metin düğümleri ve <strong> ayrı flex öğesi olup alt alta kırılıyordu. */}
       <Card className="p-4 text-xs text-muted-foreground">
-        Bir <strong className="text-foreground">varyant</strong> = bir fiziksel şişe
-        (renk × form × ambalaj × hazırlık). Stok, reçete ve barkod ona aittir. Renk satırı
-        onları toplar; tıklayınca açılır.
+        <p>
+          Bir <strong className="text-foreground">varyant</strong> = bir fiziksel şişe
+          (renk × ürün tipi × ambalaj). Stok, reçete ve barkod ona aittir. Renk satırı onları
+          toplar; tıklayınca açılır. Aynı varyant birden çok isimle satılabilir — o pazarlama
+          kimliğidir, ayrı varyant değil.
+        </p>
       </Card>
 
       {tree.length === 0 ? (
