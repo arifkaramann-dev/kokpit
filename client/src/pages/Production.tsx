@@ -163,7 +163,7 @@ export default function Production() {
             {queue?.unmatchedLines} sipariş satırı bir ürüne bağlanamadı — bu satırlar üretim
             planına girmiyor.
           </span>
-          <Link href="/katalog" className="font-medium underline">
+          <Link href="/katalog?sekme=baglar" className="font-medium underline">
             Bağla
           </Link>
         </Card>

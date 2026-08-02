@@ -45,6 +45,7 @@ import { qtyInMaterialUnit } from "@shared/units";
 import { planFormulaBindings, type MatchableFormula } from "../formulaMatch";
 import { BASE_VOLUME_ML, planBaseNormalization } from "../formulaBase";
 import { auditRecipes, type AuditFormula, type AuditMaterial } from "../recipeAudit";
+import { buildChannelRefIndex, resolveMasterByRef } from "../orderBinding";
 import {
   pickBlock,
   planContentBlocks,
@@ -2999,6 +3000,182 @@ export const katalogRouter = router({
     .mutation(async ({ input }) => {
       await db.bindOrderItem(input.itemId, input.masterId);
       return { ok: true };
+    }),
+
+  /**
+   * Bağlanamayan sipariş satırından ürün AÇAR ve bağlar.
+   *
+   * ── Neden ────────────────────────────────────────────────────────────────
+   * Pazaryerinde satılan ama katalogda karşılığı olmayan ürünler siparişte
+   * "bağlanmamış satır" olarak birikiyordu: üretim planına, stok düşümüne ve
+   * getiri raporuna hiç girmiyorlar. Tek çare ürünü elle açıp satırı elle
+   * bağlamaktı — kimse yapmıyordu.
+   *
+   * ── Mükerrer olmama garantisi ────────────────────────────────────────────
+   * Üç kademe: (1) kanal kodu zaten bir ilana bağlıysa YENİ ÜRÜN AÇILMAZ, o
+   * master'a bağlanır; (2) aynı küp koordinatında (seri×renk×form×ambalaj×
+   * hazırlık) master varsa o kullanılır — küp tekilliği veritabanı kısıtıdır;
+   * (3) yalnız ikisi de yoksa yeni master açılır.
+   *
+   * Kanal kodu ilanla birlikte KAYDEDİLİR: aynı üründen bir daha sipariş
+   * geldiğinde `backfillOrderBinding` onu kendiliğinden bağlar — bu iş bir
+   * kez yapılır.
+   */
+  createMasterFromOrderLine: protectedProcedure
+    .input(
+      z.object({
+        itemId: z.number(),
+        seriesId: z.number(),
+        colorId: z.number(),
+        familyId: z.number(),
+        packagingId: z.number(),
+        readiness: z.enum(["konsantre", "r2u"]).default("konsantre"),
+        /** Boşsa satırın birim fiyatı taban fiyat olur. */
+        basePrice: z.number().min(0).optional(),
+        /** Kanal ilanının açılacağı pazaryeri; yoksa yalnız iç ilan açılır. */
+        channelId: z.number().nullish(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const item = await db.getOrderItem(input.itemId);
+      if (!item) throw new TRPCError({ code: "NOT_FOUND", message: "Sipariş satırı bulunamadı." });
+
+      const channelRef = (item.channelRef ?? "").trim();
+      const productName = String(item.productName ?? "").trim() || "İsimsiz ürün";
+
+      const [masters, channelListingRows, colors, packagings, families, seriesRows, useCases] =
+        await Promise.all([
+          db.listMasterProducts(),
+          db.listChannelListings(),
+          db.listColors(),
+          db.listPackagings(),
+          db.listProductFamilies(),
+          db.listProductSeries(),
+          db.listUseCases(),
+        ]);
+
+      // (1) Kanal kodu zaten tanınıyorsa yeni ürün AÇMA — sadece bağla.
+      if (channelRef) {
+        const { index } = buildChannelRefIndex(
+          (channelListingRows as Record<string, unknown>[]).map(c => ({
+            masterId: c.masterId as number,
+            listingId: c.listingId as number,
+            channelSku: (c.channelSku as string | null) ?? null,
+            channelBarcode: (c.channelBarcode as string | null) ?? null,
+          })),
+        );
+        const hit = resolveMasterByRef(channelRef, index);
+        if (hit) {
+          const bound = await db.bindOrderItemsByChannelRef(channelRef, hit.masterId);
+          return { masterId: hit.masterId, created: false, reason: "kanal_kodu" as const, bound };
+        }
+      }
+
+      // (2) Aynı küp koordinatında master varsa onu kullan (küp tekil).
+      const existingCube = (masters as Record<string, unknown>[]).find(
+        m =>
+          m.seriesId === input.seriesId &&
+          m.colorId === input.colorId &&
+          m.familyId === input.familyId &&
+          m.packagingId === input.packagingId &&
+          m.readiness === input.readiness,
+      );
+
+      const seriesRow = (seriesRows as { id: number; name: string; prefix: string | null }[]).find(
+        s => s.id === input.seriesId,
+      );
+      const color = (colors as { id: number; code: string; name: string }[]).find(
+        c => c.id === input.colorId,
+      );
+      const family = (families as { id: number; code: string; skuSegment: string | null }[]).find(
+        f => f.id === input.familyId,
+      );
+      const pack = (packagings as { id: number; code: string; skuSegment: string | null }[]).find(
+        p => p.id === input.packagingId,
+      );
+
+      let masterId: number;
+      let created = false;
+      if (existingCube) {
+        masterId = existingCube.id as number;
+      } else {
+        const baseCode = buildBaseCode({
+          brand: "aoc",
+          seriesPrefix: seriesRow?.prefix ?? null,
+          colorCode: color?.code,
+        });
+        masterId = await db.createMasterProduct({
+          seriesId: input.seriesId,
+          colorId: input.colorId,
+          familyId: input.familyId,
+          packagingId: input.packagingId,
+          readiness: input.readiness,
+          baseCode,
+          internalSku: buildInternalSku({
+            baseCode,
+            familySegment: family?.skuSegment ?? family?.code,
+            packagingSegment: pack?.skuSegment ?? pack?.code,
+            readiness: input.readiness,
+          }),
+          // Pazaryerinde zaten satılıyor: taslak değil aktif açılır, yoksa
+          // ilan kapalı sayılıp stok gönderimi dışında kalır.
+          status: "aktif",
+          basePrice: String(input.basePrice ?? num(item.unitPrice)),
+          // Ürün gerçekte satıldığı için satışı kapasiteye bağlamıyoruz;
+          // reçetesi bağlanana kadar "üretemediğini satamama" durumu doğardı.
+          salesMode: "tedarikli",
+        } as never);
+        created = true;
+      }
+
+      // İç ilan: başlık pazaryerinden gelen adla açılır — elle yazmak zorunda
+      // kalmamak için. Zaten ilanı varsa yenisi açılmaz.
+      const listingRows = await db.listListingsByMaster(masterId);
+      let listingId = (listingRows as { id: number }[])[0]?.id ?? null;
+      if (listingId == null) {
+        const generic = (useCases as { id: number; code: string }[])[0];
+        listingId = await db.createListing({
+          masterId,
+          useCaseId: generic?.id ?? 1,
+          title: productName.slice(0, 255),
+          slug: buildSlug(productName),
+          isPrimary: 1,
+          status: "canli",
+        } as never);
+      }
+
+      // Kanal ilanı: barkodu SAKLAMAK bu işin tekrar edilmemesini sağlar —
+      // aynı üründen sonraki sipariş kendiliğinden bağlanır.
+      if (channelRef && input.channelId) {
+        const already = (channelListingRows as Record<string, unknown>[]).some(
+          c => c.channelId === input.channelId && c.channelBarcode === channelRef,
+        );
+        if (!already) {
+          await db.createChannelListing({
+            listingId,
+            masterId,
+            channelId: input.channelId,
+            channelSku: channelRef.slice(0, 96),
+            channelBarcode: channelRef.slice(0, 64),
+            price: String(input.basePrice ?? num(item.unitPrice)),
+            status: "canli",
+          } as never);
+        }
+      }
+
+      // Aynı kanal kodunu taşıyan TÜM bağsız satırlar bağlanır: geçmiş
+      // siparişler de tek işlemde raporlara girsin.
+      const bound = channelRef
+        ? await db.bindOrderItemsByChannelRef(channelRef, masterId)
+        : (await db.bindOrderItem(input.itemId, masterId), 1);
+
+      await runCapacityRecompute();
+      return {
+        masterId,
+        created,
+        reason: created ? ("yeni" as const) : ("kup" as const),
+        bound,
+      };
     }),
 
   /* ---- Getiri: hangi renk para kazandırıyor ----------------------------- */
