@@ -10,23 +10,20 @@ import {
 } from "@/components/ui/select";
 import { trpc } from "@/lib/trpc";
 import { AlertTriangle, Save } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 /**
- * Seri uyumluluk matrisi — hangi seride hangi RENK, form ve ambalaj üretilir.
+ * Seri uyumluluk matrisi — hangi seride hangi RENK, ürün tipi ve ambalaj üretilir.
  *
  * Eksik olan renk eksenIydi. `colors.seriesId` tek bir seriye işaret eden
  * nullable bir alandı ve tohumlama hiçbir renge seri atamıyordu; sonuçta her
  * renk her seriye düşüyordu. CANDY için master üretince RAL kodları dahil 31
  * rengin tamamı çarpıma girip 744 master çıkıyordu.
  *
- * Renk artık ambalaj ve formla aynı şekilde çoka-çok bağlanır. Seçim yapılmamış
+ * Renk artık ambalaj ve tiple aynı şekilde çoka-çok bağlanır. Seçim yapılmamış
  * seri "tüm renkler" demektir ve bu ekranda açıkça uyarılır — sessizce
  * şişmesin.
- */
-/**
- * Seri kurulumu — hangi renk/form/ambalaj hangi seriye bağlı.
  *
  * `seriesId` verilirse kendi seri seçicisini gizler ve yalnız o seriyi
  * düzenler. Sihirbaz bunu kullanır: kullanıcının kurulum için ayrı sayfaya
@@ -66,8 +63,28 @@ export default function SeriesMatrix({ seriesId: lockedSeriesId }: { seriesId?: 
   }, [links, activeId]);
 
   const [sel, setSel] = useState(current);
-  // Seri değişince seçim o serininkiyle yeniden kurulur.
-  useEffect(() => setSel(current), [current]);
+
+  /*
+   * Seçim YALNIZ düzenlenen seri değişince sıfırlanır.
+   *
+   * Önce `useEffect(() => setSel(current), [current])` yazılmıştı ve bu,
+   * kullanıcının KAYDEDİLMEMİŞ seçimlerini siliyordu: `current` bir useMemo
+   * ve `links` her tazelendiğinde yeni bir nesne kimliği üretiyor. Sayfadaki
+   * herhangi bir mutation `utils.katalog.invalidate()` çağırdığında ya da
+   * pencere yeniden odağa geldiğinde sorgu yeniden çekiliyor, efekt tetikleniyor
+   * ve ekranda işaretlenen her şey eski haline dönüyordu.
+   *
+   * `links` gelmeden ilk kurulum yapılmaz; yoksa seçim boş kümeyle sabitlenir
+   * ve gerçek veri geldiğinde bir daha yüklenmez.
+   */
+  const loadedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!links) return;
+    const key = String(activeId);
+    if (loadedFor.current === key) return;
+    loadedFor.current = key;
+    setSel(current);
+  }, [links, activeId, current]);
 
   const save = trpc.katalog.seriesCompatibility.useMutation({
     onSuccess: () => {
@@ -93,7 +110,6 @@ export default function SeriesMatrix({ seriesId: lockedSeriesId }: { seriesId?: 
     Array.from(sel.families).some(id => !current.families.has(id)) ||
     Array.from(sel.packagings).some(id => !current.packagings.has(id));
 
-  const readiness = 2; // ekranda en kötü durum gösterilir (r2u işaretliyken)
   const projected =
     (sel.colors.size || colors.length) *
     (sel.families.size || 0) *
@@ -146,12 +162,12 @@ export default function SeriesMatrix({ seriesId: lockedSeriesId }: { seriesId?: 
         <div className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
           <div className="flex items-center gap-2 text-sm font-medium">
             <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
-            Hazırlık eksenini tekrar eden ambalajlar
+            Mükerrer ambalajlar
           </div>
           <p className="text-xs text-muted-foreground">
-            "Kullanıma hazır" ayrı bir eksen (r2u). Bu ambalajlar aynı bilgiyi ikinci kez
-            taşıyor ve her ürünü ikiye katlıyor: "30 ML + r2u" ile "30 ml (ReadyToUse) + r2u"
-            aynı şey. Pasife alın.
+            R2U artık bir ürün TİPİDİR ("R2U Boya"), ambalaj adına gömülmemeli. Bu ambalajlar
+            aynı hacmin ikinci kaydı: "30 ML" ile "30 ml (ReadyToUse)" aynı şişedir ve üretime
+            girerse kopya SKU doğurur. Pasife alın.
           </p>
           <div className="flex flex-wrap gap-1.5">
             {redundant?.map(p => (
@@ -178,10 +194,12 @@ export default function SeriesMatrix({ seriesId: lockedSeriesId }: { seriesId?: 
       )}
 
       <div className="rounded-lg border p-3 text-sm">
-        Tahmini master:{" "}
-        <strong>
-          {projected} (konsantre) · {projected * readiness} (r2u dahil)
-        </strong>
+        Tahmini master: <strong>{projected}</strong>
+        <span className="text-muted-foreground">
+          {" "}
+          — renk × ürün tipi × ambalaj. R2U ayrı bir ürün tipidir, sayıyı ikiye katlayan
+          ayrı bir eksen değil.
+        </span>
       </div>
 
       <Axis
@@ -265,7 +283,16 @@ function FamilyPackagingMatrix({
     [links, activeId],
   );
   const [sel, setSel] = useState(current);
-  useEffect(() => setSel(current), [current]);
+
+  // Aynı sebep, aynı çözüm: yalnız düzenlenen form değişince sıfırla.
+  // Bkz. SeriesMatrix'teki uzun açıklama.
+  const loadedFor = useRef<number | null>(null);
+  useEffect(() => {
+    if (links.length === 0) return;
+    if (loadedFor.current === activeId) return;
+    loadedFor.current = activeId;
+    setSel(current);
+  }, [links, activeId, current]);
 
   const save = trpc.katalog.setFamilyPackagings.useMutation({
     onSuccess: () => {
