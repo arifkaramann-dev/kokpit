@@ -1,6 +1,7 @@
 import CatalogAudit from "@/components/CatalogAudit";
 import CatalogRevenue from "@/components/CatalogRevenue";
 import ProductTree from "@/components/ProductTree";
+import CatalogRestructure from "@/components/CatalogRestructure";
 import SeriesMatrix from "@/components/SeriesMatrix";
 import MissingImages from "@/components/MissingImages";
 import UnboundOrderItems from "@/components/UnboundOrderItems";
@@ -457,6 +458,11 @@ export default function Catalog() {
           )}
         </Card>
       )}
+
+      {/* Ürün tipi ekseninin yeniden yapılandırılması — R2U tip, Airbrush
+          pazarlama kimliği, rötuş ambalaj. Denetimden ÖNCE gelir: model
+          düzelmeden hangi kaydın geçersiz olduğu doğru hesaplanamaz. */}
+      <CatalogRestructure />
 
       {/* Katalog denetimi — kurallara uymayan eski ürünler */}
       <CatalogAudit />

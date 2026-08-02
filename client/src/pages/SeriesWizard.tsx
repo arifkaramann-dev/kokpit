@@ -55,7 +55,16 @@ export default function SeriesWizard() {
   const utils = trpc.useUtils();
   const [step, setStep] = useState<Step>(0);
   const [seriesId, setSeriesId] = useState<string>("");
-  const [readiness, setReadiness] = useState<("konsantre" | "r2u")[]>(["konsantre"]);
+  /*
+   * readiness ARTIK BİR EKSEN DEĞİL.
+   *
+   * R2U ürünün tipidir ("R2U Boya" ile "Boya" farklı sıvılar, farklı
+   * reçeteler), master üzerinde taşınan bir bayrak değil. Bayrak olarak
+   * kaldığında her form×ambalaj çiftini ikiye katlıyordu ve katalogdaki
+   * 300 varyantın yarısının sebebi buydu. Sabit tek değer geçilir; kolon
+   * geriye dönük uyum için şemada durur.
+   */
+  const readiness: ("konsantre" | "r2u")[] = ["konsantre"];
 
   const { data: series } = trpc.series.list.useQuery();
   const { data: track } = trpc.katalog.trackList.useQuery();
@@ -204,41 +213,6 @@ export default function SeriesWizard() {
             </p>
           </div>
 
-          <div className="space-y-1.5">
-            <Label className="text-xs">Hazırlık</Label>
-            <div className="flex flex-wrap gap-1.5">
-              {(
-                [
-                  { v: "konsantre", label: "Konsantre" },
-                  { v: "r2u", label: "Kullanıma hazır (r2u)" },
-                ] as const
-              ).map(o => {
-                const active = readiness.includes(o.v);
-                return (
-                  <button
-                    key={o.v}
-                    type="button"
-                    onClick={() =>
-                      setReadiness(r =>
-                        active ? r.filter(x => x !== o.v) : [...r, o.v],
-                      )
-                    }
-                    className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
-                      active
-                        ? "border-primary bg-primary text-primary-foreground"
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    {o.label}
-                  </button>
-                );
-              })}
-            </div>
-            <p className="text-[11px] text-muted-foreground">
-              İkisini birden seçmek varyant sayısını ikiye katlar. Zaten adında "ReadyToUse" geçen
-              bir ambalajı ayrıca r2u işaretlemeyin — aynı ürün iki kere çıkar.
-            </p>
-          </div>
         </Card>
       )}
 
