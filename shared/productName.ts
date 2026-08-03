@@ -46,3 +46,62 @@ export function displayNameOf(p: NameableProduct): string {
   if (manual) return manual;
   return derivedNameOf(p) || (p.internalSku?.trim() ?? "");
 }
+
+/* --------------------------- Satış adı üretimi --------------------------- */
+
+export const DEFAULT_BRAND = "ARTOFCOLOUR";
+
+export type SalesNameInput = {
+  brand?: string | null;
+  /** Serinin satış karşılığı — "CANDY PAINT". Boşsa serinin kendi adı. */
+  seriesNameEn?: string | null;
+  seriesName?: string | null;
+  /** Rengin uluslararası adı — "MAGENTA". Boşsa yalnız Türkçe yazılır. */
+  colorNameEn?: string | null;
+  colorName?: string | null;
+  family?: string | null;
+  packaging?: string | null;
+  readiness?: string | null;
+};
+
+/**
+ * Pazaryeri/etiket satış adını kurar.
+ *
+ *   ARTOFCOLOUR CANDY PAINT MAGENTA (FUŞYA) - AİRBRUSH 100 ML
+ *   └ marka    └ seri        └ renk EN (TR)   └ form   └ ambalaj
+ *
+ * Türkçe büyük harf kuralı uygulanır ("Airbrush" → "AİRBRUSH"), çünkü ad
+ * etikete ve pazaryeri kartına gidiyor; "AIRBRUSH" yazmak Türkçe bir markada
+ * yanlış görünür.
+ *
+ * R2U eki bilinçli: hazırlık ekseni koordinatın parçası, yani aynı renk ve
+ * ambalajın konsantre ve kullanıma-hazır hâli AYRI ürün. Ek olmasaydı ikisi
+ * aynı adı alır ve pazaryerinde birbirine karışırdı.
+ *
+ * Eksik parça atlanır — hiçbir alan zorunlu değil, ad yine de kurulur.
+ */
+export function salesNameOf(p: SalesNameInput): string {
+  const up = (s: string) => s.trim().toLocaleUpperCase("tr-TR");
+  const part = (v: string | null | undefined) => (v?.trim() ? up(v) : "");
+
+  const colorTr = p.colorName?.trim();
+  const colorEn = p.colorNameEn?.trim();
+  const color = colorEn && colorTr && up(colorEn) !== up(colorTr)
+    ? `${up(colorEn)} (${up(colorTr)})`
+    : part(colorEn || colorTr);
+
+  const head = [
+    part(p.brand?.trim() || DEFAULT_BRAND),
+    part(p.seriesNameEn?.trim() || p.seriesName),
+    color,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const tail = [part(p.family), part(p.packaging), p.readiness === "r2u" ? "R2U" : ""]
+    .filter(Boolean)
+    .join(" ");
+
+  if (!head) return tail;
+  return tail ? `${head} - ${tail}` : head;
+}

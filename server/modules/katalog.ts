@@ -36,6 +36,7 @@ import {
   planMasterImport,
   type MasterIORecord,
 } from "@shared/masterIO";
+import { salesNameOf } from "@shared/productName";
 import { runCapacityRecompute } from "../catalogJobs";
 import { loadCapacityInputs } from "../capacityInputs";
 import {
@@ -339,6 +340,8 @@ export const katalogRouter = router({
         code: z.string().min(1),
         name: z.string().min(1),
         // Renk
+        /** Satış adında kullanılan uluslararası ad — "MAGENTA". */
+        nameEn: z.string().nullable().optional(),
         hex: z.string().nullable().optional(),
         finish: z.enum(["duz", "metalik", "sedef", "candy", "neon", "seffaf"]).optional(),
         seriesId: z.number().nullable().optional(),
@@ -359,6 +362,7 @@ export const katalogRouter = router({
       if (rest.sortOrder !== undefined) data.sortOrder = rest.sortOrder;
       if (rest.isActive !== undefined) data.isActive = rest.isActive ? 1 : 0;
       if (kind === "colors") {
+        data.nameEn = rest.nameEn?.trim() || null;
         data.hex = rest.hex ?? null;
         if (rest.finish) data.finish = rest.finish;
         data.seriesId = rest.seriesId ?? null;
@@ -1781,6 +1785,85 @@ export const katalogRouter = router({
     }),
 
   /**
+   * Boş satış adlarını koordinattan üretip yazar.
+   *
+   * 88 ürünün adını tek tek yazmak yapılmayacak bir iştir; adsız kalınca da
+   * katalog kod dökümü gibi görünür. Üretim `salesNameOf` ile TEK yerden
+   * yapılır — kartta gördüğünüz öneriyle yazılan ad birebir aynıdır.
+   *
+   * Varsayılan yalnız BOŞ olanları doldurur: elle yazılmış adı ezmek,
+   * kullanıcının emeğini sessizce silmek olurdu. `overwrite` açıkça istenir.
+   */
+  generateNames: protectedProcedure
+    .input(
+      z.object({
+        overwrite: z.boolean().default(false),
+        dryRun: z.boolean().default(true),
+        seriesIds: z.array(z.number()).optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const [masters, series, colors, families, packagings] = await Promise.all([
+        db.listMasterProducts(),
+        db.listProductSeries(),
+        db.listColors(),
+        db.listProductFamilies(),
+        db.listPackagings(),
+      ]);
+      const seriesById = new Map(
+        (series as { id: number; name: string; nameEn: string | null }[]).map(s => [s.id, s]),
+      );
+      const colorById = new Map(
+        (colors as { id: number; name: string; nameEn: string | null }[]).map(c => [c.id, c]),
+      );
+      const familyById = new Map((families as { id: number; name: string }[]).map(f => [f.id, f]));
+      const packagingById = new Map(
+        (packagings as { id: number; name: string }[]).map(p => [p.id, p]),
+      );
+
+      const wanted = input.seriesIds?.length ? new Set(input.seriesIds) : null;
+      const changes: { masterId: number; sku: string; old: string; next: string }[] = [];
+
+      for (const m of masters as Record<string, unknown>[]) {
+        if (wanted && !wanted.has(m.seriesId as number)) continue;
+        const current = ((m.name as string | null) ?? "").trim();
+        if (current && !input.overwrite) continue;
+
+        const s = seriesById.get(m.seriesId as number);
+        const c = colorById.get(m.colorId as number);
+        const next = salesNameOf({
+          seriesNameEn: s?.nameEn ?? null,
+          seriesName: s?.name ?? null,
+          colorNameEn: c?.nameEn ?? null,
+          colorName: c?.name ?? null,
+          family: familyById.get(m.familyId as number)?.name ?? null,
+          packaging: packagingById.get(m.packagingId as number)?.name ?? null,
+          readiness: String(m.readiness ?? "konsantre"),
+        });
+        if (!next || next === current) continue;
+        changes.push({
+          masterId: m.id as number,
+          sku: String(m.internalSku ?? ""),
+          old: current,
+          next,
+        });
+      }
+
+      if (input.dryRun) {
+        return { dryRun: true as const, updated: 0, willUpdate: changes.length, sample: changes.slice(0, 20) };
+      }
+      for (const ch of changes) {
+        await db.updateMasterProduct(ch.masterId, { name: ch.next } as never);
+      }
+      return {
+        dryRun: false as const,
+        updated: changes.length,
+        willUpdate: changes.length,
+        sample: changes.slice(0, 20),
+      };
+    }),
+
+  /**
    * Barkodu (GTIN) yazar ya da temizler.
    *
    * Alan şemada ve sağlık kontrolünde vardı ama hiçbir ekrandan
@@ -2609,9 +2692,15 @@ export const katalogRouter = router({
 
     const allUseCaseIds = (useCases as { id: number }[]).map(u => u.id);
     const allChannelIds = (channels as { id: number }[]).map(c => c.id);
-    const colorById = new Map((colors as { id: number; name: string; hex: string | null }[]).map(c => [c.id, c]));
+    const colorById = new Map(
+      (colors as { id: number; name: string; hex: string | null; nameEn: string | null }[]).map(
+        c => [c.id, c],
+      ),
+    );
     const packById = new Map((packagings as { id: number; name: string }[]).map(p => [p.id, p]));
-    const seriesById = new Map((series as { id: number; name: string }[]).map(s => [s.id, s]));
+    const seriesById = new Map(
+      (series as { id: number; name: string; nameEn: string | null }[]).map(s => [s.id, s]),
+    );
     const familyById = new Map((families as { id: number; name: string }[]).map(f => [f.id, f]));
 
     const rows = data.rawMasters.map(m => {
@@ -2666,6 +2755,18 @@ export const katalogRouter = router({
         // ürün başına ayrı sorgu atmak listeyi N+1'e çevirirdi.
         gtin: (m.gtin as string | null) ?? null,
         name: (m.name as string | null) ?? null,
+        // Önerilen satış adı — kartta yer tutucu olarak gösterilir ve
+        // `generateNames` bunun aynısını yazar; öneri ile yazılan ad
+        // ayrışmasın diye tek fonksiyondan gelir.
+        suggestedName: salesNameOf({
+          seriesNameEn: seriesById.get(m.seriesId as number)?.nameEn ?? null,
+          seriesName: seriesById.get(m.seriesId as number)?.name ?? null,
+          colorNameEn: color?.nameEn ?? null,
+          colorName: color?.name ?? null,
+          family: familyById.get(m.familyId as number)?.name ?? null,
+          packaging: packById.get(m.packagingId as number)?.name ?? null,
+          readiness: String(m.readiness ?? "konsantre"),
+        }),
         imageUrl: coverByMaster.get(masterId)?.url ?? null,
         imageId: coverByMaster.get(masterId)?.id ?? null,
         imageCount: masterImageCount.get(masterId) ?? 0,

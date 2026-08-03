@@ -82,22 +82,30 @@ const menuGroups = [
       { icon: ListChecks, label: "Görevler & Eksikler", path: "/gorevler" },
     ],
   },
+  /*
+   * Ürünle ilgili HER ŞEY tek grupta. Eskiden tek bir ürünü kurmak için üç
+   * ayrı menü grubunda dolaşmak gerekiyordu: renk tanımı "Analiz & Tanımlar",
+   * seri "Şablonlar", reçete "Üretim Merkezi", geri kalanı "Ürün" altındaydı.
+   * Sıra iş akışını izler: tanımla → kur → reçete → fiyat → metin → yayınla.
+   */
   {
-    label: "Ürün",
+    label: "Ürün & Katalog",
     items: [
       { icon: Package, label: "Ürünler", path: "/katalog" },
+      { icon: LibraryBig, label: "Tanımlar", path: "/tanimlar" },
+      { icon: Layers, label: "Seriler", path: "/sablonlar" },
+      { icon: Beaker, label: "Reçeteler", path: "/recete" },
+      { icon: BadgePercent, label: "Fiyat & Kâr", path: "/fiyat" },
       { icon: FileText, label: "İçerik Blokları", path: "/icerik" },
       { icon: Store, label: "Toplu Yayın", path: "/yayin" },
       { icon: Wand2, label: "Yeni Seri Sihirbazı", path: "/sihirbaz" },
       { icon: FlaskConical, label: "Ürün Geliştirme", path: "/gelistirme" },
-      { icon: BadgePercent, label: "Fiyat & Kâr", path: "/fiyat" },
     ],
   },
   {
-    label: "Üretim Merkezi",
+    label: "Üretim & Stok",
     items: [
       { icon: Warehouse, label: "Hammadde & Stok", path: "/stok" },
-      { icon: Beaker, label: "Reçeteler", path: "/recete" },
       { icon: Factory, label: "Üretim Kayıtları", path: "/uretim" },
     ],
   },
@@ -123,11 +131,10 @@ const menuGroups = [
     ],
   },
   {
-    label: "Analiz & Tanımlar",
+    label: "Analiz & Ayarlar",
     items: [
       { icon: BarChart3, label: "Satış Analizi", path: "/analiz" },
       { icon: Target, label: "Strateji & Rapor", path: "/strateji" },
-      { icon: LibraryBig, label: "Tanımlar", path: "/tanimlar" },
       { icon: Sparkles, label: "AI Pazarlama", path: "/pazarlama" },
       { icon: CalendarDays, label: "Kampanya Takvimi", path: "/kampanyalar" },
       { icon: Truck, label: "Tedarikçiler", path: "/tedarikciler" },

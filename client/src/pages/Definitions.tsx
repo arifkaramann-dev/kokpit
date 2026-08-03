@@ -76,6 +76,7 @@ export default function Definitions() {
   const [form, setForm] = useState({
     code: "",
     name: "",
+    nameEn: "",
     hex: "#888888",
     seriesId: NONE,
     volumeMl: "",
@@ -111,6 +112,7 @@ export default function Definitions() {
     setForm({
       code: "",
       name: "",
+      nameEn: "",
       hex: "#888888",
       seriesId: NONE,
       volumeMl: "",
@@ -127,6 +129,7 @@ export default function Definitions() {
     setForm({
       code: String(row.code ?? ""),
       name: String(row.name ?? ""),
+      nameEn: (row.nameEn as string) ?? "",
       hex: (row.hex as string) ?? "#888888",
       seriesId: row.seriesId != null ? String(row.seriesId) : NONE,
       volumeMl: row.volumeMl != null ? String(parseFloat(String(row.volumeMl))) : "",
@@ -144,6 +147,7 @@ export default function Definitions() {
       id: editId,
       code: form.code.trim(),
       name: form.name.trim(),
+      nameEn: kind === "colors" ? form.nameEn.trim() || null : undefined,
       hex: kind === "colors" ? form.hex : null,
       seriesId: form.seriesId === NONE ? null : Number(form.seriesId),
       volumeMl: kind === "packagings" ? parseFloat(form.volumeMl) || 0 : undefined,
@@ -339,6 +343,18 @@ export default function Definitions() {
 
             {kind === "colors" && (
               <>
+                <div className="space-y-1.5">
+                  <Label>Uluslararası ad</Label>
+                  <Input
+                    value={form.nameEn}
+                    onChange={e => setForm(f => ({ ...f, nameEn: e.target.value }))}
+                    placeholder="MAGENTA"
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Satış adında Türkçe adın yanına yazılır: MAGENTA (FUŞYA). Boşsa yalnız Türkçe
+                    ad kullanılır.
+                  </p>
+                </div>
                 <div className="space-y-1.5">
                   <Label>Renk</Label>
                   <div className="flex items-center gap-2">

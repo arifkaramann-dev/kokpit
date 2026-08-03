@@ -48,6 +48,28 @@ export default function Catalog() {
   const [, setLocation] = useLocation();
   const [onlyProblem, setOnlyProblem] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [namePreview, setNamePreview] = useState<{
+    willUpdate: number;
+    sample: { masterId: number; sku: string; old: string; next: string }[];
+  } | null>(null);
+
+  /*
+   * Ad üretimi iki adımlı: önce ne yazılacağı gösterilir, sonra yazılır.
+   * Tek tıkla 88 kaydı değiştirmek, kullanıcının "ürünler kendi kendine
+   * değişiyor" şikayetini haklı çıkaran davranışın ta kendisi olurdu.
+   */
+  const nameRun = trpc.katalog.generateNames.useMutation({
+    onSuccess: r => {
+      if (r.dryRun) {
+        setNamePreview({ willUpdate: r.willUpdate, sample: r.sample });
+        return;
+      }
+      setNamePreview(null);
+      utils.katalog.invalidate();
+      toast.success(`${r.updated} ürünün satış adı yazıldı`);
+    },
+    onError: e => toast.error(e.message),
+  });
 
   // Diğer ekranlar sekmeye doğrudan link verebilsin: /katalog?sekme=baglar
   const urlTab =
@@ -178,8 +200,8 @@ export default function Catalog() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Ürünler</h1>
         <p className="text-sm text-muted-foreground">
-          Master ürün = fiziksel gerçeklik (stok, reçete, kapasite). İlan = aynı ürünün farklı
-          pazarlama açısı. Tek şişe, çok ilan — stok bölünmez.
+          Sattığınız her şey burada. Seriyi açın, rengi açın, ürünün kartında ne eksikse yerinde
+          tamamlayın.
         </p>
       </div>
 
@@ -208,12 +230,14 @@ export default function Catalog() {
         }
       >
         <TabsList>
-          <TabsTrigger value="liste">Ürün Listesi</TabsTrigger>
-          <TabsTrigger value="seriler">Seri Takibi</TabsTrigger>
-          <TabsTrigger value="getiri">Getiri</TabsTrigger>
-          <TabsTrigger value="gorseller">Görseller</TabsTrigger>
-          <TabsTrigger value="baglar">Bağlanmamış Satırlar</TabsTrigger>
-          <TabsTrigger value="kurulum">Kurulum</TabsTrigger>
+          {/* Sekme adları iş diliyle: "Bağlanmamış Satırlar" ve "Kurulum"
+              mühendis terimleriydi, kullanıcı hangisine gireceğini bilmiyordu. */}
+          <TabsTrigger value="liste">Ürünler</TabsTrigger>
+          <TabsTrigger value="kurulum">Seri kurgusu</TabsTrigger>
+          <TabsTrigger value="seriler">Seri durumu</TabsTrigger>
+          <TabsTrigger value="getiri">Kazanç</TabsTrigger>
+          <TabsTrigger value="gorseller">Eksik görseller</TabsTrigger>
+          <TabsTrigger value="baglar">Eşleşmeyen siparişler</TabsTrigger>
         </TabsList>
 
         {/* Getiri — hangi renk para kazandırıyor */}
@@ -249,7 +273,65 @@ export default function Catalog() {
             <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
               <FileSpreadsheet className="mr-1 h-3.5 w-3.5" /> Excel
             </Button>
+            {/* Adsız ürünlerin adını koordinattan doldurur. Önce kaç ürüne ne
+                yazılacağı gösterilir — 88 kaydı görmeden değiştirmek, tam da
+                "kendi kendine değişiyor" hissini yaratan şeydir. */}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={nameRun.isPending}
+              onClick={() => nameRun.mutate({ dryRun: true, overwrite: false })}
+            >
+              {nameRun.isPending ? (
+                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="mr-1 h-3.5 w-3.5" />
+              )}
+              Satış adlarını üret
+            </Button>
           </div>
+
+          {namePreview && (
+            <Card className="space-y-2 border-primary/30 bg-primary/5 p-3">
+              {namePreview.willUpdate === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Adsız ürün yok — hepsinin satış adı girilmiş.
+                </p>
+              ) : (
+                <>
+                  <p className="text-sm">
+                    <strong>{namePreview.willUpdate}</strong> ürünün satış adı yazılacak. Elle
+                    yazdığınız adlara dokunulmaz.
+                  </p>
+                  <div className="max-h-40 space-y-0.5 overflow-y-auto rounded-md border bg-background p-2">
+                    {namePreview.sample.map(s => (
+                      <p key={s.masterId} className="text-xs">
+                        <span className="font-mono text-[10px] text-muted-foreground">{s.sku}</span>{" "}
+                        <span className="font-medium">{s.next}</span>
+                      </p>
+                    ))}
+                    {namePreview.willUpdate > namePreview.sample.length && (
+                      <p className="text-xs text-muted-foreground">
+                        …ve {namePreview.willUpdate - namePreview.sample.length} tane daha
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      disabled={nameRun.isPending}
+                      onClick={() => nameRun.mutate({ dryRun: false, overwrite: false })}
+                    >
+                      {namePreview.willUpdate} adı yaz
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setNamePreview(null)}>
+                      Vazgeç
+                    </Button>
+                  </div>
+                </>
+              )}
+            </Card>
+          )}
           <ProductTree rows={(track?.rows ?? []) as never} onlyProblem={onlyProblem} />
           <MasterImport open={importOpen} onOpenChange={setImportOpen} />
         </TabsContent>

@@ -101,6 +101,11 @@ export const productSeries = mysqlTable("productSeries", {
   id: int("id").autoincrement().primaryKey(),
   companyId: int("companyId").notNull().default(1),
   name: varchar("name", { length: 128 }).notNull(),
+  /**
+   * Serinin satış adındaki karşılığı — "CANDY" değil "CANDY PAINT".
+   * Satış adı buradan kurulur; boşsa serinin kendi adı kullanılır.
+   */
+  nameEn: varchar("nameEn", { length: 128 }),
   profitMargin: decimal("profitMargin", { precision: 5, scale: 2 }).notNull().default("35"),
   vatRate: decimal("vatRate", { precision: 5, scale: 2 }).notNull().default("20"),
   category: varchar("category", { length: 64 }),
@@ -1013,6 +1018,11 @@ export const colors = mysqlTable(
     companyId: int("companyId").notNull().default(1),
     code: varchar("code", { length: 64 }).notNull(),
     name: varchar("name", { length: 128 }).notNull(),
+    /**
+     * Rengin İngilizce/uluslararası adı — satış adında kullanılır.
+     * "MAGENTA (FUŞYA)" gibi. Boşsa yalnız Türkçe ad yazılır.
+     */
+    nameEn: varchar("nameEn", { length: 128 }),
     hex: varchar("hex", { length: 16 }),
     // Renk ailesi (kırmızı/mavi/nötr) — filtreleme ve vitrin gruplaması.
     family: varchar("family", { length: 64 }),

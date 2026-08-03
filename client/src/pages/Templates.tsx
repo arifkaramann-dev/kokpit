@@ -211,6 +211,7 @@ export default function Templates() {
 
 const emptySeriesForm = {
   name: "",
+  nameEn: "",
   profitMargin: "35",
   vatRate: "20",
   category: "",
@@ -311,6 +312,7 @@ function SeriesManager() {
     const colors = colorLines;
     const payload = {
       name: form.name.trim(),
+      nameEn: form.nameEn.trim() || null,
       profitMargin: parseFloat(form.profitMargin.replace(",", ".")) || 0,
       vatRate: parseFloat(form.vatRate.replace(",", ".")) || 0,
       category: form.category || null,
@@ -428,6 +430,7 @@ function SeriesManager() {
                     .join("\n");
                   setForm({
                     name: s.name,
+                    nameEn: (s as { nameEn?: string | null }).nameEn ?? "",
                     profitMargin: String(parseFloat(String(s.profitMargin)) || 0),
                     vatRate: String(parseFloat(String(s.vatRate)) || 0),
                     category: s.category ?? "",
@@ -502,6 +505,18 @@ function SeriesManager() {
                       onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
                       placeholder="Örn. CANDY, METEOR"
                     />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Satış adındaki karşılığı</Label>
+                    <Input
+                      value={form.nameEn}
+                      onChange={e => setForm(f => ({ ...f, nameEn: e.target.value }))}
+                      placeholder="Örn. CANDY PAINT"
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Ürün adı buradan kurulur: ARTOFCOLOUR <strong>CANDY PAINT</strong> MAGENTA
+                      (FUŞYA) - AİRBRUSH 100 ML. Boşsa seri adı kullanılır.
+                    </p>
                   </div>
                   <div className="space-y-1.5">
                     <Label>Kategori</Label>
