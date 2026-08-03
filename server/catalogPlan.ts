@@ -107,7 +107,7 @@ export type MasterPlan = {
  * değil: aynı ürün her çalıştırmada aynı kodu alsın. Kod bir kez üretilip
  * saklandığı için bunun deterministik olması şart.
  */
-function disambiguate(
+export function disambiguate(
   rawSku: string,
   coord: { packagingId: number; familyId: number },
   taken: Set<string>,

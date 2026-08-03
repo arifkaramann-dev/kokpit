@@ -14,6 +14,8 @@ export type HealthMaster = {
   id: number;
   formulaId: number | null;
   buildableQty: number;
+  /** Raftaki mamul adedi — elle girilir, hammaddeye bakmaz. */
+  stockQty: number;
   gtin: string | null;
   status: "taslak" | "aktif" | "arsiv";
 };
@@ -42,6 +44,8 @@ export type MasterHealth = {
   score: number;
   /** Eksik olan şeyler, kullanıcı diliyle. */
   missing: string[];
+  /** Toplam kontrol sayısı — "6/9 tamam" için; istemci sayıyı varsaymasın. */
+  checkCount: number;
   /** İlan açılmamış kullanım alanları — açılmamış pazar. */
   openUseCaseIds: number[];
   /** Yayına alınmamış kanallar. */
@@ -77,11 +81,18 @@ export function masterHealth(input: {
   );
   const withImage = mine.filter(l => l.imageCount > 0);
 
+  /*
+   * Satılabilirlik iki yoldan sağlanır: raftaki mamul ya da hammaddeden
+   * üretilebilir kapasite. Kontrol yalnız kapasiteye bakınca elle stok
+   * girilen her ürün "üretilemiyor" diye kırmızı kalıyordu — hammadde
+   * defteri tam değilken katalogun tamamı hatalı görünür.
+   */
   const checks: [label: string, ok: boolean][] = [
     ["Reçete bağlı değil", master.formulaId != null],
-    ["Üretilemiyor — hammadde/kapasite yok", master.buildableQty > 0],
+    ["Stok yok", master.stockQty > 0 || master.buildableQty > 0],
     ["Maliyet bilinmiyor", input.costKnown],
     ["Fiyat girilmemiş", input.hasPrice],
+    ["Barkod yok", (master.gtin ?? "").trim().length > 0],
     ["İlan açılmamış", mine.length > 0],
     ["İlan metni boş", withContent.length > 0],
     ["Görsel yok", withImage.length > 0],
@@ -96,6 +107,7 @@ export function masterHealth(input: {
     masterId: master.id,
     score: Math.round((done / checks.length) * 100),
     missing: checks.filter(([, ok]) => !ok).map(([label]) => label),
+    checkCount: checks.length,
     openUseCaseIds: input.allUseCaseIds.filter(id => !usedUseCases.has(id)),
     openChannelIds: input.allChannelIds.filter(id => !usedChannels.has(id)),
     listingCount: mine.length,
@@ -121,7 +133,7 @@ export type SeriesRollup = {
  * bakmak mümkün değil.
  */
 export function rollupBySeries(
-  rows: { seriesId: number; health: MasterHealth; buildable: number }[],
+  rows: { seriesId: number; health: MasterHealth; buildable: number; stockQty: number }[],
 ): SeriesRollup[] {
   const bySeries = new Map<number, typeof rows>();
   for (const r of rows) {
@@ -133,7 +145,8 @@ export function rollupBySeries(
       masterCount: list.length,
       avgScore: Math.round(list.reduce((s, r) => s + r.health.score, 0) / list.length),
       withoutListing: list.filter(r => r.health.listingCount === 0).length,
-      notBuildable: list.filter(r => r.buildable <= 0).length,
+      // Satılamaz = ne rafta mamul var ne de hammaddeden üretilebiliyor.
+      notBuildable: list.filter(r => r.buildable <= 0 && r.stockQty <= 0).length,
       liveListings: list.reduce((s, r) => s + r.health.liveCount, 0),
     }))
     .sort((a, b) => a.avgScore - b.avgScore);

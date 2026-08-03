@@ -3107,6 +3107,28 @@ export async function listMasterImages(masterId?: number) {
   return masterId ? q.where(eq(masterImages.masterId, masterId)) : q;
 }
 
+/**
+ * Görsel referansları — base64 `data` alanı okunmaz.
+ *
+ * Liste ekranları görselin kendisini değil adresini ister. `select()` ile
+ * bütün satırı çekmek her ürün listesi sorgusuna megabaytlarca base64
+ * bindiriyordu; ürün kartından görsel yüklemek kolaylaştıkça bu maliyet
+ * katalogla birlikte büyür.
+ */
+export async function listMasterImageRefs(masterId?: number) {
+  const db = await requireDb();
+  const q = db
+    .select({
+      id: masterImages.id,
+      masterId: masterImages.masterId,
+      url: masterImages.url,
+      role: masterImages.role,
+      sortOrder: masterImages.sortOrder,
+    })
+    .from(masterImages);
+  return masterId ? q.where(eq(masterImages.masterId, masterId)) : q;
+}
+
 export async function getMasterImage(id: number) {
   const db = await requireDb();
   const [row] = await db.select().from(masterImages).where(eq(masterImages.id, id)).limit(1);

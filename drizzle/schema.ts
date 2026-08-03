@@ -1342,6 +1342,19 @@ export const masterProducts = mysqlTable(
     packagingId: int("packagingId").notNull(),
     readiness: mysqlEnum("readiness", ["konsantre", "r2u"]).notNull().default("konsantre"),
 
+    /**
+     * Ürünün satış adı — etiketteki, faturadaki, insanın söylediği isim.
+     *
+     * Bu alan yoktu: bir master'ın tek "adı" `internalSku` koordinatıydı
+     * (aoccndred1822ab100r2u), gerçek isim ise yalnız İLAN kaydında
+     * (`listings.title`) yaşıyordu. İlanı açılmamış ürünün hiçbir yerde adı
+     * olmuyordu — katalog ekranı bu yüzden kod listesi gibi görünüyordu.
+     *
+     * Boş bırakılabilir: `displayNameOf` koordinattan okunur bir ad türetir,
+     * böylece isim vermeden de ürün insanca görünür.
+     */
+    name: varchar("name", { length: 255 }),
+
     // Kullanıcının verdiği renk/temel kod: marka+seri+renk+renk kodu.
     // Örn. aoccndred1822 — bu kod bir MASTER'ı değil bir RENGİ tanımlar
     // (form/ambalaj/hazırlık içermez), o yüzden kimlik değil ön ektir.

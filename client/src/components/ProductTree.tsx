@@ -2,19 +2,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { formatTL } from "@/lib/format";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { trpc } from "@/lib/trpc";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { useLocation } from "wouter";
+import VariantCard from "./VariantCard";
 
 /**
  * Ürün ağacı — SERİ → RENK → varyant.
@@ -45,12 +37,25 @@ export type TrackRow = {
   cost: number;
   price: number;
   profit: number;
-  health: { score: number; missing: string[]; listingCount: number; liveCount: number };
+  health: {
+    score: number;
+    missing: string[];
+    checkCount: number;
+    listingCount: number;
+    liveCount: number;
+  };
   salesMode: "siparis_uzerine" | "stoktan" | "tedarikli";
   leadTimeDays: number;
   stockQty: number;
   /** İlana yazılacak miktar — satış moduna göre hesaplanmış. */
   listingQty: number;
+  gtin: string | null;
+  /** Elle girilmiş satış adı; boşsa koordinattan türetilir. */
+  name: string | null;
+  /** Kapak görselinin adresi; yüklenmemişse null. */
+  imageUrl: string | null;
+  imageId: number | null;
+  imageCount: number;
 };
 
 /** Satış modu etiketleri; kısa tutuldu, satıra sığması gerekiyor. */
@@ -67,7 +72,6 @@ export default function ProductTree({
   rows: TrackRow[];
   onlyProblem: boolean;
 }) {
-  const [, setLocation] = useLocation();
   const utils = trpc.useUtils();
   const [search, setSearch] = useState("");
 
@@ -122,10 +126,14 @@ export default function ProductTree({
         ),
         // Renk seviyesindeki özet: en iyi durum değil, GERÇEK durum.
         buildable: variants.reduce((n, v) => n + v.buildable, 0),
+        stock: variants.reduce((n, v) => n + v.stockQty, 0),
         listings: variants.reduce((n, v) => n + v.health.listingCount, 0),
         live: variants.reduce((n, v) => n + v.health.liveCount, 0),
         worstScore: Math.min(...variants.map(v => v.health.score)),
         missing: Array.from(new Set(variants.flatMap(v => v.health.missing))),
+        // Kaç ÜRÜNDE eksik var — hangi rengi açacağını bu söyler; eksik
+        // etiketlerinin birleşimi kaç ürünü ilgilendirdiğini göstermiyordu.
+        problemCount: variants.filter(v => v.health.missing.length > 0).length,
       })).sort((a, b) => a.name.localeCompare(b.name, "tr")),
     })).sort((a, b) => a.name.localeCompare(b.name, "tr"));
   }, [rows, search, onlyProblem]);
@@ -238,19 +246,22 @@ export default function ProductTree({
                               </Badge>
                             )}
                             <span className="ml-auto flex items-center gap-2 text-xs">
-                              <span
-                                className={
-                                  c.buildable > 0 ? "text-emerald-600" : "text-destructive"
-                                }
-                              >
-                                {c.buildable} üretilebilir
+                              {/* Hammadde defteri tamamlanana kadar güvenilir
+                                  adet elle girilen raf stoğu; kapasite ancak
+                                  hesaplanabildiği yerde eklenir. */}
+                              <span className={c.stock > 0 ? "text-emerald-600" : "text-muted-foreground"}>
+                                {c.stock} adet stok
                               </span>
-                              <Badge
-                                variant={c.worstScore >= 90 ? "secondary" : "destructive"}
-                                className="text-[10px]"
-                              >
-                                %{c.worstScore}
-                              </Badge>
+                              {c.buildable > 0 && (
+                                <span className="text-muted-foreground">
+                                  +{c.buildable} üretilebilir
+                                </span>
+                              )}
+                              {c.problemCount > 0 && (
+                                <Badge variant="destructive" className="text-[10px]">
+                                  {c.problemCount} üründe eksik
+                                </Badge>
+                              )}
                             </span>
                           </button>
 
@@ -293,93 +304,10 @@ export default function ProductTree({
                           )}
 
                           {open && (
-                            <div className="overflow-x-auto bg-muted/20">
-                              <table className="w-full text-sm">
-                                <thead className="text-xs text-muted-foreground">
-                                  <tr>
-                                    <th className="p-2 pl-12 text-left">Varyant</th>
-                                    <th className="p-2 text-right">Üretilebilir</th>
-                                    <th className="p-2 text-right">Maliyet</th>
-                                    <th className="p-2 text-right">Fiyat</th>
-                                    <th className="p-2 text-right">Kâr</th>
-                                    <th className="p-2 text-left">Satış</th>
-                                    <th className="p-2 text-right">İlan</th>
-                                    <th className="p-2 text-left">Eksik</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {c.variants.map(v => (
-                                    <tr
-                                      key={v.masterId}
-                                      className="cursor-pointer border-t hover:bg-accent/40"
-                                      onClick={() => setLocation(`/urun/${v.masterId}`)}
-                                    >
-                                      <td className="p-2 pl-12">
-                                        <span className="font-medium">
-                                          {v.family} · {v.packaging}
-                                        </span>
-                                        {v.readiness === "r2u" && (
-                                          <Badge variant="secondary" className="ml-1.5 text-[10px]">
-                                            r2u
-                                          </Badge>
-                                        )}
-                                        <span className="block font-mono text-[10px] text-muted-foreground">
-                                          {v.internalSku}
-                                        </span>
-                                      </td>
-                                      <td className="p-2 text-right">
-                                        <span
-                                          className={
-                                            v.buildable > 0 ? undefined : "text-destructive"
-                                          }
-                                        >
-                                          {v.buildable}
-                                        </span>
-                                      </td>
-                                      <td className="p-2 text-right">
-                                        {v.cost > 0 ? formatTL(v.cost) : "—"}
-                                      </td>
-                                      <td className="p-2 text-right">
-                                        {v.price > 0 ? formatTL(v.price) : "—"}
-                                      </td>
-                                      <td className="p-2 text-right">
-                                        {v.price > 0 ? formatTL(v.profit) : "—"}
-                                      </td>
-                                      <td className="p-2" onClick={e => e.stopPropagation()}>
-                                        <Select
-                                          value={v.salesMode}
-                                          onValueChange={mode =>
-                                            setSalesMode.mutate({
-                                              masterIds: [v.masterId],
-                                              salesMode: mode as never,
-                                            })
-                                          }
-                                        >
-                                          <SelectTrigger className="h-7 w-36 text-[11px]">
-                                            <SelectValue />
-                                          </SelectTrigger>
-                                          <SelectContent>
-                                            {SALES_MODES.map(m => (
-                                              <SelectItem key={m.value} value={m.value}>
-                                                {m.label}
-                                              </SelectItem>
-                                            ))}
-                                          </SelectContent>
-                                        </Select>
-                                        <span className="block text-[10px] text-muted-foreground">
-                                          ilanda {v.listingQty} adet
-                                        </span>
-                                      </td>
-                                      <td className="p-2 text-right">
-                                        {v.health.liveCount}/{v.health.listingCount}
-                                      </td>
-                                      <td className="p-2 text-[11px] text-muted-foreground">
-                                        {v.health.missing.slice(0, 2).join(" · ") || "—"}
-                                      </td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
+                            <div className="space-y-2 bg-muted/20 p-2 pl-4 sm:pl-10">
+                              {c.variants.map(v => (
+                                <VariantCard key={v.masterId} row={v} />
+                              ))}
                             </div>
                           )}
                         </div>
