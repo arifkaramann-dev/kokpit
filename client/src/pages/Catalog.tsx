@@ -3,6 +3,7 @@ import CatalogRevenue from "@/components/CatalogRevenue";
 import ProductTree from "@/components/ProductTree";
 import CatalogRestructure from "@/components/CatalogRestructure";
 import SeriesMatrix from "@/components/SeriesMatrix";
+import MasterImport from "@/components/MasterImport";
 import MissingImages from "@/components/MissingImages";
 import UnboundOrderItems from "@/components/UnboundOrderItems";
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +16,7 @@ import { trpc } from "@/lib/trpc";
 import {
   AlertTriangle,
   Boxes,
+  FileSpreadsheet,
   Layers,
   Loader2,
   PackagePlus,
@@ -45,6 +47,7 @@ export default function Catalog() {
   const { data: track } = trpc.katalog.trackList.useQuery();
   const [, setLocation] = useLocation();
   const [onlyProblem, setOnlyProblem] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   // Diğer ekranlar sekmeye doğrudan link verebilsin: /katalog?sekme=baglar
   const urlTab =
@@ -241,8 +244,14 @@ export default function Catalog() {
             >
               Sadece eksikli
             </Button>
+            {/* Katalog Excel'de kuruluyor; listeyi indirip düzenleyip geri
+                yüklemek ürünleri tek tek gezmekten hızlı. */}
+            <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
+              <FileSpreadsheet className="mr-1 h-3.5 w-3.5" /> Excel
+            </Button>
           </div>
           <ProductTree rows={(track?.rows ?? []) as never} onlyProblem={onlyProblem} />
+          <MasterImport open={importOpen} onOpenChange={setImportOpen} />
         </TabsContent>
 
         <TabsContent value="seriler" className="space-y-3 pt-3">

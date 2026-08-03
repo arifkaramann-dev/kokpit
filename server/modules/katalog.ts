@@ -29,7 +29,13 @@ import {
   looksLikeReadyToUse,
 } from "../catalogCodes";
 import { mapToTrendyolCards } from "../cardMapping";
-import { cubeKey, planListings, planMasters, type Readiness } from "../catalogPlan";
+import { cubeKey, disambiguate, planListings, planMasters, type Readiness } from "../catalogPlan";
+import {
+  buildMasterExportMatrix,
+  masterMatrixToParsed,
+  planMasterImport,
+  type MasterIORecord,
+} from "@shared/masterIO";
 import { runCapacityRecompute } from "../catalogJobs";
 import { loadCapacityInputs } from "../capacityInputs";
 import {
@@ -1762,6 +1768,19 @@ export const katalogRouter = router({
     }),
 
   /**
+   * Ürünün satış adını yazar ya da temizler.
+   *
+   * Boşaltmak geçerli bir işlem: ad silinince `displayNameOf` koordinattan
+   * türetilene döner, ürün adsız kalmaz.
+   */
+  setName: protectedProcedure
+    .input(z.object({ masterId: z.number(), name: z.string().trim().max(255) }))
+    .mutation(async ({ input }) => {
+      await db.updateMasterProduct(input.masterId, { name: input.name || null } as never);
+      return { ok: true };
+    }),
+
+  /**
    * Barkodu (GTIN) yazar ya da temizler.
    *
    * Alan şemada ve sağlık kontrolünde vardı ama hiçbir ekrandan
@@ -1796,6 +1815,200 @@ export const katalogRouter = router({
       }
       await db.updateMasterProduct(input.masterId, { gtin: gtin || null } as never);
       return { ok: true };
+    }),
+
+  /**
+   * Katalogu Excel/CSV matrisi olarak verir.
+   *
+   * Dışa aktarılan dosya düzenlenip geri yüklenebilsin diye kimlik (ID + Kod)
+   * ve koordinat sütunları da yazılır; `bulkImportMasters` aynı alan
+   * kataloğunu okur, ikisi ayrışamaz.
+   */
+  exportMasters: protectedProcedure.query(async () => {
+    const [masters, series, colors, families, packagings] = await Promise.all([
+      db.listMasterProducts(),
+      db.listProductSeries(),
+      db.listColors(),
+      db.listProductFamilies(),
+      db.listPackagings(),
+    ]);
+    const nameById = (rows: unknown[]) =>
+      new Map((rows as { id: number; name: string }[]).map(r => [r.id, r.name]));
+    const seriesName = nameById(series);
+    const colorName = nameById(colors);
+    const familyName = nameById(families);
+    const packagingName = nameById(packagings);
+
+    const records: MasterIORecord[] = (masters as Record<string, unknown>[]).map(m => ({
+      id: m.id as number,
+      internalSku: String(m.internalSku ?? ""),
+      name: (m.name as string | null) ?? null,
+      gtin: (m.gtin as string | null) ?? null,
+      basePrice: num(m.basePrice),
+      stockQty: Number(m.stockQty ?? 0),
+      status: (m.status as MasterIORecord["status"]) ?? "taslak",
+      seriesId: m.seriesId as number,
+      colorId: m.colorId as number,
+      familyId: m.familyId as number,
+      packagingId: m.packagingId as number,
+      readiness: (m.readiness as MasterIORecord["readiness"]) ?? "konsantre",
+      series: seriesName.get(m.seriesId as number) ?? null,
+      colorName: colorName.get(m.colorId as number) ?? null,
+      family: familyName.get(m.familyId as number) ?? null,
+      packaging: packagingName.get(m.packagingId as number) ?? null,
+    }));
+
+    return {
+      matrix: buildMasterExportMatrix(records, { numeric: true }),
+      count: records.length,
+    };
+  }),
+
+  /**
+   * Excel/CSV ile toplu ürün yükleme — oluştur-veya-güncelle.
+   *
+   * Plan istemcide de çıkarılır (kullanıcı farkı görüp onaylar) ama BURADA
+   * yeniden kurulur: istemciden gelen plana güvenmek, kullanıcının
+   * önizlemede gördüğünden başka bir şeyin yazılabilmesi demek olurdu.
+   * Aynı dosya, aynı saf fonksiyon, aynı sonuç.
+   *
+   * Yeni ürünün kodu küp üretimiyle AYNI kurallardan geçer (`buildInternalSku`
+   * + `disambiguate`): aynı ürün hangi yoldan açılırsa açılsın aynı kodu alsın,
+   * yoksa Excel'den ve sihirbazdan açılan ürün iki farklı kayda dönüşürdü.
+   */
+  bulkImportMasters: protectedProcedure
+    .input(
+      z.object({
+        /** Dosyanın ham hücre matrisi (ilk satır başlık). */
+        matrix: z.array(z.array(z.string())).min(2).max(5001),
+        matchBy: z.enum(["kod", "id"]).default("kod"),
+        dryRun: z.boolean().default(true),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const [masters, series, colors, families, packagings] = await Promise.all([
+        db.listMasterProducts(),
+        db.listProductSeries(),
+        db.listColors(),
+        db.listProductFamilies(),
+        db.listPackagings(),
+      ]);
+
+      const { parsed, error } = masterMatrixToParsed(input.matrix);
+      if (!parsed) throw new TRPCError({ code: "BAD_REQUEST", message: error ?? "Dosya okunamadı." });
+
+      const dimRows = {
+        series: series as { id: number; name: string; prefix: string | null }[],
+        colors: colors as { id: number; name: string; code: string }[],
+        families: families as { id: number; name: string; code: string; skuSegment: string | null }[],
+        packagings: packagings as {
+          id: number;
+          name: string;
+          code: string;
+          skuSegment: string | null;
+          volumeMl: string;
+        }[],
+      };
+
+      const records: MasterIORecord[] = (masters as Record<string, unknown>[]).map(m => ({
+        id: m.id as number,
+        internalSku: String(m.internalSku ?? ""),
+        name: (m.name as string | null) ?? null,
+        gtin: (m.gtin as string | null) ?? null,
+        basePrice: num(m.basePrice),
+        stockQty: Number(m.stockQty ?? 0),
+        status: (m.status as MasterIORecord["status"]) ?? "taslak",
+        seriesId: m.seriesId as number,
+        colorId: m.colorId as number,
+        familyId: m.familyId as number,
+        packagingId: m.packagingId as number,
+        readiness: (m.readiness as MasterIORecord["readiness"]) ?? "konsantre",
+        series: null,
+        colorName: null,
+        family: null,
+        packaging: null,
+      }));
+
+      const plan = planMasterImport(records, parsed, {
+        matchBy: input.matchBy,
+        dims: {
+          series: dimRows.series.map(s => ({ id: s.id, name: s.name })),
+          colors: dimRows.colors.map(c => ({ id: c.id, name: c.name })),
+          families: dimRows.families.map(f => ({ id: f.id, name: f.name })),
+          packagings: dimRows.packagings.map(p => ({ id: p.id, name: p.name })),
+        },
+      });
+
+      if (input.dryRun) return { dryRun: true as const, created: 0, updated: 0, plan };
+
+      /** Decimal sütunlar metin olarak yazılır; sayı geçmek sessiz yuvarlama yapar. */
+      const toRow = (data: Record<string, unknown>) => {
+        const out: Record<string, unknown> = {};
+        if ("name" in data) out.name = String(data.name ?? "").trim() || null;
+        if ("gtin" in data) out.gtin = String(data.gtin ?? "").trim() || null;
+        if ("basePrice" in data) out.basePrice = String(data.basePrice);
+        if ("stockQty" in data) out.stockQty = Number(data.stockQty);
+        if ("status" in data) out.status = data.status;
+        return out;
+      };
+
+      let updated = 0;
+      for (const u of plan.updates) {
+        await db.updateMasterProduct(u.id, toRow(u.data) as never);
+        updated++;
+      }
+
+      const seriesById = new Map(dimRows.series.map(s => [s.id, s]));
+      const colorById = new Map(dimRows.colors.map(c => [c.id, c]));
+      const familyById = new Map(dimRows.families.map(f => [f.id, f]));
+      const packagingById = new Map(dimRows.packagings.map(p => [p.id, p]));
+      const takenSkus = new Set(records.map(r => r.internalSku));
+
+      let created = 0;
+      for (const c of plan.creates) {
+        const s = seriesById.get(c.coord.seriesId);
+        const color = colorById.get(c.coord.colorId);
+        const family = familyById.get(c.coord.familyId);
+        const packaging = packagingById.get(c.coord.packagingId);
+        if (!s || !color || !family || !packaging) continue;
+
+        const baseCode = ["aoc", s.prefix ?? "", color.code]
+          .filter(Boolean)
+          .join("")
+          .toLowerCase();
+        const rawSku = buildInternalSku({
+          baseCode,
+          familySegment: family.skuSegment ?? family.code,
+          packagingSegment: packaging.skuSegment ?? packaging.code,
+          readiness: c.coord.readiness,
+        });
+        const internalSku = takenSkus.has(rawSku)
+          ? disambiguate(rawSku, c.coord, takenSkus)
+          : rawSku;
+        takenSkus.add(internalSku);
+
+        const volumeMl = num(packaging.volumeMl);
+        await db.createMasterProduct({
+          seriesId: c.coord.seriesId,
+          colorId: c.coord.colorId,
+          familyId: c.coord.familyId,
+          packagingId: c.coord.packagingId,
+          readiness: c.coord.readiness,
+          baseCode,
+          internalSku,
+          formulaScale: String(volumeMl > 0 ? volumeMl / BASE_VOLUME_ML : 1),
+          // Varsayılan taslak: fiyatı/reçetesi tamamlanmadan pazaryerine
+          // gitmesin. Dosyada Durum yazılmışsa kullanıcının dediği geçerlidir,
+          // o yüzden yayılım bu satırdan sonra gelir.
+          status: "taslak",
+          ...toRow(c.data),
+        } as never);
+        created++;
+      }
+
+      // Stok ve durum ilan miktarını besler — kanal gönderimi tazelensin.
+      if (updated > 0 || created > 0) await runCapacityRecompute();
+      return { dryRun: false as const, created, updated, plan };
     }),
 
   packagingCosts: protectedProcedure.query(async () => {
@@ -2452,6 +2665,7 @@ export const katalogRouter = router({
         // Kart ekranı barkodu ve kapak görselini satırda ister; bunlar için
         // ürün başına ayrı sorgu atmak listeyi N+1'e çevirirdi.
         gtin: (m.gtin as string | null) ?? null,
+        name: (m.name as string | null) ?? null,
         imageUrl: coverByMaster.get(masterId)?.url ?? null,
         imageId: coverByMaster.get(masterId)?.id ?? null,
         imageCount: masterImageCount.get(masterId) ?? 0,

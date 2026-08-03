@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/select";
 import { formatTL } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
+import { derivedNameOf } from "@shared/productName";
 import { ExternalLink, ImagePlus, Loader2, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -140,6 +141,13 @@ export default function VariantCard({ row }: { row: TrackRow }) {
     onSuccess: () => {
       done();
       toast.success("Stok kaydedildi");
+    },
+    onError: fail,
+  });
+  const setName = trpc.katalog.setName.useMutation({
+    onSuccess: () => {
+      done();
+      toast.success("Ad kaydedildi");
     },
     onError: fail,
   });
@@ -284,9 +292,19 @@ export default function VariantCard({ row }: { row: TrackRow }) {
         <div className="min-w-0 flex-1 space-y-3">
           {/* Kimlik */}
           <div className="flex flex-wrap items-start justify-between gap-2">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="font-medium">
+            <div className="min-w-0 flex-1">
+              {/* Satış adı en üstte ve düzenlenebilir: ürünü "gerçek" yapan
+                  şey bu. Boşsa koordinattan türetilen ad yer tutucu olarak
+                  görünür — kullanıcı neyi değiştireceğini görsün. */}
+              <InlineField
+                value={row.name ?? ""}
+                placeholder={derivedNameOf(row) || row.internalSku}
+                saving={setName.isPending}
+                onSave={v => setName.mutate({ masterId: row.masterId, name: v })}
+                className="h-7 border-transparent px-1 font-medium hover:border-input focus:border-input"
+              />
+              <div className="mt-0.5 flex flex-wrap items-center gap-1.5 pl-1">
+                <span className="text-xs text-muted-foreground">
                   {row.family} · {row.packaging}
                 </span>
                 {row.readiness === "r2u" && (
@@ -299,8 +317,10 @@ export default function VariantCard({ row }: { row: TrackRow }) {
                     {row.status}
                   </Badge>
                 )}
+                <span className="font-mono text-[10px] text-muted-foreground">
+                  {row.internalSku}
+                </span>
               </div>
-              <div className="font-mono text-[10px] text-muted-foreground">{row.internalSku}</div>
             </div>
             <Button
               variant="ghost"

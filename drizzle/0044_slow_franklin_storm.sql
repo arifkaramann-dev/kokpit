@@ -1,0 +1,1 @@
+ALTER TABLE `masterProducts` ADD `name` varchar(255);

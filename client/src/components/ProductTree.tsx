@@ -50,6 +50,8 @@ export type TrackRow = {
   /** İlana yazılacak miktar — satış moduna göre hesaplanmış. */
   listingQty: number;
   gtin: string | null;
+  /** Elle girilmiş satış adı; boşsa koordinattan türetilir. */
+  name: string | null;
   /** Kapak görselinin adresi; yüklenmemişse null. */
   imageUrl: string | null;
   imageId: number | null;
