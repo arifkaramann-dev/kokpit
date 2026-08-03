@@ -29,16 +29,19 @@ import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatQty, formatTL, MATERIAL_CATEGORIES, num, UNITS } from "@/lib/format";
 import { useConfirm } from "@/components/ConfirmDialog";
 import MaterialImport from "@/components/MaterialImport";
+import { downloadPurchaseCsv, printPurchaseOrder } from "@/lib/purchaseOrder";
 import { trpc } from "@/lib/trpc";
 import { normalizeUnit } from "@shared/units";
 import {
   AlertTriangle,
   ArrowDownToLine,
   ArrowUpFromLine,
+  Download,
   FileSpreadsheet,
   History,
   Pencil,
   Plus,
+  Printer,
   Search,
   Trash2,
 } from "lucide-react";
@@ -333,6 +336,17 @@ export default function Stock() {
     }
   }
 
+  /**
+   * Öneriyi tedarikçi başına bölünmüş, yazdırılabilir satın alma talebi olarak
+   * açar. Şirket bilgisi antet için gerekli; döküm anında çekilir çünkü sayfa
+   * her açılışta ayarları sorgulamasın.
+   */
+  async function printPurchase() {
+    if (!reorder?.suggestions.length) return;
+    const company = await utils.client.settings.get.query();
+    printPurchaseOrder(reorder.suggestions, company as Record<string, string>);
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -407,11 +421,17 @@ export default function Stock() {
               </tbody>
             </table>
           </div>
-          <div className="border-t px-4 py-2.5">
-            <Button size="sm" variant="outline" onClick={() => setLocation("/faturalar")}>
-              Alış Faturası Oluştur
+          <div className="border-t px-4 py-2.5 flex items-center gap-2 flex-wrap">
+            <Button size="sm" variant="outline" onClick={printPurchase}>
+              <Printer className="h-4 w-4 mr-1" /> Döküm Al / Yazdır
             </Button>
-            <span className="ml-2 text-xs text-muted-foreground">
+            <Button size="sm" variant="outline" onClick={() => downloadPurchaseCsv(reorder.suggestions)}>
+              <Download className="h-4 w-4 mr-1" /> Excel'e Aktar
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setLocation("/faturalar")}>
+              Alış Faturası Gir
+            </Button>
+            <span className="ml-auto text-xs text-muted-foreground">
               Öneri = stoğu kritik eşiğin 2 katına tamamlar.
             </span>
           </div>
