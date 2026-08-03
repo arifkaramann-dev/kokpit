@@ -70,7 +70,12 @@ import {
   rollupRevenueBySeries,
   windowStart,
 } from "../masterRevenue";
-import { buildFormulation, planProduction, resolveOrderLines } from "../productionPlan";
+import {
+  buildFormulation,
+  groupUnmatchedLines,
+  planProduction,
+  resolveOrderLines,
+} from "../productionPlan";
 import { planPublications, summarizeSkips } from "../publishPlan";
 import { GENERIC_USE_CASE_CODE, seedCatalogDimensions } from "../seedCatalog";
 import { fetchHepsiburadaCategories } from "../hepsiburada";
@@ -4063,9 +4068,22 @@ export const katalogRouter = router({
         demand: demand.sort((a, b) => b.qty - a.qty),
         formulation,
         plan,
-        unmatched: resolved
-          .filter(r => r.masterId == null)
-          .map(r => ({ id: r.line.id, orderId: r.line.orderId, productName: r.line.productName, quantity: r.line.quantity })),
+        /*
+         * Eşleşmeyen satırlar tek tek değil, GRUPLU döner.
+         *
+         * Aynı üründen iki sipariş gelince liste aynı metni alt alta iki kez
+         * basıyordu ve satırda yalnız başlık vardı — "Sprey Astar 400 Ml"
+         * hangi renk olduğunu söylemiyor. Stok kodu siparişle birlikte zaten
+         * geliyor ve saklanıyor, sadece buraya taşınmıyordu.
+         */
+        unmatched: groupUnmatchedLines(
+          resolved.filter(r => r.masterId == null).map(r => r.line),
+          (colors as { code: string; name: string; hex: string | null }[]).map(c => ({
+            code: c.code,
+            name: c.name,
+            hex: c.hex,
+          })),
+        ),
       };
     }),
 

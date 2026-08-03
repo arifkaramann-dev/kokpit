@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { CapacityFormula, CapacityMaterial } from "./capacity";
-import { planProduction, resolveOrderLines, type OrderLine } from "./productionPlan";
+import {
+  groupUnmatchedLines,
+  planProduction,
+  resolveOrderLines,
+  type OrderLine,
+} from "./productionPlan";
 
 /* ---------------------------- Satır çözümleme ----------------------------- */
 
@@ -231,5 +236,135 @@ describe("planProduction — malzeme ihtiyacı patlatma", () => {
       { masterId: 1, qty: 30 },
     ]);
     expect(plan.needs.find(n => n.materialId === HARC)?.needed).toBe(4000);
+  });
+});
+
+/* -------------------- Eşleşmeyen satırların gruplanması -------------------- */
+
+describe("groupUnmatchedLines — eşleşmeyen satırlar okunur hale gelsin", () => {
+  const colors = [
+    { code: "RAL9016", name: "Trafik Beyazı", hex: "#F1F1F1" },
+    { code: "AOC-12", name: "Beyaz İnci", hex: "#EDEAE0" },
+    { code: "AOC-13", name: "Beyaz", hex: "#FFFFFF" },
+    { code: "AOC-40", name: "Gri", hex: "#808080" },
+  ];
+
+  it("aynı stok kodundan gelen satırları tek satırda toplar", () => {
+    const groups = groupUnmatchedLines([
+      line({ id: 1, orderId: 100, productName: "Sprey Astar 400 Ml", channelRef: "AOC-ASTAR-400" }),
+      line({ id: 2, orderId: 101, productName: "Sprey Astar 400 Ml", channelRef: "AOC-ASTAR-400" }),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].quantity).toBe(2);
+    expect(groups[0].lineCount).toBe(2);
+    expect(groups[0].orderIds).toEqual([100, 101]);
+    expect(groups[0].channelRef).toBe("AOC-ASTAR-400");
+  });
+
+  it("pazaryerinde başlık düzenlenmişse bile aynı kod aynı üründür", () => {
+    const groups = groupUnmatchedLines([
+      line({ id: 1, productName: "Sprey Astar 400 Ml", channelRef: "AOC-1" }),
+      line({ id: 2, productName: "ART OF COLOUR Sprey Astar 400 Ml YENİ", channelRef: "AOC-1" }),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].quantity).toBe(2);
+  });
+
+  it("farklı kodlu satırlar başlıkları aynı olsa da birleşmez — farklı renk olabilir", () => {
+    const groups = groupUnmatchedLines([
+      line({ id: 1, productName: "Sprey Boya 400 Ml", channelRef: "AOC-13" }),
+      line({ id: 2, productName: "Sprey Boya 400 Ml", channelRef: "AOC-40" }),
+    ]);
+    expect(groups).toHaveLength(2);
+  });
+
+  it("kod yoksa normalize başlıktan toplar (büyük harf/noktalama farkı yutulur)", () => {
+    const groups = groupUnmatchedLines([
+      line({ id: 1, productName: "Sprey Astar 400 Ml", channelRef: null, quantity: 3 }),
+      line({ id: 2, productName: "sprey astar, 400 ml", channelRef: null, quantity: 2 }),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].quantity).toBe(5);
+  });
+
+  it("rengi başlıktaki koddan okur — 'Ral 9016' ile 'RAL9016' aynı", () => {
+    const groups = groupUnmatchedLines(
+      [line({ productName: "Art Of Colour Sprey Boya Ral 9016 400 Ml" })],
+      colors,
+    );
+    expect(groups[0].colorName).toBe("Trafik Beyazı");
+    expect(groups[0].colorHex).toBe("#F1F1F1");
+    expect(groups[0].colorVia).toBe("kod");
+  });
+
+  it("kod başlıkta yoksa stok kodundan okunur", () => {
+    const groups = groupUnmatchedLines(
+      [line({ productName: "Sprey Boya 400 Ml", channelRef: "TREN-AOC-40-400" })],
+      colors,
+    );
+    expect(groups[0].colorName).toBe("Gri");
+    expect(groups[0].colorVia).toBe("kod");
+  });
+
+  it("kod yoksa başlıktaki renk adına düşer — uzun ad kısa ada tercih edilir", () => {
+    const groups = groupUnmatchedLines(
+      [line({ productName: "Sprey Boya Beyaz İnci 400 Ml" })],
+      colors,
+    );
+    expect(groups[0].colorName).toBe("Beyaz İnci");
+    expect(groups[0].colorVia).toBe("baslik");
+  });
+
+  it("renk adı kelime sınırıyla aranır — 'Grinbaz' gri sayılmaz", () => {
+    const groups = groupUnmatchedLines([line({ productName: "Grinbaz Dolgu 400 Ml" })], colors);
+    expect(groups[0].colorName).toBeNull();
+  });
+
+  it("renk çıkarılamıyorsa uydurmaz", () => {
+    const groups = groupUnmatchedLines(
+      [line({ productName: "Art Of Colour Sprey Astar Dolgu Astarı 400 Ml" })],
+      colors,
+    );
+    expect(groups[0].colorName).toBeNull();
+    expect(groups[0].colorVia).toBeNull();
+  });
+
+  it("çok adetli grup üstte sıralanır", () => {
+    const groups = groupUnmatchedLines([
+      line({ id: 1, productName: "Az satan", channelRef: "A", quantity: 1 }),
+      line({ id: 2, productName: "Çok satan", channelRef: "B", quantity: 7 }),
+    ]);
+    expect(groups[0].productName).toBe("Çok satan");
+  });
+});
+
+describe("groupUnmatchedLines — kodsuz satırın kodlu grupla birleşmesi", () => {
+  it("aynı başlıklı kodsuz satır, tek kodlu gruba katılır (elden giriş + pazaryeri)", () => {
+    const groups = groupUnmatchedLines([
+      line({ id: 1, orderId: 100, productName: "Sprey Astar 400 Ml", channelRef: "AOC-1" }),
+      line({ id: 2, orderId: 101, productName: "Sprey Astar 400 Ml", channelRef: null }),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].quantity).toBe(2);
+    expect(groups[0].lineCount).toBe(2);
+    expect(groups[0].channelRef).toBe("AOC-1");
+    expect(groups[0].orderIds).toEqual([100, 101]);
+  });
+
+  it("aynı başlığı iki farklı kod taşıyorsa kodsuz satır hiçbirine yedirilmez", () => {
+    const groups = groupUnmatchedLines([
+      line({ id: 1, productName: "Sprey Boya 400 Ml", channelRef: "AOC-13" }),
+      line({ id: 2, productName: "Sprey Boya 400 Ml", channelRef: "AOC-40" }),
+      line({ id: 3, productName: "Sprey Boya 400 Ml", channelRef: null }),
+    ]);
+    expect(groups).toHaveLength(3);
+  });
+
+  it("başlığı tutmayan kodsuz satır kendi başına kalır", () => {
+    const groups = groupUnmatchedLines([
+      line({ id: 1, productName: "Sprey Astar 400 Ml", channelRef: "AOC-1" }),
+      line({ id: 2, productName: "Vernik 250 Ml", channelRef: null }),
+    ]);
+    expect(groups).toHaveLength(2);
   });
 });

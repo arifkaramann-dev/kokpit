@@ -130,6 +130,160 @@ export function resolveOrderLines(
   });
 }
 
+/* ------------------- Eşleşmeyen satırların okunur hale gelmesi ------------- */
+
+export type ColorHint = {
+  /** Renk kodu — "RAL9016", "AOC-12" gibi. */
+  code: string;
+  name: string;
+  hex: string | null;
+};
+
+export type UnmatchedGroup = {
+  /** Gruplama anahtarı — kanal kodu varsa o, yoksa normalize başlık. */
+  key: string;
+  productName: string;
+  /** Pazaryeri stok kodu / barkod — hangi varyant olduğunu söyleyen tek alan. */
+  channelRef: string | null;
+  /** Gruptaki satırların toplam adedi. */
+  quantity: number;
+  /** Kaç ayrı sipariş satırı toplandı — "2 satır" diye göstermek için. */
+  lineCount: number;
+  lineIds: number[];
+  orderIds: number[];
+  colorName: string | null;
+  colorHex: string | null;
+  /** Renk nereden okundu — güven seviyesi görünür olmalı. */
+  colorVia: "kod" | "baslik" | null;
+};
+
+/** Kod karşılaştırması: "RAL 9016" ile "ral9016" aynı sayılmalı. */
+function squash(s: string): string {
+  return normalizeTitle(s).replace(/\s+/g, "");
+}
+
+/**
+ * Başlıktan/stok kodundan rengi okumaya çalışır.
+ *
+ * Eşleşmeyen satırda master yok, dolayısıyla renk ilişkisi de yok — ama renk
+ * bilgisi çoğu zaman başlığın içinde ("... Ral 9016 Beyaz 400 Ml") ya da stok
+ * kodunda duruyor. Kod eşleşmesi başlık eşleşmesinden güvenlidir: başlıkta
+ * "beyaz" kelimesi ürün adının parçası da olabilir.
+ *
+ * Uzun renk adı önce denenir — "Beyaz İnci" varken "Beyaz"a düşmemeli.
+ */
+function guessColor(
+  productName: string,
+  channelRef: string | null,
+  colors: ColorHint[],
+): { name: string; hex: string | null; via: "kod" | "baslik" } | null {
+  if (colors.length === 0) return null;
+
+  const haystack = squash(productName) + " " + squash(channelRef ?? "");
+  const byCodeLength = colors
+    .filter(c => squash(c.code).length >= 3)
+    .sort((a, b) => squash(b.code).length - squash(a.code).length);
+  for (const c of byCodeLength) {
+    if (haystack.includes(squash(c.code))) {
+      return { name: c.name, hex: c.hex, via: "kod" };
+    }
+  }
+
+  // Başlıkta ad araması kelime sınırıyla yapılır: "gri" kelimesi
+  // "grinbaz" içinde geçtiği için ham `includes` yanlış renk verir.
+  const title = ` ${normalizeTitle(productName)} `;
+  const byNameLength = colors
+    .filter(c => normalizeTitle(c.name).length >= 3)
+    .sort((a, b) => normalizeTitle(b.name).length - normalizeTitle(a.name).length);
+  for (const c of byNameLength) {
+    if (title.includes(` ${normalizeTitle(c.name)} `)) {
+      return { name: c.name, hex: c.hex, via: "baslik" };
+    }
+  }
+  return null;
+}
+
+/**
+ * Katalogla eşleşmeyen sipariş satırlarını tek satırda toplar.
+ *
+ * İki sorun vardı: (1) aynı üründen iki sipariş gelince liste aynı metni alt
+ * alta iki kez basıyordu — okunmuyordu; (2) satırda yalnız başlık vardı, oysa
+ * "Sprey Astar 400 Ml" hangi renk olduğunu söylemiyor. Stok kodu siparişle
+ * birlikte zaten geliyor ve saklanıyor (`orderItems.channelRef`), sadece bu
+ * listeye taşınmıyordu.
+ *
+ * Gruplama anahtarı önce KANAL KODU'dur: pazaryerinde başlık düzenlense bile
+ * aynı stok kodu aynı varyanttır. Kod yoksa normalize başlığa düşülür. Farklı
+ * kodlu satırlar başlıkları aynı olsa da BİRLEŞTİRİLMEZ — farklı kod çoğunlukla
+ * farklı renk demektir ve yanlış toplama, ayrı yazmaktan kötüdür.
+ */
+export function groupUnmatchedLines(
+  lines: OrderLine[],
+  colors: ColorHint[] = [],
+): UnmatchedGroup[] {
+  const groups = new Map<string, UnmatchedGroup>();
+
+  for (const line of lines) {
+    const ref = line.channelRef?.trim() || null;
+    const key = ref ? `ref:${ref.toLowerCase()}` : `ad:${normalizeTitle(line.productName)}`;
+
+    const existing = groups.get(key);
+    if (existing) {
+      existing.quantity += line.quantity;
+      existing.lineCount += 1;
+      existing.lineIds.push(line.id);
+      if (!existing.orderIds.includes(line.orderId)) existing.orderIds.push(line.orderId);
+      continue;
+    }
+
+    const color = guessColor(line.productName, ref, colors);
+    groups.set(key, {
+      key,
+      productName: line.productName,
+      channelRef: ref,
+      quantity: line.quantity,
+      lineCount: 1,
+      lineIds: [line.id],
+      orderIds: [line.orderId],
+      colorName: color?.name ?? null,
+      colorHex: color?.hex ?? null,
+      colorVia: color?.via ?? null,
+    });
+  }
+
+  /*
+   * Kodsuz satırı kodlu gruba yedir.
+   *
+   * Aynı ürünün biri pazaryerinden (kodlu), biri elden girilmiş (kodsuz) iki
+   * satırı yukarıdaki anahtarla ayrı düşer ve liste yine aynı metni iki kez
+   * basar. Kodsuz satırın çelişecek bir kodu YOK, o yüzden başlığı birebir
+   * tutan tek bir kodlu grup varsa ona katılır. Birden fazla kodlu grup aynı
+   * başlığı taşıyorsa hangisine ait olduğu bilinemez — ayrı bırakılır.
+   */
+  const refGroupsByTitle = new Map<string, UnmatchedGroup[]>();
+  for (const g of Array.from(groups.values())) {
+    if (!g.channelRef) continue;
+    const t = normalizeTitle(g.productName);
+    refGroupsByTitle.set(t, [...(refGroupsByTitle.get(t) ?? []), g]);
+  }
+  for (const [key, g] of Array.from(groups.entries())) {
+    if (g.channelRef) continue;
+    const candidates = refGroupsByTitle.get(normalizeTitle(g.productName)) ?? [];
+    if (candidates.length !== 1) continue;
+    const target = candidates[0];
+    target.quantity += g.quantity;
+    target.lineCount += g.lineCount;
+    target.lineIds.push(...g.lineIds);
+    for (const id of g.orderIds) if (!target.orderIds.includes(id)) target.orderIds.push(id);
+    groups.delete(key);
+  }
+
+  // Çok adetli olan üstte: elle açılacak ilk ürün o.
+  return Array.from(groups.values()).sort(
+    (a, b) => b.quantity - a.quantity || a.productName.localeCompare(b.productName, "tr"),
+  );
+}
+
 /* ------------------------- Malzeme ihtiyacı patlatma ----------------------- */
 
 export type PlanMaster = {

@@ -162,21 +162,68 @@ export default function Briefing() {
             <Card className="space-y-2 border-amber-300 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/40">
               <div className="flex items-center gap-2">
                 <HelpCircle className="h-4 w-4 text-amber-600" />
+                {/* Sayaç satır üzerinden verilir: gruplama gösterimi
+                    sadeleştirir, "kaç satır bekliyor" bilgisini eksiltmemeli. */}
                 <p className="text-sm font-medium">
-                  {data?.unmatched.length} sipariş satırı katalogla eşleşmedi
+                  {data?.unmatched.reduce((s, u) => s + u.lineCount, 0)} sipariş satırı katalogla
+                  eşleşmedi
+                  {(data?.unmatched.length ?? 0) !== (data?.unmatched.reduce((s, u) => s + u.lineCount, 0) ?? 0) &&
+                    ` · ${data?.unmatched.length} farklı ürün`}
                 </p>
               </div>
               <p className="text-xs text-muted-foreground">
                 Bu ürünler için master kaydı yok ya da ilan başlığı katalogdakinden çok farklı.
-                Üretim listesine dahil edilmediler.
+                Üretim listesine dahil edilmediler — renk katalogdan gelemediği için stok kodundan
+                ve başlıktan okundu.
               </p>
-              <div className="space-y-0.5">
+              <div className="space-y-1">
                 {data?.unmatched.map(u => (
-                  <div key={u.id} className="text-xs">
-                    <span className="tabular-nums font-medium">{u.quantity}×</span> {u.productName}
+                  <div
+                    key={u.key}
+                    className="flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-background/60 px-2 py-1.5 text-xs dark:border-amber-900"
+                  >
+                    <span className="tabular-nums text-sm font-semibold">{u.quantity}×</span>
+                    <span
+                      className="inline-block h-4 w-4 shrink-0 rounded border shadow-inner"
+                      style={{ backgroundColor: u.colorHex ?? "transparent" }}
+                      title={u.colorName ?? "renk okunamadı"}
+                    />
+                    {/* Rengin nereden okunduğu görünür kalmalı: başlıktan tahmin
+                        edilen renk, koddan okunan kadar güvenilir değil. */}
+                    {u.colorName ? (
+                      <span className="font-medium">
+                        {u.colorName}
+                        {u.colorVia === "baslik" && (
+                          <span className="text-muted-foreground"> (başlıktan)</span>
+                        )}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">renk okunamadı</span>
+                    )}
+                    <span className="min-w-0 flex-1 truncate">{u.productName}</span>
+                    {u.channelRef ? (
+                      <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+                        {u.channelRef}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-muted-foreground">stok kodu yok</span>
+                    )}
+                    {u.lineCount > 1 && (
+                      <Badge variant="outline" className="text-[10px]">
+                        {u.orderIds.length} siparişte {u.lineCount} satır
+                      </Badge>
+                    )}
                   </div>
                 ))}
               </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-1"
+                onClick={() => setLocation("/katalog")}
+              >
+                Ürüne bağla / ürün aç
+              </Button>
             </Card>
           )}
 
