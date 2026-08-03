@@ -187,8 +187,10 @@ export default function Catalog() {
         <Stat icon={<Store className="h-4 w-4" />} label="İlan" value={String(listings?.length ?? 0)} />
         <Stat
           icon={<AlertTriangle className="h-4 w-4" />}
-          label="Üretilemeyen"
-          value={String((masters ?? []).filter(m => m.buildableQty <= 0).length)}
+          label="Stoksuz"
+          value={String(
+            (masters ?? []).filter(m => m.buildableQty <= 0 && Number(m.stockQty ?? 0) <= 0).length,
+          )}
         />
       </div>
 

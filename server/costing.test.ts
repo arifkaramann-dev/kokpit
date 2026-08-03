@@ -163,7 +163,14 @@ const listing = (p: Partial<HealthListing> = {}): HealthListing => ({
 });
 
 const fullMaster = {
-  master: { id: 1, formulaId: 101, buildableQty: 40, gtin: null, status: "aktif" as const },
+  master: {
+    id: 1,
+    formulaId: 101,
+    buildableQty: 40,
+    stockQty: 0,
+    gtin: "8691960000015",
+    status: "aktif" as const,
+  },
   listings: [listing()],
   channelListings: [{ listingId: 1, masterId: 1, channelId: 1, status: "canli" as const }],
   allUseCaseIds: [1, 2, 3],
@@ -181,13 +188,40 @@ describe("masterHealth — eksikler ve açılmamış pazar", () => {
   it("eksikleri kullanıcı diliyle sayar", () => {
     const h = masterHealth({
       ...fullMaster,
-      master: { ...fullMaster.master, formulaId: null, buildableQty: 0 },
+      master: { ...fullMaster.master, formulaId: null, buildableQty: 0, stockQty: 0 },
       costKnown: false,
     });
     expect(h.missing).toContain("Reçete bağlı değil");
-    expect(h.missing).toContain("Üretilemiyor — hammadde/kapasite yok");
+    expect(h.missing).toContain("Stok yok");
     expect(h.missing).toContain("Maliyet bilinmiyor");
     expect(h.score).toBeLessThan(100);
+  });
+
+  /*
+   * Hammadde defteri tamamlanmadan katalog kullanılabilir olmalı: raftaki
+   * mamul elle girilince ürün satılabilirdir, kapasite hesabı 0 olsa bile.
+   * Kontrol yalnız buildableQty'ye bakarken elle stoklanan her ürün kırmızı
+   * kalıyordu.
+   */
+  it("elle girilen raf stoğu kapasite yerine geçer", () => {
+    const h = masterHealth({
+      ...fullMaster,
+      master: { ...fullMaster.master, buildableQty: 0, stockQty: 12 },
+    });
+    expect(h.missing).not.toContain("Stok yok");
+  });
+
+  it("ne stok ne kapasite varsa stok eksiği yazar", () => {
+    const h = masterHealth({
+      ...fullMaster,
+      master: { ...fullMaster.master, buildableQty: 0, stockQty: 0 },
+    });
+    expect(h.missing).toContain("Stok yok");
+  });
+
+  it("barkodsuz ürünü yakalar", () => {
+    const h = masterHealth({ ...fullMaster, master: { ...fullMaster.master, gtin: "  " } });
+    expect(h.missing).toContain("Barkod yok");
   });
 
   it("açılmamış kullanım alanlarını fırsat olarak listeler", () => {
@@ -225,17 +259,29 @@ describe("masterHealth — eksikler ve açılmamış pazar", () => {
 describe("rollupBySeries — seri bazlı takip", () => {
   it("en zayıf seriyi başa koyar", () => {
     const h = (score: number, listingCount: number) => ({
-      masterId: 1, score, missing: [], openUseCaseIds: [], openChannelIds: [],
+      masterId: 1, score, missing: [], checkCount: 9, openUseCaseIds: [], openChannelIds: [],
       listingCount, liveCount: 0,
     });
     const rows = rollupBySeries([
-      { seriesId: 10, health: h(100, 2), buildable: 5 },
-      { seriesId: 20, health: h(40, 0), buildable: 0 },
-      { seriesId: 20, health: h(60, 1), buildable: 3 },
+      { seriesId: 10, health: h(100, 2), buildable: 5, stockQty: 0 },
+      { seriesId: 20, health: h(40, 0), buildable: 0, stockQty: 0 },
+      { seriesId: 20, health: h(60, 1), buildable: 3, stockQty: 0 },
     ]);
     expect(rows[0].seriesId).toBe(20);
     expect(rows[0].avgScore).toBe(50);
     expect(rows[0].withoutListing).toBe(1);
+    expect(rows[0].notBuildable).toBe(1);
+  });
+
+  it("raf stoğu olan ürün satılamaz sayılmaz", () => {
+    const h = (score: number) => ({
+      masterId: 1, score, missing: [], checkCount: 9, openUseCaseIds: [], openChannelIds: [],
+      listingCount: 1, liveCount: 0,
+    });
+    const rows = rollupBySeries([
+      { seriesId: 30, health: h(50), buildable: 0, stockQty: 8 },
+      { seriesId: 30, health: h(50), buildable: 0, stockQty: 0 },
+    ]);
     expect(rows[0].notBuildable).toBe(1);
   });
 });

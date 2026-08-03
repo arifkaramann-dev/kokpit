@@ -55,6 +55,7 @@ import {
 import {
   guessSource,
   imageUrlOf,
+  masterImagePath,
   resolveImages,
   resolveLogistics,
   type ChannelAttributeDef,
@@ -1737,6 +1738,66 @@ export const katalogRouter = router({
       return { updated: input.masterIds.length, salesMode: input.salesMode };
     }),
 
+  /**
+   * Raftaki mamul adedini elle yazar.
+   *
+   * Stok bugüne kadar yalnız `setSalesMode` üzerinden ve yalnız satış modu
+   * `stoktan` iken girilebiliyordu; yani sayıyı düzeltmek için önce ürünün
+   * satış kuralını değiştirmek gerekiyordu. İkisi ayrı karar: kaç tane var
+   * sorusunun cevabı, ilan miktarının hangi kuraldan çıkacağından bağımsız.
+   * Hammadde defteri tamamlanana kadar katalogdaki tek güvenilir adet budur.
+   */
+  setStock: protectedProcedure
+    .input(
+      z.object({
+        masterId: z.number(),
+        stockQty: z.number().int().min(0).max(1000000),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      await db.updateMasterProduct(input.masterId, { stockQty: input.stockQty } as never);
+      // İlan miktarı stoktan türeyebilir — kanal gönderimi tazelensin.
+      await runCapacityRecompute();
+      return { ok: true };
+    }),
+
+  /**
+   * Barkodu (GTIN) yazar ya da temizler.
+   *
+   * Alan şemada ve sağlık kontrolünde vardı ama hiçbir ekrandan
+   * doldurulamıyordu — barkodsuz ürün pazaryerine açılamaz.
+   */
+  setGtin: protectedProcedure
+    .input(
+      z.object({
+        masterId: z.number(),
+        gtin: z.string().trim().max(20),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const gtin = input.gtin.trim();
+      if (gtin && !/^\d{8,14}$/.test(gtin)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Barkod 8-14 haneli rakam olmalı",
+        });
+      }
+      // Aynı barkod iki üründe olursa pazaryeri kartları birbirine karışır.
+      if (gtin) {
+        const clash = (await db.listMasterProducts()).find(
+          m => m.id !== input.masterId && (m.gtin ?? "").trim() === gtin,
+        );
+        if (clash) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Bu barkod ${clash.internalSku} ürününde kullanılıyor`,
+          });
+        }
+      }
+      await db.updateMasterProduct(input.masterId, { gtin: gtin || null } as never);
+      return { ok: true };
+    }),
+
   packagingCosts: protectedProcedure.query(async () => {
     const [packagings, packInputs, materials] = await Promise.all([
       db.listPackagings(),
@@ -2270,7 +2331,7 @@ export const katalogRouter = router({
         db.listProductFamilies(),
         db.listListingImages(),
       ]);
-    const masterImages = await db.listMasterImages();
+    const masterImages = await db.listMasterImageRefs();
     const data = await loadCapacityInputs();
 
     const costs = computeMasterCosts({
@@ -2288,8 +2349,23 @@ export const katalogRouter = router({
     // Master görselleri ilanlara miras kalır; "görsel yok" uyarısı bunu
     // saymazsa görseli master'da olan ürün eksik görünürdü.
     const masterImageCount = new Map<number, number>();
-    for (const img of masterImages as { masterId: number }[]) {
+    // Kartta gösterilecek kapak görseli: sortOrder'ı en küçük olan.
+    const coverByMaster = new Map<number, { id: number; url: string; sortOrder: number }>();
+    for (const img of masterImages as {
+      id: number;
+      masterId: number;
+      url: string | null;
+      sortOrder: number;
+    }[]) {
       masterImageCount.set(img.masterId, (masterImageCount.get(img.masterId) ?? 0) + 1);
+      const current = coverByMaster.get(img.masterId);
+      if (!current || img.sortOrder < current.sortOrder) {
+        coverByMaster.set(img.masterId, {
+          id: img.id,
+          url: img.url?.trim() || masterImagePath(img.id),
+          sortOrder: img.sortOrder,
+        });
+      }
     }
 
     const healthListings = (listings as Record<string, unknown>[]).map(l => ({
@@ -2334,6 +2410,7 @@ export const katalogRouter = router({
           id: masterId,
           formulaId: (m.formulaId as number | null) ?? null,
           buildableQty: Number(m.buildableQty ?? 0),
+          stockQty: Number(m.stockQty ?? 0),
           gtin: (m.gtin as string | null) ?? null,
           status: m.status as "taslak" | "aktif" | "arsiv",
         },
@@ -2372,6 +2449,12 @@ export const katalogRouter = router({
         salesMode: (m.salesMode as SalesMode | null) ?? "siparis_uzerine",
         leadTimeDays: Number(m.leadTimeDays ?? 0),
         stockQty: Number(m.stockQty ?? 0),
+        // Kart ekranı barkodu ve kapak görselini satırda ister; bunlar için
+        // ürün başına ayrı sorgu atmak listeyi N+1'e çevirirdi.
+        gtin: (m.gtin as string | null) ?? null,
+        imageUrl: coverByMaster.get(masterId)?.url ?? null,
+        imageId: coverByMaster.get(masterId)?.id ?? null,
+        imageCount: masterImageCount.get(masterId) ?? 0,
         listingQty: listingQtyFor({
           salesMode: m.salesMode as SalesMode | null,
           buildable: Number(m.buildableQty ?? 0),
@@ -2385,7 +2468,12 @@ export const katalogRouter = router({
     return {
       rows: rows.sort((a, b) => a.health.score - b.health.score),
       series: rollupBySeries(
-        rows.map(r => ({ seriesId: r.seriesId, health: r.health, buildable: r.buildable })),
+        rows.map(r => ({
+          seriesId: r.seriesId,
+          health: r.health,
+          buildable: r.buildable,
+          stockQty: r.stockQty,
+        })),
       ).map(s => ({ ...s, seriesName: seriesById.get(s.seriesId)?.name ?? `#${s.seriesId}` })),
       useCases,
       channels,
