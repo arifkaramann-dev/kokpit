@@ -331,7 +331,7 @@ export const chequesRouter = router({
       return db.createCheque({
         ...(toDecimalFields(rest, ["amount"]) as never as object),
         dueDate: dueDate ? new Date(dueDate) : null,
-      } as never);
+      });
     }),
   setStatus: protectedProcedure
     .input(z.object({ id: z.number(), status: z.enum(["portfoyde", "tahsil", "odendi", "karsiliksiz", "iade"]) }))
@@ -399,7 +399,7 @@ export const expensesRouter = router({
     return db.createExpense({
       ...(toDecimalFields(rest, ["amount"]) as never as object),
       expenseDate: expenseDate ? new Date(expenseDate) : new Date(),
-    } as never);
+    });
   }),
   update: protectedProcedure
     .input(z.object({ id: z.number(), data: expenseInput.partial() }))
@@ -408,7 +408,7 @@ export const expensesRouter = router({
       return db.updateExpense(input.id, {
         ...(toDecimalFields(rest, ["amount"]) as never as object),
         ...(expenseDate ? { expenseDate: new Date(expenseDate) } : {}),
-      } as never);
+      });
     }),
   delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(({ input }) => db.deleteExpense(input.id)),
 });
@@ -525,7 +525,7 @@ export const kargoRouter = router({
           cargoTrackingNumber: res.trackingNumber,
           cargoProviderName: res.provider,
           cargoTrackingLink: res.trackingUrl,
-        } as never);
+        });
       }
       return res;
     }),

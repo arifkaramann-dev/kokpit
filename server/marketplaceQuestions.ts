@@ -226,7 +226,7 @@ async function runSync(): Promise<QuestionSyncResult> {
           questionText: q.questionText,
           productId: matched?.id ?? null,
           productName: matched?.name ?? q.productName ?? null,
-        } as never),
+        }),
       );
       result.imported++;
 
@@ -252,7 +252,7 @@ async function runSync(): Promise<QuestionSyncResult> {
           answerText: draft.answer,
           status: "answered",
           answeredAt: new Date(),
-        } as never);
+        });
         result.autoAnswered++;
       } catch (e) {
         // Gönderim başarısız: taslak kalır, kuyrukta "yeni" olarak durur.

@@ -119,7 +119,7 @@ export async function runFormulaBinding(): Promise<{ bound: number; unmatched: n
     await db.updateMasterProduct(b.masterId, {
       formulaId: b.formulaId,
       formulaScale: String(b.formulaScale),
-    } as never);
+    });
   }
   return { bound: plan.bindings.length, unmatched: plan.unmatched.length };
 }

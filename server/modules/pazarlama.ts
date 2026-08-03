@@ -361,7 +361,7 @@ export const devRouter = router({
         shortDescription: seriesRec?.shortDescription ?? null,
         longDescription: seriesRec?.longDescription ?? null,
         applicationText: seriesRec?.applicationText ?? null,
-      } as never);
+      });
       for (const item of chosenItems) {
         await db.addFormulaItem(Number(productId), item.materialId, parseFloat(item.qty), item.note ?? undefined);
       }
@@ -442,7 +442,7 @@ export const devRouter = router({
         beforeAfterImageUrl: beforeAfter.url ?? null,
         packagingImageUrl: packaging.url ?? null,
         marketingImageUrl: marketing.url ?? null,
-      } as never);
+      });
 
       return {
         beforeAfterImageUrl: beforeAfter.url,
@@ -501,7 +501,7 @@ export const devRouter = router({
           shortDescription: seriesRec?.shortDescription ?? null,
           longDescription: seriesRec?.longDescription ?? null,
           applicationText: seriesRec?.applicationText ?? null,
-        } as never);
+        });
         parentId = Number(newParentId);
         // Ana ürünün reçetesi de seçili denemeden kopyalanır.
         for (const item of chosenItems) {
@@ -573,7 +573,7 @@ export const devRouter = router({
             await db.updateProduct(linkedId, variantData as never);
             // Kopan bağ yeniden kurulur ki sonraki aktarımlar da güncelleme olsun.
             if (g.productId !== linkedId) {
-              await db.updateProductGeneration(g.id, { productId: linkedId, status: "listed" } as never);
+              await db.updateProductGeneration(g.id, { productId: linkedId, status: "listed" });
             }
             updated++;
             continue;
@@ -584,12 +584,12 @@ export const devRouter = router({
         const variantId = await db.createProduct({
           ...variantData,
           sku: uniqueSku(g.variantCode || suggestSku(project.name, g.packaging)),
-        } as never);
+        });
         // Reçeteyi türev ürüne kopyala (maliyet analizi boş kalmasın).
         for (const item of chosenItems) {
           await db.addFormulaItem(Number(variantId), item.materialId, parseFloat(item.qty), item.note ?? undefined);
         }
-        await db.updateProductGeneration(g.id, { productId: Number(variantId), status: "listed" } as never);
+        await db.updateProductGeneration(g.id, { productId: Number(variantId), status: "listed" });
         created++;
       }
 
@@ -823,7 +823,7 @@ export const devRouter = router({
             projectId: input.projectId,
             variantCode,
             ...content,
-          } as never);
+          });
           created.push(genId);
         }
       }
@@ -862,7 +862,7 @@ export const devRouter = router({
 
       if (!ai) {
         // AI başarısız: mevcut (şablon) içeriği koru, hatayı işaretle.
-        await db.updateProductGeneration(input.generationId, { status: "error" } as never);
+        await db.updateProductGeneration(input.generationId, { status: "error" });
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
           message: "AI içerik üretilemedi. 'AI ile Yenile' ile tekrar deneyebilirsiniz.",
@@ -964,7 +964,7 @@ export const questionsRouter = router({
         answerText: input.answerText,
         status: "answered",
         answeredAt: new Date(),
-      } as never);
+      });
       return { ok: true };
     }),
   dismiss: protectedProcedure
@@ -1442,7 +1442,7 @@ export const storefrontRouter = router({
           customerPhone: input.phone.trim(),
           customerAddress: input.address.trim(),
           paymentStatus: "unpaid",
-        } as never),
+        }),
       );
       await db.replaceOrderItems(
         orderId,

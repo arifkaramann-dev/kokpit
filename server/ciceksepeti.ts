@@ -244,7 +244,7 @@ export async function syncCiceksepetiOrders() {
       const existing = await db.getOrderByOrderNo(mapped.orderNo);
       if (existing) {
         if (shouldSyncOrderStatus(existing.status, mapped.status)) {
-          await db.updateOrder(existing.id, { status: mapped.status } as never);
+          await db.updateOrder(existing.id, { status: mapped.status });
           updated++;
         } else {
           skipped++;

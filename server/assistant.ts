@@ -150,7 +150,7 @@ export async function actionCreateOrder(input: {
     totalAmount: String(total),
     itemsSummary: input.items.length ? summarizeItems(input.items) : (input.noteText ?? null),
     notes: input.noteText ?? null,
-  } as never);
+  });
   if (input.items.length) await db.replaceOrderItems(Number(id), toItemRows(input.items));
   return {
     message: `${input.kind === "sale" ? "Elden satış" : "Sipariş"} eklendi: ${formatCmdItems(input.items)} — ${total} TL`,
@@ -177,7 +177,7 @@ export async function actionStockMove(input: {
         stockQty: String(input.quantity),
         criticalQty: "0",
         unitCost: "0",
-      } as never);
+      });
       return { message: `Yeni hammadde açıldı: ${input.materialName} (${input.quantity} ${input.unit ?? "adet"})` };
     }
     throw new Error(`"${input.materialName}" adında hammadde bulamadım.`);
@@ -266,7 +266,7 @@ export async function actionAddExpense(input: {
     category,
     description: input.description.slice(0, 255),
     amount: String(input.amount),
-  } as never);
+  });
   return { message: `Gider eklendi: ${category} — ${input.amount.toFixed(2)} TL ✅ (Giderler sayfasında)` };
 }
 
@@ -340,7 +340,7 @@ export async function actionAddCollection(input: {
     orderNo: target?.orderNo ?? null,
     description: "Asistan tahsilatı",
     note: input.note,
-  } as never);
+  });
   const num = (v: unknown) => parseFloat(String(v ?? 0)) || 0;
   let message = `Tahsilat kaydedildi: ${canonical} — ${input.amount.toFixed(2)} TL ✅`;
   if (target) {
@@ -429,7 +429,7 @@ export async function actionCreateCustomer(input: {
     return { message: summarize("güncellendi") };
   }
 
-  await db.createCustomer({ name, ...fields } as never);
+  await db.createCustomer({ name, ...fields });
   return { message: summarize("açıldı") };
 }
 

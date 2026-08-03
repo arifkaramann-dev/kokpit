@@ -197,7 +197,7 @@ async function rebindAllFormulas(): Promise<number> {
     await db.updateMasterProduct(b.masterId, {
       formulaId: b.formulaId,
       formulaScale: String(b.formulaScale),
-    } as never);
+    });
   }
   return plan.bindings.length;
 }
@@ -501,7 +501,7 @@ export const katalogRouter = router({
 
       for (const v of plan.deletable) await db.deleteMasterProduct(v.masterId);
       for (const v of plan.archivable) {
-        await db.updateMasterProduct(v.masterId, { status: "arsiv" } as never);
+        await db.updateMasterProduct(v.masterId, { status: "arsiv" });
       }
       return {
         dryRun: false,
@@ -658,7 +658,7 @@ export const katalogRouter = router({
 
       // 5) Uymayan master'ları ARŞİVLE (silme değil: geri alınabilir olmalı).
       for (const m of plan.mastersToArchive) {
-        await db.updateMasterProduct(m.id, { status: "arsiv" } as never);
+        await db.updateMasterProduct(m.id, { status: "arsiv" });
       }
 
       await runCapacityRecompute();
@@ -864,7 +864,7 @@ export const katalogRouter = router({
           internalSku: m.internalSku,
           formulaScale: String(m.formulaScale),
           status: "taslak",
-        } as never);
+        });
         created++;
       }
       return {
@@ -1013,7 +1013,7 @@ export const katalogRouter = router({
           longDescription: content.longDescription,
           applicationText: content.applicationText,
           status: "taslak",
-        } as never);
+        });
         created++;
       }
       return {
@@ -1243,7 +1243,7 @@ export const katalogRouter = router({
         price: String(input.price),
         syncState: "kirli",
         status: "taslak",
-      } as never);
+      });
       return { id, channelSku: buildChannelSku(channel.code, seq), channelBarcode: buildChannelBarcode(seq) };
     }),
 
@@ -1436,7 +1436,7 @@ export const katalogRouter = router({
           price: String(c.price),
           syncState: "kirli",
           status: "taslak",
-        } as never);
+        });
         seq++;
         published++;
       }
@@ -1943,7 +1943,7 @@ export const katalogRouter = router({
         await db.updateMasterProduct(b.masterId, {
           formulaId: b.formulaId,
           formulaScale: String(b.formulaScale),
-        } as never);
+        });
       }
       return {
         dryRun: false,
@@ -2128,7 +2128,7 @@ export const katalogRouter = router({
         await db.updateFormula(change.formulaId, {
           baseQty: String(change.toQty),
           baseUnit: change.toUnit,
-        } as never);
+        });
         const original = byFormula.get(change.formulaId) ?? [];
         const scaled = new Map(change.inputs.map(i => [i.id, i.to]));
         await db.setFormulaInputs(
@@ -2479,7 +2479,7 @@ export const katalogRouter = router({
       let updated = 0;
       for (const m of targets) {
         const next = Math.round(num(m.basePrice) * (1 + input.percent / 100) * 100) / 100;
-        await db.updateMasterProduct(m.id as number, { basePrice: String(next) } as never);
+        await db.updateMasterProduct(m.id as number, { basePrice: String(next) });
         updated++;
       }
       // Fiyat değişimi pazaryerine gitmeli.
@@ -2618,7 +2618,7 @@ export const katalogRouter = router({
       await db.updateMasterProduct(input.masterId, {
         basePrice: String(input.basePrice),
         discountPercent: String(input.discountPercent),
-      } as never);
+      });
 
       let updated = 0;
       if (input.applyToChannels) {
@@ -2629,7 +2629,7 @@ export const katalogRouter = router({
             price: String(input.basePrice),
             discountPercent: String(input.discountPercent),
             syncState: "kirli",
-          } as never);
+          });
           updated++;
         }
       }
@@ -2650,7 +2650,7 @@ export const katalogRouter = router({
         price: String(input.price),
         discountPercent: String(input.discountPercent),
         syncState: "kirli",
-      } as never);
+      });
       return { ok: true };
     }),
 
@@ -3129,7 +3129,7 @@ export const katalogRouter = router({
           // Ürün gerçekte satıldığı için satışı kapasiteye bağlamıyoruz;
           // reçetesi bağlanana kadar "üretemediğini satamama" durumu doğardı.
           salesMode: "tedarikli",
-        } as never);
+        });
         created = true;
       }
 
@@ -3145,8 +3145,11 @@ export const katalogRouter = router({
           title: productName.slice(0, 255),
           slug: buildSlug(productName),
           isPrimary: 1,
-          status: "canli",
-        } as never);
+          // İlanın kendi durumu: taslak|aktif|arsiv. "canli" KANAL yayınının
+          // durumudur (aşağıdaki createChannelListing) — ikisi ayrı enum.
+          // Ürün pazaryerinde zaten satıldığı için taslak değil aktif açılır.
+          status: "aktif",
+        });
       }
 
       // Kanal ilanı: barkodu SAKLAMAK bu işin tekrar edilmemesini sağlar —
@@ -3164,7 +3167,7 @@ export const katalogRouter = router({
             channelBarcode: channelRef.slice(0, 64),
             price: String(input.basePrice ?? num(item.unitPrice)),
             status: "canli",
-          } as never);
+          });
         }
       }
 
@@ -3891,7 +3894,7 @@ export const katalogRouter = router({
           formulaScale: String(pack && pack.volume > 0 ? pack.volume / BASE_VOLUME_ML : 1),
           basePrice: String(num(gen.suggestedPrice)),
           status: "taslak",
-        } as never);
+        });
 
         // Geliştirmede üretilen metin doğrudan ilana taşınır — yeniden
         // yazdırmak hem AI maliyeti hem gözden geçirilmiş içeriğin kaybı olur.
@@ -3905,7 +3908,7 @@ export const katalogRouter = router({
           longDescription: (gen.trendyolDescription as string | null) ?? null,
           applicationText: (gen.applicationNotes as string | null) ?? null,
           status: "taslak",
-        } as never);
+        });
         created++;
       }
       return { dryRun: false, willCreate: plan.length, created, problems: Array.from(new Set(problems)) };
@@ -4228,7 +4231,7 @@ export const katalogRouter = router({
           salesMode: "tedarikli",
           leadTimeDays: input.leadTimeDays,
           ...(input.virtualStockCap != null ? { virtualStockCap: input.virtualStockCap } : {}),
-        } as never);
+        });
       }
       await runCapacityRecompute();
       return { dryRun: false as const, updated: targets.length, willUpdate: targets.length };
@@ -4247,7 +4250,7 @@ export const katalogRouter = router({
       }),
     )
     .mutation(async ({ input }) => {
-      await db.updateMaterial(input.materialId, { type: input.type } as never);
+      await db.updateMaterial(input.materialId, { type: input.type });
       return { ok: true };
     }),
 });

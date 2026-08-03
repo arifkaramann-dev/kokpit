@@ -162,7 +162,7 @@ async function ensureSeriesRecord(series: string | null | undefined) {
   const name = series?.trim();
   if (!name) return;
   const existing = await db.getProductSeriesByName(name);
-  if (!existing) await db.createProductSeries({ name } as never);
+  if (!existing) await db.createProductSeries({ name });
 }
 
 /** Hiyerarşi koruması (Faz A4): türevin altına türev eklenemez. */
@@ -315,7 +315,7 @@ export const materialsRouter = router({
         for (const name of plan.newSuppliers) {
           const key = name.trim().toLocaleLowerCase("tr-TR");
           if (supplierIdByName.has(key)) continue;
-          const id = await db.createSupplier({ name: name.trim() } as never);
+          const id = await db.createSupplier({ name: name.trim() });
           supplierIdByName.set(key, Number(id));
         }
       }
@@ -391,7 +391,7 @@ export const productsRouter = router({
           for (const v of variants) {
             const nextName = renameVariantTitle(v.name, current.name, input.data.name);
             if (nextName !== v.name) {
-              await db.updateProduct(v.id, { name: nextName } as never);
+              await db.updateProduct(v.id, { name: nextName });
               renamedVariants++;
             }
           }
@@ -440,7 +440,7 @@ export const productsRouter = router({
         });
       }
       if (input.target === "mockup") {
-        await db.updateProduct(input.productId, { mockupUrl: url } as never);
+        await db.updateProduct(input.productId, { mockupUrl: url });
       } else {
         let list: string[] = [];
         try {
@@ -450,7 +450,7 @@ export const productsRouter = router({
           // bozuk JSON — sıfırdan başla
         }
         list.push(url);
-        await db.updateProduct(input.productId, { imageUrls: JSON.stringify(list) } as never);
+        await db.updateProduct(input.productId, { imageUrls: JSON.stringify(list) });
       }
       return { url };
     }),
@@ -493,7 +493,7 @@ export const productsRouter = router({
         if (!name || seriesSeen.has(name.toLowerCase())) return;
         seriesSeen.add(name.toLowerCase());
         const existing = await db.getProductSeriesByName(name);
-        if (!existing) await db.createProductSeries({ name } as never);
+        if (!existing) await db.createProductSeries({ name });
       };
 
       let created = 0;
