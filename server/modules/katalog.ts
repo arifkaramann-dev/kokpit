@@ -3939,7 +3939,13 @@ export const katalogRouter = router({
           db.listProductFamilies(),
         ]);
 
-      const openOrders = (orders as { id: number; orderNo: string; status: string; customerName: string }[]).filter(
+      const openOrders = (orders as {
+        id: number;
+        orderNo: string;
+        status: string;
+        customerName: string;
+        channel: string | null;
+      }[]).filter(
         o => (input.orderIds.length ? input.orderIds.includes(o.id) : o.status === "new" || o.status === "production"),
       );
       if (openOrders.length === 0) {
@@ -3973,6 +3979,10 @@ export const katalogRouter = router({
         channelRefs: refsByListing.get(l.id) ?? [],
       }));
 
+      // Satır hangi pazaryerinden geldi: aynı ürünün kodu kanaldan kanala
+      // değiştiği için gruplama bunu bilmeden doğru toplayamaz.
+      const channelByOrder = new Map(openOrders.map(o => [o.id, o.channel ?? null]));
+
       const resolved = resolveOrderLines(
         (items as {
           id: number;
@@ -3989,6 +3999,7 @@ export const katalogRouter = router({
           // Kayıtlı bağ ve kanal kodu artık taşınıyor: bulanık başlık
           // eşleştirmesi kritik yoldan çıkıp yedek yola iniyor.
           channelRef: i.channelRef,
+          channel: channelByOrder.get(i.orderId) ?? null,
           masterId: i.masterId,
         })),
         resolvable,
