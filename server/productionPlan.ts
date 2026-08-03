@@ -29,6 +29,8 @@ export type OrderLine = {
   quantity: number;
   /** Pazaryerinden gelen satıcı kodu / barkod (varsa). */
   channelRef?: string | null;
+  /** Siparişin geldiği kanal — "trendyol", "hepsiburada", "web"… */
+  channel?: string | null;
   /**
    * Sipariş düşerken kesin olarak çözülüp SAKLANMIŞ master bağı.
    * Doluysa tahmin yürütülmez — bu alan bulanık eşleştirmeyi kritik yoldan
@@ -143,8 +145,18 @@ export type UnmatchedGroup = {
   /** Gruplama anahtarı — kanal kodu varsa o, yoksa normalize başlık. */
   key: string;
   productName: string;
-  /** Pazaryeri stok kodu / barkod — hangi varyant olduğunu söyleyen tek alan. */
+  /**
+   * Pazaryeri stok kodu / barkod — hangi varyant olduğunu söyleyen tek alan.
+   * BİZİM stok kodumuz DEĞİL: pazaryerinin kendi kodu, kanaldan kanala değişir.
+   */
   channelRef: string | null;
+  /**
+   * Gruptaki her kanalın kendi kodu.
+   *
+   * Aynı ürünün Hepsiburada'daki kodu ile Trendyol'daki kodu farklıdır; tek
+   * bir "stok kodu" göstermek yanlış, çünkü hiçbiri bizim kodumuz değil.
+   */
+  codes: { channel: string | null; ref: string }[];
   /** Gruptaki satırların toplam adedi. */
   quantity: number;
   /** Kaç ayrı sipariş satırı toplandı — "2 satır" diye göstermek için. */
@@ -241,6 +253,7 @@ export function groupUnmatchedLines(
       key,
       productName: line.productName,
       channelRef: ref,
+      codes: ref ? [{ channel: line.channel ?? null, ref }] : [],
       quantity: line.quantity,
       lineCount: 1,
       lineIds: [line.id],
@@ -260,22 +273,67 @@ export function groupUnmatchedLines(
    * tutan tek bir kodlu grup varsa ona katılır. Birden fazla kodlu grup aynı
    * başlığı taşıyorsa hangisine ait olduğu bilinemez — ayrı bırakılır.
    */
-  const refGroupsByTitle = new Map<string, UnmatchedGroup[]>();
-  for (const g of Array.from(groups.values())) {
-    if (!g.channelRef) continue;
-    const t = normalizeTitle(g.productName);
-    refGroupsByTitle.set(t, [...(refGroupsByTitle.get(t) ?? []), g]);
-  }
-  for (const [key, g] of Array.from(groups.entries())) {
-    if (g.channelRef) continue;
-    const candidates = refGroupsByTitle.get(normalizeTitle(g.productName)) ?? [];
-    if (candidates.length !== 1) continue;
-    const target = candidates[0];
+  const absorb = (target: UnmatchedGroup, g: UnmatchedGroup) => {
     target.quantity += g.quantity;
     target.lineCount += g.lineCount;
     target.lineIds.push(...g.lineIds);
     for (const id of g.orderIds) if (!target.orderIds.includes(id)) target.orderIds.push(id);
+    for (const c of g.codes) {
+      if (!target.codes.some(x => x.ref === c.ref && x.channel === c.channel)) target.codes.push(c);
+    }
+    // Renk yalnız hiç okunamamışsa devralınır — okunan renk ezilmemeli.
+    if (!target.colorName && g.colorName) {
+      target.colorName = g.colorName;
+      target.colorHex = g.colorHex;
+      target.colorVia = g.colorVia;
+    }
+  };
+
+  const titleIndex = () => {
+    const byTitle = new Map<string, UnmatchedGroup[]>();
+    for (const g of Array.from(groups.values())) {
+      if (!g.channelRef) continue;
+      const t = normalizeTitle(g.productName);
+      byTitle.set(t, [...(byTitle.get(t) ?? []), g]);
+    }
+    return byTitle;
+  };
+
+  let refGroupsByTitle = titleIndex();
+  for (const [key, g] of Array.from(groups.entries())) {
+    if (g.channelRef) continue;
+    const candidates = refGroupsByTitle.get(normalizeTitle(g.productName)) ?? [];
+    if (candidates.length !== 1) continue;
+    absorb(candidates[0], g);
     groups.delete(key);
+  }
+
+  /*
+   * Aynı ürünün kanaldan kanala değişen kodunu tek satırda topla.
+   *
+   * Pazaryeri kodu BİZİM stok kodumuz değil: aynı ürün Hepsiburada'da başka,
+   * Trendyol'da başka kod taşır. Yalnız koda bakan gruplama bu yüzden tek
+   * ürünü iki satıra bölerdi — asıl şikâyet buydu.
+   *
+   * Kural: aynı başlık için HER KANAL TEK BİR kod getirmişse bunlar aynı
+   * ürünün kanal karşılıklarıdır, birleşir. Bir kanal aynı başlıkla iki farklı
+   * kod getirmişse orada gerçek bir varyant ayrımı var (aynı isimle iki ayrı
+   * ürün satılıyor) — hiçbiri birleştirilmez, çünkü hangisinin hangisiyle
+   * eşleştiği bilinemez ve yanlış toplama ayrı yazmaktan kötüdür.
+   */
+  refGroupsByTitle = titleIndex();
+  for (const candidates of Array.from(refGroupsByTitle.values())) {
+    if (candidates.length < 2) continue;
+    const channels = candidates.map(g => (g.codes[0]?.channel ?? "").toLowerCase());
+    const distinct = new Set(channels);
+    // Kanalı bilinmeyen ya da aynı kanaldan birden çok kod varsa dokunma.
+    if (distinct.size !== candidates.length || distinct.has("")) continue;
+
+    const [target, ...rest] = candidates;
+    for (const g of rest) {
+      absorb(target, g);
+      groups.delete(g.key);
+    }
   }
 
   // Çok adetli olan üstte: elle açılacak ilk ürün o.

@@ -368,3 +368,68 @@ describe("groupUnmatchedLines — kodsuz satırın kodlu grupla birleşmesi", ()
     expect(groups).toHaveLength(2);
   });
 });
+
+describe("groupUnmatchedLines — kanaldan kanala değişen pazaryeri kodu", () => {
+  it("aynı ürün Hepsiburada ve Trendyol'da farklı kod taşısa da tek satırda toplanır", () => {
+    const groups = groupUnmatchedLines([
+      line({
+        id: 1,
+        orderId: 100,
+        productName: "Sprey Astar Dolgu Astarı 400 Ml",
+        channelRef: "artofcolour6424260d-d8f",
+        channel: "hepsiburada",
+      }),
+      line({
+        id: 2,
+        orderId: 101,
+        productName: "Sprey Astar Dolgu Astarı 400 Ml",
+        channelRef: "TY-99120",
+        channel: "trendyol",
+      }),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].quantity).toBe(2);
+    // Her kanalın kendi kodu korunur — tek "stok kodu" göstermek yanlış olurdu.
+    expect(groups[0].codes).toEqual([
+      { channel: "hepsiburada", ref: "artofcolour6424260d-d8f" },
+      { channel: "trendyol", ref: "TY-99120" },
+    ]);
+  });
+
+  it("aynı kanalda aynı başlıkla iki farklı kod varsa hiçbiri birleşmez", () => {
+    const groups = groupUnmatchedLines([
+      line({ id: 1, productName: "Sprey Boya 400 Ml", channelRef: "TY-1", channel: "trendyol" }),
+      line({ id: 2, productName: "Sprey Boya 400 Ml", channelRef: "TY-2", channel: "trendyol" }),
+      line({ id: 3, productName: "Sprey Boya 400 Ml", channelRef: "HB-1", channel: "hepsiburada" }),
+    ]);
+    expect(groups).toHaveLength(3);
+  });
+
+  it("kanalı bilinmeyen kodlar birleştirilmez — hangi pazaryeri olduğu bilinmiyor", () => {
+    const groups = groupUnmatchedLines([
+      line({ id: 1, productName: "Sprey Boya 400 Ml", channelRef: "A-1", channel: null }),
+      line({ id: 2, productName: "Sprey Boya 400 Ml", channelRef: "A-2", channel: "trendyol" }),
+    ]);
+    expect(groups).toHaveLength(2);
+  });
+
+  it("farklı başlıklı ürünler kanal farkına bakılmadan ayrı kalır", () => {
+    const groups = groupUnmatchedLines([
+      line({ id: 1, productName: "Sprey Astar 400 Ml", channelRef: "HB-1", channel: "hepsiburada" }),
+      line({ id: 2, productName: "Vernik 250 Ml", channelRef: "TY-1", channel: "trendyol" }),
+    ]);
+    expect(groups).toHaveLength(2);
+  });
+
+  it("kanal birleşmesinde okunabilen renk kaybolmaz", () => {
+    const groups = groupUnmatchedLines(
+      [
+        line({ id: 1, productName: "Sprey Boya Ral 9016 400 Ml", channelRef: "HB-1", channel: "hepsiburada" }),
+        line({ id: 2, productName: "Sprey Boya Ral 9016 400 Ml", channelRef: "TY-1", channel: "trendyol" }),
+      ],
+      [{ code: "RAL9016", name: "Trafik Beyazı", hex: "#F1F1F1" }],
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0].colorName).toBe("Trafik Beyazı");
+  });
+});

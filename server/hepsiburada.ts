@@ -541,7 +541,7 @@ export async function syncHepsiburadaOrders() {
       // Tamamlandı) senkronda otomatik akıtılır; ama yalnızca İLERİ —
       // elle "Üretimde"ye alınan sipariş geri "Yeni"ye basılmaz.
       if (shouldSyncOrderStatus(existing.status, mapped.status)) {
-        await db.updateOrder(existing.id, { status: mapped.status } as never);
+        await db.updateOrder(existing.id, { status: mapped.status });
         updated++;
       } else {
         skipped++;

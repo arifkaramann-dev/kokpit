@@ -390,7 +390,7 @@ export const quotesRouter = router({
         notes: [quote.notes, `Teklif ${quote.quoteNo} kabulüyle oluşturuldu`].filter(Boolean).join("\n"),
         customerPhone: quote.customerPhone,
         customerAddress: quote.customerAddress,
-      } as never);
+      });
       if (qItems.length > 0) {
         await db.replaceOrderItems(
           Number(orderId),

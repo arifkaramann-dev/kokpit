@@ -750,11 +750,11 @@ export async function transferBetweenAccounts(fromId: number, toId: number, amou
   await db.insert(transactions).values({
     txnDate: now, accountId: fromId, direction: "out", amount: String(amount), category: "transfer",
     description: `Transfer → ${to?.name ?? ""}`, note,
-  } as never);
+  });
   await db.insert(transactions).values({
     txnDate: now, accountId: toId, direction: "in", amount: String(amount), category: "transfer",
     description: `Transfer ← ${from?.name ?? ""}`, note,
-  } as never);
+  });
 }
 
 /**
@@ -3381,7 +3381,7 @@ export async function upsertContentBlock(
     await db.update(contentBlocks).set(data).where(eq(contentBlocks.id, rows[0].id));
     return rows[0].id;
   }
-  const [r] = await db.insert(contentBlocks).values({ ...coord, ...data } as never);
+  const [r] = await db.insert(contentBlocks).values({ ...coord, ...data });
   return Number(r.insertId);
 }
 

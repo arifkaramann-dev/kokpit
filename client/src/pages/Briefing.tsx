@@ -173,8 +173,10 @@ export default function Briefing() {
               </div>
               <p className="text-xs text-muted-foreground">
                 Bu ürünler için master kaydı yok ya da ilan başlığı katalogdakinden çok farklı.
-                Üretim listesine dahil edilmediler — renk katalogdan gelemediği için stok kodundan
-                ve başlıktan okundu.
+                Üretim listesine dahil edilmediler — renk katalogdan gelemediği için pazaryeri
+                kodundan ve başlıktan okundu. Gösterilen kod{" "}
+                <strong>pazaryerinin kendi kodudur</strong>, sizin stok kodunuz değil; aynı ürünün
+                kodu her pazaryerinde farklıdır. Ürünü bağladığınızda kendi kodunuz görünür.
               </p>
               <div className="space-y-1">
                 {data?.unmatched.map(u => (
@@ -201,12 +203,22 @@ export default function Briefing() {
                       <span className="text-muted-foreground">renk okunamadı</span>
                     )}
                     <span className="min-w-0 flex-1 truncate">{u.productName}</span>
-                    {u.channelRef ? (
-                      <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
-                        {u.channelRef}
-                      </span>
+                    {/* Kod pazaryerinin kendi kodudur, bizim stok kodumuz değil —
+                        ve kanaldan kanala değişir. Kanal etiketi olmadan
+                        gösterilirse kendi kodumuz sanılıyor. */}
+                    {u.codes.length > 0 ? (
+                      u.codes.map(c => (
+                        <span
+                          key={`${c.channel}-${c.ref}`}
+                          className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]"
+                          title="Pazaryerinin kendi kodu — kendi stok kodunuz değil"
+                        >
+                          {c.channel ? `${c.channel}: ` : ""}
+                          {c.ref}
+                        </span>
+                      ))
                     ) : (
-                      <span className="text-[10px] text-muted-foreground">stok kodu yok</span>
+                      <span className="text-[10px] text-muted-foreground">pazaryeri kodu yok</span>
                     )}
                     {u.lineCount > 1 && (
                       <Badge variant="outline" className="text-[10px]">
