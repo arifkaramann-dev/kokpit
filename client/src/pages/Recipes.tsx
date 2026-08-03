@@ -534,7 +534,7 @@ export default function Recipes() {
                   )}
                   {(issue.kind === "ambalaj_hacimsiz" || issue.kind === "ambalaj_maliyetsiz") && (
                     <Button size="sm" variant="outline" className="h-8" asChild>
-                      <a href="/tanimlar">Ambalajı Düzelt</a>
+                      <a href="/katalog?sekme=tanimlar">Ambalajı Düzelt</a>
                     </Button>
                   )}
                 </Card>

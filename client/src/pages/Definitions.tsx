@@ -58,7 +58,7 @@ const KIND_META: Record<Kind, { title: string; desc: string }> = {
  * hangisinin doğru olduğu belirsizdi. Artık sözlük burada, metin şablonları
  * (etiket yazısı, kılavuz, güvenlik) ayrı sekmede.
  */
-export default function Definitions() {
+export default function Definitions({ embedded = false }: { embedded?: boolean }) {
   const utils = trpc.useUtils();
   const confirm = useConfirm();
   const [, setLocation] = useLocation();
@@ -159,13 +159,17 @@ export default function Definitions() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Tanımlar</h1>
-        <p className="text-sm text-muted-foreground">
-          Ürün sözlüğünün tek kaynağı. Buradaki renk, form, ambalaj ve kullanım alanları master
-          ürünlerin koordinatını ve ilan başlıklarını oluşturur.
-        </p>
-      </div>
+      {/* Ürünler sayfasının sekmesinde kullanılırken kendi başlığını
+          göstermez — iki başlık üst üste gelirdi. */}
+      {!embedded && (
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Tanımlar</h1>
+          <p className="text-sm text-muted-foreground">
+            Ürün sözlüğünün tek kaynağı. Buradaki renk, form, ambalaj ve kullanım alanları master
+            ürünlerin koordinatını ve ilan başlıklarını oluşturur.
+          </p>
+        </div>
+      )}
 
       <Tabs value={tab} onValueChange={v => setTab(v)}>
         <TabsList className="flex-wrap">
@@ -300,15 +304,17 @@ export default function Definitions() {
         ))}
       </Tabs>
 
-      <Card className="flex flex-wrap items-center gap-3 p-4">
-        <p className="flex-1 text-sm text-muted-foreground">
-          <strong className="text-foreground">Metin şablonları</strong> (etiket yazısı, kullanım
-          kılavuzu, güvenlik uyarısı) ve seri ayarları ayrı sayfada — orada ikinci kaynak sorunu yok.
-        </p>
-        <Button variant="outline" size="sm" onClick={() => setLocation("/sablonlar")}>
-          Şablonlar & Seriler
-        </Button>
-      </Card>
+      {!embedded && (
+        <Card className="flex flex-wrap items-center gap-3 p-4">
+          <p className="flex-1 text-sm text-muted-foreground">
+            <strong className="text-foreground">Metin şablonları</strong> (etiket yazısı, kullanım
+            kılavuzu, güvenlik uyarısı) ayrı sayfada — orada ikinci kaynak sorunu yok.
+          </p>
+          <Button variant="outline" size="sm" onClick={() => setLocation("/sablonlar")}>
+            Şablonlar
+          </Button>
+        </Card>
+      )}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-md">

@@ -5,6 +5,8 @@ import CatalogRestructure from "@/components/CatalogRestructure";
 import SeriesMatrix from "@/components/SeriesMatrix";
 import MasterImport from "@/components/MasterImport";
 import MissingImages from "@/components/MissingImages";
+import SeriesManager from "@/components/SeriesManager";
+import Definitions from "@/pages/Definitions";
 import UnboundOrderItems from "@/components/UnboundOrderItems";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -76,6 +78,17 @@ export default function Catalog() {
     typeof window !== "undefined"
       ? new URLSearchParams(window.location.search).get("sekme")
       : null;
+
+  /*
+   * Durum sekmeleri eskiden üst düzeydeydi ve dış ekranlar onlara doğrudan
+   * link veriyordu (?sekme=baglar). Alt sekmeye taşındıkları için bu adresler
+   * "Durum" üst sekmesine, oradan da doğru alt sekmeye düşer — yer imleri ve
+   * mevcut bağlantılar kırılmasın.
+   */
+  const STATUS_TABS = ["seriler", "getiri", "gorseller", "baglar"];
+  const isStatus = urlTab != null && STATUS_TABS.includes(urlTab);
+  const statusTab = isStatus ? urlTab : "seriler";
+  const topTab = isStatus ? "durum" : urlTab;
 
   const [selectedSeries, setSelectedSeries] = useState<Set<number>>(new Set());
   type Breakdown = {
@@ -222,38 +235,110 @@ export default function Catalog() {
       {isLoading && <div className="h-32 animate-pulse rounded-xl bg-muted" />}
 
       {/* Sekme URL'den seçilebilir (?sekme=baglar): başka ekranlardan gelen
-          "Bağla" bağlantısı doğrudan ilgili sekmeyi açsın, kullanıcı altı
-          sekme arasından doğru olanı aramasın. */}
+          "Bağla" bağlantısı doğrudan ilgili sekmeyi açsın. Durum sekmeleri
+          alta indiği için eski adresler `topTab`/`statusTab` ile çözülür. */}
       <Tabs
         defaultValue={
-          urlTab ?? ((masters?.length ?? 0) > 0 ? "liste" : "kurulum")
+          topTab ?? ((masters?.length ?? 0) > 0 ? "liste" : "kurulum")
         }
       >
-        <TabsList>
-          {/* Sekme adları iş diliyle: "Bağlanmamış Satırlar" ve "Kurulum"
-              mühendis terimleriydi, kullanıcı hangisine gireceğini bilmiyordu. */}
+        {/* Dört üst sekme, iş akışı sırasıyla: neyi satıyorum → nasıl
+            kuruyorum → sözlüğüm → nerede duruyorum. Altı düz sekme, ürün
+            kurmakla durum izlemeyi aynı düzleme koyuyordu. */}
+        <TabsList className="flex-wrap">
           <TabsTrigger value="liste">Ürünler</TabsTrigger>
           <TabsTrigger value="kurulum">Seri kurgusu</TabsTrigger>
-          <TabsTrigger value="seriler">Seri durumu</TabsTrigger>
-          <TabsTrigger value="getiri">Kazanç</TabsTrigger>
-          <TabsTrigger value="gorseller">Eksik görseller</TabsTrigger>
-          <TabsTrigger value="baglar">Eşleşmeyen siparişler</TabsTrigger>
+          <TabsTrigger value="tanimlar">Tanımlar</TabsTrigger>
+          <TabsTrigger value="durum">Durum</TabsTrigger>
         </TabsList>
 
-        {/* Getiri — hangi renk para kazandırıyor */}
-        <TabsContent value="getiri" className="pt-3">
-          <CatalogRevenue />
+        {/* Durum — "ne eksik, ne kazandırıyor" soruları tek yerde. Dördü de
+            ayrı üst sekmeydi; ürün kurma akışıyla karışıyorlardı. */}
+        <TabsContent value="durum" className="pt-3">
+          <Tabs defaultValue={statusTab}>
+            <TabsList>
+              <TabsTrigger value="seriler">Seri durumu</TabsTrigger>
+              <TabsTrigger value="getiri">Kazanç</TabsTrigger>
+              <TabsTrigger value="gorseller">Eksik görseller</TabsTrigger>
+              <TabsTrigger value="baglar">Eşleşmeyen siparişler</TabsTrigger>
+            </TabsList>
+          <TabsContent value="seriler" className="space-y-3 pt-3">
+            <Card className="overflow-hidden p-0">
+              <div className="border-b p-4">
+                <p className="font-semibold">Seri Takibi</p>
+                <p className="text-sm text-muted-foreground">
+                  En zayıf seri üstte. "İlansız" sütunu açılmamış pazarı, "üretilemeyen" hammadde
+                  sorununu gösterir.
+                </p>
+              </div>
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50 text-xs text-muted-foreground">
+                  <tr>
+                    <th className="p-2 text-left">Seri</th>
+                    <th className="p-2 text-right">Ürün</th>
+                    <th className="p-2 text-right">Ort. tamamlanma</th>
+                    <th className="p-2 text-right">İlansız</th>
+                    <th className="p-2 text-right">Üretilemeyen</th>
+                    <th className="p-2 text-right">Canlı ilan</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(track?.series ?? []).map(s => (
+                    <tr key={s.seriesId} className="border-t">
+                      <td className="p-2 font-medium">{s.seriesName}</td>
+                      <td className="p-2 text-right tabular-nums">{s.masterCount}</td>
+                      <td className="p-2 text-right tabular-nums">%{s.avgScore}</td>
+                      <td className="p-2 text-right tabular-nums">
+                        {s.withoutListing > 0 ? (
+                          <span className="font-medium text-amber-600">{s.withoutListing}</span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="p-2 text-right tabular-nums">
+                        {s.notBuildable > 0 ? (
+                          <span className="font-medium text-rose-600">{s.notBuildable}</span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="p-2 text-right tabular-nums text-emerald-600">{s.liveListings}</td>
+                    </tr>
+                  ))}
+                  {(track?.series ?? []).length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="p-6 text-center text-sm text-muted-foreground">
+                        Henüz ürün yok.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </Card>
+          </TabsContent>
+          {/* Getiri — hangi renk para kazandırıyor */}
+          <TabsContent value="getiri" className="pt-3">
+            <CatalogRevenue />
+          </TabsContent>
+          {/* Görseller — kart açmanın önündeki tek fiziksel engel */}
+          <TabsContent value="gorseller" className="pt-3">
+            <MissingImages />
+          </TabsContent>
+          {/* Bağlanmamış satırlar — üretim planı ve getiri bunlara bağlı */}
+          <TabsContent value="baglar" className="pt-3">
+            <UnboundOrderItems />
+          </TabsContent>
+          </Tabs>
         </TabsContent>
 
-        {/* Görseller — kart açmanın önündeki tek fiziksel engel */}
-        <TabsContent value="gorseller" className="pt-3">
-          <MissingImages />
+        {/* Tanımlar ayrı sayfaydı ve menüde "Analiz & Tanımlar" altında
+            duruyordu; renk eklemek için ürün ekranından çıkmak gerekiyordu. */}
+        <TabsContent value="tanimlar" className="pt-3">
+          <Definitions embedded />
         </TabsContent>
 
-        {/* Bağlanmamış satırlar — üretim planı ve getiri bunlara bağlı */}
-        <TabsContent value="baglar" className="pt-3">
-          <UnboundOrderItems />
-        </TabsContent>
+
+
 
         {/* Ürün listesi — takip sütunlarıyla. Eksikler, getiri (maliyet/kâr),
             hedef pazar (ilan sayısı) ve fırsat (açılmamış kullanım alanı). */}
@@ -336,62 +421,13 @@ export default function Catalog() {
           <MasterImport open={importOpen} onOpenChange={setImportOpen} />
         </TabsContent>
 
-        <TabsContent value="seriler" className="space-y-3 pt-3">
-          <Card className="overflow-hidden p-0">
-            <div className="border-b p-4">
-              <p className="font-semibold">Seri Takibi</p>
-              <p className="text-sm text-muted-foreground">
-                En zayıf seri üstte. "İlansız" sütunu açılmamış pazarı, "üretilemeyen" hammadde
-                sorununu gösterir.
-              </p>
-            </div>
-            <table className="w-full text-sm">
-              <thead className="bg-muted/50 text-xs text-muted-foreground">
-                <tr>
-                  <th className="p-2 text-left">Seri</th>
-                  <th className="p-2 text-right">Ürün</th>
-                  <th className="p-2 text-right">Ort. tamamlanma</th>
-                  <th className="p-2 text-right">İlansız</th>
-                  <th className="p-2 text-right">Üretilemeyen</th>
-                  <th className="p-2 text-right">Canlı ilan</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(track?.series ?? []).map(s => (
-                  <tr key={s.seriesId} className="border-t">
-                    <td className="p-2 font-medium">{s.seriesName}</td>
-                    <td className="p-2 text-right tabular-nums">{s.masterCount}</td>
-                    <td className="p-2 text-right tabular-nums">%{s.avgScore}</td>
-                    <td className="p-2 text-right tabular-nums">
-                      {s.withoutListing > 0 ? (
-                        <span className="font-medium text-amber-600">{s.withoutListing}</span>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td className="p-2 text-right tabular-nums">
-                      {s.notBuildable > 0 ? (
-                        <span className="font-medium text-rose-600">{s.notBuildable}</span>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td className="p-2 text-right tabular-nums text-emerald-600">{s.liveListings}</td>
-                  </tr>
-                ))}
-                {(track?.series ?? []).length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="p-6 text-center text-sm text-muted-foreground">
-                      Henüz ürün yok.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </Card>
-        </TabsContent>
 
         <TabsContent value="kurulum" className="space-y-4 pt-3">
+
+      {/* Seriler burada: seri tanımı /sablonlar sayfasının içindeydi ve o
+          sayfa menüde hiç yoktu — seri düzenlemek için adresi elle yazmak
+          gerekiyordu. Seri kurgusunun ilk adımı serinin kendisidir. */}
+      <SeriesManager />
 
       {/* 1 — Boyutlar */}
       <Card className="space-y-3 p-5">
