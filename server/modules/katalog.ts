@@ -93,6 +93,7 @@ import {
   fetchTrendyolCategoryAttributes,
   parseCardSettings,
   pushTrendyolProductCards,
+  searchTrendyolBrands,
 } from "../trendyolProducts";
 
 /* ---- Pazaryeri kategori ağacı önbelleği ---------------------------------- */
@@ -3990,6 +3991,37 @@ export const katalogRouter = router({
    * ProductDetail sayfasında kalmıştı; mantık v3 nesnelerine taşındı.
    * Sonuç asenkron: batchRequestId ile sorgulanır.
    */
+  /*
+   * Trendyol keşif araçları — Ayarlar'daki marka/kategori alanlarını doldurmak
+   * için. Emekli `products` router'ındaydı; kart gönderimi burada olduğu için
+   * buraya taşındı.
+   */
+  trendyolBrandSearch: protectedProcedure
+    .input(z.object({ name: z.string().min(2) }))
+    .mutation(async ({ input }) => {
+      try {
+        return await searchTrendyolBrands(input.name);
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: error instanceof Error ? error.message : "Marka araması başarısız",
+        });
+      }
+    }),
+
+  trendyolCategoryAttributes: protectedProcedure
+    .input(z.object({ categoryId: z.number() }))
+    .mutation(async ({ input }) => {
+      try {
+        return await fetchTrendyolCategoryAttributes(input.categoryId);
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: error instanceof Error ? error.message : "Kategori özellikleri alınamadı",
+        });
+      }
+    }),
+
   pushCardsToTrendyol: protectedProcedure
     .input(
       z.object({

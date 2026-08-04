@@ -59,11 +59,11 @@ export default function Settings() {
   const [brandQuery, setBrandQuery] = useState("");
   const [categoryIdQuery, setCategoryIdQuery] = useState("");
   const [discovery, setDiscovery] = useState<unknown>(null);
-  const brandSearch = trpc.products.trendyolBrandSearch.useMutation({
+  const brandSearch = trpc.katalog.trendyolBrandSearch.useMutation({
     onSuccess: r => setDiscovery(r),
     onError: e => toast.error(e.message, { duration: 8000 }),
   });
-  const catAttrs = trpc.products.trendyolCategoryAttributes.useMutation({
+  const catAttrs = trpc.katalog.trendyolCategoryAttributes.useMutation({
     onSuccess: r => setDiscovery(r),
     onError: e => toast.error(e.message, { duration: 8000 }),
   });
