@@ -249,6 +249,7 @@ export default function AttributeMapping({ channelId }: { channelId: number }) {
                   constantValueId={a.constantValueId}
                   constantText={a.constantText}
                   isRequired={Number(a.isRequired ?? 1) === 1}
+                  options={optionsFor(a.attributeId)}
                   coverage={(coverage ?? []).find(c => c.id === a.id) ?? null}
                   onSave={patch =>
                     saveAttr.mutate({
@@ -421,6 +422,7 @@ function AttributeRow({
   constantValueId,
   constantText,
   isRequired,
+  options,
   coverage,
   onSave,
   onDelete,
@@ -431,6 +433,7 @@ function AttributeRow({
   constantValueId: number | null;
   constantText: string | null;
   isRequired: boolean;
+  options: { valueId: number; valueName: string }[];
   coverage: { total: number; mapped: number } | null;
   onSave: (patch: {
     source: "renk" | "ambalaj" | "form" | "seri" | "hacim" | "sabit";
@@ -471,7 +474,33 @@ function AttributeRow({
         </Select>
       </td>
       <td className="p-2">
-        {src === "sabit" ? (
+        {src !== "sabit" ? (
+          <span className="text-xs text-muted-foreground">ürün başına türetilir</span>
+        ) : options.length > 0 ? (
+          /*
+           * Pazaryeri bu özellik için değer listesi veriyor. Serbest metin
+           * yazmak riskli: liste dayatan bir özellikte metin reddedilir ve
+           * kartın tamamı düşer. Bu yüzden liste varsa seçim öne alınır.
+           */
+          <div className="flex flex-wrap items-center gap-1.5">
+            <OptionPicker
+              options={options}
+              current={
+                valueId ? options.find(o => String(o.valueId) === valueId)?.valueName ?? valueId : null
+              }
+              onPick={o => {
+                setValueId(String(o.valueId));
+                setText("");
+              }}
+            />
+            <Input
+              value={text}
+              onChange={e => setText(e.target.value)}
+              placeholder="ya da metin"
+              className="h-8 w-32 text-xs"
+            />
+          </div>
+        ) : (
           <div className="flex gap-1.5">
             <Input
               value={valueId}
@@ -486,8 +515,6 @@ function AttributeRow({
               className="h-8 w-40 text-xs"
             />
           </div>
-        ) : (
-          <span className="text-xs text-muted-foreground">ürün başına türetilir</span>
         )}
       </td>
       <td className="flex items-center gap-2 p-2">
@@ -526,6 +553,56 @@ function AttributeRow({
         </Button>
       </td>
     </tr>
+  );
+}
+
+/** Pazaryerinin izin verdiği değerler arasında aranabilir seçim. */
+function OptionPicker({
+  options,
+  current,
+  onPick,
+}: {
+  options: { valueId: number; valueName: string }[];
+  current: string | null;
+  onPick: (o: { valueId: number; valueName: string }) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm" className="h-8 w-48 justify-between text-xs">
+          <span className={current ? "truncate" : "truncate text-muted-foreground"}>
+            {current ?? "Değer seçin…"}
+          </span>
+          <Search className="h-3.5 w-3.5 shrink-0 opacity-60" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-64 p-0" align="start">
+        <Command>
+          <CommandInput placeholder={`${options.length} seçenek içinde ara…`} />
+          <CommandList>
+            <CommandEmpty>Sonuç yok.</CommandEmpty>
+            <CommandGroup>
+              {options.map(o => (
+                <CommandItem
+                  key={o.valueId}
+                  value={o.valueName}
+                  onSelect={() => {
+                    onPick(o);
+                    setOpen(false);
+                  }}
+                >
+                  <span className="truncate">{o.valueName}</span>
+                  <span className="ml-auto shrink-0 font-mono text-[11px] text-muted-foreground">
+                    {o.valueId}
+                  </span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }
 

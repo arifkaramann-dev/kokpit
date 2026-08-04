@@ -92,6 +92,7 @@ import { fetchHepsiburadaCategories, fetchHepsiburadaCategoryAttributes } from "
 import {
   fetchTrendyolCategories,
   fetchTrendyolCategoryAttributes,
+  fetchTrendyolExistingBarcodes,
   parseCardSettings,
   pushTrendyolProductCards,
   searchTrendyolBrands,
@@ -148,8 +149,39 @@ type NormalizedAttribute = {
   options: { valueId: number; valueName: string }[];
 };
 
+/**
+ * Yanıt ağacında özellik dizisini bulur.
+ *
+ * Bir kaydın "özellik" sayılması için sayısal bir kimliği ve adı olmalı. Bilinen
+ * alan adlarına (`data`, `attributes`, …) güvenmek kırılgandı: HB sarmalayıcıyı
+ * değiştirdiğinde dizi yerine nesne bulunuyor ve döngü "not iterable" ile
+ * çöküyordu. Arama sınırlı derinlikte yapılır — yanıt beklenmedikse boş döner,
+ * çökmez.
+ */
+export function findAttributeArray(raw: unknown, depth = 0): Record<string, unknown>[] {
+  if (depth > 4 || raw == null || typeof raw !== "object") return [];
+
+  const looksLikeAttribute = (v: unknown): boolean => {
+    if (!v || typeof v !== "object") return false;
+    const r = v as Record<string, unknown>;
+    const hasId = Number(r.id ?? r.attributeId ?? 0) > 0;
+    const hasName = typeof (r.name ?? r.attributeName) === "string";
+    return hasId && hasName;
+  };
+
+  if (Array.isArray(raw)) {
+    return raw.some(looksLikeAttribute) ? (raw as Record<string, unknown>[]) : [];
+  }
+
+  for (const value of Object.values(raw as Record<string, unknown>)) {
+    const found = findAttributeArray(value, depth + 1);
+    if (found.length > 0) return found;
+  }
+  return [];
+}
+
 /** Ham değer dizisini `{valueId,valueName}` listesine indirger. */
-function normalizeOptionList(raw: unknown): { valueId: number; valueName: string }[] {
+export function normalizeOptionList(raw: unknown): { valueId: number; valueName: string }[] {
   const rows = (Array.isArray(raw) ? raw : []) as Record<string, unknown>[];
   const out: { valueId: number; valueName: string }[] = [];
   for (const v of rows) {
@@ -165,7 +197,7 @@ function normalizeOptionList(raw: unknown): { valueId: number; valueName: string
  * Trendyol:
  * `{ categoryAttributes: [{ attribute: {id,name}, attributeValues: [{id,name}], required }] }`
  */
-function normalizeTrendyolAttributes(raw: unknown): NormalizedAttribute[] {
+export function normalizeTrendyolAttributes(raw: unknown): NormalizedAttribute[] {
   const rows = ((raw as Record<string, unknown>)?.categoryAttributes ?? []) as Record<
     string,
     unknown
@@ -190,14 +222,14 @@ function normalizeTrendyolAttributes(raw: unknown): NormalizedAttribute[] {
  * (`data` / `attributes` / düz dizi), zorunluluk alanı da
  * `mandatory` ya da `required` olabiliyor. Hepsi savunmacı denenir.
  */
-function normalizeHepsiburadaAttributes(raw: unknown): NormalizedAttribute[] {
-  const envelope = raw as Record<string, unknown> | unknown[] | null;
-  const rows = (
-    Array.isArray(envelope)
-      ? envelope
-      : ((envelope?.["data"] ?? envelope?.["attributes"] ?? envelope?.["categoryAttributes"] ?? []) as unknown[])
-  ) as Record<string, unknown>[];
-
+export function normalizeHepsiburadaAttributes(raw: unknown): NormalizedAttribute[] {
+  /*
+   * Sarmalayıcı sürümden sürüme değişiyor ve bir seviye daha derin de olabiliyor
+   * (`{data:{attributes:[…]}}`). Sabit alan adlarına güvenmek "rows is not
+   * iterable" ile çöküyordu: bulunan şey dizi değil nesneydi. Artık özellik
+   * dizisi ağaçta ARANIYOR; bulunamazsa çökmek yerine boş dönülüyor.
+   */
+  const rows = findAttributeArray(raw);
   const out: NormalizedAttribute[] = [];
   for (const row of rows) {
     // Kimlik sayısal olmayabilir (HB bazı özelliklerde metin anahtar verir);
@@ -3793,6 +3825,21 @@ export const katalogRouter = router({
         });
       }
 
+      /*
+       * Boş sonuç sessizce "0 özellik" diye geçiyordu; kullanıcı neyin yanlış
+       * olduğunu anlamıyordu. Kategori yanlışsa ya da yanıt beklenmedik şekilde
+       * geldiyse bunu söylemek gerekir.
+       */
+      if (rows.length === 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            `Bu kategori için özellik alınamadı (kategori ${input.categoryId}). ` +
+            `Kategori kimliği ${channel.code} tarafında geçerli mi kontrol edin — ` +
+            `Kategori Eşlemesi sekmesinden pazaryeri ağacından seçmek en güvenlisi.`,
+        });
+      }
+
       const existing = (await db.listChannelAttributes(input.channelId)) as Record<string, unknown>[];
       const known = new Set(
         existing
@@ -4203,22 +4250,64 @@ export const katalogRouter = router({
         includeUnbuildable: input.includeUnbuildable,
       });
 
-      if (input.dryRun) {
-        return { dryRun: true, willSend: items.length, sent: 0, batchRequestId: null, problems };
+      /*
+       * Trendyol'da HÂLEN kayıtlı barkodlar ayıklanır.
+       *
+       * Trendyol mevcut bir barkod için "oluştur" kabul etmiyor ve tek kalem
+       * yüzünden TÜM parti düşüyordu: içinde gerçekten yeni ürünler olsa bile
+       * hiçbiri açılmıyordu ve kullanıcı "barkod zaten kayıtlı" hatasında
+       * kilitli kalıyordu. Var olanlar burada ayrılıp bildirilir, yeniler gider.
+       *
+       * Liste çekilemezse (ağ/kota) gönderim durdurulmaz — eskisi gibi denenir.
+       */
+      let existing = new Set<string>();
+      let existingCheckFailed = false;
+      try {
+        existing = await fetchTrendyolExistingBarcodes();
+      } catch {
+        existingCheckFailed = true;
       }
-      if (items.length === 0) {
+
+      const fresh = items.filter(i => !existing.has(String((i as { barcode?: string }).barcode ?? "")));
+      const already = items.length - fresh.length;
+      const allProblems = [...problems];
+      if (already > 0) {
+        allProblems.push(
+          `${already} kalem Trendyol'da zaten kayıtlı — kart açılmadı. ` +
+            `Bunların stok/fiyatı için "Stok & fiyat gönderimi"ni kullanın.`,
+        );
+      }
+
+      if (input.dryRun) {
+        return {
+          dryRun: true,
+          willSend: fresh.length,
+          sent: 0,
+          batchRequestId: null,
+          alreadyOnMarketplace: already,
+          problems: allProblems,
+        };
+      }
+      if (fresh.length === 0) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: `Gönderilebilir kart yok — ${problems.slice(0, 3).join(" · ")}`,
+          message:
+            already > 0
+              ? `Açılacak yeni kart yok — ${already} kalemin hepsi Trendyol'da zaten kayıtlı. Stok/fiyat gönderimini kullanın.`
+              : `Gönderilebilir kart yok — ${allProblems.slice(0, 3).join(" · ")}`,
         });
       }
       let result: { batchRequestId: string | null; sent: number };
       try {
-        result = await pushTrendyolProductCards(items as never);
+        result = await pushTrendyolProductCards(fresh as never);
       } catch (error) {
+        const base = error instanceof Error ? error.message : "Trendyol ürün gönderimi başarısız";
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: error instanceof Error ? error.message : "Trendyol ürün gönderimi başarısız",
+          // Ayıklama yapılamadıysa kullanıcı nedenini bilsin.
+          message: existingCheckFailed
+            ? `${base} (Mevcut ürün listesi çekilemediği için zaten kayıtlı barkodlar ayıklanamadı.)`
+            : base,
         });
       }
 
@@ -4237,7 +4326,7 @@ export const katalogRouter = router({
               .filter(l => l.channelId === input.channelId)
               .map(l => [String(l.channelSku ?? ""), l.id as number]),
           );
-          for (const item of items) {
+          for (const item of fresh) {
             const listingId = bySku.get(item.stockCode);
             if (listingId) {
               await db.saveMarketplaceBatchJob(listingId, "trendyol", result.batchRequestId);
@@ -4249,7 +4338,14 @@ export const katalogRouter = router({
         }
       }
 
-      return { dryRun: false, willSend: items.length, ...result, tracked, problems };
+      return {
+        dryRun: false,
+        willSend: fresh.length,
+        ...result,
+        tracked,
+        alreadyOnMarketplace: already,
+        problems: allProblems,
+      };
     }),
 
   /**

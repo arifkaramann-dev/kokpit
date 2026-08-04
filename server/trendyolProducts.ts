@@ -191,6 +191,44 @@ export async function pushTrendyolProductCards(items: TrendyolProductItem[]) {
   return { batchRequestId: data.batchRequestId ?? null, sent: items.length };
 }
 
+/**
+ * Satıcının Trendyol'da HÂLEN KAYITLI barkodları.
+ *
+ * "Bu barkod Trendyol'da zaten kayıtlı" hatasının sebebi: kart bir kez açılmış
+ * (ya da önceki denemede açılmış), sistem yine "oluştur" gönderiyor. Trendyol
+ * mevcut ürün için create kabul etmiyor ve TÜM parti düşüyor — içinde gerçekten
+ * yeni olan kalemler varsa onlar da gitmiyor.
+ *
+ * Gönderimden önce bu küme çekilip parti ikiye ayrılır: yeni olanlar açılır,
+ * var olanlar bildirilir. Böylece kullanıcı kilitlenmiş bir hatada kalmaz.
+ *
+ * Arşivlenmiş/onay bekleyen ürünler de barkodu tuttuğu için filtre konmaz —
+ * amaç "bu barkod Trendyol'da var mı?" sorusuna tam cevap vermek.
+ */
+export async function fetchTrendyolExistingBarcodes(): Promise<Set<string>> {
+  const found = new Set<string>();
+  if (!isTrendyolConfigured()) return found;
+
+  const size = 1000;
+  // Üst sınır: katalog beklenmedik büyüklükteyse sonsuz döngüye girilmesin.
+  const MAX_PAGES = 50;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const data = (await trendyolGet(
+      `/integration/product/sellers/${ENV.trendyolSellerId}/products?page=${page}&size=${size}`,
+    )) as { content?: { barcode?: string }[]; totalPages?: number };
+
+    const rows = Array.isArray(data?.content) ? data.content : [];
+    for (const r of rows) {
+      const b = String(r?.barcode ?? "").trim();
+      if (b) found.add(b);
+    }
+
+    const totalPages = Number(data?.totalPages ?? 0);
+    if (rows.length === 0 || page + 1 >= totalPages) break;
+  }
+  return found;
+}
+
 /** Batch sonucu: her kalemin durumu + hata mesajları. */
 export async function getTrendyolProductBatchStatus(batchRequestId: string) {
   if (!isTrendyolConfigured()) {
