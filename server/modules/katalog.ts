@@ -88,6 +88,7 @@ import {
 import { planPublications, summarizeSkips } from "../publishPlan";
 import { GENERIC_USE_CASE_CODE, seedCatalogDimensions } from "../seedCatalog";
 import { fetchHepsiburadaCategories } from "../hepsiburada";
+import { pushHepsiburadaProductCards } from "../hepsiburadaProducts";
 import {
   fetchTrendyolCategories,
   fetchTrendyolCategoryAttributes,
@@ -4028,11 +4029,94 @@ export const katalogRouter = router({
       }
       try {
         const result = await pushTrendyolProductCards(items as never);
+
+        if (result.batchRequestId) {
+          const allListings = await db.listChannelListings();
+          for (const item of items) {
+            const listing = (allListings as Record<string, unknown>[]).find(
+              l => l.channelId === input.channelId && (l as any).channelSku === item.stockCode,
+            );
+            if (listing?.id) {
+              await db.saveMarketplaceBatchJob(listing.id as number, "trendyol", result.batchRequestId);
+            }
+          }
+        }
+
         return { dryRun: false, willSend: items.length, ...result, problems };
       } catch (error) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: error instanceof Error ? error.message : "Trendyol ürün gönderimi başarısız",
+        });
+      }
+    }),
+
+  pushCardsToHepsiburada: protectedProcedure
+    .input(
+      z.object({
+        channelId: z.number(),
+        seriesIds: z.array(z.number()).default([]),
+        dryRun: z.boolean().default(true),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const [channelListings, masters] = await Promise.all([
+        db.listChannelListings(),
+        db.listMasterProducts(),
+      ]);
+
+      const wantedSeries = input.seriesIds.length ? new Set(input.seriesIds) : null;
+      const masterRows = (masters as Record<string, unknown>[]).filter(
+        m => !wantedSeries || wantedSeries.has(m.seriesId as number),
+      );
+      const allowed = new Set(masterRows.map(m => m.id as number));
+
+      const items = (channelListings as Record<string, unknown>[])
+        .filter(c => c.channelId === input.channelId && allowed.has(c.masterId as number))
+        .map(c => ({
+          barcode: String(c.channelBarcode ?? ""),
+          title: "", // İlan başlığını kullan
+          categoryId: 1, // TODO: kategori eşlemesi
+          quantity: Number(c.quantity ?? 0),
+          price: num(c.price),
+          stock: Number(c.quantity ?? 0),
+          description: "",
+          images: [],
+        }));
+
+      const problems = items.length === 0 ? ["Gönderilecek geçerli ürün kalemi yok"] : [];
+
+      if (input.dryRun) {
+        return { dryRun: true, willSend: items.length, sent: 0, batchRequestId: null, problems };
+      }
+
+      if (items.length === 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Gönderilebilir kart yok — ${problems.join(" · ")}`,
+        });
+      }
+
+      try {
+        const result = await pushHepsiburadaProductCards(items as never);
+
+        if (result.batchRequestId) {
+          const allListings = await db.listChannelListings();
+          for (const item of items) {
+            const listing = (allListings as Record<string, unknown>[]).find(
+              l => l.channelId === input.channelId && (l as any).channelBarcode === item.barcode,
+            );
+            if (listing?.id) {
+              await db.saveMarketplaceBatchJob(listing.id as number, "hepsiburada", result.batchRequestId);
+            }
+          }
+        }
+
+        return { dryRun: false, willSend: items.length, ...result, problems };
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: error instanceof Error ? error.message : "Hepsiburada ürün gönderimi başarısız",
         });
       }
     }),

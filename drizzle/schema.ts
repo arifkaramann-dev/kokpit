@@ -1648,3 +1648,50 @@ export const channelAttributeValues = mysqlTable(
 );
 
 export type ChannelAttributeValue = typeof channelAttributeValues.$inferSelect;
+
+/**
+ * Pazaryeri ürün kartı batch işleri.
+ *
+ * Trendyol/Hepsiburada/N11 ürün kartı açma (create) ve güncelleme asenkron
+ * batch işleridir. API batchRequestId döner, sistem status'u polling'le kontrol eder
+ * (pending → success/failed). Her batch tarafından geçmiş log tutulur.
+ *
+ * channelListingId: hangi ilan için açılmış batch
+ * marketplace: 'trendyol' | 'hepsiburada' | 'n11'
+ * batchRequestId: pazaryeri API'sinden dönen batch kimliği
+ * status: 'pending' | 'success' | 'failed'
+ * errorMessage: başarısız batch'te hata detayı (null = başarılı veya henüz tamamlanmadı)
+ * completedAt: batch tamamlanma zamanı (status != 'pending' ise dolu)
+ */
+export const marketplaceBatchJobs = mysqlTable(
+  "marketplaceBatchJobs",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    channelListingId: int("channelListingId").notNull(),
+    marketplace: varchar("marketplace", { length: 50 }).notNull(),
+    batchRequestId: varchar("batchRequestId", { length: 255 }).notNull().unique(),
+    status: mysqlEnum("status", ["pending", "success", "failed"])
+      .notNull()
+      .default("pending"),
+    errorMessage: text("errorMessage"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+    completedAt: timestamp("completedAt"),
+  },
+  t => [
+    index("marketplaceBatchJobs_listing_status_idx").on(
+      t.channelListingId,
+      t.status,
+    ),
+    index("marketplaceBatchJobs_batchRequestId_idx").on(t.batchRequestId),
+    index("marketplaceBatchJobs_created_status_idx").on(t.createdAt, t.status),
+    index("marketplaceBatchJobs_listing_created_idx").on(
+      t.channelListingId,
+      t.createdAt,
+    ),
+  ],
+);
+
+export type MarketplaceBatchJob = typeof marketplaceBatchJobs.$inferSelect;
+export type InsertMarketplaceBatchJob = typeof marketplaceBatchJobs.$inferInsert;
