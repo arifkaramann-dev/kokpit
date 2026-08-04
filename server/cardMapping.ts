@@ -146,7 +146,9 @@ export function mapToTrendyolCards(input: {
     }
     const categoryId = Number(cl.channelCategoryId);
     if (!categoryId) {
-      problems.push(`${label}: kategori eşlemesi yok`);
+      problems.push(
+        `${label}: kategori seçilmemiş — Toplu Yayın → "Kategori Eşlemesi" sekmesinden bu kullanım alanına kategori seçin`,
+      );
       continue;
     }
     const description =

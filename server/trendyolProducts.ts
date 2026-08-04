@@ -62,14 +62,23 @@ export function parseCardSettings(
   const cargoCompanyId = parseInt(raw.trendyolCargoCompanyId ?? "", 10);
   if (!cargoCompanyId) missing.push("trendyolCargoCompanyId (anlaşmalı kargo ID)");
 
+  /*
+   * Kategori eşlemesi ARTIK ZORUNLU DEĞİL.
+   *
+   * Küp katalogda kategori, kanal ilanının kendi `channelCategoryId` alanından
+   * gelir ve Toplu Yayın → "Kategori Eşlemesi" sekmesinde ağaçtan seçilir.
+   * Buradaki JSON yalnız emekli düz ürün modelinin eşleyicisine (kategori ADI
+   * → id) hizmet ediyor.
+   *
+   * Zorunlu tutulduğu sürece kullanıcı, yeni modelin hiç kullanmadığı bir
+   * ayarı Ayarlar sayfasında elle JSON yazarak doldurmadan ürün kartı
+   * açamıyordu — sahte bir engeldi. Bozuk JSON hâlâ bildirilir.
+   */
   let categoryMap: Record<string, number> = {};
   try {
     categoryMap = raw.trendyolCategoryMap ? JSON.parse(raw.trendyolCategoryMap) : {};
   } catch {
     missing.push('trendyolCategoryMap (geçersiz JSON — örn. {"Boya": 1234})');
-  }
-  if (Object.keys(categoryMap).length === 0 && !missing.some(m => m.startsWith("trendyolCategoryMap"))) {
-    missing.push('trendyolCategoryMap (kategori eşlemesi boş — örn. {"Boya": 1234})');
   }
 
   const publicBaseUrl = (raw.publicBaseUrl || process.env.RENDER_EXTERNAL_URL || "").replace(/\/$/, "");

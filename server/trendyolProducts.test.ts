@@ -123,8 +123,33 @@ describe("parseCardSettings", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.missing.join(" ")).toContain("trendyolBrandId");
-      expect(r.missing.join(" ")).toContain("trendyolCategoryMap");
+      expect(r.missing.join(" ")).toContain("trendyolCargoCompanyId");
     }
+  });
+
+  /*
+   * Küp katalogda kategori kanal ilanından gelir (Toplu Yayın → Kategori
+   * Eşlemesi). Bu JSON'u zorunlu tutmak, yeni modelin hiç kullanmadığı bir
+   * ayar için kullanıcıyı Ayarlar'da elle JSON yazmaya mecbur bırakıyordu.
+   */
+  it("kategori eşlemesi JSON'u zorunlu değildir", () => {
+    const r = parseCardSettings({
+      trendyolBrandId: "999",
+      trendyolCargoCompanyId: "17",
+      publicBaseUrl: "https://kokpit.example.com",
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it("bozuk kategori JSON'u yine bildirilir", () => {
+    const r = parseCardSettings({
+      trendyolBrandId: "999",
+      trendyolCargoCompanyId: "17",
+      publicBaseUrl: "https://kokpit.example.com",
+      trendyolCategoryMap: "{bozuk",
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.missing.join(" ")).toContain("trendyolCategoryMap");
   });
 
   it("geçerli ayarları çözümler, site adresindeki bitiş eğik çizgisini atar", () => {
