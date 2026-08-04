@@ -44,6 +44,14 @@ export default function Publish() {
   const channels = dims?.channels ?? [];
   const useCases = dims?.useCases ?? [];
   const activeChannel = Number(channelId) || channels[0]?.id || 0;
+  const activeChannelName = channels.find(c => c.id === activeChannel)?.name ?? "Pazaryeri";
+  /*
+   * Sıfırdan kart açmayı yalnız Trendyol destekliyor. Ekran eskiden kanal ne
+   * olursa olsun "Trendyol'da ürün kartı aç" yazıp Trendyol ucuna gidiyordu:
+   * Hepsiburada seçiliyken Trendyol'a kart gönderiliyordu.
+   */
+  const cardChannelCode = channels.find(c => c.id === activeChannel)?.code ?? "";
+  const supportsCardOpen = cardChannelCode === "trendyol";
 
   const bulk = trpc.katalog.bulkPublish.useMutation({
     onSuccess: r => {
@@ -110,7 +118,15 @@ export default function Publish() {
       <div className="flex flex-wrap items-end gap-3">
         <div className="space-y-1.5">
           <Label>Kanal</Label>
-          <Select value={String(activeChannel)} onValueChange={setChannelId}>
+          <Select
+            value={String(activeChannel)}
+            onValueChange={v => {
+              // Önceki kanalın önizleme/sorun kutuları yeni kanalda asılı kalmasın.
+              setChannelId(v);
+              setCardProblems([]);
+              setPreview(null);
+            }}
+          >
             <SelectTrigger className="w-56">
               <SelectValue placeholder="Kanal seçin" />
             </SelectTrigger>
@@ -286,52 +302,66 @@ export default function Publish() {
           </Card>
 
           <Card className="space-y-3 p-5">
-            <p className="font-semibold">Trendyol&apos;da ürün kartı aç</p>
+            <p className="font-semibold">{activeChannelName}&apos;da ürün kartı aç</p>
             <p className="text-sm text-muted-foreground">
               Sıfırdan ilan açar (stok/fiyat güncellemesinden farklı). Aynı ürün ailesinin
               kalemleri tek ilan altında varyant olarak toplanır. Sonuç asenkron gelir.
             </p>
-            <label className="flex w-fit cursor-pointer items-center gap-2 text-sm">
-              <Checkbox
-                checked={includeUnbuildable}
-                onCheckedChange={c => setIncludeUnbuildable(c === true)}
-              />
-              Üretilemeyenleri de gönder
-            </label>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="outline"
-                disabled={pushCards.isPending || !activeChannel}
-                onClick={() =>
-                  pushCards.mutate({
-                    channelId: activeChannel,
-                    seriesIds: Array.from(selectedSeries),
-                    includeUnbuildable,
-                    dryRun: true,
-                  })
-                }
-              >
-                <Play className="mr-1 h-4 w-4" /> Önce Göster
-              </Button>
-              <Button
-                disabled={pushCards.isPending || !activeChannel}
-                onClick={() =>
-                  pushCards.mutate({
-                    channelId: activeChannel,
-                    seriesIds: Array.from(selectedSeries),
-                    includeUnbuildable,
-                    dryRun: false,
-                  })
-                }
-              >
-                {pushCards.isPending ? (
-                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                ) : (
-                  <Upload className="mr-1 h-4 w-4" />
-                )}
-                Kartları Gönder
-              </Button>
-            </div>
+            {!supportsCardOpen ? (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs dark:border-amber-800 dark:bg-amber-950/40">
+                <p className="font-medium text-amber-800 dark:text-amber-300">
+                  {activeChannelName} için sıfırdan kart açma henüz yok.
+                </p>
+                <p className="text-muted-foreground">
+                  Bu kanalda ürünleri panelden açın; stok ve fiyat güncellemeleri yukarıdaki
+                  gönderimle çalışır. Kart açma yalnız Trendyol&apos;da destekleniyor.
+                </p>
+              </div>
+            ) : (
+              <>
+                <label className="flex w-fit cursor-pointer items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={includeUnbuildable}
+                    onCheckedChange={c => setIncludeUnbuildable(c === true)}
+                  />
+                  Üretilemeyenleri de gönder
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    disabled={pushCards.isPending || !activeChannel}
+                    onClick={() =>
+                      pushCards.mutate({
+                        channelId: activeChannel,
+                        seriesIds: Array.from(selectedSeries),
+                        includeUnbuildable,
+                        dryRun: true,
+                      })
+                    }
+                  >
+                    <Play className="mr-1 h-4 w-4" /> Önce Göster
+                  </Button>
+                  <Button
+                    disabled={pushCards.isPending || !activeChannel}
+                    onClick={() =>
+                      pushCards.mutate({
+                        channelId: activeChannel,
+                        seriesIds: Array.from(selectedSeries),
+                        includeUnbuildable,
+                        dryRun: false,
+                      })
+                    }
+                  >
+                    {pushCards.isPending ? (
+                      <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Upload className="mr-1 h-4 w-4" />
+                    )}
+                    Kartları Gönder
+                  </Button>
+                </div>
+              </>
+            )}
             {cardProblems.length > 0 && (
               <div className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs dark:border-amber-800 dark:bg-amber-950/40">
                 <p className="font-medium text-amber-800 dark:text-amber-300">

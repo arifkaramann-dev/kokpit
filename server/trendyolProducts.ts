@@ -276,10 +276,13 @@ export function extractTrendyolBatchStatus(
       finalStatus: "failed",
       errorMessage: errorParts.join(" | "),
     };
-  } catch (e) {
-    return {
-      finalStatus: "failed",
-      errorMessage: `Batch sonucu işlenemedi: ${String(e).slice(0, 200)}`,
-    };
+  } catch {
+    /*
+     * Gövde okunamadı. Bu partinin BAŞARISIZ olduğu anlamına GELMEZ — yanıt
+     * biçimi değişmiş ya da bozuk gelmiş olabilir. "failed" demek kullanıcıya
+     * "ürün açılmadı" dedirtir ve aynı barkodu tekrar göndermeye iter; parti
+     * pending kalsın, sonraki turda yeniden sorulur.
+     */
+    return { finalStatus: "pending", errorMessage: null };
   }
 }

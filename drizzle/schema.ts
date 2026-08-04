@@ -1670,7 +1670,9 @@ export const marketplaceBatchJobs = mysqlTable(
     companyId: int("companyId").notNull().default(1),
     channelListingId: int("channelListingId").notNull(),
     marketplace: varchar("marketplace", { length: 50 }).notNull(),
-    batchRequestId: varchar("batchRequestId", { length: 255 }).notNull().unique(),
+    // Tekil DEĞİL: bir batch birden çok ilanı kapsar, her ilan için bir satır
+    // yazılır. Tekil kısıt ikinci satırı duplicate key ile düşürürdü.
+    batchRequestId: varchar("batchRequestId", { length: 255 }).notNull(),
     status: mysqlEnum("status", ["pending", "success", "failed"])
       .notNull()
       .default("pending"),

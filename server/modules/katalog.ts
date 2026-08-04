@@ -87,8 +87,7 @@ import {
 } from "../productionPlan";
 import { planPublications, summarizeSkips } from "../publishPlan";
 import { GENERIC_USE_CASE_CODE, seedCatalogDimensions } from "../seedCatalog";
-import { fetchHepsiburadaCategories } from "../hepsiburada";
-import { pushHepsiburadaProductCards } from "../hepsiburadaProducts";
+import { fetchHepsiburadaCategories, fetchHepsiburadaCategoryAttributes } from "../hepsiburada";
 import {
   fetchTrendyolCategories,
   fetchTrendyolCategoryAttributes,
@@ -131,6 +130,63 @@ async function loadChannelCategories(channelCode: string): Promise<FlatCategory[
   const rows = flattenCategories(raw);
   categoryCache.set(channelCode, { at: Date.now(), rows });
   return rows;
+}
+
+/* ---- Pazaryeri özellik (attribute) normalizasyonu ------------------------ */
+
+/** Kanal farkı gözetmeyen özellik satırı — kayıt katmanı bunu bekler. */
+type NormalizedAttribute = {
+  attributeId: number;
+  attributeName: string;
+  isRequired: boolean;
+};
+
+/** Trendyol: `{ categoryAttributes: [{ attribute: {id,name}, required }] }` */
+function normalizeTrendyolAttributes(raw: unknown): NormalizedAttribute[] {
+  const rows = ((raw as Record<string, unknown>)?.categoryAttributes ?? []) as Record<
+    string,
+    unknown
+  >[];
+  const out: NormalizedAttribute[] = [];
+  for (const row of rows) {
+    const attr = (row.attribute ?? {}) as Record<string, unknown>;
+    const attributeId = Number(attr.id ?? 0);
+    if (!attributeId) continue;
+    out.push({
+      attributeId,
+      attributeName: String(attr.name ?? ""),
+      isRequired: Boolean(row.required),
+    });
+  }
+  return out;
+}
+
+/**
+ * Hepsiburada: yanıt sarmalayıcısı sürümden sürüme değişiyor
+ * (`data` / `attributes` / düz dizi), zorunluluk alanı da
+ * `mandatory` ya da `required` olabiliyor. Hepsi savunmacı denenir.
+ */
+function normalizeHepsiburadaAttributes(raw: unknown): NormalizedAttribute[] {
+  const envelope = raw as Record<string, unknown> | unknown[] | null;
+  const rows = (
+    Array.isArray(envelope)
+      ? envelope
+      : ((envelope?.["data"] ?? envelope?.["attributes"] ?? envelope?.["categoryAttributes"] ?? []) as unknown[])
+  ) as Record<string, unknown>[];
+
+  const out: NormalizedAttribute[] = [];
+  for (const row of rows) {
+    // Kimlik sayısal olmayabilir (HB bazı özelliklerde metin anahtar verir);
+    // sayıya çevrilemeyen satır atlanır — şemamız sayısal kimlik tutuyor.
+    const attributeId = Number(row.id ?? row.attributeId ?? 0);
+    if (!attributeId) continue;
+    out.push({
+      attributeId,
+      attributeName: String(row.name ?? row.attributeName ?? ""),
+      isRequired: Boolean(row.mandatory ?? row.required ?? false),
+    });
+  }
+  return out;
 }
 
 /**
@@ -3682,19 +3738,36 @@ export const katalogRouter = router({
       if (!categoryId) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Kategori kimliği sayı olmalı" });
       }
-      let raw: unknown;
+      /*
+       * Özellikler kanalın KENDİ ucundan çekilir. Eskiden kanal ne olursa olsun
+       * Trendyol'a sorulurdu: Hepsiburada kategorisiyle (ör. 60007334) Trendyol'a
+       * gidilince "category.not.found" 404'ü dönüyordu — kullanıcı Hepsiburada
+       * ekranındayken Trendyol hatası görüyordu.
+       */
+      const channels = (await db.listSalesChannels()) as { id: number; code: string }[];
+      const channel = channels.find(c => c.id === input.channelId);
+      if (!channel) throw new TRPCError({ code: "NOT_FOUND", message: "Kanal bulunamadı" });
+
+      let rows: NormalizedAttribute[];
       try {
-        raw = await fetchTrendyolCategoryAttributes(categoryId);
+        if (channel.code === "trendyol") {
+          rows = normalizeTrendyolAttributes(await fetchTrendyolCategoryAttributes(categoryId));
+        } else if (channel.code === "hepsiburada") {
+          rows = normalizeHepsiburadaAttributes(await fetchHepsiburadaCategoryAttributes(categoryId));
+        } else {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `"${channel.code}" kanalı için özellik listesi çekilemiyor — özellikleri elle tanımlayın.`,
+          });
+        }
       } catch (error) {
+        if (error instanceof TRPCError) throw error;
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: error instanceof Error ? error.message : "Kategori özellikleri alınamadı",
         });
       }
-      const rows = ((raw as Record<string, unknown>)?.categoryAttributes ?? []) as Record<
-        string,
-        unknown
-      >[];
+
       const existing = (await db.listChannelAttributes(input.channelId)) as Record<string, unknown>[];
       const known = new Set(
         existing
@@ -3705,18 +3778,14 @@ export const katalogRouter = router({
       let added = 0;
       let updated = 0;
       for (const row of rows) {
-        const attr = (row.attribute ?? {}) as Record<string, unknown>;
-        const attributeId = Number(attr.id ?? 0);
-        if (!attributeId) continue;
-        const attributeName = String(attr.name ?? "");
-        const isNew = !known.has(attributeId);
+        const isNew = !known.has(row.attributeId);
         await db.upsertChannelAttribute({
           channelId: input.channelId,
           categoryId: input.categoryId,
-          attributeId,
-          attributeName,
-          source: guessSource(attributeName),
-          isRequired: Boolean(row.required),
+          attributeId: row.attributeId,
+          attributeName: row.attributeName,
+          source: guessSource(row.attributeName),
+          isRequired: row.isRequired,
           // Mevcut satırda kullanıcının seçimi korunur.
           keepSource: !isNew,
         });
@@ -4027,98 +4096,44 @@ export const katalogRouter = router({
           message: `Gönderilebilir kart yok — ${problems.slice(0, 3).join(" · ")}`,
         });
       }
+      let result: { batchRequestId: string | null; sent: number };
       try {
-        const result = await pushTrendyolProductCards(items as never);
-
-        if (result.batchRequestId) {
-          const allListings = await db.listChannelListings();
-          for (const item of items) {
-            const listing = (allListings as Record<string, unknown>[]).find(
-              l => l.channelId === input.channelId && (l as any).channelSku === item.stockCode,
-            );
-            if (listing?.id) {
-              await db.saveMarketplaceBatchJob(listing.id as number, "trendyol", result.batchRequestId);
-            }
-          }
-        }
-
-        return { dryRun: false, willSend: items.length, ...result, problems };
+        result = await pushTrendyolProductCards(items as never);
       } catch (error) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: error instanceof Error ? error.message : "Trendyol ürün gönderimi başarısız",
         });
       }
-    }),
 
-  pushCardsToHepsiburada: protectedProcedure
-    .input(
-      z.object({
-        channelId: z.number(),
-        seriesIds: z.array(z.number()).default([]),
-        dryRun: z.boolean().default(true),
-      }),
-    )
-    .mutation(async ({ input }) => {
-      const [channelListings, masters] = await Promise.all([
-        db.listChannelListings(),
-        db.listMasterProducts(),
-      ]);
-
-      const wantedSeries = input.seriesIds.length ? new Set(input.seriesIds) : null;
-      const masterRows = (masters as Record<string, unknown>[]).filter(
-        m => !wantedSeries || wantedSeries.has(m.seriesId as number),
-      );
-      const allowed = new Set(masterRows.map(m => m.id as number));
-
-      const items = (channelListings as Record<string, unknown>[])
-        .filter(c => c.channelId === input.channelId && allowed.has(c.masterId as number))
-        .map(c => ({
-          barcode: String(c.channelBarcode ?? ""),
-          title: "", // İlan başlığını kullan
-          categoryId: 1, // TODO: kategori eşlemesi
-          quantity: Number(c.quantity ?? 0),
-          price: num(c.price),
-          stock: Number(c.quantity ?? 0),
-          description: "",
-          images: [],
-        }));
-
-      const problems = items.length === 0 ? ["Gönderilecek geçerli ürün kalemi yok"] : [];
-
-      if (input.dryRun) {
-        return { dryRun: true, willSend: items.length, sent: 0, batchRequestId: null, problems };
-      }
-
-      if (items.length === 0) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: `Gönderilebilir kart yok — ${problems.join(" · ")}`,
-        });
-      }
-
-      try {
-        const result = await pushHepsiburadaProductCards(items as never);
-
-        if (result.batchRequestId) {
-          const allListings = await db.listChannelListings();
+      /*
+       * Kartlar Trendyol'a GİTTİ. Buradan sonrası yalnızca takip kaydı —
+       * hata verirse gönderimi başarısız SAYMAYIZ: kullanıcı "başarısız" görüp
+       * tekrar denerse aynı barkodlar ikinci kez gider ve "barkod zaten kayıtlı"
+       * hatasına düşer. Takip kaydı kaybolur, kart açılışı kaybolmaz.
+       */
+      let tracked = 0;
+      if (result.batchRequestId) {
+        try {
+          const allListings = (await db.listChannelListings()) as Record<string, unknown>[];
+          const bySku = new Map(
+            allListings
+              .filter(l => l.channelId === input.channelId)
+              .map(l => [String(l.channelSku ?? ""), l.id as number]),
+          );
           for (const item of items) {
-            const listing = (allListings as Record<string, unknown>[]).find(
-              l => l.channelId === input.channelId && (l as any).channelBarcode === item.barcode,
-            );
-            if (listing?.id) {
-              await db.saveMarketplaceBatchJob(listing.id as number, "hepsiburada", result.batchRequestId);
+            const listingId = bySku.get(item.stockCode);
+            if (listingId) {
+              await db.saveMarketplaceBatchJob(listingId, "trendyol", result.batchRequestId);
+              tracked += 1;
             }
           }
+        } catch (error) {
+          console.error("[katalog] batch takip kaydı yazılamadı:", error);
         }
-
-        return { dryRun: false, willSend: items.length, ...result, problems };
-      } catch (error) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: error instanceof Error ? error.message : "Hepsiburada ürün gönderimi başarısız",
-        });
       }
+
+      return { dryRun: false, willSend: items.length, ...result, tracked, problems };
     }),
 
   /**
