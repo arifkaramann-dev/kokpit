@@ -18,6 +18,24 @@
 > siteleri bot erişimini kısmen engelliyor. Mevcut derin analiz
 > `RAKIP-ANALIZI-BIZIMHESAP-QUKASOFT.md` (18.07.2026) burada tekrar edilmedi —
 > bu belge onun **üstüne** koyar.
+>
+> ## ⚠ DÜZELTME (04.08.2026, aynı gün)
+>
+> Bu belge yalnız rakiplere bakıp **kendi kodumuza bakmadan** yazıldı ve üç
+> maddesi yanlış çıktı. Kod incelemesi
+> (`KOKPIT-DURUM-VE-YOL-HARITASI.md`) şunları gösterdi:
+>
+> - **"N11/Çiçeksepeti yok"** → `products.pushToN11` ve `pushToCiceksepeti`
+>   yazılmış; ölü ürün modeline bağlı oldukları için görünmüyorlar.
+> - **"Tahsilat linki yok"** → PayTR sanal POS hazır (`server/paytr.ts`, env
+>   anahtarları, iframe token ucu). Yalnız mağaza sayfasındaki son adım
+>   bağlanmamış.
+> - **"Kârlılık raporu yok"** → `report.productSales` var, Analiz sayfasından
+>   koparılmış (yetim uç nokta).
+>
+> Yani bazı "eksikler" eksik değil, **bağlantısı kopuk**. Aşağıdaki tabloları
+> okurken bunu hesaba katın; öncelik sıralaması için
+> `KOKPIT-DURUM-VE-YOL-HARITASI.md` esas alınmalıdır.
 
 ---
 
