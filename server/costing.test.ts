@@ -95,6 +95,46 @@ describe("computeMasterCosts", () => {
     expect(c.totalCost).toBeCloseTo(22.9);
   });
 
+  /*
+   * Maliyet uzun süre yalnız hammadde + ambalajdan oluşuyordu; ayarlarda
+   * tanımlı işçilik ve genel gider hesaba girmiyordu. Birim maliyet
+   * sistematik olarak düşük çıkınca üstüne kurulan fiyat da olduğundan
+   * kârlı görünüyordu.
+   */
+  it("işçilik + genel gider birim maliyete eklenir", () => {
+    const [c] = computeMasterCosts({
+      masters: [master],
+      materials,
+      formulas: [harc, mamul],
+      packagings: [pack],
+      unitLaborOverhead: 4.5,
+    });
+    expect(c.laborOverhead).toBeCloseTo(4.5);
+    expect(c.totalCost).toBeCloseTo(27.4); // 19 + 3,9 + 4,5
+  });
+
+  it("pay verilmezse eski davranış korunur", () => {
+    const [c] = computeMasterCosts({
+      masters: [master],
+      materials,
+      formulas: [harc, mamul],
+      packagings: [pack],
+    });
+    expect(c.laborOverhead).toBe(0);
+    expect(c.totalCost).toBeCloseTo(22.9);
+  });
+
+  it("negatif pay maliyeti düşürmez", () => {
+    const [c] = computeMasterCosts({
+      masters: [master],
+      materials,
+      formulas: [harc, mamul],
+      packagings: [pack],
+      unitLaborOverhead: -10,
+    });
+    expect(c.totalCost).toBeCloseTo(22.9);
+  });
+
   it("büyük ambalaj boya maliyetini orantılı artırır", () => {
     const [c] = computeMasterCosts({
       masters: [{ ...master, formulaScale: 0.5 }],

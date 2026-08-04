@@ -37,6 +37,7 @@ import {
   type MasterIORecord,
 } from "@shared/masterIO";
 import { salesNameOf } from "@shared/productName";
+import { deriveUnitLaborOverhead } from "@shared/pricing";
 import { runCapacityRecompute } from "../catalogJobs";
 import { loadCapacityInputs } from "../capacityInputs";
 import {
@@ -294,6 +295,18 @@ const num = (v: unknown): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
+
+/**
+ * Birim başına işçilik + genel gider payı.
+ *
+ * Ayarlarda aylık genel gider, ortalama üretim adedi ve saatlik işçilik
+ * zaten tanımlıydı ve eski modelin kanal kârı raporu bunları kullanıyordu;
+ * küp katalog kullanmadığı için birim maliyet sistematik olarak düşük
+ * çıkıyordu.
+ */
+async function unitLaborOverheadValue(): Promise<number> {
+  return deriveUnitLaborOverhead(await db.getSettings()).value;
+}
 
 export const katalogRouter = router({
   /* ---- Boyutlar --------------------------------------------------------- */
@@ -2630,11 +2643,14 @@ export const katalogRouter = router({
     const masterImages = await db.listMasterImageRefs();
     const data = await loadCapacityInputs();
 
+    const laborOverheadValue = await unitLaborOverheadValue();
+
     const costs = computeMasterCosts({
       masters: data.masters,
       materials: data.costMaterials,
       formulas: data.formulas,
       packagings: data.packagings,
+      unitLaborOverhead: laborOverheadValue,
     });
     const costById = new Map(costs.map(c => [c.masterId, c]));
 
@@ -2811,11 +2827,13 @@ export const katalogRouter = router({
       db.listChannelListings(),
     ]);
     const data = await loadCapacityInputs();
+    const laborOverheadValue = await unitLaborOverheadValue();
     const costs = computeMasterCosts({
       masters: data.masters,
       materials: data.costMaterials,
       formulas: data.formulas,
       packagings: data.packagings,
+      unitLaborOverhead: laborOverheadValue,
     });
     const costById = new Map(costs.map(c => [c.masterId, c]));
 
@@ -2914,11 +2932,14 @@ export const katalogRouter = router({
       const report = computeCapacity(data);
       const capacity = report.masters.find(r => r.masterId === input.masterId) ?? null;
 
+      const laborOverheadValue = await unitLaborOverheadValue();
+
       const [cost] = computeMasterCosts({
         masters: data.masters.filter(m => m.id === input.masterId),
         materials: data.costMaterials,
         formulas: data.formulas,
         packagings: data.packagings,
+        unitLaborOverhead: laborOverheadValue,
       });
 
       const formula = master.formulaId
@@ -3278,11 +3299,13 @@ export const katalogRouter = router({
           reservedQty: num(m.reservedQty),
         })),
       });
+      const laborOverheadValue = await unitLaborOverheadValue();
       const [cost] = computeMasterCosts({
         masters: data.masters.filter(m => m.id === input.masterId),
         materials: data.costMaterials,
         formulas: data.formulas,
         packagings: data.packagings,
+        unitLaborOverhead: laborOverheadValue,
       });
       return { ...plan, unitCost: cost?.totalCost ?? 0 };
     }),
@@ -3609,11 +3632,13 @@ export const katalogRouter = router({
         db.listPackagings(),
       ]);
       const data = await loadCapacityInputs();
+      const laborOverheadValue = await unitLaborOverheadValue();
       const costs = computeMasterCosts({
         masters: data.masters,
         materials: data.costMaterials,
         formulas: data.formulas,
         packagings: data.packagings,
+        unitLaborOverhead: laborOverheadValue,
       });
       const unitCosts = new Map(costs.map(c => [c.masterId, c.totalCost]));
 

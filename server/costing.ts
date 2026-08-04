@@ -42,6 +42,8 @@ export type MasterCost = {
   materialCost: number;
   /** Şişe, kapak, etiket, koli. */
   packagingCost: number;
+  /** Birim başına işçilik + genel gider payı (ayarlardan türetilir). */
+  laborOverhead: number;
   totalCost: number;
   /** Maliyeti bilinmeyen kalemler — sayı eksik hesaplanmış demektir. */
   unknownInputs: string[];
@@ -128,7 +130,20 @@ export function computeMasterCosts(input: {
   materials: CostMaterial[];
   formulas: CapacityFormula[];
   packagings: CapacityPackaging[];
+  /**
+   * Birim başına işçilik + genel gider payı (`deriveUnitLaborOverhead`).
+   *
+   * Maliyet uzun süre yalnız hammadde + ambalajdan oluşuyordu; oysa ayarlarda
+   * aylık genel gider, ortalama üretim adedi ve saatlik işçilik zaten
+   * tanımlıydı ve eski modelin kanal kârı raporu bunları kullanıyordu. Yeni
+   * katalog kullanmayınca birim maliyet sistematik olarak DÜŞÜK çıkıyor,
+   * üstüne kurulan her fiyat da olduğundan kârlı görünüyordu.
+   *
+   * Verilmezse 0 sayılır — eski davranış korunur.
+   */
+  unitLaborOverhead?: number;
 }): MasterCost[] {
+  const laborOverhead = Math.max(0, input.unitLaborOverhead ?? 0);
   const unit = resolveUnitCosts(input.materials, input.formulas);
   const materialById = new Map(input.materials.map(m => [m.id, m]));
   const formulaById = new Map(input.formulas.map(f => [f.id, f]));
@@ -182,7 +197,8 @@ export function computeMasterCosts(input: {
       masterId: master.id,
       materialCost: round(materialCost),
       packagingCost: round(packagingCost),
-      totalCost: round(materialCost + packagingCost),
+      laborOverhead: round(laborOverhead),
+      totalCost: round(materialCost + packagingCost + laborOverhead),
       unknownInputs: Array.from(unknown),
       unitMismatches: Array.from(mismatched),
     };

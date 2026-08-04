@@ -35,6 +35,23 @@ export default function MasterCard() {
   const [, setLocation] = useLocation();
   const utils = trpc.useUtils();
   const masterId = Number(params?.id ?? 0);
+
+  /*
+   * "İlan üret" düğmesi eskiden yalnız /katalog'a yönlendiriyordu; kullanıcı
+   * ürün listesine düşüyor ve hiçbir şey olmuyordu. Zincirin kırıldığı yer tam
+   * burasıydı — düğme artık işini kendisi yapar.
+   */
+  const genListings = trpc.katalog.generateListings.useMutation({
+    onSuccess: r => {
+      utils.katalog.invalidate();
+      toast.success(
+        r.created > 0
+          ? `${r.created} ilan açıldı — Toplu Yayın'dan pazaryerine gönderebilirsiniz`
+          : "Açılacak yeni ilan yok",
+      );
+    },
+    onError: e => toast.error(e.message, { duration: 10000 }),
+  });
   const { data, isLoading } = trpc.katalog.masterCard.useQuery(
     { masterId },
     { enabled: masterId > 0 },
@@ -298,8 +315,15 @@ export default function MasterCard() {
                   </Badge>
                 ))}
               </div>
-              <Button size="sm" variant="outline" className="mt-1 w-fit" onClick={() => setLocation("/katalog")}>
-                İlan üret
+              <Button
+                size="sm"
+                className="mt-1 w-fit"
+                disabled={genListings.isPending}
+                onClick={() => genListings.mutate({ masterIds: [masterId], dryRun: false })}
+              >
+                {genListings.isPending
+                  ? "Açılıyor…"
+                  : `${openUseCases.length} ilanı aç`}
               </Button>
             </Card>
           )}
