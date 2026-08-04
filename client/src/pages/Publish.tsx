@@ -117,14 +117,19 @@ export default function Publish() {
     onSuccess: r => {
       setCardProblems(r.problems);
       utils.katalog.invalidate();
+      const already = r.alreadyOnMarketplace
+        ? ` · ${r.alreadyOnMarketplace} kalem zaten pazaryerinde`
+        : "";
       if (r.dryRun) {
-        toast.info(`${r.willSend} kart gönderilecek${r.problems.length ? ` · ${r.problems.length} sorun` : ""}`, {
-          duration: 9000,
-        });
+        toast.info(
+          `${r.willSend} kart gönderilecek${already}` +
+            (r.problems.length ? ` · ${r.problems.length} sorun` : ""),
+          { duration: 9000 },
+        );
         return;
       }
       toast.success(
-        `${r.sent} kart gönderildi${r.batchRequestId ? ` (parti: ${r.batchRequestId})` : ""}`,
+        `${r.sent} kart gönderildi${already}${r.batchRequestId ? ` (parti: ${r.batchRequestId})` : ""}`,
         { duration: 12000 },
       );
     },
