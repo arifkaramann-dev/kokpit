@@ -121,3 +121,50 @@ describe("templateContentBlock — pazaryerine giden metin", () => {
     }
   });
 });
+
+/**
+ * Serinin kendi metinleri.
+ *
+ * Kullanıcı Seriler ekranında açıklama giriyor ama blok üretimi jenerik
+ * şablon yazıyordu; blok yazılınca içerik zinciri (blok → seri → boş) seriye
+ * hiç düşmediği için girilen bilgi ilanlara ulaşmıyordu.
+ */
+describe("templateContentBlock — seri metinleri şablonu yener", () => {
+  const base = { seriesName: "CANDY", useCaseName: "Airbrush", surfaces: ["Metal"] };
+
+  it("seride açıklama varsa onu kullanır", () => {
+    const b = templateContentBlock({
+      ...base,
+      seriesContent: { longDescription: "<p>Seriye özel metin.</p>" },
+    });
+    expect(b.longDescription).toBe("<p>Seriye özel metin.</p>");
+  });
+
+  it("seride olmayan alan şablondan gelir — yarım seri içeriği düşürmez", () => {
+    const b = templateContentBlock({
+      ...base,
+      seriesContent: { longDescription: "<p>Yalnız uzun açıklama girilmiş.</p>" },
+    });
+    expect(b.longDescription).toBe("<p>Yalnız uzun açıklama girilmiş.</p>");
+    expect(b.shortDescription).toContain("{{seri}}");
+    expect(b.applicationText).toContain("kat");
+  });
+
+  it("boş/boşluklu seri alanı yok sayılır", () => {
+    const b = templateContentBlock({ ...base, seriesContent: { longDescription: "   " } });
+    expect(b.longDescription).toContain("Nasıl uygulanır");
+  });
+
+  it("uygulama metni yoksa kullanım kılavuzu şablonuna düşer", () => {
+    const b = templateContentBlock({
+      ...base,
+      seriesContent: { guideTemplate: "Kılavuz: {{renk}} için." },
+    });
+    expect(b.applicationText).toBe("Kılavuz: {{renk}} için.");
+  });
+
+  it("seri içeriği hiç yoksa eski davranış korunur", () => {
+    const b = templateContentBlock(base);
+    expect(b.longDescription).toContain("Nasıl uygulanır");
+  });
+});

@@ -87,6 +87,7 @@ import {
 } from "../productionPlan";
 import { matchAttributeValues } from "../attributeMatch";
 import { reconcileCatalogs, reconcileSummary } from "../marketplaceReconcile";
+import { planProductImport } from "../productImport";
 import { planPublications, summarizeSkips } from "../publishPlan";
 import { GENERIC_USE_CASE_CODE, seedCatalogDimensions } from "../seedCatalog";
 import { fetchHepsiburadaCategories, fetchHepsiburadaCategoryAttributes } from "../hepsiburada";
@@ -1284,6 +1285,15 @@ export const katalogRouter = router({
           useCaseName: u.name,
           familyName: t.familyId != null ? (fById.get(t.familyId)?.name ?? null) : null,
           surfaces: parseStringArray(s.applicationSurfaces),
+          // Serinin kendi metinleri jenerik şablonu yener — kullanıcı Seriler
+          // ekranında bunları giriyor, blok üretimi eskiden hiç bakmıyordu.
+          seriesContent: {
+            shortDescription: (s.shortDescription as string | null) ?? null,
+            longDescription: (s.longDescription as string | null) ?? null,
+            applicationText: (s.applicationText as string | null) ?? null,
+            guideTemplate: (s.guideTemplate as string | null) ?? null,
+            labelTemplate: (s.labelTemplate as string | null) ?? null,
+          },
         };
 
         // AI başarısız olursa şablona düşülür — hiçbir ilan boş kalmasın.
@@ -3945,6 +3955,163 @@ export const katalogRouter = router({
         matched: result.matched.slice(0, 200),
         onlyRemote: result.onlyRemote.slice(0, 200),
         onlyLocal: result.onlyLocal.slice(0, 200),
+      };
+    }),
+
+  /**
+   * Pazaryerinde olup Kokpit'te olmayan ürünlerden master üretir.
+   *
+   * Kataloğumuz küp (seri × renk × ambalaj × form); pazaryeri kaydı bu
+   * koordinatları taşımaz, yalnız başlık taşır. Koordinat başlıktan çözülür ve
+   * SADECE Tanımlar'da mevcut boyut değerleri eşleşir — başlıkta geçen ama
+   * tanımlı olmayan bir renk için yeni renk yaratılmaz. Çözülemeyen ürün
+   * oluşturulmaz, nedeni bildirilir.
+   *
+   * Seri başlıkta genelde geçmediği için parti başına dışarıdan verilir.
+   */
+  importFromMarketplace: protectedProcedure
+    .input(
+      z.object({
+        channelId: z.number(),
+        seriesId: z.number(),
+        useCaseId: z.number(),
+        barcodes: z.array(z.string()).default([]),
+        dryRun: z.boolean().default(true),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const channels = (await db.listSalesChannels()) as { id: number; code: string }[];
+      const channel = channels.find(c => c.id === input.channelId);
+      if (!channel) throw new TRPCError({ code: "NOT_FOUND", message: "Kanal bulunamadı" });
+      if (channel.code !== "trendyol") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `"${channel.code}" kanalı için içe aktarma şimdilik yok.`,
+        });
+      }
+
+      const [remoteRows, channelListings, colors, packagings, families, series] = await Promise.all([
+        fetchTrendyolProducts(),
+        db.listChannelListings(),
+        db.listColors(),
+        db.listPackagings(),
+        db.listProductFamilies(),
+        db.listProductSeries(),
+      ]);
+
+      const seriesRow = (series as Record<string, unknown>[]).find(s => s.id === input.seriesId);
+      if (!seriesRow) throw new TRPCError({ code: "NOT_FOUND", message: "Seri bulunamadı" });
+
+      // Zaten bizde olan barkodlar aday değil.
+      const known = new Set(
+        (channelListings as Record<string, unknown>[])
+          .filter(c => c.channelId === input.channelId)
+          .map(c => String(c.channelBarcode ?? "").trim().toLocaleLowerCase("tr")),
+      );
+      const wanted = new Set(input.barcodes.map(b => b.trim()));
+      const candidates = remoteRows
+        .filter(r => !known.has(r.barcode.trim().toLocaleLowerCase("tr")))
+        .filter(r => wanted.size === 0 || wanted.has(r.barcode.trim()))
+        .map(r => ({
+          barcode: r.barcode,
+          title: r.title,
+          stockCode: r.stockCode,
+          salePrice: r.salePrice,
+        }));
+
+      const dim = (rows: unknown) =>
+        (rows as Record<string, unknown>[]).map(r => ({
+          id: r.id as number,
+          name: String(r.name ?? ""),
+        }));
+
+      const plan = planProductImport({
+        candidates,
+        colors: dim(colors),
+        packagings: dim(packagings),
+        families: dim(families),
+      });
+
+      if (input.dryRun) {
+        return {
+          dryRun: true,
+          created: 0,
+          ready: plan.ready.slice(0, 200),
+          blocked: plan.blocked.slice(0, 200),
+          readyCount: plan.ready.length,
+          blockedCount: plan.blocked.length,
+        };
+      }
+
+      /*
+       * Yazma: master → ilan → kanal yayını. Bir kalemin hatası partiyi
+       * durdurmaz; kalanlar yazılır ve hata bildirilir. Yarım kalan bir
+       * içe aktarma, hiç olmayandan iyidir ama sessiz olmamalı.
+       */
+      let created = 0;
+      const failures: string[] = [];
+      const brand = "Artofcolour";
+
+      for (const row of plan.ready) {
+        try {
+          const baseCode = buildBaseCode({
+            brand,
+            seriesPrefix: (seriesRow.prefix as string | null) ?? String(seriesRow.name ?? ""),
+            colorCode: row.colorName,
+          });
+          const internalSku = buildInternalSku({
+            baseCode,
+            familySegment: row.familyName,
+            packagingSegment: row.packagingName,
+          });
+
+          const masterId = await db.createMasterProduct({
+            seriesId: input.seriesId,
+            colorId: row.colorId!,
+            familyId: row.familyId!,
+            packagingId: row.packagingId!,
+            baseCode,
+            internalSku,
+            status: "aktif",
+            basePrice: String(row.candidate.salePrice || 0),
+          } as never);
+
+          const listingId = await db.createListing({
+            masterId,
+            useCaseId: input.useCaseId,
+            title: row.candidate.title,
+            slug: buildSlug(row.candidate.title),
+          } as never);
+
+          await db.createChannelListing({
+            listingId,
+            masterId,
+            channelId: input.channelId,
+            // Pazaryerindeki gerçek değerler: bağ buradan kurulur, yenisi
+            // üretilirse aynı ürün ikinci kez açılırdı.
+            channelSku: row.candidate.stockCode || internalSku,
+            channelBarcode: row.candidate.barcode,
+            price: String(row.candidate.salePrice || 0),
+            status: "canli",
+            syncState: "temiz",
+          } as never);
+
+          created += 1;
+        } catch (error) {
+          failures.push(
+            `${row.candidate.title}: ${error instanceof Error ? error.message : "yazılamadı"}`,
+          );
+        }
+      }
+
+      return {
+        dryRun: false,
+        created,
+        ready: [],
+        blocked: plan.blocked.slice(0, 200),
+        readyCount: plan.ready.length,
+        blockedCount: plan.blocked.length,
+        failures,
       };
     }),
 
