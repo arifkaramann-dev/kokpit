@@ -28,20 +28,46 @@ export type ContentVars = {
   hacim?: string | null;
 };
 
-/** Şablon değişkenlerini doldurur. Bilinmeyen değişken boş bırakılır. */
+/**
+ * Şablon değişkenlerini doldurur. Bilinmeyen değişken boş bırakılır.
+ *
+ * Koşullu bölüm: `{{#kullanim}}… {{kullanim}} için…{{/kullanim}}`
+ *
+ * Boş değişken yalnız boşluk bırakmıyor, cümleyi SAKAT bırakıyordu. Jenerik
+ * ilanda kullanım alanı bilerek boş geçiliyor (başlık forma düşsün diye) ve
+ * "{{kullanim}} için geliştirilmiş boya" cümlesi pazaryerine
+ * "— için geliştirilmiş boya." diye gidiyordu. Boşluk temizliği bunu
+ * düzeltemez: eksik olan kelimenin kendisi. Değişkene bağlı cümle parçası
+ * artık koşullu bölüme sarılır ve değişken boşsa parça tamamen düşer.
+ */
 export function fillTemplate(template: string | null | undefined, vars: ContentVars): string {
   if (!template) return "";
-  return template
-    .replaceAll("{{marka}}", vars.marka ?? "")
-    .replaceAll("{{seri}}", vars.seri ?? "")
-    .replaceAll("{{renk}}", vars.renk ?? "")
-    .replaceAll("{{form}}", vars.form ?? "")
-    .replaceAll("{{ambalaj}}", vars.ambalaj ?? "")
-    .replaceAll("{{kullanim}}", vars.kullanim ?? "")
-    .replaceAll("{{hacim}}", vars.hacim ?? "")
+
+  const value = (name: string): string => {
+    const v = (vars as Record<string, string | null | undefined>)[name];
+    return typeof v === "string" ? v.trim() : "";
+  };
+
+  // Koşullu bölümler önce çözülür: içindeki değişkenler ancak bölüm
+  // korunduysa doldurulmalı.
+  const withSections = template.replace(
+    /\{\{#(\w+)\}\}([\s\S]*?)\{\{\/\1\}\}/g,
+    (_match, name: string, body: string) => (value(name) ? body : ""),
+  );
+
+  return withSections
+    .replaceAll("{{marka}}", value("marka"))
+    .replaceAll("{{seri}}", value("seri"))
+    .replaceAll("{{renk}}", value("renk"))
+    .replaceAll("{{form}}", value("form"))
+    .replaceAll("{{ambalaj}}", value("ambalaj"))
+    .replaceAll("{{kullanim}}", value("kullanim"))
+    .replaceAll("{{hacim}}", value("hacim"))
     // Değişken boş kalınca oluşan çift boşluk ve boşluklu noktalama temizlenir.
     .replace(/[ \t]{2,}/g, " ")
     .replace(/\s+([,.;:!?])/g, "$1")
+    // Boş bölüm sonrası kalan sarkan ayraç ("<strong>X</strong> — .") temizlenir.
+    .replace(/\s*[—–-]\s*([.<])/g, "$1")
     .trim();
 }
 

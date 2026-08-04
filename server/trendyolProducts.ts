@@ -192,6 +192,36 @@ export async function pushTrendyolProductCards(items: TrendyolProductItem[]) {
 }
 
 /**
+ * MEVCUT ürün kartlarını günceller (başlık, açıklama, görsel, özellik, kategori).
+ *
+ * Sistemde yalnız "oluştur" vardı; Trendyol'da zaten kayıtlı bir barkod için
+ * create reddedildiğinden ürün ya hata veriyor ya atlanıyordu. Oysa doğru
+ * karşılık güncellemektir — kart açılışıyla aynı veriden beslenir, sadece
+ * fiil değişir (POST → PUT).
+ *
+ * Stok/fiyat bunun kapsamında DEĞİL: onun ayrı ve daha hızlı bir ucu var
+ * (price-and-inventory). Burası ürün bilgisi içindir.
+ */
+export async function updateTrendyolProductCards(items: TrendyolProductItem[]) {
+  if (!isTrendyolConfigured()) {
+    throw new Error("Trendyol entegrasyonu yapılandırılmamış (Satıcı ID, API Key, API Secret gerekli).");
+  }
+  if (items.length === 0) throw new Error("Güncellenecek geçerli ürün kalemi yok.");
+
+  const url = `${TRENDYOL_API_BASE}/integration/product/sellers/${ENV.trendyolSellerId}/products`;
+  const res = await fetch(url, { method: "PUT", headers: headers(), body: JSON.stringify({ items }) });
+  if (res.status === 401 || res.status === 403) {
+    throw new Error("Trendyol API bilgileri reddedildi (yetki hatası).");
+  }
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Trendyol ürün güncellemesi başarısız: ${explainTrendyolError(body)}`);
+  }
+  const data = (await res.json()) as { batchRequestId?: string };
+  return { batchRequestId: data.batchRequestId ?? null, sent: items.length };
+}
+
+/**
  * Satıcının Trendyol'da HÂLEN KAYITLI barkodları.
  *
  * "Bu barkod Trendyol'da zaten kayıtlı" hatasının sebebi: kart bir kez açılmış
