@@ -41,9 +41,24 @@ export default function MasterCard() {
    * ürün listesine düşüyor ve hiçbir şey olmuyordu. Zincirin kırıldığı yer tam
    * burasıydı — düğme artık işini kendisi yapar.
    */
+  /*
+   * Hangi kullanım alanlarında ilan açılacağı SEÇİLİR. Önceden hepsi birden
+   * açılıyordu — bir şişe için 20 ilan, çoğu ilgisiz (kaliper, motosiklet…).
+   * Varsayılan hiçbiri: kullanıcı bilerek seçsin.
+   */
+  const [pickedUseCases, setPickedUseCases] = useState<Set<number>>(new Set());
+  const toggleUseCase = (id: number) =>
+    setPickedUseCases(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
   const genListings = trpc.katalog.generateListings.useMutation({
     onSuccess: r => {
       utils.katalog.invalidate();
+      setPickedUseCases(new Set());
       toast.success(
         r.created > 0
           ? `${r.created} ilan açıldı — Toplu Yayın'dan pazaryerine gönderebilirsiniz`
@@ -308,22 +323,55 @@ export default function MasterCard() {
                 Aynı şişe, farklı alıcı kitlesi. Eksik alan doldurmak değil, açılmamış pazara
                 girmek satış getirir.
               </p>
-              <div className="flex flex-wrap gap-1.5">
-                {(openUseCases as { id: number; name: string }[]).map(u => (
-                  <Badge key={u.id} variant="outline">
-                    {u.name}
-                  </Badge>
-                ))}
+              <div className="flex flex-wrap items-center gap-1.5">
+                {(openUseCases as { id: number; name: string }[]).map(u => {
+                  const on = pickedUseCases.has(u.id);
+                  return (
+                    <button
+                      key={u.id}
+                      type="button"
+                      onClick={() => toggleUseCase(u.id)}
+                      className={`rounded-full border px-2.5 py-1 text-xs transition ${
+                        on
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : "border-input bg-background hover:border-primary/60"
+                      }`}
+                    >
+                      {u.name}
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPickedUseCases(
+                      pickedUseCases.size === openUseCases.length
+                        ? new Set()
+                        : new Set((openUseCases as { id: number }[]).map(u => u.id)),
+                    )
+                  }
+                  className="ml-1 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                >
+                  {pickedUseCases.size === openUseCases.length ? "Hiçbiri" : "Tümü"}
+                </button>
               </div>
               <Button
                 size="sm"
                 className="mt-1 w-fit"
-                disabled={genListings.isPending}
-                onClick={() => genListings.mutate({ masterIds: [masterId], dryRun: false })}
+                disabled={genListings.isPending || pickedUseCases.size === 0}
+                onClick={() =>
+                  genListings.mutate({
+                    masterIds: [masterId],
+                    useCaseIds: Array.from(pickedUseCases),
+                    dryRun: false,
+                  })
+                }
               >
                 {genListings.isPending
                   ? "Açılıyor…"
-                  : `${openUseCases.length} ilanı aç`}
+                  : pickedUseCases.size === 0
+                    ? "Kullanım alanı seçin"
+                    : `Seçili ${pickedUseCases.size} ilanı aç`}
               </Button>
             </Card>
           )}

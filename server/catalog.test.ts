@@ -110,6 +110,22 @@ describe("buildListingTitle / buildSlug", () => {
     ).toBe("Artofcolour Candy Red 3D Baskı Boyası 100 ML PET");
   });
 
+  /*
+   * Seri başlıkta olmalı: CANDY ile VIVID aynı renkte aynı başlığı alıyor,
+   * pazaryerinde hangi seriden olduğu anlaşılmıyordu.
+   */
+  it("şablonsuz başlıkta seri de yer alır", () => {
+    expect(
+      buildListingTitle(null, {
+        marka: "Artofcolour",
+        seri: "CANDY",
+        renk: "Fuşya",
+        kullanim: "Airbrush",
+        ambalaj: "100 ml",
+      }),
+    ).toBe("Artofcolour CANDY Fuşya Airbrush Boyası 100 ml");
+  });
+
   it("şablon değişkenlerini doldurur", () => {
     expect(
       buildListingTitle("{{renk}} {{kullanim}} Boyası {{ambalaj}}", {

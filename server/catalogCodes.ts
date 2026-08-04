@@ -236,8 +236,11 @@ export function buildListingTitle(pattern: string | null | undefined, vars: Titl
       .replaceAll("{{kullanim}}", vars.kullanim ?? "");
     return clean(filled);
   }
+  // Seri şablonsuz başlıkta da yer alır: "Artofcolour Fuşya Airbrush Boyası"
+  // hangi seriden olduğunu söylemiyordu — CANDY ile VIVID aynı renkte aynı
+  // başlığı alıyor, pazaryerinde ayırt edilemiyordu.
   return clean(
-    [vars.marka, vars.renk, vars.kullanim ?? vars.form, "Boyası", vars.ambalaj]
+    [vars.marka, vars.seri, vars.renk, vars.kullanim ?? vars.form, "Boyası", vars.ambalaj]
       .filter(Boolean)
       .join(" "),
   );
