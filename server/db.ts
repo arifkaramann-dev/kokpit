@@ -3205,6 +3205,22 @@ export async function markChannelSyncFailed(ids: number[], message: string) {
     .where(inArray(channelListings.id, ids));
 }
 
+/**
+ * İlanın kanal barkodunu değiştirir (pazaryeri ürününe bağlama).
+ *
+ * Barkod normalde bir kez üretilip sabit kalır; burada elle değiştirilmesinin
+ * tek meşru sebebi pazaryerinde ZATEN var olan bir ürüne bağlanmaktır.
+ * Bağlandıktan sonra gönderim o ürünü günceller, yenisini açmaz. Satır kirli
+ * işaretlenir ki stok/fiyat yeni barkodla bir kez daha gitsin.
+ */
+export async function setChannelListingBarcode(id: number, barcode: string) {
+  const db = await requireDb();
+  await db
+    .update(channelListings)
+    .set({ channelBarcode: barcode, syncState: "kirli", lastError: null })
+    .where(eq(channelListings.id, id));
+}
+
 /* ---- Pazaryeri batch tracking (ürün kartı açma) ---- */
 
 /**

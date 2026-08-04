@@ -1,5 +1,6 @@
 import AttributeMapping from "@/components/AttributeMapping";
 import CategoryMapping from "@/components/CategoryMapping";
+import MarketplaceReconcile from "@/components/MarketplaceReconcile";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -304,6 +305,7 @@ export default function Publish() {
           <TabsTrigger value="gonder">Pazaryerine Gönder</TabsTrigger>
           <TabsTrigger value="kategori">Kategori Eşlemesi</TabsTrigger>
           <TabsTrigger value="ozellik">Özellik Eşlemesi</TabsTrigger>
+          <TabsTrigger value="mutabakat">Pazaryeri Ürünleri</TabsTrigger>
           <TabsTrigger value="kayit">Gönderim Kayıtları</TabsTrigger>
         </TabsList>
 
@@ -555,6 +557,10 @@ export default function Publish() {
 
         <TabsContent value="ozellik" className="pt-3">
           <AttributeMapping channelId={activeChannel} />
+        </TabsContent>
+
+        <TabsContent value="mutabakat" className="pt-3">
+          <MarketplaceReconcile channelId={activeChannel} channelCode={cardChannelCode} />
         </TabsContent>
 
         <TabsContent value="kayit" className="pt-3">

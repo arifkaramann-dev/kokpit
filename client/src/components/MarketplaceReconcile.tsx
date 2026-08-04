@@ -1,0 +1,194 @@
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { trpc } from "@/lib/trpc";
+import { Download, Link2, Loader2 } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
+
+/**
+ * Pazaryeri ↔ Kokpit ürün mutabakatı.
+ *
+ * "Trendyol'daki ürünleri sisteme çekebilir miyim, güncelleyebilir miyim?"
+ * sorusunun ekrandaki cevabı. Güncelleme yalnız iki tarafta da kaydı olan
+ * ürün için mümkün; bu ekran hangilerinin öyle olduğunu ve kalanların neden
+ * olmadığını gösterir.
+ *
+ * Bağlama otomatik YAPILMAZ: yanlış bağlanan ürün, sonraki güncellemede başka
+ * bir ürünün başlığını ve görselini ezer. Stok kodu tutan adaylar önerilir,
+ * kararı kullanıcı verir.
+ */
+export default function MarketplaceReconcile({
+  channelId,
+  channelCode,
+}: {
+  channelId: number;
+  channelCode: string;
+}) {
+  const utils = trpc.useUtils();
+  const [ran, setRan] = useState(false);
+
+  const reconcile = trpc.katalog.reconcileMarketplace.useMutation({
+    onSuccess: () => setRan(true),
+    onError: e => toast.error(e.message, { duration: 12000 }),
+  });
+
+  const link = trpc.katalog.linkMarketplaceProduct.useMutation({
+    onSuccess: () => {
+      utils.katalog.invalidate();
+      toast.success("Ürün bağlandı — bundan sonraki gönderimler bu ürünü günceller", {
+        duration: 9000,
+      });
+      reconcile.mutate({ channelId });
+    },
+    onError: e => toast.error(e.message, { duration: 12000 }),
+  });
+
+  if (channelCode !== "trendyol") {
+    return (
+      <Card className="p-4 text-sm text-muted-foreground">
+        Ürün listesi çekme şimdilik yalnız Trendyol için var.
+      </Card>
+    );
+  }
+
+  const data = reconcile.data;
+
+  return (
+    <div className="space-y-3">
+      <Card className="space-y-3 p-5">
+        <p className="font-semibold">Pazaryerindeki ürünleri karşılaştır</p>
+        <p className="text-sm text-muted-foreground">
+          Trendyol&apos;daki ürün listesi çekilip Kokpit ile karşılaştırılır. Bir ürünü
+          güncelleyebilmek için iki tarafta da kaydı olması gerekir; eşleşme barkod üzerinden
+          kurulur.
+        </p>
+        <div>
+          <Button
+            disabled={reconcile.isPending || !channelId}
+            onClick={() => reconcile.mutate({ channelId })}
+          >
+            {reconcile.isPending ? (
+              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="mr-1 h-4 w-4" />
+            )}
+            Pazaryerinden Çek ve Karşılaştır
+          </Button>
+        </div>
+
+        {data && (
+          <div className="flex flex-wrap gap-2 pt-1">
+            <Badge variant="secondary">{data.summary.matched} eşleşti · güncellenebilir</Badge>
+            <Badge variant={data.summary.onlyRemote > 0 ? "destructive" : "outline"}>
+              {data.summary.onlyRemote} yalnız pazaryerinde
+            </Badge>
+            <Badge variant="outline">{data.summary.onlyLocal} yalnız Kokpit&apos;te</Badge>
+            {data.summary.linkable > 0 && (
+              <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                {data.summary.linkable} tanesi stok koduyla bağlanabilir
+              </Badge>
+            )}
+          </div>
+        )}
+      </Card>
+
+      {ran && data && data.onlyRemote.length > 0 && (
+        <Card className="space-y-2 p-4">
+          <p className="text-sm font-medium">Yalnız pazaryerinde ({data.onlyRemote.length})</p>
+          <p className="text-xs text-muted-foreground">
+            Bu ürünlerin Kokpit&apos;te karşılığı yok, bu yüzden güncellenemiyorlar. Stok kodu
+            tutan bir ilan bulunduysa tek tıkla bağlayabilirsiniz — bağlantı sonrası
+            güncellemeler o ürüne gider.
+          </p>
+          <div className="max-h-96 overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50 text-xs text-muted-foreground">
+                <tr>
+                  <th className="p-2 text-left">Pazaryeri ürünü</th>
+                  <th className="p-2 text-left">Barkod</th>
+                  <th className="p-2 text-left">Durum</th>
+                  <th className="p-2 text-left">Kokpit karşılığı</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.onlyRemote.map(row => (
+                  <tr key={row.remote.barcode} className="border-t align-top">
+                    <td className="p-2">
+                      <div className="max-w-72 truncate">{row.remote.title}</div>
+                      {row.remote.stockCode && (
+                        <div className="font-mono text-[11px] text-muted-foreground">
+                          {row.remote.stockCode}
+                        </div>
+                      )}
+                    </td>
+                    <td className="p-2 font-mono text-xs">{row.remote.barcode}</td>
+                    <td className="p-2">
+                      <Badge variant={row.remote.approved ? "secondary" : "outline"}>
+                        {row.remote.approved ? "onaylı" : "onay bekliyor"}
+                      </Badge>
+                    </td>
+                    <td className="p-2">
+                      {row.skuCandidate ? (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="max-w-52 truncate text-xs">
+                            {row.skuCandidate.title}
+                          </span>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7"
+                            disabled={link.isPending}
+                            onClick={() =>
+                              link.mutate({
+                                channelListingId: row.skuCandidate!.channelListingId,
+                                barcode: row.remote.barcode,
+                              })
+                            }
+                          >
+                            <Link2 className="mr-1 h-3.5 w-3.5" />
+                            Bağla
+                          </Button>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">
+                          eşleşen ilan yok — Kokpit&apos;te ürünü oluşturup barkodunu bu
+                          barkoda çevirin
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      {ran && data && data.onlyLocal.length > 0 && (
+        <Card className="space-y-2 p-4">
+          <p className="text-sm font-medium">Yalnız Kokpit&apos;te ({data.onlyLocal.length})</p>
+          <p className="text-xs text-muted-foreground">
+            Bunlar pazaryerinde yok — &quot;Kartları Gönder&quot; ile açılabilir.
+          </p>
+          <div className="max-h-64 space-y-1 overflow-y-auto">
+            {data.onlyLocal.map(l => (
+              <div key={l.channelListingId} className="flex items-center gap-2 text-xs">
+                <span className="max-w-96 truncate">{l.title}</span>
+                <span className="ml-auto shrink-0 font-mono text-muted-foreground">
+                  {l.barcode || "barkodsuz"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {ran && data && data.summary.onlyRemote === 0 && data.summary.onlyLocal === 0 && (
+        <Card className="p-4 text-sm text-muted-foreground">
+          İki taraf birebir örtüşüyor — tüm ürünler eşleşmiş durumda.
+        </Card>
+      )}
+    </div>
+  );
+}

@@ -236,27 +236,81 @@ export async function updateTrendyolProductCards(items: TrendyolProductItem[]) {
  * amaç "bu barkod Trendyol'da var mı?" sorusuna tam cevap vermek.
  */
 export async function fetchTrendyolExistingBarcodes(): Promise<Set<string>> {
-  const found = new Set<string>();
-  if (!isTrendyolConfigured()) return found;
+  const rows = await fetchTrendyolProducts();
+  return new Set(rows.map(r => r.barcode));
+}
 
+/** Trendyol'daki bir ürün kaydının bizi ilgilendiren alanları. */
+export type TrendyolRemoteProduct = {
+  barcode: string;
+  title: string;
+  stockCode: string;
+  productMainId: string;
+  categoryId: number | null;
+  categoryName: string | null;
+  brandId: number | null;
+  quantity: number;
+  listPrice: number;
+  salePrice: number;
+  /** Trendyol içi ürün kimliği — eşleştirmede saklanır. */
+  productCode: string | null;
+  approved: boolean;
+  onSale: boolean;
+  images: string[];
+};
+
+/**
+ * Satıcının Trendyol'daki ürünleri (tam kayıt).
+ *
+ * Barkod kümesi bu listenin özetidir; ayrı bir uç değil. Eşleştirme ekranı
+ * başlık, stok kodu ve durum gibi alanları da gösterdiği için ham kayıt burada
+ * döner — aynı veriyi iki kez çekmemek için barkod kümesi de bunu kullanır.
+ */
+export async function fetchTrendyolProducts(): Promise<TrendyolRemoteProduct[]> {
+  if (!isTrendyolConfigured()) return [];
+
+  const out: TrendyolRemoteProduct[] = [];
   const size = 1000;
   // Üst sınır: katalog beklenmedik büyüklükteyse sonsuz döngüye girilmesin.
   const MAX_PAGES = 50;
+
   for (let page = 0; page < MAX_PAGES; page++) {
     const data = (await trendyolGet(
       `/integration/product/sellers/${ENV.trendyolSellerId}/products?page=${page}&size=${size}`,
-    )) as { content?: { barcode?: string }[]; totalPages?: number };
+    )) as { content?: Record<string, unknown>[]; totalPages?: number };
 
     const rows = Array.isArray(data?.content) ? data.content : [];
     for (const r of rows) {
-      const b = String(r?.barcode ?? "").trim();
-      if (b) found.add(b);
+      const barcode = String(r?.barcode ?? "").trim();
+      if (!barcode) continue;
+      const category = (r.category ?? {}) as Record<string, unknown>;
+      const images = Array.isArray(r.images)
+        ? (r.images as Record<string, unknown>[])
+            .map(i => String(i?.url ?? "").trim())
+            .filter(Boolean)
+        : [];
+      out.push({
+        barcode,
+        title: String(r.title ?? ""),
+        stockCode: String(r.stockCode ?? ""),
+        productMainId: String(r.productMainId ?? ""),
+        categoryId: Number(r.pimCategoryId ?? category.id ?? 0) || null,
+        categoryName: String(category.name ?? "") || null,
+        brandId: Number(r.brandId ?? 0) || null,
+        quantity: Number(r.quantity ?? 0),
+        listPrice: Number(r.listPrice ?? 0),
+        salePrice: Number(r.salePrice ?? 0),
+        productCode: r.productCode != null ? String(r.productCode) : null,
+        approved: Boolean(r.approved),
+        onSale: Boolean(r.onSale),
+        images,
+      });
     }
 
     const totalPages = Number(data?.totalPages ?? 0);
     if (rows.length === 0 || page + 1 >= totalPages) break;
   }
-  return found;
+  return out;
 }
 
 /** Batch sonucu: her kalemin durumu + hata mesajları. */
