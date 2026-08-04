@@ -1,8 +1,16 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { trpc } from "@/lib/trpc";
-import { Download, Link2, Loader2 } from "lucide-react";
+import { Download, Link2, Loader2, Play } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -18,6 +26,156 @@ import { toast } from "sonner";
  * bir ürünün başlığını ve görselini ezer. Stok kodu tutan adaylar önerilir,
  * kararı kullanıcı verir.
  */
+/**
+ * Pazaryeri ürününden Kokpit ürünü üretme.
+ *
+ * Kataloğumuz küp (seri × renk × ambalaj × form); pazaryeri kaydı yalnız
+ * başlık taşıyor. Renk/ambalaj/form başlıktan çözülür, SERİ başlıkta genelde
+ * geçmediği için parti başına burada seçilir — uydurmak yerine sormak doğru.
+ *
+ * Çözülemeyen ürün oluşturulmaz: eksik eksen, ürünün küpte yanlış yerde
+ * doğması ve kapasite/reçete bağlarının tutmaması demek.
+ */
+function ImportPanel({ channelId, onDone }: { channelId: number; onDone: () => void }) {
+  const { data: dims } = trpc.katalog.dimensions.useQuery();
+  const { data: series } = trpc.series.list.useQuery();
+  const [seriesId, setSeriesId] = useState("");
+  const [useCaseId, setUseCaseId] = useState("");
+
+  const runImport = trpc.katalog.importFromMarketplace.useMutation({
+    onSuccess: r => {
+      if (r.dryRun) {
+        toast.info(
+          `${r.readyCount} ürün oluşturulabilir` +
+            (r.blockedCount > 0 ? ` · ${r.blockedCount} tanesi çözülemedi` : ""),
+          { duration: 10000 },
+        );
+        return;
+      }
+      toast.success(`${r.created} ürün Kokpit'e eklendi`, { duration: 10000 });
+      if (r.failures?.length) {
+        toast.error(`${r.failures.length} kalem yazılamadı: ${r.failures[0]}`, { duration: 12000 });
+      }
+      onDone();
+    },
+    onError: e => toast.error(e.message, { duration: 12000 }),
+  });
+
+  const ready = runImport.data?.dryRun ? runImport.data.ready : [];
+  const blocked = runImport.data?.blocked ?? [];
+  const canRun = seriesId !== "" && useCaseId !== "";
+
+  return (
+    <Card className="space-y-3 p-4">
+      <p className="text-sm font-medium">Pazaryeri ürünlerinden Kokpit ürünü oluştur</p>
+      <p className="text-xs text-muted-foreground">
+        Renk, ambalaj ve form ürün adından çözülür — yalnız Tanımlar&apos;da <em>zaten var olan</em>{" "}
+        değerlerle eşleşir, yenisini uydurmaz. Seri ürün adında geçmediği için burada seçilir.
+      </p>
+
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="space-y-1.5">
+          <Label className="text-xs">Seri</Label>
+          <Select value={seriesId} onValueChange={setSeriesId}>
+            <SelectTrigger className="h-9 w-48 text-xs">
+              <SelectValue placeholder="Seri seçin" />
+            </SelectTrigger>
+            <SelectContent>
+              {(series ?? []).map(s => (
+                <SelectItem key={s.id} value={String(s.id)}>
+                  {s.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Kullanım alanı</Label>
+          <Select value={useCaseId} onValueChange={setUseCaseId}>
+            <SelectTrigger className="h-9 w-48 text-xs">
+              <SelectValue placeholder="Kullanım alanı seçin" />
+            </SelectTrigger>
+            <SelectContent>
+              {(dims?.useCases ?? []).map(u => (
+                <SelectItem key={u.id} value={String(u.id)}>
+                  {u.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <Button
+          variant="outline"
+          className="h-9"
+          disabled={!canRun || runImport.isPending}
+          onClick={() =>
+            runImport.mutate({
+              channelId,
+              seriesId: Number(seriesId),
+              useCaseId: Number(useCaseId),
+              dryRun: true,
+            })
+          }
+        >
+          {runImport.isPending ? (
+            <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+          ) : (
+            <Play className="mr-1 h-4 w-4" />
+          )}
+          Önce Göster
+        </Button>
+        {ready.length > 0 && (
+          <Button
+            className="h-9"
+            disabled={runImport.isPending}
+            onClick={() =>
+              runImport.mutate({
+                channelId,
+                seriesId: Number(seriesId),
+                useCaseId: Number(useCaseId),
+                dryRun: false,
+              })
+            }
+          >
+            {ready.length} ürünü oluştur
+          </Button>
+        )}
+      </div>
+
+      {ready.length > 0 && (
+        <div className="max-h-64 space-y-1 overflow-y-auto rounded-lg border p-2">
+          {ready.map(r => (
+            <div key={r.candidate.barcode} className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="max-w-72 truncate">{r.candidate.title}</span>
+              <span className="ml-auto shrink-0 text-muted-foreground">
+                {r.colorName} · {r.packagingName} · {r.familyName}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {blocked.length > 0 && (
+        <div className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs dark:border-amber-800 dark:bg-amber-950/40">
+          <p className="font-medium text-amber-800 dark:text-amber-300">
+            {blocked.length} ürün çözülemedi — eksik boyutu Tanımlar&apos;dan ekleyin
+          </p>
+          <div className="max-h-40 space-y-1 overflow-y-auto">
+            {blocked.slice(0, 20).map(b => (
+              <div key={b.candidate.barcode} className="flex flex-wrap items-center gap-2">
+                <span className="max-w-72 truncate">{b.candidate.title}</span>
+                <span className="ml-auto shrink-0 text-muted-foreground">
+                  eksik: {b.missing.join(", ")}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export default function MarketplaceReconcile({
   channelId,
   channelCode,
@@ -92,6 +250,10 @@ export default function MarketplaceReconcile({
           </div>
         )}
       </Card>
+
+      {ran && data && data.summary.onlyRemote > 0 && (
+        <ImportPanel channelId={channelId} onDone={() => reconcile.mutate({ channelId })} />
+      )}
 
       {ran && data && data.onlyRemote.length > 0 && (
         <Card className="space-y-2 p-4">

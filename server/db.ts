@@ -2617,6 +2617,19 @@ export async function createListing(data: InsertListing) {
   return Number(r.insertId);
 }
 
+/**
+ * İlan metnini günceller (gönderim önizlemesinden elle düzeltme).
+ *
+ * Metin normalde içerik zincirinden (blok → seri) türetilir; buradaki yazma
+ * o ilana ÖZEL bir düzeltmedir ve zinciri ezer. Pazaryerine gitmeden önce tek
+ * bir ilanın başlığını düzeltmek için blok metnini değiştirmek, aynı bloğu
+ * paylaşan bütün ilanları etkilerdi.
+ */
+export async function updateListing(id: number, data: Partial<InsertListing>) {
+  const db = await requireDb();
+  await db.update(listings).set(data).where(eq(listings.id, id));
+}
+
 /* ---- Kanal yayınları ----------------------------------------------------- */
 
 export async function listChannelListings() {

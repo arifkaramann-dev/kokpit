@@ -22,6 +22,20 @@ export type BlockContext = {
   surfaces?: string[];
   /** Seride tanımlı ambalajlar — metin hangi boyutlara hitap edecek. */
   packagings?: string[];
+  /**
+   * Serinin KENDİ metinleri (Seriler ekranında elle girilen).
+   *
+   * Bunlar varken jenerik şablon yazmak, kullanıcının girdiği bilgiyi
+   * gölgeliyordu: içerik zinciri blok → seri → boş şeklinde ilerlediği için
+   * blok yazılır yazılmaz seri metnine hiç düşülmüyordu.
+   */
+  seriesContent?: {
+    shortDescription?: string | null;
+    longDescription?: string | null;
+    applicationText?: string | null;
+    guideTemplate?: string | null;
+    labelTemplate?: string | null;
+  };
 };
 
 export type GeneratedBlock = {
@@ -129,6 +143,18 @@ export function surfaceSentence(surfaces: string[] | undefined, fallback: string
 export function templateContentBlock(ctx: BlockContext): GeneratedBlock {
   const yuzey = surfaceSentence(ctx.surfaces, ctx.useCaseName);
 
+  /*
+   * Serinin kendi metni her zaman jenerik şablonu YENER.
+   *
+   * Kullanıcı Seriler ekranında açıklama, uygulama metni ve etiket şablonu
+   * giriyor; blok üretimi bunlara hiç bakmadan jenerik metin yazıyordu. Blok
+   * yazılınca içerik zinciri seriye düşmediği için girilen bilgi ilanlara hiç
+   * ulaşmıyordu. Alan alan devralınır: seride olan alan seriden, olmayan
+   * şablondan gelir — yarım dolu seri yüzünden içerik kaybolmasın.
+   */
+  const own = ctx.seriesContent ?? {};
+  const pick = (v: string | null | undefined) => (typeof v === "string" && v.trim() ? v.trim() : null);
+
   const longDescription = [
     `<p><strong>Art of Colour {{seri}} {{renk}}</strong>, {{ambalaj}} ambalajında hazır kullanım boyasıdır.`,
     `{{#kullanim}} {{kullanim}} uygulamaları için üretilmiştir.{{/kullanim}}</p>`,
@@ -153,15 +179,20 @@ export function templateContentBlock(ctx: BlockContext): GeneratedBlock {
   return {
     titlePattern: "{{renk}} {{kullanim}} Boyası {{ambalaj}}",
     shortDescription:
+      pick(own.shortDescription) ??
       `Art of Colour {{seri}} serisi {{renk}} tonu, {{ambalaj}} ambalajında. ` +
-      `İnce katlar hâlinde kolay uygulanır, düzgün ve homojen kapatır.`,
-    longDescription,
+        `İnce katlar hâlinde kolay uygulanır, düzgün ve homojen kapatır.`,
+    longDescription: pick(own.longDescription) ?? longDescription,
     applicationText:
+      pick(own.applicationText) ??
+      pick(own.guideTemplate) ??
       `Yüzeyi tozdan ve yağdan arındırın, parlak yüzeyleri hafifçe matlaştırın. ` +
-      `Ürünü kullanmadan önce iyice karıştırın. 2-3 ince kat hâlinde uygulayın; ` +
-      `katlar arasında yüzeyin dokunma kuruluğuna gelmesini bekleyin. ` +
-      `İnce kat, tek kalın kattan daha düzgün ve akmasız sonuç verir. ` +
-      `Dayanıklılık için üzerine vernik uygulayabilirsiniz.`,
-    labelText: `{{seri}} {{renk}} · {{ambalaj}}\nÇocuklardan uzak tutunuz. Serin ve havadar ortamda saklayınız.`,
+        `Ürünü kullanmadan önce iyice karıştırın. 2-3 ince kat hâlinde uygulayın; ` +
+        `katlar arasında yüzeyin dokunma kuruluğuna gelmesini bekleyin. ` +
+        `İnce kat, tek kalın kattan daha düzgün ve akmasız sonuç verir. ` +
+        `Dayanıklılık için üzerine vernik uygulayabilirsiniz.`,
+    labelText:
+      pick(own.labelTemplate) ??
+      `{{seri}} {{renk}} · {{ambalaj}}\nÇocuklardan uzak tutunuz. Serin ve havadar ortamda saklayınız.`,
   };
 }
