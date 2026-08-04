@@ -99,16 +99,69 @@ belirt.
 }
 
 /**
+ * Yüzey listesini okunur bir cümleye çevirir.
+ *
+ * Ham liste olduğu gibi basılıyordu: 25 kalemlik "Otomobil, Araç, Motosiklet,
+ * Jant, Kask, … Rapala, Sahte Balık, Reçine" dökümü. Bu bir ürün açıklaması
+ * değil anahtar kelime yığını — müşteriye bilgi vermiyor, ilanı ucuz
+ * gösteriyor ve alakasız kalemler (olta yemi ile oto boya yan yana) güven
+ * kırıyor. Liste kısaltılır, gerisi "ve benzeri yüzeyler" ile toplanır.
+ */
+export function surfaceSentence(surfaces: string[] | undefined, fallback: string): string {
+  const list = (surfaces ?? []).map(s => s.trim()).filter(Boolean);
+  if (list.length === 0) return fallback;
+  if (list.length <= 6) return list.join(", ");
+  return `${list.slice(0, 6).join(", ")} ve benzeri yüzeyler`;
+}
+
+/**
  * AI erişilemezse ya da başarısız olursa kullanılacak şablon içeriği.
  * Hiçbir ilan boş açıklamayla kalmasın diye — boş ilan pazaryerine gönderilemez.
+ *
+ * Bu metin pazaryerinde MÜŞTERİYE görünüyor; "yedek içerik" olması özensiz
+ * olmasını haklı çıkarmaz. Eski hâli ürünü anlatmıyordu: tek satır tanım +
+ * seri/ambalaj dökümü. Ne işe yaradığı, nasıl uygulandığı, ne kadar kuruduğu
+ * yazmıyordu — alıcının sorduğu sorular bunlar.
+ *
+ * `{{kullanim}}` jenerik ilanda BOŞ gelir; ona bağlı cümleler koşullu bölüme
+ * sarılır, yoksa cümle sakat kalır.
  */
 export function templateContentBlock(ctx: BlockContext): GeneratedBlock {
-  const yuzey = ctx.surfaces?.length ? ctx.surfaces.join(", ") : ctx.useCaseName;
+  const yuzey = surfaceSentence(ctx.surfaces, ctx.useCaseName);
+
+  const longDescription = [
+    `<p><strong>Art of Colour {{seri}} {{renk}}</strong>, {{ambalaj}} ambalajında hazır kullanım boyasıdır.`,
+    `{{#kullanim}} {{kullanim}} uygulamaları için üretilmiştir.{{/kullanim}}</p>`,
+    `<p>Uygulanabilir yüzeyler: ${yuzey}.</p>`,
+    `<p><strong>Nasıl uygulanır?</strong></p>`,
+    `<ul>`,
+    `<li>Yüzeyi tozdan, yağdan ve nemden arındırın; parlak yüzeyleri hafifçe matlaştırın.</li>`,
+    `<li>Kullanmadan önce ürünü iyice karıştırın.</li>`,
+    `<li>İnce katlar hâlinde uygulayın; tek kalın kat yerine 2-3 ince kat daha düzgün sonuç verir.</li>`,
+    `<li>Katlar arasında yüzey dokunma kuruluğuna gelene kadar bekleyin.</li>`,
+    `<li>Dayanıklılık ve parlaklık için üzerine vernik uygulanabilir.</li>`,
+    `</ul>`,
+    `<p><strong>Ürün bilgisi</strong></p>`,
+    `<ul>`,
+    `<li>Seri: {{seri}}</li>`,
+    `<li>Renk: {{renk}}</li>`,
+    `<li>Ambalaj: {{ambalaj}}</li>`,
+    `</ul>`,
+    `<p>Çocukların erişemeyeceği yerde, serin ve havadar ortamda saklayınız.</p>`,
+  ].join("");
+
   return {
     titlePattern: "{{renk}} {{kullanim}} Boyası {{ambalaj}}",
-    shortDescription: `{{seri}} serisi {{renk}} tonu, {{kullanim}} uygulamaları için {{ambalaj}} ambalajında.`,
-    longDescription: `<p><strong>{{seri}} {{renk}}</strong> — {{kullanim}} için geliştirilmiş boya.</p><ul><li>Uygulama alanı: ${yuzey}</li><li>Ambalaj: {{ambalaj}}</li><li>Seri: {{seri}}</li></ul>`,
-    applicationText: `Yüzeyi tozdan ve yağdan arındırın. Ürünü kullanmadan önce iyice karıştırın. İnce katlar hâlinde uygulayın, katlar arasında kuruma süresine uyun. ${ctx.useCaseName} uygulamalarında ince kat tercih edin.`,
+    shortDescription:
+      `Art of Colour {{seri}} serisi {{renk}} tonu, {{ambalaj}} ambalajında. ` +
+      `İnce katlar hâlinde kolay uygulanır, düzgün ve homojen kapatır.`,
+    longDescription,
+    applicationText:
+      `Yüzeyi tozdan ve yağdan arındırın, parlak yüzeyleri hafifçe matlaştırın. ` +
+      `Ürünü kullanmadan önce iyice karıştırın. 2-3 ince kat hâlinde uygulayın; ` +
+      `katlar arasında yüzeyin dokunma kuruluğuna gelmesini bekleyin. ` +
+      `İnce kat, tek kalın kattan daha düzgün ve akmasız sonuç verir. ` +
+      `Dayanıklılık için üzerine vernik uygulayabilirsiniz.`,
     labelText: `{{seri}} {{renk}} · {{ambalaj}}\nÇocuklardan uzak tutunuz. Serin ve havadar ortamda saklayınız.`,
   };
 }
