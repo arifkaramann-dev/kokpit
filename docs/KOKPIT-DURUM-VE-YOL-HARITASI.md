@@ -232,6 +232,38 @@ vardır ama **canlıda doğrulanmalı**.
 
 ---
 
+## Bölüm 5.5 — Uygulama durumu (04.08.2026 akşamı)
+
+Bu belge yazıldıktan sonra Faz 1-3'ün bir kısmı uygulandı. Gerçekleşen:
+
+| İş | Durum | Not |
+|---|---|---|
+| Ar-Ge → katalog köprüsü | ✅ | Ürün Çıktıları'nda **üç** düğme vardı; biri ölü modele yazıyordu. Tek yola indi |
+| PayTR ödeme adımı | ✅ | Sunucu hazırdı, istemci çağırmıyordu; bağlandı |
+| "İlan üret" düğmesi | ✅ | **Hiçbir şey üretmiyordu**, yalnız /katalog'a yönlendiriyordu. Zincirin kırıldığı yer buydu |
+| Trendyol sahte kategori engeli | ✅ | Yeni modelin kullanmadığı bir ayar zorunlu tutuluyordu |
+| İşçilik + genel gider maliyete | ✅ | `computeMasterCosts` artık payı alıyor; maliyetler ARTACAK, doğrusu bu |
+| Ölü ağırlık | ✅ | 3 router, 3 shared modül, 27 db fonksiyonu, 36 boş test kaldırıldı |
+| Kârlılık raporu (F1.3) | ⬜ | `report.productSales` yetim, eski modeli okuyor |
+| N11/Çiçeksepeti (F1.4) | ⬜ | Push kodu ölü modele bağlı |
+| Net kâr (F3.1) | 🟡 | **Zaten yazılmış**: `report.channelProfit` komisyon profilleriyle hesaplıyor ve Analiz'e bağlı — ama eski modelin ürünlerini okuyor. Yapılacak iş taşımak, yazmak değil |
+| Renk kodu araması (F4) | ⬜ | — |
+
+### Yeni bulgu: Strateji sayfası ölü veriyi analiz ediyor
+
+`report.data` → `reportData()` eski `products` tablosunu okuyor. Strateji
+sayfasındaki 12 maddelik ürün tamamlanma listesi (`Strategy.tsx:65-92`)
+aslında `masterHealth`'in ölü model üzerindeki bir KOPYASI — üstelik daha
+eski bir sürümü.
+
+Doğru çözüm silmek değil, tekrarı kaldırmak: Strateji ürün bölümü kendi
+kontrol listesini tutmayı bırakıp `katalog.trackList`'in sağlık verisini
+okumalı. Ürünler sayfasındaki kartlar bunu zaten canlı veriyle ve tıklanabilir
+düzeltmelerle yapıyor.
+
+**Neden bu turda yapılmadı:** sayfayı yarım taşımak, ölü veriyi analiz
+etmekten daha kötü olurdu. Ayrı bir iş olarak duruyor.
+
 ## Bölüm 6 — Yol haritası
 
 Sıralama mantığı: **önce çalıştır, sonra bağla, sonra temizle, sonra büyüt.**
