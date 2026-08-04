@@ -1,8 +1,17 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -11,7 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { trpc } from "@/lib/trpc";
-import { Download, Loader2, Trash2 } from "lucide-react";
+import { Download, Loader2, Search, Trash2, Wand2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -68,9 +77,12 @@ export default function AttributeMapping({ channelId }: { channelId: number }) {
     onSuccess: r => {
       utils.katalog.channelAttributes.invalidate();
       utils.katalog.attributeCoverage.invalidate();
-      toast.success(`${r.added} yeni · ${r.updated} güncellendi (${r.total} özellik)`, {
-        duration: 8000,
-      });
+      utils.katalog.channelAttributeOptions.invalidate();
+      toast.success(
+        `${r.added} yeni · ${r.updated} güncellendi (${r.total} özellik)` +
+          (r.options > 0 ? ` · ${r.options} seçenek — artık listeden seçebilirsiniz` : ""),
+        { duration: 8000 },
+      );
     },
     onError: e => toast.error(e.message, { duration: 10000 }),
   });
@@ -99,6 +111,49 @@ export default function AttributeMapping({ channelId }: { channelId: number }) {
 
   /** Kurulu eşlemeler — yanlış eşleneni kaldırabilmek için listelenir. */
   const { data: mappedValues } = trpc.katalog.channelAttributeValues.useQuery({ channelId });
+
+  /*
+   * Pazaryerinin kabul ettiği değerler. Bu liste gelmeden önce kullanıcı
+   * kimliği pazaryeri panelinden kopyalamak zorundaydı; artık seçiyor.
+   */
+  const { data: options } = trpc.katalog.channelAttributeOptions.useQuery(
+    { channelId, categoryId: activeCategory },
+    { enabled: channelId > 0 && activeCategory !== "" },
+  );
+
+  const optionsFor = (attributeId: number) =>
+    (options ?? [])
+      .filter(o => o.attributeId === attributeId)
+      .map(o => ({ valueId: o.valueId, valueName: o.valueName }));
+
+  const [matchPreview, setMatchPreview] = useState<{
+    attributeId: number;
+    proposals: { dimensionId: number; dimensionName: string; valueId: number; valueName: string; confidence: string }[];
+    unmatched: { id: number; name: string }[];
+  } | null>(null);
+
+  const autoMatch = trpc.katalog.autoMatchAttributeValues.useMutation({
+    onSuccess: (r, vars) => {
+      if (r.dryRun) {
+        setMatchPreview({
+          attributeId: vars.attributeId,
+          proposals: r.proposals,
+          unmatched: r.unmatched,
+        });
+        if (r.proposals.length === 0) {
+          toast.info("Ada göre eşleşen değer bulunamadı — aşağıdan tek tek seçin.", {
+            duration: 8000,
+          });
+        }
+        return;
+      }
+      setMatchPreview(null);
+      utils.katalog.attributeCoverage.invalidate();
+      utils.katalog.channelAttributeValues.invalidate();
+      toast.success(`${r.applied} değer eşlendi`, { duration: 8000 });
+    },
+    onError: e => toast.error(e.message, { duration: 10000 }),
+  });
 
   const deleteValue = trpc.katalog.deleteChannelAttributeValue.useMutation({
     onSuccess: () => {
@@ -224,10 +279,93 @@ export default function AttributeMapping({ channelId }: { channelId: number }) {
               </Badge>
               {!c.isRequired && <Badge variant="outline">zorunlu değil</Badge>}
             </div>
-            <p className="text-xs text-muted-foreground">
-              Bu değerler eşlenmeden kart açılamaz — pazaryerindeki karşılık kimliğini (ya da
-              serbest metni) girin.
-            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-xs text-muted-foreground">
+                Bu değerler eşlenmeden kart açılamaz.
+                {optionsFor(c.attributeId).length > 0
+                  ? ` Pazaryerinden ${optionsFor(c.attributeId).length} seçenek çekildi — listeden seçin.`
+                  : " Seçenek listesi yok: önce \"Pazaryerinden çek\" deyin, sonra listeden seçebilirsiniz."}
+              </p>
+              {optionsFor(c.attributeId).length > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="ml-auto h-8"
+                  disabled={autoMatch.isPending}
+                  onClick={() =>
+                    autoMatch.mutate({
+                      channelId,
+                      categoryId: activeCategory,
+                      attributeId: c.attributeId,
+                      dryRun: true,
+                    })
+                  }
+                >
+                  {autoMatch.isPending ? (
+                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Wand2 className="mr-2 h-3.5 w-3.5" />
+                  )}
+                  Ada göre otomatik eşle
+                </Button>
+              )}
+            </div>
+
+            {/* Otomatik eşleme önizlemesi — onaysız yazılmaz. */}
+            {matchPreview?.attributeId === c.attributeId && (
+              <div className="space-y-2 rounded-lg border border-primary/40 bg-primary/5 p-3">
+                <p className="text-xs font-medium">
+                  {matchPreview.proposals.length} eşleşme bulundu
+                  {matchPreview.unmatched.length > 0 &&
+                    ` · ${matchPreview.unmatched.length} tanesi elle seçilmeli`}
+                </p>
+                <div className="max-h-56 space-y-1 overflow-y-auto">
+                  {matchPreview.proposals.map(p => (
+                    <div key={p.dimensionId} className="flex items-center gap-2 text-xs">
+                      <span className="w-40 shrink-0 truncate">{p.dimensionName}</span>
+                      <span className="text-muted-foreground">→</span>
+                      <span className="truncate font-medium">{p.valueName}</span>
+                      <Badge
+                        variant={p.confidence === "tam" ? "secondary" : "outline"}
+                        className="ml-auto shrink-0"
+                      >
+                        {p.confidence === "tam" ? "tam" : "yakın"}
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+                {matchPreview.unmatched.length > 0 && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Eşleşmeyen: {matchPreview.unmatched.map(u => u.name).join(", ")}
+                  </p>
+                )}
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    className="h-8"
+                    disabled={autoMatch.isPending || matchPreview.proposals.length === 0}
+                    onClick={() =>
+                      autoMatch.mutate({
+                        channelId,
+                        categoryId: activeCategory,
+                        attributeId: c.attributeId,
+                        dryRun: false,
+                      })
+                    }
+                  >
+                    {matchPreview.proposals.length} eşlemeyi uygula
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-8"
+                    onClick={() => setMatchPreview(null)}
+                  >
+                    Vazgeç
+                  </Button>
+                </div>
+              </div>
+            )}
             {/* Kurulu eşlemeler: yanlış eşleneni kaldırmanın tek yolu. */}
             {(mappedValues ?? []).filter(v => v.attributeId === c.attributeId).length > 0 && (
               <div className="flex flex-wrap gap-1.5 border-b pb-2">
@@ -256,6 +394,7 @@ export default function AttributeMapping({ channelId }: { channelId: number }) {
                 <MissingRow
                   key={m.id}
                   name={m.name}
+                  options={optionsFor(c.attributeId)}
                   onSave={(valueId, text) =>
                     saveValue.mutate({
                       channelId,
@@ -390,39 +529,93 @@ function AttributeRow({
   );
 }
 
+/**
+ * Bir boyut değerinin pazaryeri karşılığını belirler.
+ *
+ * Eskiden iki boş kutu vardı: "pazaryeri değer kimliği" ve "serbest metin".
+ * Kimliği bulmak için pazaryeri paneline gidip aramak, kopyalayıp yapıştırmak
+ * gerekiyordu — 30 renk için 30 kez. Seçenek kataloğu çekildiği için artık
+ * aranabilir bir listeden seçiliyor; elle giriş yalnız liste yoksa ya da
+ * pazaryeri serbest metne izin veriyorsa açılıyor.
+ */
 function MissingRow({
   name,
+  options,
   onSave,
 }: {
   name: string;
+  options: { valueId: number; valueName: string }[];
   onSave: (valueId: number | null, text: string | null) => void;
 }) {
-  const [valueId, setValueId] = useState("");
+  const [open, setOpen] = useState(false);
+  const [manual, setManual] = useState(false);
   const [text, setText] = useState("");
-  const filled = valueId.trim() !== "" || text.trim() !== "";
+
+  // Seçenek listesi yoksa elle girişten başka yol yok.
+  const canPick = options.length > 0;
 
   return (
     <div className="flex flex-wrap items-center gap-2">
       <span className="w-44 shrink-0 truncate text-sm">{name}</span>
-      <Input
-        value={valueId}
-        onChange={e => setValueId(e.target.value)}
-        placeholder="pazaryeri değer kimliği"
-        className="h-8 w-44 font-mono text-xs"
-      />
-      <Input
-        value={text}
-        onChange={e => setText(e.target.value)}
-        placeholder="ya da serbest metin"
-        className="h-8 w-52 text-xs"
-      />
-      {filled && (
+
+      {canPick && !manual ? (
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <Button variant="outline" size="sm" className="h-8 w-72 justify-between text-xs">
+              <span className="text-muted-foreground">Pazaryeri değerini seçin…</span>
+              <Search className="h-3.5 w-3.5 shrink-0 opacity-60" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-72 p-0" align="start">
+            <Command>
+              <CommandInput placeholder={`${options.length} seçenek içinde ara…`} />
+              <CommandList>
+                <CommandEmpty>Sonuç yok.</CommandEmpty>
+                <CommandGroup>
+                  {options.map(o => (
+                    <CommandItem
+                      key={o.valueId}
+                      value={o.valueName}
+                      onSelect={() => {
+                        onSave(o.valueId, null);
+                        setOpen(false);
+                      }}
+                    >
+                      <span className="truncate">{o.valueName}</span>
+                      <span className="ml-auto shrink-0 font-mono text-[11px] text-muted-foreground">
+                        {o.valueId}
+                      </span>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+      ) : (
+        <>
+          <Input
+            value={text}
+            onChange={e => setText(e.target.value)}
+            placeholder="serbest metin"
+            className="h-8 w-52 text-xs"
+          />
+          {text.trim() && (
+            <Button size="sm" className="h-8" onClick={() => onSave(null, text.trim())}>
+              Eşle
+            </Button>
+          )}
+        </>
+      )}
+
+      {canPick && (
         <Button
           size="sm"
-          className="h-8"
-          onClick={() => onSave(valueId.trim() ? Number(valueId) : null, text.trim() || null)}
+          variant="ghost"
+          className="h-8 text-xs text-muted-foreground"
+          onClick={() => setManual(v => !v)}
         >
-          Eşle
+          {manual ? "Listeden seç" : "Elle gir"}
         </Button>
       )}
     </div>

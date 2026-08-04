@@ -85,6 +85,7 @@ import {
   planProduction,
   resolveOrderLines,
 } from "../productionPlan";
+import { matchAttributeValues } from "../attributeMatch";
 import { planPublications, summarizeSkips } from "../publishPlan";
 import { GENERIC_USE_CASE_CODE, seedCatalogDimensions } from "../seedCatalog";
 import { fetchHepsiburadaCategories, fetchHepsiburadaCategoryAttributes } from "../hepsiburada";
@@ -134,14 +135,36 @@ async function loadChannelCategories(channelCode: string): Promise<FlatCategory[
 
 /* ---- Pazaryeri özellik (attribute) normalizasyonu ------------------------ */
 
-/** Kanal farkı gözetmeyen özellik satırı — kayıt katmanı bunu bekler. */
+/**
+ * Kanal farkı gözetmeyen özellik satırı — kayıt katmanı bunu bekler.
+ *
+ * `options`: pazaryerinin o özellik için KABUL ETTİĞİ değerler. Yanıt bunu
+ * zaten taşıyordu ama atılıyordu; saklanınca eşleme yazmak değil seçmek olur.
+ */
 type NormalizedAttribute = {
   attributeId: number;
   attributeName: string;
   isRequired: boolean;
+  options: { valueId: number; valueName: string }[];
 };
 
-/** Trendyol: `{ categoryAttributes: [{ attribute: {id,name}, required }] }` */
+/** Ham değer dizisini `{valueId,valueName}` listesine indirger. */
+function normalizeOptionList(raw: unknown): { valueId: number; valueName: string }[] {
+  const rows = (Array.isArray(raw) ? raw : []) as Record<string, unknown>[];
+  const out: { valueId: number; valueName: string }[] = [];
+  for (const v of rows) {
+    const valueId = Number(v.id ?? v.valueId ?? 0);
+    const valueName = String(v.name ?? v.valueName ?? "").trim();
+    if (!valueId || !valueName) continue;
+    out.push({ valueId, valueName });
+  }
+  return out;
+}
+
+/**
+ * Trendyol:
+ * `{ categoryAttributes: [{ attribute: {id,name}, attributeValues: [{id,name}], required }] }`
+ */
 function normalizeTrendyolAttributes(raw: unknown): NormalizedAttribute[] {
   const rows = ((raw as Record<string, unknown>)?.categoryAttributes ?? []) as Record<
     string,
@@ -156,6 +179,7 @@ function normalizeTrendyolAttributes(raw: unknown): NormalizedAttribute[] {
       attributeId,
       attributeName: String(attr.name ?? ""),
       isRequired: Boolean(row.required),
+      options: normalizeOptionList(row.attributeValues),
     });
   }
   return out;
@@ -184,6 +208,7 @@ function normalizeHepsiburadaAttributes(raw: unknown): NormalizedAttribute[] {
       attributeId,
       attributeName: String(row.name ?? row.attributeName ?? ""),
       isRequired: Boolean(row.mandatory ?? row.required ?? false),
+      options: normalizeOptionList(row.values ?? row.attributeValues ?? row.options),
     });
   }
   return out;
@@ -3777,6 +3802,7 @@ export const katalogRouter = router({
 
       let added = 0;
       let updated = 0;
+      let options = 0;
       for (const row of rows) {
         const isNew = !known.has(row.attributeId);
         await db.upsertChannelAttribute({
@@ -3789,10 +3815,100 @@ export const katalogRouter = router({
           // Mevcut satırda kullanıcının seçimi korunur.
           keepSource: !isNew,
         });
+        // Seçenek kataloğu: eşlemeyi elle YAZMAK yerine SEÇMEYİ mümkün kılar.
+        await db.replaceChannelAttributeOptions(
+          input.channelId,
+          input.categoryId,
+          row.attributeId,
+          row.options,
+        );
+        options += row.options.length;
         if (isNew) added += 1;
         else updated += 1;
       }
-      return { added, updated, total: rows.length };
+      return { added, updated, total: rows.length, options };
+    }),
+
+  /** Pazaryerinin kabul ettiği değerler — eşleme ekranındaki seçim listesi. */
+  channelAttributeOptions: protectedProcedure
+    .input(z.object({ channelId: z.number(), categoryId: z.string().optional() }))
+    .query(({ input }) => db.listChannelAttributeOptions(input.channelId, input.categoryId)),
+
+  /**
+   * Eşlenmemiş boyut değerlerini pazaryeri seçenekleriyle ada göre eşleştirir.
+   *
+   * `dryRun` ile ne yazılacağı önce gösterilir — yanlış değer ürünü yanlış
+   * renkle listeler, onaysız yazılmaz. Yalnız EKSİK olanlara dokunur; kullanıcı
+   * elle düzelttiği bir eşleme varsa üzerine yazmaz.
+   */
+  autoMatchAttributeValues: protectedProcedure
+    .input(
+      z.object({
+        channelId: z.number(),
+        categoryId: z.string().min(1),
+        attributeId: z.number(),
+        dryRun: z.boolean().default(true),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const [defs, existing, options, colors, packagings, families, series] = await Promise.all([
+        db.listChannelAttributes(input.channelId),
+        db.listChannelAttributeValues(input.channelId),
+        db.listChannelAttributeOptions(input.channelId, input.categoryId),
+        db.listColors(),
+        db.listPackagings(),
+        db.listProductFamilies(),
+        db.listProductSeries(),
+      ]);
+
+      const def = (defs as Record<string, unknown>[]).find(
+        d => d.attributeId === input.attributeId && String(d.categoryId) === input.categoryId,
+      );
+      if (!def) throw new TRPCError({ code: "NOT_FOUND", message: "Özellik tanımı bulunamadı" });
+
+      const kind = String(def.source);
+      if (kind === "sabit" || kind === "hacim") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Bu özellik bir eksene bağlı değil — otomatik eşleme yalnız eksenli özellikler için.",
+        });
+      }
+
+      const src =
+        kind === "renk" ? colors : kind === "ambalaj" ? packagings : kind === "form" ? families : series;
+      const already = new Set(
+        (existing as Record<string, unknown>[])
+          .filter(v => v.attributeId === input.attributeId)
+          .map(v => v.dimensionId as number),
+      );
+      // Elle eşlenmişe dokunulmaz: otomatik eşleme kullanıcının kararını ezmez.
+      const pending = (src as Record<string, unknown>[])
+        .map(r => ({ id: r.id as number, name: String(r.name ?? "") }))
+        .filter(r => !already.has(r.id));
+
+      const { proposals, unmatched } = matchAttributeValues(
+        pending,
+        (options as Record<string, unknown>[]).map(o => ({
+          valueId: o.valueId as number,
+          valueName: String(o.valueName ?? ""),
+        })),
+      );
+
+      if (input.dryRun) {
+        return { dryRun: true, applied: 0, proposals, unmatched };
+      }
+
+      for (const p of proposals) {
+        await db.upsertChannelAttributeValue({
+          channelId: input.channelId,
+          attributeId: input.attributeId,
+          dimensionKind: kind as "renk" | "ambalaj" | "form" | "seri",
+          dimensionId: p.dimensionId,
+          attributeValueId: p.valueId,
+          attributeText: null,
+        });
+      }
+      return { dryRun: false, applied: proposals.length, proposals, unmatched };
     }),
 
   channelAttributeValues: protectedProcedure

@@ -337,6 +337,13 @@
       "when": 1785859704733,
       "tag": "0047_complete_red_hulk",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "5",
+      "when": 1785860719770,
+      "tag": "0048_fuzzy_bucky",
+      "breakpoints": true
     }
   ]
 }

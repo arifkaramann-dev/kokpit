@@ -4,7 +4,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -15,7 +14,7 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc";
-import { Loader2, Play, Send, Store, Upload } from "lucide-react";
+import { AlertTriangle, Check, Loader2, Play, Send, Upload } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -26,6 +25,35 @@ import { toast } from "sonner";
  * Üretim adımlarındaki gibi "önce göster / sonra uygula": atlananların
  * sebebi önden görünür, toplu işlem ortasında sürprize düşülmez.
  */
+/** Hazırlık rozeti: durumu söyler ve eksik adıma götürür. */
+function ReadyChip({
+  ok,
+  label,
+  hint,
+  onClick,
+}: {
+  ok: boolean;
+  label: string;
+  hint: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors ${
+        ok
+          ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+          : "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+      }`}
+    >
+      {ok ? <Check className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3.5 w-3.5" />}
+      <span className="font-medium">{label}</span>
+      <span className="opacity-70">· {hint}</span>
+    </button>
+  );
+}
+
 export default function Publish() {
   const utils = trpc.useUtils();
   const { data: dims } = trpc.katalog.dimensions.useQuery();
@@ -34,6 +62,7 @@ export default function Publish() {
   const { data: published } = trpc.katalog.channelListings.useQuery();
 
   const [channelId, setChannelId] = useState<string>("");
+  const [tab, setTab] = useState("yayin");
   const [selectedSeries, setSelectedSeries] = useState<Set<number>>(new Set());
   const [includeUnbuildable, setIncludeUnbuildable] = useState(false);
   const [preview, setPreview] = useState<{
@@ -105,6 +134,20 @@ export default function Publish() {
   const publishedCount = (published ?? []).filter(p => p.channelId === activeChannel).length;
   const mappedCount = (categories ?? []).filter(c => c.channelId === activeChannel).length;
 
+  /*
+   * Hazırlık şeridi: kart açmayı ne engelliyor, tek bakışta.
+   *
+   * Sekmeler arasında dolaşıp "acaba özellik eşlemesi tam mı?" diye kontrol
+   * etmek gerekiyordu; eksik olan ancak gönderim hatasında görülüyordu.
+   */
+  const { data: coverage } = trpc.katalog.attributeCoverage.useQuery(
+    { channelId: activeChannel },
+    { enabled: activeChannel > 0 },
+  );
+  const missingValues = (coverage ?? []).reduce((s, c) => s + (c.total - c.mapped), 0);
+  const categoryReady = mappedCount >= useCases.length && useCases.length > 0;
+  const attributesReady = (coverage ?? []).length > 0 && missingValues === 0;
+
   return (
     <div className="space-y-4">
       <div>
@@ -144,7 +187,29 @@ export default function Publish() {
         </span>
       </div>
 
-      <Tabs defaultValue="yayin">
+      {/* Hazırlık şeridi — eksik adıma tıklayarak gidilir. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <ReadyChip
+          ok={categoryReady}
+          label={`Kategori ${mappedCount}/${useCases.length}`}
+          hint={categoryReady ? "tamam" : "eksik kategori var"}
+          onClick={() => setTab("kategori")}
+        />
+        <ReadyChip
+          ok={attributesReady}
+          label={
+            (coverage ?? []).length === 0
+              ? "Özellik çekilmedi"
+              : missingValues === 0
+                ? "Özellik eşlemesi tamam"
+                : `${missingValues} değer eşlenmedi`
+          }
+          hint={attributesReady ? "tamam" : "kart açmayı engeller"}
+          onClick={() => setTab("ozellik")}
+        />
+      </div>
+
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="yayin">Yayınla</TabsTrigger>
           <TabsTrigger value="gonder">Pazaryerine Gönder</TabsTrigger>
