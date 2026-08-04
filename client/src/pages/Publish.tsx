@@ -54,6 +54,91 @@ function ReadyChip({
   );
 }
 
+/**
+ * Gönderim kayıtları — "gitti mi, açıldı mı, neden açılmadı?"
+ *
+ * Kart gönderimi asenkron: pazaryeri bir parti kimliği veriyor, sonucu
+ * dakikalar sonra belli oluyor. Sonuç veritabanına yazılıyordu ama hiçbir
+ * ekran göstermiyordu; kullanıcı gönderip sonrasını göremiyordu.
+ */
+function BatchLog({ marketplace }: { marketplace: string }) {
+  const { data, isLoading } = trpc.katalog.marketplaceBatches.useQuery(
+    { marketplace: marketplace || undefined, limit: 50 },
+    { enabled: marketplace !== "", refetchInterval: 30_000 },
+  );
+
+  if (isLoading) {
+    return (
+      <Card className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" /> Yükleniyor…
+      </Card>
+    );
+  }
+  if ((data ?? []).length === 0) {
+    return (
+      <Card className="p-4 text-sm text-muted-foreground">
+        Henüz gönderim yok. Kart gönderdiğinizde parti buraya düşer ve sonucu
+        (açıldı / hata) burada görünür.
+      </Card>
+    );
+  }
+
+  const tone: Record<string, string> = {
+    success: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
+    failed: "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300",
+    pending: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
+  };
+  const label: Record<string, string> = {
+    success: "açıldı",
+    failed: "hata",
+    pending: "bekliyor",
+  };
+
+  return (
+    <Card className="overflow-hidden p-0">
+      <table className="w-full text-sm">
+        <thead className="bg-muted/50 text-xs text-muted-foreground">
+          <tr>
+            <th className="p-2 text-left">Zaman</th>
+            <th className="p-2 text-left">Kalem</th>
+            <th className="p-2 text-left">Durum</th>
+            <th className="p-2 text-left">Sonuç</th>
+          </tr>
+        </thead>
+        <tbody>
+          {(data ?? []).map(b => (
+            <tr key={b.batchRequestId} className="border-t align-top">
+              <td className="whitespace-nowrap p-2 text-xs text-muted-foreground">
+                {new Date(b.createdAt).toLocaleString("tr-TR", {
+                  day: "2-digit",
+                  month: "2-digit",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </td>
+              <td className="p-2 tabular-nums">{b.items}</td>
+              <td className="p-2">
+                <Badge className={tone[b.status] ?? ""}>{label[b.status] ?? b.status}</Badge>
+              </td>
+              <td className="p-2 text-xs">
+                {b.errorMessage ? (
+                  <span className="text-rose-700 dark:text-rose-300">{b.errorMessage}</span>
+                ) : b.status === "pending" ? (
+                  <span className="text-muted-foreground">
+                    pazaryeri işliyor — sonuç birkaç dakika içinde
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Card>
+  );
+}
+
 export default function Publish() {
   const utils = trpc.useUtils();
   const { data: dims } = trpc.katalog.dimensions.useQuery();
@@ -65,6 +150,7 @@ export default function Publish() {
   const [tab, setTab] = useState("yayin");
   const [selectedSeries, setSelectedSeries] = useState<Set<number>>(new Set());
   const [includeUnbuildable, setIncludeUnbuildable] = useState(false);
+  const [updateExisting, setUpdateExisting] = useState(true);
   const [preview, setPreview] = useState<{
     willPublish: number;
     skipped: { reason: string; count: number }[];
@@ -117,19 +203,17 @@ export default function Publish() {
     onSuccess: r => {
       setCardProblems(r.problems);
       utils.katalog.invalidate();
-      const already = r.alreadyOnMarketplace
-        ? ` · ${r.alreadyOnMarketplace} kalem zaten pazaryerinde`
-        : "";
       if (r.dryRun) {
         toast.info(
-          `${r.willSend} kart gönderilecek${already}` +
+          `${r.willSend} yeni kart · ${r.willUpdate} güncelleme gönderilecek` +
             (r.problems.length ? ` · ${r.problems.length} sorun` : ""),
           { duration: 9000 },
         );
         return;
       }
       toast.success(
-        `${r.sent} kart gönderildi${already}${r.batchRequestId ? ` (parti: ${r.batchRequestId})` : ""}`,
+        `${r.sent} kart açıldı · ${r.updated} kart güncellendi` +
+          (r.problems.length ? ` · ${r.problems.length} sorun` : ""),
         { duration: 12000 },
       );
     },
@@ -220,6 +304,7 @@ export default function Publish() {
           <TabsTrigger value="gonder">Pazaryerine Gönder</TabsTrigger>
           <TabsTrigger value="kategori">Kategori Eşlemesi</TabsTrigger>
           <TabsTrigger value="ozellik">Özellik Eşlemesi</TabsTrigger>
+          <TabsTrigger value="kayit">Gönderim Kayıtları</TabsTrigger>
         </TabsList>
 
         <TabsContent value="yayin" className="space-y-3 pt-3">
@@ -396,6 +481,16 @@ export default function Publish() {
                   />
                   Üretilemeyenleri de gönder
                 </label>
+                <label className="flex w-fit cursor-pointer items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={updateExisting}
+                    onCheckedChange={c => setUpdateExisting(c === true)}
+                  />
+                  Pazaryerinde olanları güncelle
+                  <span className="text-xs text-muted-foreground">
+                    — başlık, açıklama, görsel ve özellikleri yeniler
+                  </span>
+                </label>
                 <div className="flex flex-wrap gap-2">
                   <Button
                     variant="outline"
@@ -405,6 +500,7 @@ export default function Publish() {
                         channelId: activeChannel,
                         seriesIds: Array.from(selectedSeries),
                         includeUnbuildable,
+                        updateExisting,
                         dryRun: true,
                       })
                     }
@@ -418,6 +514,7 @@ export default function Publish() {
                         channelId: activeChannel,
                         seriesIds: Array.from(selectedSeries),
                         includeUnbuildable,
+                        updateExisting,
                         dryRun: false,
                       })
                     }
@@ -458,6 +555,10 @@ export default function Publish() {
 
         <TabsContent value="ozellik" className="pt-3">
           <AttributeMapping channelId={activeChannel} />
+        </TabsContent>
+
+        <TabsContent value="kayit" className="pt-3">
+          <BatchLog marketplace={cardChannelCode} />
         </TabsContent>
       </Tabs>
     </div>

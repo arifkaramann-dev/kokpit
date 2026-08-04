@@ -96,6 +96,7 @@ import {
   parseCardSettings,
   pushTrendyolProductCards,
   searchTrendyolBrands,
+  updateTrendyolProductCards,
 } from "../trendyolProducts";
 
 /* ---- Pazaryeri kategori ağacı önbelleği ---------------------------------- */
@@ -3876,6 +3877,17 @@ export const katalogRouter = router({
       return { added, updated, total: rows.length, options };
     }),
 
+  /**
+   * Son gönderim partileri ve sonuçları.
+   *
+   * Kart gönderiliyor, sonuç asenkron geliyor ve kullanıcı ne olduğunu
+   * göremiyordu — "gitti mi, açıldı mı, neden açılmadı?" sorusunun ekranda
+   * karşılığı yoktu.
+   */
+  marketplaceBatches: protectedProcedure
+    .input(z.object({ marketplace: z.string().optional(), limit: z.number().max(200).default(50) }))
+    .query(({ input }) => db.listMarketplaceBatchJobs(input.marketplace, input.limit)),
+
   /** Pazaryerinin kabul ettiği değerler — eşleme ekranındaki seçim listesi. */
   channelAttributeOptions: protectedProcedure
     .input(z.object({ channelId: z.number(), categoryId: z.string().optional() }))
@@ -4092,6 +4104,8 @@ export const katalogRouter = router({
         channelId: z.number(),
         seriesIds: z.array(z.number()).default([]),
         includeUnbuildable: z.boolean().default(false),
+        /** Pazaryerinde zaten kayıtlı olanlar güncellensin mi? */
+        updateExisting: z.boolean().default(true),
         dryRun: z.boolean().default(true),
       }),
     )
@@ -4268,13 +4282,23 @@ export const katalogRouter = router({
         existingCheckFailed = true;
       }
 
-      const fresh = items.filter(i => !existing.has(String((i as { barcode?: string }).barcode ?? "")));
-      const already = items.length - fresh.length;
+      const isKnown = (i: unknown) =>
+        existing.has(String((i as { barcode?: string }).barcode ?? ""));
+      const fresh = items.filter(i => !isKnown(i));
+      /*
+       * Var olanlar ATLANMIYOR, GÜNCELLENİYOR.
+       *
+       * Sistemde yalnız "oluştur" vardı; Trendyol'da kayıtlı bir ürün için
+       * doğru karşılık onu güncellemektir. Atlamak, başlık/görsel/özellik
+       * düzeltmelerinin pazaryerine hiç gitmemesi demekti.
+       */
+      const stale = input.updateExisting ? items.filter(isKnown) : [];
+      const skipped = input.updateExisting ? 0 : items.length - fresh.length;
+
       const allProblems = [...problems];
-      if (already > 0) {
+      if (skipped > 0) {
         allProblems.push(
-          `${already} kalem Trendyol'da zaten kayıtlı — kart açılmadı. ` +
-            `Bunların stok/fiyatı için "Stok & fiyat gönderimi"ni kullanın.`,
+          `${skipped} kalem Trendyol'da zaten kayıtlı — güncelleme kapalı olduğu için dokunulmadı.`,
         );
       }
 
@@ -4282,33 +4306,66 @@ export const katalogRouter = router({
         return {
           dryRun: true,
           willSend: fresh.length,
+          willUpdate: stale.length,
           sent: 0,
+          updated: 0,
           batchRequestId: null,
-          alreadyOnMarketplace: already,
+          updateBatchRequestId: null,
+          alreadyOnMarketplace: items.length - fresh.length,
           problems: allProblems,
         };
       }
-      if (fresh.length === 0) {
+      if (fresh.length === 0 && stale.length === 0) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message:
-            already > 0
-              ? `Açılacak yeni kart yok — ${already} kalemin hepsi Trendyol'da zaten kayıtlı. Stok/fiyat gönderimini kullanın.`
+            skipped > 0
+              ? `Açılacak yeni kart yok — ${skipped} kalemin hepsi Trendyol'da zaten kayıtlı. Güncellemeyi açın ya da stok/fiyat gönderimini kullanın.`
               : `Gönderilebilir kart yok — ${allProblems.slice(0, 3).join(" · ")}`,
         });
       }
-      let result: { batchRequestId: string | null; sent: number };
-      try {
-        result = await pushTrendyolProductCards(fresh as never);
-      } catch (error) {
-        const base = error instanceof Error ? error.message : "Trendyol ürün gönderimi başarısız";
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          // Ayıklama yapılamadıysa kullanıcı nedenini bilsin.
-          message: existingCheckFailed
-            ? `${base} (Mevcut ürün listesi çekilemediği için zaten kayıtlı barkodlar ayıklanamadı.)`
-            : base,
-        });
+
+      const withContext = (base: string) =>
+        existingCheckFailed
+          ? `${base} (Mevcut ürün listesi çekilemediği için yeni/mevcut ayrımı yapılamadı.)`
+          : base;
+
+      let created: { batchRequestId: string | null; sent: number } = {
+        batchRequestId: null,
+        sent: 0,
+      };
+      if (fresh.length > 0) {
+        try {
+          created = await pushTrendyolProductCards(fresh as never);
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: withContext(
+              error instanceof Error ? error.message : "Trendyol ürün gönderimi başarısız",
+            ),
+          });
+        }
+      }
+
+      /*
+       * Güncelleme hatası kart AÇILIŞINI geçersiz kılmaz: yeni kartlar gitmişse
+       * o kazanç korunur, güncelleme sorunu ayrıca bildirilir. Aksi hâlde
+       * kullanıcı hata görüp tekrar dener ve yeni kartlar ikinci kez gider.
+       */
+      let updated: { batchRequestId: string | null; sent: number } = {
+        batchRequestId: null,
+        sent: 0,
+      };
+      if (stale.length > 0) {
+        try {
+          updated = await updateTrendyolProductCards(stale as never);
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : "Trendyol ürün güncellemesi başarısız";
+          if (created.sent === 0) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: withContext(msg) });
+          }
+          allProblems.push(`${stale.length} kalem güncellenemedi: ${msg}`);
+        }
       }
 
       /*
@@ -4318,32 +4375,39 @@ export const katalogRouter = router({
        * hatasına düşer. Takip kaydı kaybolur, kart açılışı kaybolmaz.
        */
       let tracked = 0;
-      if (result.batchRequestId) {
-        try {
-          const allListings = (await db.listChannelListings()) as Record<string, unknown>[];
-          const bySku = new Map(
-            allListings
-              .filter(l => l.channelId === input.channelId)
-              .map(l => [String(l.channelSku ?? ""), l.id as number]),
-          );
-          for (const item of fresh) {
+      try {
+        const allListings = (await db.listChannelListings()) as Record<string, unknown>[];
+        const bySku = new Map(
+          allListings
+            .filter(l => l.channelId === input.channelId)
+            .map(l => [String(l.channelSku ?? ""), l.id as number]),
+        );
+        const track = async (batchId: string | null, rows: typeof items) => {
+          if (!batchId) return;
+          for (const item of rows) {
             const listingId = bySku.get(item.stockCode);
             if (listingId) {
-              await db.saveMarketplaceBatchJob(listingId, "trendyol", result.batchRequestId);
+              await db.saveMarketplaceBatchJob(listingId, "trendyol", batchId);
               tracked += 1;
             }
           }
-        } catch (error) {
-          console.error("[katalog] batch takip kaydı yazılamadı:", error);
-        }
+        };
+        await track(created.batchRequestId, fresh);
+        await track(updated.batchRequestId, stale);
+      } catch (error) {
+        console.error("[katalog] batch takip kaydı yazılamadı:", error);
       }
 
       return {
         dryRun: false,
         willSend: fresh.length,
-        ...result,
+        willUpdate: stale.length,
+        sent: created.sent,
+        updated: updated.sent,
+        batchRequestId: created.batchRequestId,
+        updateBatchRequestId: updated.batchRequestId,
         tracked,
-        alreadyOnMarketplace: already,
+        alreadyOnMarketplace: items.length - fresh.length,
         problems: allProblems,
       };
     }),

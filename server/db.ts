@@ -3207,6 +3207,53 @@ export async function markChannelSyncFailed(ids: number[], message: string) {
 
 /* ---- Pazaryeri batch tracking (ürün kartı açma) ---- */
 
+/**
+ * Son gönderim partileri — "ne oldu?" sorusunun ekrandaki cevabı.
+ *
+ * Parti durumu veritabanına yazılıyordu ama hiçbir ekran okumuyordu: kullanıcı
+ * kart gönderip sonucu göremiyordu. Aynı parti birden çok ilanı kapsadığı için
+ * kimlik başına tek satıra indirgenir.
+ */
+export async function listMarketplaceBatchJobs(marketplace?: string, limit = 50) {
+  const db = await requireDb();
+  const rows = await db
+    .select()
+    .from(marketplaceBatchJobs)
+    .where(marketplace ? eq(marketplaceBatchJobs.marketplace, marketplace) : undefined)
+    .orderBy(desc(marketplaceBatchJobs.createdAt))
+    .limit(limit * 20);
+
+  const byBatch = new Map<
+    string,
+    {
+      batchRequestId: string;
+      marketplace: string;
+      status: string;
+      errorMessage: string | null;
+      createdAt: Date;
+      completedAt: Date | null;
+      items: number;
+    }
+  >();
+  for (const r of rows) {
+    const hit = byBatch.get(r.batchRequestId);
+    if (hit) {
+      hit.items += 1;
+      continue;
+    }
+    byBatch.set(r.batchRequestId, {
+      batchRequestId: r.batchRequestId,
+      marketplace: r.marketplace,
+      status: r.status,
+      errorMessage: r.errorMessage,
+      createdAt: r.createdAt,
+      completedAt: r.completedAt,
+      items: 1,
+    });
+  }
+  return Array.from(byBatch.values()).slice(0, limit);
+}
+
 export async function saveMarketplaceBatchJob(
   channelListingId: number,
   marketplace: "trendyol" | "hepsiburada" | "n11",
