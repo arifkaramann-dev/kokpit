@@ -4028,6 +4028,19 @@ export const katalogRouter = router({
       }
       try {
         const result = await pushTrendyolProductCards(items as never);
+
+        if (result.batchRequestId) {
+          const allListings = await db.listChannelListings();
+          for (const item of items) {
+            const listing = (allListings as Record<string, unknown>[]).find(
+              l => l.channelId === input.channelId && (l as any).channelSku === item.stockCode,
+            );
+            if (listing?.id) {
+              await db.saveMarketplaceBatchJob(listing.id as number, "trendyol", result.batchRequestId);
+            }
+          }
+        }
+
         return { dryRun: false, willSend: items.length, ...result, problems };
       } catch (error) {
         throw new TRPCError({

@@ -7,6 +7,7 @@ import { isTrendyolConfigured } from "./trendyol";
 import { syncAllMarketplaces } from "./marketplace";
 import { runQuestionSyncAndNotify } from "./marketplaceQuestions";
 import { notifyOwner } from "./notify";
+import { pollMarketplaceBatches } from "./jobs/pollMarketplaceBatches";
 
 /**
  * Uygulama içi zamanlayıcı (Faz 1): sunucu ayaktayken dakikada bir uyanır ve
@@ -61,7 +62,7 @@ export function startScheduler() {
   setInterval(() => {
     void tick();
   }, 60 * 1000);
-  console.log("[scheduler] başladı (sipariş+soru senkron 15dk, stok nöbeti 60dk, katalog 30dk, brifing 08:00 TR, tahsilat takibi 09:00 TR)");
+  console.log("[scheduler] başladı (sipariş+soru senkron 15dk, batch polling 1dk, stok nöbeti 60dk, katalog 30dk, brifing 08:00 TR, tahsilat takibi 09:00 TR)");
 }
 
 async function tick() {
@@ -116,6 +117,13 @@ async function tick() {
     if (isIntervalDue(num(cfg[KEY_LAST_CATALOG]), now, CATALOG_INTERVAL_MS)) {
       await db.setSettings({ [KEY_LAST_CATALOG]: String(now) });
       await runCatalogJobs();
+    }
+
+    // Pazaryeri batch status polling: her turda pending batch'leri kontrol et
+    try {
+      await pollMarketplaceBatches();
+    } catch (error) {
+      console.error("[scheduler] batch polling hatası:", error);
     }
   } catch (error) {
     // DB yoksa (yerel araç çalıştırma) sessizce geç; diğer hataları logla.

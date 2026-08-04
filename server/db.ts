@@ -72,6 +72,7 @@ import {
   materialReservations,
   salesChannels,
   channelListings,
+  marketplaceBatchJobs,
   InsertColor,
   InsertProductFamily,
   InsertPackaging,
@@ -3150,4 +3151,20 @@ export async function markChannelSyncFailed(ids: number[], message: string) {
     .update(channelListings)
     .set({ syncState: "hata", lastError: message.slice(0, 500) })
     .where(inArray(channelListings.id, ids));
+}
+
+/* ---- Pazaryeri batch tracking (ürün kartı açma) ---- */
+
+export async function saveMarketplaceBatchJob(
+  channelListingId: number,
+  marketplace: "trendyol" | "hepsiburada" | "n11",
+  batchRequestId: string,
+) {
+  const db = await requireDb();
+  await db.insert(marketplaceBatchJobs).values({
+    channelListingId,
+    marketplace,
+    batchRequestId,
+    status: "pending",
+  });
 }

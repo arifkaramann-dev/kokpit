@@ -215,3 +215,71 @@ export async function fetchTrendyolCategoryAttributes(categoryId: number) {
 export async function searchTrendyolBrands(name: string) {
   return trendyolGet(`/integration/product/brands/by-name?name=${encodeURIComponent(name)}`);
 }
+
+/**
+ * Batch status sonucu ve hata çıkarım.
+ *
+ * Trendyol batch response'ı kalem-bazlı sonuçlar içerir:
+ * ```
+ * {
+ *   "batchRequestId": "abc123",
+ *   "items": [
+ *     {
+ *       "barcode": "...",
+ *       "productId": 123,
+ *       "status": "SUCCESS|FAILED",
+ *       "errors": [{ "key": "...", "message": "..." }]
+ *     }
+ *   ]
+ * }
+ * ```
+ *
+ * Batch tamamlandı mı? Başarı/başarısızlık durumunu belirle.
+ * Eğer bir kalem başarısız, batch başarısız kabul edilir.
+ */
+export function extractTrendyolBatchStatus(
+  batchData: unknown,
+): {
+  finalStatus: "pending" | "success" | "failed";
+  errorMessage: string | null;
+} {
+  try {
+    const batch = batchData as {
+      batchRequestId?: string;
+      items?: Array<{
+        barcode?: string;
+        status?: string;
+        errors?: Array<{ key?: string; message?: string }>;
+      }>;
+    };
+
+    const items = batch.items ?? [];
+    if (items.length === 0) {
+      return { finalStatus: "pending", errorMessage: null };
+    }
+
+    const failedItems = items.filter(i => i.status === "FAILED");
+    if (failedItems.length === 0) {
+      return { finalStatus: "success", errorMessage: null };
+    }
+
+    const errorParts = failedItems.map(item => {
+      const errors = item.errors ?? [];
+      const errorMessages = errors.map(e => {
+        const hint = e.key ? TRENDYOL_ERROR_HINTS[e.key] : null;
+        return hint || e.message || "Bilinmeyen hata";
+      });
+      return `${item.barcode || "?"}: ${errorMessages.join(" · ")}`;
+    });
+
+    return {
+      finalStatus: "failed",
+      errorMessage: errorParts.join(" | "),
+    };
+  } catch (e) {
+    return {
+      finalStatus: "failed",
+      errorMessage: `Batch sonucu işlenemedi: ${String(e).slice(0, 200)}`,
+    };
+  }
+}
