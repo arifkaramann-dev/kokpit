@@ -32,7 +32,7 @@ const PAGES: { label: string; path: string; icon: React.ReactNode; keywords?: st
   { label: "Müşteriler", path: "/musteriler", icon: <Contact className="h-4 w-4" />, keywords: "müşteri crm adres" },
   { label: "Giderler", path: "/giderler", icon: <Receipt className="h-4 w-4" />, keywords: "gider masraf" },
   { label: "Stok & Hammadde", path: "/stok", icon: <Warehouse className="h-4 w-4" />, keywords: "stok hammadde" },
-  { label: "Ürünler & Türevler", path: "/urunler", icon: <Package className="h-4 w-4" />, keywords: "ürün" },
+  { label: "Ürünler", path: "/katalog", icon: <Package className="h-4 w-4" />, keywords: "ürün katalog seri renk ambalaj" },
   { label: "Formül Defteri", path: "/formuller", icon: <FlaskConical className="h-4 w-4" />, keywords: "reçete formül" },
   { label: "Fiyat & Kâr Motoru", path: "/fiyat", icon: <Target className="h-4 w-4" />, keywords: "fiyat kâr marj toplu zam excel maliyet hesaplayıcı" },
   { label: "AI Pazarlama", path: "/pazarlama", icon: <Sparkles className="h-4 w-4" />, keywords: "metin instagram" },

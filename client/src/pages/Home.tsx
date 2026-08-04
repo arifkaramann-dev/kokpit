@@ -439,7 +439,7 @@ export default function Home() {
             <QuickAction
               icon={<Package className="h-4 w-4" />}
               label="Ürünler"
-              onClick={() => setLocation("/urunler")}
+              onClick={() => setLocation("/katalog")}
             />
             <QuickAction
               icon={<Contact className="h-4 w-4" />}

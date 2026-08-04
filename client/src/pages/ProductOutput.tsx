@@ -184,24 +184,6 @@ export default function ProductOutput() {
     onError: e => toast.error(e.message, { duration: 10000 }),
   });
 
-  const publishToProducts = trpc.dev.publishToProducts.useMutation({
-    onSuccess: r => {
-      const parts: string[] = [];
-      if (r.created) parts.push(`${r.created} yeni varyant`);
-      if (r.updated) parts.push(`${r.updated} güncellendi`);
-      toast.success(
-        `Ürünlere aktarıldı${parts.length ? " — " + parts.join(", ") : ""} 🎉`,
-      );
-      utils.dev.generations.invalidate({ projectId: id });
-      // Proje "Ürünleşti" olarak işaretlendi + katalog değişti: ilgili
-      // listeler tazelensin (aksi halde ekranda eski durum kalıyordu).
-      utils.dev.get.invalidate({ id });
-      utils.dev.list.invalidate();
-      utils.products.list.invalidate();
-    },
-    onError: e => toast.error(e.message),
-  });
-
   async function exportExcel() {
     try {
       const res = await utils.series.exportToExcel.fetch({ projectId: id });
@@ -374,22 +356,10 @@ export default function ProductOutput() {
                 <PackagePlus className="mr-1 h-4 w-4" /> Kataloğa Aktar
               </Button>
               {publishedCount > 0 && (
-                <Button variant="outline" size="sm" onClick={() => setLocation("/urunler")}>
+                <Button variant="outline" size="sm" onClick={() => setLocation("/katalog")}>
                   <Store className="h-4 w-4 mr-1" /> Ürünleri Gör
                 </Button>
               )}
-              <Button
-                size="sm"
-                onClick={() => publishToProducts.mutate({ projectId: id })}
-                disabled={publishToProducts.isPending}
-              >
-                <PackagePlus className="h-4 w-4 mr-1" />
-                {publishToProducts.isPending
-                  ? "Aktarılıyor…"
-                  : publishedCount > 0
-                    ? "Güncelle / Yenilerini Aktar"
-                    : "Ürünlere Aktar"}
-              </Button>
             </div>
           </CardContent>
         </Card>
