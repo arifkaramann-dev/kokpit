@@ -6,6 +6,11 @@ import {
   extractTrendyolBatchStatus,
   isTrendyolConfigured,
 } from "../trendyolProducts";
+import {
+  getHepsiburadaProductBatchStatus,
+  extractHepsiburadaBatchStatus,
+  isHepsiburadaConfigured,
+} from "../hepsiburadaProducts";
 
 /**
  * Pazaryeri batch status polling daemon.
@@ -39,8 +44,21 @@ export async function pollMarketplaceBatches() {
             updatedAt: new Date(),
           })
           .where(eq(marketplaceBatchJobs.id, batch.id));
+      } else if (batch.marketplace === "hepsiburada" && isHepsiburadaConfigured()) {
+        const batchData = await getHepsiburadaProductBatchStatus(batch.batchRequestId);
+        const { finalStatus, errorMessage } = extractHepsiburadaBatchStatus(batchData);
+
+        await db
+          .update(marketplaceBatchJobs)
+          .set({
+            status: finalStatus,
+            errorMessage,
+            completedAt: finalStatus !== "pending" ? new Date() : null,
+            updatedAt: new Date(),
+          })
+          .where(eq(marketplaceBatchJobs.id, batch.id));
       }
-      // TODO: Hepsiburada ve N11 için benzer polling
+      // TODO: N11 için benzer polling
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : "Bilinmeyen hata";
       await db
