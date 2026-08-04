@@ -9,7 +9,6 @@ import {
   devTrialItems,
   devTrials,
   expenses,
-  formulaItems,
   transactions,
   InsertAccount,
   InsertCheque,
@@ -20,7 +19,6 @@ import {
   InsertTransaction,
   InsertOrder,
   InsertOrderItem,
-  InsertProduct,
   InsertUser,
   marketingTexts,
   marketplaceQuestions,
@@ -32,14 +30,11 @@ import {
   orderItems,
   orderEvents,
   orders,
-  products,
-  productImages,
-  productMovements,
   productSeries,
+  productionRuns,
   InsertProductSeries,
   productGenerations,
   InsertProductGeneration,
-  productionRuns,
   purchaseItems,
   purchases,
   quoteItems,
@@ -215,7 +210,7 @@ export async function updateMaterial(id: number, data: Partial<InsertMaterial>) 
 
 export async function deleteMaterial(id: number) {
   const db = await requireDb();
-  await db.delete(formulaItems).where(eq(formulaItems.materialId, id));
+  await db.delete(formulaInputs).where(eq(formulaInputs.inputMaterialId, id));
   await db.delete(stockMovements).where(eq(stockMovements.materialId, id));
   await db.delete(materials).where(eq(materials.id, id));
 }
@@ -251,139 +246,29 @@ export async function listCriticalMaterials() {
 
 /* ------------------------- Products (Ürünler) ------------------------- */
 
-export async function listProducts() {
-  const db = await requireDb();
-  return db.select().from(products).orderBy(products.parentId, products.name);
-}
 
-export async function getProduct(id: number) {
-  const db = await requireDb();
-  const rows = await db.select().from(products).where(eq(products.id, id)).limit(1);
-  return rows[0];
-}
-
-export async function createProduct(data: InsertProduct) {
-  const db = await requireDb();
-  const [result] = await db.insert(products).values(data);
-  return result.insertId;
-}
-
-export async function updateProduct(id: number, data: Partial<InsertProduct>) {
-  const db = await requireDb();
-  // Stok, ürün kartından mutlak değerle değiştirildiyse aradaki fark hareket
-  // defterine işlenir; böylece productMovements ile stockQty sessizce ayrışmaz.
-  if (data.stockQty !== undefined && data.stockQty !== null) {
-    const current = await getProduct(id);
-    const delta = data.stockQty - (current?.stockQty ?? 0);
-    if (current && delta !== 0) {
-      await db.insert(productMovements).values({
-        productId: id,
-        type: delta > 0 ? "in" : "out",
-        qty: String(Math.abs(delta)),
-        note: "Elle düzeltme (ürün kartı)",
-      });
-    }
-  }
-  await db.update(products).set(data).where(eq(products.id, id));
-}
-
-export async function deleteProduct(id: number) {
-  const db = await requireDb();
-  // Türevleri, formülleri, görselleri ve mamul stok hareketlerini de temizle —
-  // özellikle görseller (base64, MEDIUMTEXT) öksüz kalırsa veritabanını şişirir.
-  const children = await db.select({ id: products.id }).from(products).where(eq(products.parentId, id));
-  for (const pid of [...children.map(c => c.id), id]) {
-    await db.delete(formulaItems).where(eq(formulaItems.productId, pid));
-    await db.delete(productImages).where(eq(productImages.productId, pid));
-    await db.delete(productMovements).where(eq(productMovements.productId, pid));
-  }
-  await db.delete(products).where(eq(products.parentId, id));
-  await db.delete(products).where(eq(products.id, id));
-}
 
 /* ------------------------- Formula (Formül Defteri) ------------------------- */
-
-export async function listFormulaItems(productId: number) {
-  const db = await requireDb();
-  return db
-    .select({
-      id: formulaItems.id,
-      productId: formulaItems.productId,
-      materialId: formulaItems.materialId,
-      qty: formulaItems.qty,
-      note: formulaItems.note,
-      materialName: materials.name,
-      materialUnit: materials.unit,
-      materialUnitCost: materials.unitCost,
-      materialCategory: materials.category,
-    })
-    .from(formulaItems)
-    .leftJoin(materials, eq(formulaItems.materialId, materials.id))
-    .where(eq(formulaItems.productId, productId));
-}
-
-/** Tüm reçete kalemleri (hafif küme): ürün başına üretilebilirlik hesabı için. */
-export async function listAllFormulaItems() {
-  const db = await requireDb();
-  return db
-    .select({
-      productId: formulaItems.productId,
-      materialId: formulaItems.materialId,
-      qty: formulaItems.qty,
-    })
-    .from(formulaItems);
-}
-
-export async function addFormulaItem(productId: number, materialId: number, qty: number, note?: string) {
-  const db = await requireDb();
-  const [result] = await db.insert(formulaItems).values({ productId, materialId, qty: String(qty), note });
-  return result.insertId;
-}
-
-export async function updateFormulaItem(id: number, qty: number, note?: string) {
-  const db = await requireDb();
-  await db.update(formulaItems).set({ qty: String(qty), note }).where(eq(formulaItems.id, id));
-}
-
-export async function deleteFormulaItem(id: number) {
-  const db = await requireDb();
-  await db.delete(formulaItems).where(eq(formulaItems.id, id));
-}
-
-/**
- * Kaynak ürünün reçetesini hedefe kopyalar (hedefin mevcut kalemleri silinir).
- * Çarpan set/paket türevleri için: miktarlar multiplier ile çarpılır.
- */
-export async function copyFormula(fromProductId: number, toProductId: number, multiplier = 1) {
-  const db = await requireDb();
-  const source = await listFormulaItems(fromProductId);
-  if (source.length === 0) return { copied: 0 };
-  await db.delete(formulaItems).where(eq(formulaItems.productId, toProductId));
-  for (const item of source) {
-    await addFormulaItem(
-      toProductId,
-      item.materialId,
-      (parseFloat(String(item.qty)) || 0) * multiplier,
-      item.note ?? undefined,
-    );
-  }
-  return { copied: source.length };
-}
 
 /** Hammaddenin geçtiği ürün reçeteleri (kritik stok "neyi etkiliyor" analizi). */
 export async function listMaterialUsage(materialId: number) {
   const db = await requireDb();
+  /*
+   * Hangi ürünlerin reçetesinde geçiyor — küp modelden.
+   * Eskiden `formulaItems` + emekli `products` üzerinden okunuyordu; reçeteler
+   * v3'e taşındığı için liste her zaman boş çıkıyordu.
+   */
   return db
     .select({
-      productId: formulaItems.productId,
-      qty: formulaItems.qty,
-      productName: products.name,
-      parentId: products.parentId,
+      productId: masterProducts.id,
+      qty: formulaInputs.qtyPerBase,
+      productName: masterProducts.name,
+      parentId: masterProducts.seriesId,
     })
-    .from(formulaItems)
-    .leftJoin(products, eq(formulaItems.productId, products.id))
-    .where(eq(formulaItems.materialId, materialId))
-    .orderBy(products.name);
+    .from(formulaInputs)
+    .innerJoin(formulas, eq(formulaInputs.formulaId, formulas.id))
+    .innerJoin(masterProducts, eq(masterProducts.formulaId, formulas.id))
+    .where(eq(formulaInputs.inputMaterialId, materialId));
 }
 
 /* ------------------------- Orders (Siparişler) ------------------------- */
@@ -1069,9 +954,11 @@ export async function replaceQuoteItems(
   const db = await requireDb();
   await db.delete(quoteItems).where(eq(quoteItems.quoteId, quoteId));
   if (items.length === 0) return;
-  const refs = await db
-    .select({ id: products.id, name: products.name, barcode: products.barcode })
-    .from(products);
+  const masterRows = await db
+    .select({ id: masterProducts.id, name: masterProducts.name, sku: masterProducts.internalSku, barcode: masterProducts.gtin })
+    .from(masterProducts);
+  // Adı girilmemiş ürün SKU'suyla eşleşir; boş ad eşleşmeyi tamamen bozardı.
+  const refs = masterRows.map(r => ({ id: r.id, name: r.name ?? r.sku, barcode: r.barcode }));
   const rows = items.map(({ barcode, ...item }) => ({
     ...item,
     productId: item.productId ?? resolveProductIdForItem({ productName: item.productName, barcode }, refs),
@@ -1244,36 +1131,12 @@ export async function listOrderItemsBulk(orderIds: number[]) {
     .orderBy(orderItems.orderId, orderItems.id);
 }
 
-/**
- * Ürün bazlı satış özeti (son N gün): adet + ciro, iptal siparişler hariç.
- * Üretim önerisi (satış hızı) ve Ürün Kârlılığı raporu kullanır.
- * matched=false satırı, ürünle eşleşmeyen serbest kalemlerin toplamıdır.
- */
-export async function productSalesSince(days: number) {
-  const db = await requireDb();
-  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  const rows = await db
-    .select({
-      productId: orderItems.productId,
-      qty: sql<string>`SUM(${orderItems.quantity})`,
-      revenue: sql<string>`SUM(${orderItems.quantity} * ${orderItems.unitPrice})`,
-    })
-    .from(orderItems)
-    .innerJoin(orders, eq(orderItems.orderId, orders.id))
-    .where(sql`${orders.createdAt} >= ${since} AND ${orders.status} <> 'cancelled'`)
-    .groupBy(orderItems.productId);
-  return rows.map(r => ({
-    productId: r.productId,
-    qty: parseFloat(r.qty) || 0,
-    revenue: parseFloat(r.revenue) || 0,
-  }));
-}
 
 /** Kanal kâr raporu için tüm sipariş kalemlerinin hafif listesi. */
 export async function listAllOrderItemRefs() {
   const db = await requireDb();
   return db
-    .select({ orderId: orderItems.orderId, productId: orderItems.productId, quantity: orderItems.quantity })
+    .select({ orderId: orderItems.orderId, productId: orderItems.masterId, quantity: orderItems.quantity })
     .from(orderItems);
 }
 
@@ -1293,19 +1156,19 @@ export async function recordProductMovement(
 ) {
   if (!(qty > 0)) return;
   const db = await requireDb();
-  await db.insert(productMovements).values({
-    productId,
-    type,
-    qty: String(qty),
-    note: note ?? null,
-    orderId: orderId ?? null,
-  });
+  /*
+   * Hareket defteri emekli `productMovements` + `products` üzerindeydi; sipariş
+   * kalemleri v3 master'a bağlandığı için stok yanlış kayda işleniyordu.
+   * Artık doğrudan master stoğu güncellenir.
+   */
   const delta = Math.round(qty);
   if (delta !== 0) {
     await db
-      .update(products)
-      .set({ stockQty: sql`${products.stockQty} ${type === "in" ? sql`+` : sql`-`} ${delta}` })
-      .where(eq(products.id, productId));
+      .update(masterProducts)
+      .set({
+        stockQty: sql`GREATEST(${masterProducts.stockQty} ${type === "in" ? sql`+` : sql`-`} ${delta}, 0)`,
+      })
+      .where(eq(masterProducts.id, productId));
   }
 }
 
@@ -1323,24 +1186,6 @@ async function applyItemsStock(
   }
 }
 
-/** Ürünün mamul stok hareket geçmişi (üretim/satış/iade/elle düzeltme). */
-export async function listProductMovements(productId: number, limit = 50) {
-  const db = await requireDb();
-  return db
-    .select()
-    .from(productMovements)
-    .where(eq(productMovements.productId, productId))
-    .orderBy(desc(productMovements.id))
-    .limit(limit);
-}
-
-/** Üretim emri kaydı + mamul stok girişi (hammadde düşümü çağıran tarafta). */
-export async function recordProductionRun(productId: number, qty: number, note?: string | null) {
-  const db = await requireDb();
-  await db.insert(productionRuns).values({ productId, qty, note: note ?? null });
-  await recordProductMovement(productId, "in", qty, "Üretim girişi");
-}
-
 /**
  * v3 üretim emri: hammadde düşümü çağıran tarafından yapılır (çok seviyeli
  * BOM patlatması `planProduction`'da), burada emir kaydı ve mamul stok girişi
@@ -1352,7 +1197,7 @@ export async function recordMasterProductionRun(
   note?: string | null,
 ) {
   const db = await requireDb();
-  await db.insert(productionRuns).values({ productId: 0, masterId, qty, note: note ?? null });
+  await db.insert(productionRuns).values({ masterId, qty, note: note ?? null });
   await db
     .update(masterProducts)
     .set({ stockQty: sql`${masterProducts.stockQty} + ${qty}` })
@@ -1368,35 +1213,6 @@ export async function listMasterProductionRuns(limit = 50) {
     .where(isNotNull(productionRuns.masterId))
     .orderBy(desc(productionRuns.id))
     .limit(limit);
-}
-
-export async function getProductionRun(id: number) {
-  const db = await requireDb();
-  const rows = await db.select().from(productionRuns).where(eq(productionRuns.id, id)).limit(1);
-  return rows[0];
-}
-
-export async function setProductionRunNote(id: number, note: string) {
-  const db = await requireDb();
-  await db.update(productionRuns).set({ note }).where(eq(productionRuns.id, id));
-}
-
-export async function listProductionRuns(limit = 50) {
-  const db = await requireDb();
-  const rows = await db
-    .select({
-      id: productionRuns.id,
-      productId: productionRuns.productId,
-      qty: productionRuns.qty,
-      note: productionRuns.note,
-      createdAt: productionRuns.createdAt,
-      productName: products.name,
-    })
-    .from(productionRuns)
-    .leftJoin(products, eq(productionRuns.productId, products.id))
-    .orderBy(desc(productionRuns.id))
-    .limit(limit);
-  return rows;
 }
 
 /**
@@ -1422,9 +1238,16 @@ export async function replaceOrderItems(
   }
   await db.delete(orderItems).where(eq(orderItems.orderId, orderId));
   if (items.length > 0) {
-    const refs = await db
-      .select({ id: products.id, name: products.name, barcode: products.barcode })
-      .from(products);
+    const masterRows = await db
+      .select({
+        id: masterProducts.id,
+        name: masterProducts.name,
+        sku: masterProducts.internalSku,
+        barcode: masterProducts.gtin,
+      })
+      .from(masterProducts);
+    // Adı girilmemiş ürün SKU'suyla eşleşir; boş ad eşleşmeyi bozardı.
+    const refs = masterRows.map(r => ({ id: r.id, name: r.name ?? r.sku, barcode: r.barcode }));
     // v3 bağı: gelen barkod/SKU kendi ürettiğimiz kanal koduyla eşleştirilir.
     // Barkod artık SAKLANIR — eskiden eşleşmede kullanılıp atılıyordu, bu
     // yüzden sipariş↔master bağı her okumada başlıktan tahmin ediliyordu.
@@ -1804,32 +1627,41 @@ export async function getChosenDevTrialItems(projectId: number) {
 
 /* ------------------------- Strateji & Rapor ------------------------- */
 
-/** Rapor sayfasının tek seferde ihtiyaç duyduğu tüm veri kümeleri. */
+/**
+ * Rapor sayfasının tek seferde ihtiyaç duyduğu tüm veri kümeleri.
+ *
+ * Ürün tarafı KÜP katalogdan gelir. Eskiden emekli `products` tablosunu
+ * okuyordu; yani Strateji sayfası ölü veriyi analiz ediyor, canlı katalog
+ * hakkında hiçbir şey söylemiyordu.
+ */
 export async function reportData() {
   const db = await requireDb();
-  const [allProducts, formulaRows, textRows, allOrders, allOrderItems, allMaterials, allCampaigns, imageRows, expenseRows] =
+  const [masters, textRows, allOrders, allOrderItems, allMaterials, allCampaigns, imageRows, expenseRows] =
     await Promise.all([
-      db.select().from(products),
-      db
-        .select({
-          productId: formulaItems.productId,
-          qty: formulaItems.qty,
-          unitCost: materials.unitCost,
-        })
-        .from(formulaItems)
-        .leftJoin(materials, eq(formulaItems.materialId, materials.id)),
+      db.select().from(masterProducts),
       db.select({ productName: marketingTexts.productName }).from(marketingTexts),
       db.select().from(orders),
       db.select().from(orderItems),
       db.select().from(materials),
       db.select().from(campaigns),
-      // Görsel verisinin kendisi ağır (base64); tamamlama kontrolü için kimlikler yeter.
-      db.select({ productId: productImages.productId, kind: productImages.kind }).from(productImages),
+      // Görselin kendisi ağır (base64); tamamlama kontrolü için kimlik yeter.
+      db.select({ productId: masterImages.masterId }).from(masterImages),
       db.select().from(expenses),
     ]);
   return {
-    products: allProducts,
-    formulas: formulaRows,
+    // Strateji sayfasının beklediği biçim; adı girilmemiş ürün SKU'suyla anılır.
+    products: masters.map(m => ({
+      id: m.id,
+      name: m.name ?? m.internalSku,
+      internalSku: m.internalSku,
+      salePrice: m.basePrice,
+      discountPercent: m.discountPercent,
+      status: m.status,
+      formulaId: m.formulaId,
+      gtin: m.gtin,
+      stockQty: m.stockQty,
+      buildableQty: m.buildableQty,
+    })),
     marketingTexts: textRows,
     // İptal/iade siparişler analiz/ciro grafiklerine girmez.
     orders: allOrders.filter(o => o.status !== "cancelled"),
@@ -2073,60 +1905,6 @@ export async function deleteTemplate(id: number) {
   await db.delete(templates).where(eq(templates.id, id));
 }
 
-export async function getProductImages(productId: number) {
-  const db = await requireDb();
-  return db.select().from(productImages).where(eq(productImages.productId, productId));
-}
-
-export async function getProductImage(productId: number, kind: "main" | "packaging" | "usage") {
-  const db = await requireDb();
-  const rows = await db
-    .select()
-    .from(productImages)
-    .where(and(eq(productImages.productId, productId), eq(productImages.kind, kind)))
-    .limit(1);
-  return rows[0];
-}
-
-/** Tüm ürün görsellerinin hafif listesi (veri hariç): dışa aktarımda link üretmek için. */
-export async function listAllProductImageRefs() {
-  const db = await requireDb();
-  return db
-    .select({ productId: productImages.productId, kind: productImages.kind })
-    .from(productImages);
-}
-
-export async function setProductImage(productId: number, kind: "main" | "packaging" | "usage", data: string) {
-  const db = await requireDb();
-  await db
-    .delete(productImages)
-    .where(and(eq(productImages.productId, productId), eq(productImages.kind, kind)));
-  await db.insert(productImages).values({ productId, kind, data });
-}
-
-export async function deleteProductImage(productId: number, kind: "main" | "packaging" | "usage") {
-  const db = await requireDb();
-  await db
-    .delete(productImages)
-    .where(and(eq(productImages.productId, productId), eq(productImages.kind, kind)));
-}
-
-/** Görseli olan ürün ID'leri (sağlık skoru: görsel var/yok tek sorguda). */
-export async function listProductIdsWithImages(): Promise<number[]> {
-  const db = await requireDb();
-  const rows = await db
-    .selectDistinct({ productId: productImages.productId })
-    .from(productImages);
-  return rows.map(r => r.productId);
-}
-
-export async function copyProductImages(fromProductId: number, toProductId: number) {
-  const db = await requireDb();
-  const rows = await db.select().from(productImages).where(eq(productImages.productId, fromProductId));
-  for (const row of rows) {
-    await db.insert(productImages).values({ productId: toProductId, kind: row.kind, data: row.data });
-  }
-}
 
 /* ------------------------- Görevler & Eksik Listesi ------------------------- */
 
@@ -2162,35 +1940,6 @@ export async function deleteTask(id: number) {
 
 /* ------------------------- Toplu Fiyat Güncelleme ------------------------- */
 
-/** Tüm ürünlerin (ya da bir serinin) satış fiyatını yüzdeyle günceller. */
-/**
- * Tüm ürünlerin formülden gelen hammadde maliyetini TEK sorguda hesaplar
- * (Fiyat & Kâr tablosu ürün başına ayrı sorgu atmasın diye).
- */
-export async function listProductMaterialCosts() {
-  const db = await requireDb();
-  return db
-    .select({
-      productId: formulaItems.productId,
-      materialCost: sql<string>`COALESCE(SUM(${formulaItems.qty} * ${materials.unitCost}), 0)`,
-    })
-    .from(formulaItems)
-    .leftJoin(materials, eq(formulaItems.materialId, materials.id))
-    .groupBy(formulaItems.productId);
-}
-
-/** Tek ürünün formülden gelen hammadde maliyeti (otomatik doldurma için). */
-export async function getProductMaterialCost(productId: number) {
-  const db = await requireDb();
-  const rows = await db
-    .select({
-      materialCost: sql<string>`COALESCE(SUM(${formulaItems.qty} * ${materials.unitCost}), 0)`,
-    })
-    .from(formulaItems)
-    .leftJoin(materials, eq(formulaItems.materialId, materials.id))
-    .where(eq(formulaItems.productId, productId));
-  return parseFloat(String(rows[0]?.materialCost ?? "0")) || 0;
-}
 
 /* ------------------------- Ürün Serileri ------------------------- */
 
@@ -2207,22 +1956,6 @@ export async function getProductSeriesByName(name: string) {
     .where(sql`LOWER(${productSeries.name}) = LOWER(${name})`)
     .limit(1);
   return rows[0] ?? null;
-}
-
-/**
- * Otomatik doldurma referans adayları: aynı serideki en son güncellenen
- * ürünler (düzenlenen ürünün kendisi hariç). Seçim (en dolu kart) saf
- * fonksiyonla yapılır — bkz. autofill.ts / pickReferenceProduct.
- */
-export async function listSeriesReferenceCandidates(series: string, excludeId: number | null) {
-  const db = await requireDb();
-  const bySeries = sql`LOWER(${products.series}) = LOWER(${series})`;
-  return db
-    .select()
-    .from(products)
-    .where(excludeId ? and(bySeries, sql`${products.id} != ${excludeId}`) : bySeries)
-    .orderBy(desc(products.updatedAt))
-    .limit(15);
 }
 
 export async function createProductSeries(data: InsertProductSeries) {
@@ -2289,65 +2022,6 @@ export async function updateProductGeneration(id: number, data: Partial<InsertPr
 export async function deleteProductGeneration(id: number) {
   const db = await requireDb();
   await db.delete(productGenerations).where(eq(productGenerations.id, id));
-}
-
-/** Bir proje ürünleştirilmeden önce eski varyant kayıtlarını temizler (yeniden üretim). */
-export async function deleteProductGenerationsByProject(projectId: number) {
-  const db = await requireDb();
-  await db.delete(productGenerations).where(eq(productGenerations.projectId, projectId));
-}
-
-/**
- * Önizlemesi onaylanmış toplu fiyat listesini uygular (formül/CSV güncellemeleri).
- * `channel` verilirse fiyat o pazaryerine özel kayda (products.channelPrices JSON)
- * yazılır; taban salePrice değişmez. `channel` yoksa taban fiyat güncellenir
- * (web sitesi / varsayılan fiyat).
- */
-export async function applyPriceUpdates(
-  updates: { id: number; salePrice: number; discountPercent?: number }[],
-  channel?: MarketplaceChannel | null,
-) {
-  const db = await requireDb();
-  let affected = 0;
-  if (channel) {
-    for (const u of updates) {
-      const [row] = await db
-        .select({ channelPrices: products.channelPrices })
-        .from(products)
-        .where(eq(products.id, u.id))
-        .limit(1);
-      if (!row) continue;
-      const map = parseChannelPrices(row.channelPrices);
-      map[channel] = {
-        salePrice: +u.salePrice.toFixed(2),
-        ...(u.discountPercent != null ? { discountPercent: u.discountPercent } : {}),
-      };
-      const [result] = await db
-        .update(products)
-        .set({ channelPrices: JSON.stringify(map) })
-        .where(eq(products.id, u.id));
-      affected += result.affectedRows ?? 0;
-    }
-    return { affected };
-  }
-  for (const u of updates) {
-    const [result] = await db
-      .update(products)
-      .set({ salePrice: u.salePrice.toFixed(2) })
-      .where(eq(products.id, u.id));
-    affected += result.affectedRows ?? 0;
-  }
-  return { affected };
-}
-
-export async function bulkUpdatePrices(percent: number, series: string | null) {
-  const db = await requireDb();
-  const factor = 1 + percent / 100;
-  const setExpr = { salePrice: sql`ROUND(${products.salePrice} * ${factor}, 2)` };
-  const [result] = series
-    ? await db.update(products).set(setExpr).where(eq(products.series, series))
-    : await db.update(products).set(setExpr);
-  return { affected: result.affectedRows ?? 0 };
 }
 
 /* ------------------------- CRM Satış Boru Hattı ------------------------- */
@@ -2941,11 +2615,6 @@ export async function createListing(data: InsertListing) {
   return Number(r.insertId);
 }
 
-export async function updateListing(id: number, data: Partial<InsertListing>) {
-  const db = await requireDb();
-  await db.update(listings).set(data).where(eq(listings.id, id));
-}
-
 /* ---- Kanal yayınları ----------------------------------------------------- */
 
 export async function listChannelListings() {
@@ -3405,11 +3074,6 @@ export async function upsertContentBlock(
   }
   const [r] = await db.insert(contentBlocks).values({ ...coord, ...data });
   return Number(r.insertId);
-}
-
-export async function deleteContentBlock(id: number) {
-  const db = await requireDb();
-  await db.delete(contentBlocks).where(eq(contentBlocks.id, id));
 }
 
 /* ---- Kullanım alanı × kanal kategori eşlemesi ---------------------------- */

@@ -221,7 +221,7 @@ describe("mapToTrendyolCards — eksikler adıyla bildirilir", () => {
     [
       "kategori yok",
       { ...base, channelListings: [cl({ channelCategoryId: null })] },
-      "kategori eşlemesi yok",
+      "kategori seçilmemiş",
     ],
     [
       "fiyat yok",

@@ -239,7 +239,13 @@ function CartView({
   const [coupon, setCoupon] = useState("");
   const [discount, setDiscount] = useState(0);
   const [form, setForm] = useState({ customerName: "", phone: "", address: "", email: "" });
-  const [placed, setPlaced] = useState<{ orderId: number; total: number } | null>(null);
+  const [placed, setPlaced] = useState<{
+    orderId: number;
+    total: number;
+    paymentConfigured: boolean;
+  } | null>(null);
+  /** PAYTR iframe token'ı — alındığında ödeme adımı açılır. */
+  const [payToken, setPayToken] = useState<string | null>(null);
   const [couponBusy, setCouponBusy] = useState(false);
 
   const applyCouponQ = async () => {
@@ -255,11 +261,27 @@ function CartView({
     }
   };
 
+  /*
+   * Sipariş alındıktan sonra PAYTR yapılandırılmışsa kartlı ödeme adımı açılır.
+   * Sunucu zaten `paymentConfigured` döndürüyordu ama istemci yok sayıyor,
+   * ekranda "aktifleştirildiğinde burada görünür" yazıyordu — yani sanal POS
+   * hazırdı, son adım bağlanmamıştı.
+   */
+  const paytr = trpc.storefront.paytrToken.useMutation({
+    onSuccess: r => setPayToken(r.token),
+    onError: e => {
+      // Ödeme açılamazsa sipariş yine de alınmıştır; havale akışına düşülür.
+      toast.error(`${e.message} — siparişiniz alındı, ödeme için sizinle iletişime geçeceğiz.`);
+    },
+  });
+
   const createOrder = trpc.storefront.createOrder.useMutation({
     onSuccess: r => {
-      setPlaced({ orderId: r.orderId, total: r.total });
+      setPlaced({ orderId: r.orderId, total: r.total, paymentConfigured: r.paymentConfigured });
       onDone();
       toast.success("Siparişiniz alındı!");
+      const email = form.email.trim();
+      if (r.paymentConfigured && email) paytr.mutate({ orderId: r.orderId, email });
     },
     onError: e => toast.error(e.message),
   });
@@ -267,12 +289,33 @@ function CartView({
   const total = Math.max(0, subtotal - discount);
 
   if (placed) {
+    if (payToken) {
+      return (
+        <div className="mx-auto max-w-2xl space-y-3 py-6">
+          <h1 className="text-center text-xl font-bold">Güvenli ödeme</h1>
+          <p className="text-center text-sm text-neutral-600">
+            Sipariş tutarı <b>{formatTL(placed.total)}</b>
+          </p>
+          <iframe
+            title="Güvenli ödeme"
+            src={`https://www.paytr.com/odeme/guvenli/${payToken}`}
+            className="h-[560px] w-full rounded-lg border"
+          />
+          <p className="text-center text-[11px] text-neutral-500">
+            Ödeme PAYTR altyapısıyla alınır; kart bilgileriniz bize iletilmez.
+          </p>
+        </div>
+      );
+    }
     return (
       <div className="max-w-md mx-auto text-center space-y-3 py-10">
         <div className="text-4xl">✅</div>
         <h1 className="text-xl font-bold">Siparişiniz alındı</h1>
         <p className="text-sm text-neutral-600">
-          Sipariş tutarı <b>{formatTL(placed.total)}</b>. Ödeme ve kargo için sizinle iletişime geçeceğiz.
+          Sipariş tutarı <b>{formatTL(placed.total)}</b>.{" "}
+          {paytr.isPending
+            ? "Ödeme adımı açılıyor…"
+            : "Ödeme ve kargo için sizinle iletişime geçeceğiz."}
         </p>
         <Button onClick={onBack}>Alışverişe devam</Button>
       </div>
@@ -377,8 +420,8 @@ function CartView({
               Siparişi Tamamla — {formatTL(total)}
             </Button>
             <p className="text-[11px] text-neutral-500 text-center">
-              Ödeme ve kargo bilgisi sipariş sonrası iletilir. (Kartlı ödeme entegrasyonu aktifleştirildiğinde
-              burada güvenli ödeme adımı görünür.)
+              Kartla ödeme açıksa siparişten hemen sonra güvenli ödeme adımı açılır; bunun için
+              e-posta yazmanız gerekir. Aksi halde ödeme ve kargo için sizinle iletişime geçilir.
             </p>
           </div>
         </>

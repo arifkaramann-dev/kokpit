@@ -140,98 +140,7 @@ export const productSeries = mysqlTable("productSeries", {
 export type ProductSeries = typeof productSeries.$inferSelect;
 export type InsertProductSeries = typeof productSeries.$inferInsert;
 
-/**
- * Ürünler: ana ürün ve türev ürün aynı tabloda, self-referencing.
- * parentId NULL => ana ürün; parentId dolu => o ana ürünün türevi.
- * Türev tipi (surfaceType) serbest metin — tamamen esnek.
- */
-export const products = mysqlTable(
-  "products",
-  {
-  id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId").notNull().default(1),
-  parentId: int("parentId"),
-  name: varchar("name", { length: 255 }).notNull(),
-  series: varchar("series", { length: 128 }),
-  colorCode: varchar("colorCode", { length: 64 }),
-  colorHex: varchar("colorHex", { length: 16 }),
-  surfaceType: varchar("surfaceType", { length: 255 }),
-  additives: text("additives"),
-  description: text("description"),
-  salePrice: decimal("salePrice", { precision: 12, scale: 2 }).notNull().default("0"),
-  discountPercent: decimal("discountPercent", { precision: 5, scale: 2 }).notNull().default("0"),
-  // Kanal bazlı satış fiyatı (web sitesi ≠ Trendyol ≠ Hepsiburada). JSON:
-  // {"trendyol":{"salePrice":259.9,"discountPercent":0},"hepsiburada":{...}}.
-  // Bir kanal için kayıt yoksa yukarıdaki taban salePrice/discountPercent kullanılır.
-  channelPrices: text("channelPrices"),
-  packagingCost: decimal("packagingCost", { precision: 12, scale: 2 }).notNull().default("0"),
-  shippingCost: decimal("shippingCost", { precision: 12, scale: 2 }).notNull().default("0"),
-  packaging: varchar("packaging", { length: 128 }),
-  // Pazaryeri eşleştirmesi için barkod (Trendyol/Hepsiburada bununla eşler).
-  barcode: varchar("barcode", { length: 64 }),
-  stockQty: int("stockQty").notNull().default(0),
-  // Mamul kritik stok eşiği: 0 = takip yok; stok bu eşiğin altına inince
-  // düşük stok uyarısı verilir (Stok Nöbetçisi + Ürünler sayfası filtresi).
-  criticalQty: int("criticalQty").notNull().default(0),
-  labelSize: varchar("labelSize", { length: 64 }),
-  labelText: text("labelText"),
-  usageGuide: text("usageGuide"),
-  safetyNotes: text("safetyNotes"),
-  extraInfo: text("extraInfo"),
-  // Pazaryeri ürün kartı alanları (ÜRÜN KAYIT Excel paritesi).
-  // sku = satıcı stok kodu; barkodla aynı olabilir ama ayrı tutulur.
-  sku: varchar("sku", { length: 64 }),
-  category: varchar("category", { length: 64 }),
-  // NULL = seriden/varsayılandan gelir; dolu = ürüne özel değer.
-  profitMargin: decimal("profitMargin", { precision: 5, scale: 2 }),
-  vatRate: decimal("vatRate", { precision: 5, scale: 2 }),
-  desi: decimal("desi", { precision: 8, scale: 2 }),
-  paintType: varchar("paintType", { length: 64 }),
-  // JSON dizi: ["Hızlı Kuruma","Parlak",...] — en fazla 5 özellik.
-  features: text("features"),
-  shortDescription: mediumtext("shortDescription"),
-  longDescription: mediumtext("longDescription"),
-  applicationText: mediumtext("applicationText"),
-  // JSON dizi: harici görsel linkleri (gorsel1..4 paritesi).
-  imageUrls: text("imageUrls"),
-  videoUrl: varchar("videoUrl", { length: 512 }),
-  mockupUrl: varchar("mockupUrl", { length: 512 }),
-  labelWarnings: text("labelWarnings"),
-  isActive: int("isActive").notNull().default(1),
-  // Yaşam döngüsü: taslak = kart eksik/yayına hazır değil; satista = aktif satış;
-  // arsiv = satıştan kalktı (isActive=0 ile eş anlamlı, geriye uyum için ikisi de yazılır).
-  // Pazaryeri push yalnızca "satista" ürünleri gönderir.
-  status: mysqlEnum("status", ["taslak", "satista", "arsiv"]).notNull().default("satista"),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-  },
-  t => [index("products_parentId_idx").on(t.parentId), index("products_barcode_idx").on(t.barcode)],
-);
 
-export type Product = typeof products.$inferSelect;
-export type InsertProduct = typeof products.$inferInsert;
-
-/**
- * Formül kalemleri: her ürün (ana veya türev) bağımsız formül taşır.
- */
-export const formulaItems = mysqlTable(
-  "formulaItems",
-  {
-    id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId").notNull().default(1),
-    productId: int("productId").notNull(),
-    materialId: int("materialId").notNull(),
-    qty: decimal("qty", { precision: 12, scale: 3 }).notNull(),
-    note: text("note"),
-    createdAt: timestamp("createdAt").defaultNow().notNull(),
-  },
-  t => [
-    index("formulaItems_productId_idx").on(t.productId),
-    index("formulaItems_materialId_idx").on(t.materialId),
-  ],
-);
-
-export type FormulaItem = typeof formulaItems.$inferSelect;
 
 /**
  * Siparişler — kanban panosu için status alanı.
@@ -701,22 +610,6 @@ export const templates = mysqlTable("templates", {
 
 export type Template = typeof templates.$inferSelect;
 
-/** Ürün görselleri: ana/pazarlama, ambalaj, kullanım örnekleri (base64). */
-export const productImages = mysqlTable(
-  "productImages",
-  {
-    id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId").notNull().default(1),
-    productId: int("productId").notNull(),
-    kind: mysqlEnum("kind", ["main", "packaging", "usage"]).notNull(),
-    // Base64 görseller 64KB'lık TEXT sınırına sığmaz; MEDIUMTEXT (16MB) kullanılır.
-    data: mediumtext("data").notNull(),
-    createdAt: timestamp("createdAt").defaultNow().notNull(),
-  },
-  t => [index("productImages_productId_kind_idx").on(t.productId, t.kind)],
-);
-
-export type ProductImage = typeof productImages.$inferSelect;
 
 /**
  * Görevler ve eksik (alınacaklar) listesi: uygulamadan elle veya
@@ -735,30 +628,6 @@ export const tasks = mysqlTable("tasks", {
 
 export type Task = typeof tasks.$inferSelect;
 
-/**
- * Mamul (bitmiş ürün) stok hareketleri: üretim girişi, satış çıkışı,
- * iptal/iade girişi, elle düzeltme. products.stockQty bu hareketlerle yürür;
- * eksi bakiye "üretilmesi gereken" sinyalidir.
- */
-export const productMovements = mysqlTable(
-  "productMovements",
-  {
-    id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId").notNull().default(1),
-    productId: int("productId").notNull(),
-    type: mysqlEnum("type", ["in", "out"]).notNull(),
-    qty: decimal("qty", { precision: 12, scale: 2 }).notNull(),
-    note: text("note"),
-    orderId: int("orderId"),
-    createdAt: timestamp("createdAt").defaultNow().notNull(),
-  },
-  t => [
-    index("productMovements_productId_idx").on(t.productId),
-    index("productMovements_orderId_idx").on(t.orderId),
-  ],
-);
-
-export type ProductMovement = typeof productMovements.$inferSelect;
 
 /**
  * Sipariş olay defteri (denetim izi): siparişin yaşam döngüsündeki her adım
@@ -785,30 +654,24 @@ export const orderEvents = mysqlTable(
 export type OrderEvent = typeof orderEvents.$inferSelect;
 export type InsertOrderEvent = typeof orderEvents.$inferInsert;
 
+
 /**
- * Üretim emri kayıtları: ne zaman, hangi üründen kaç adet üretildi.
- * Hammadde düşümü stockMovements'a, mamul girişi productMovements'a işlenir.
+ * Üretim emirleri — hangi master, ne kadar üretildi.
+ *
+ * Eski `productId` kolonu kaldırıldı: emekli düz ürün modeli sökülürken
+ * geçmiş kayıtlar da düştü, v3 üretimi zaten yalnız `masterId` kullanıyordu.
  */
 export const productionRuns = mysqlTable(
   "productionRuns",
   {
     id: int("id").autoincrement().primaryKey(),
-  companyId: int("companyId").notNull().default(1),
-    /**
-     * Eski ürün bağı. v3 üretiminde 0 kalır; `masterId` doludur.
-     * NOT NULL olduğu için kaldırılmadı — geçmiş kayıtlar bozulmasın.
-     */
-    productId: int("productId").notNull(),
-    /** v3 master bağı — yeni üretim emirleri bunu kullanır. */
+    companyId: int("companyId").notNull().default(1),
     masterId: int("masterId"),
     qty: int("qty").notNull(),
     note: text("note"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
-  t => [
-    index("productionRuns_productId_idx").on(t.productId),
-    index("productionRuns_master_idx").on(t.masterId),
-  ],
+  t => [index("productionRuns_master_idx").on(t.masterId)],
 );
 
 export type ProductionRun = typeof productionRuns.$inferSelect;

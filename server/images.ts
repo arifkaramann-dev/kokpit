@@ -63,24 +63,4 @@ export function registerImageRoutes(app: Express) {
       res.status(500).send("Sunucu hatası");
     }
   });
-
-  app.get("/api/img/:productId/:kind", async (req: Request, res: Response) => {
-    const productId = Number(req.params.productId);
-    const kind = req.params.kind;
-    if (!Number.isFinite(productId) || !KINDS.has(kind)) {
-      res.status(400).send("Geçersiz istek");
-      return;
-    }
-    try {
-      const row = await db.getProductImage(productId, kind as "main" | "packaging" | "usage");
-      if (!row?.data) {
-        res.status(404).send("Görsel yok");
-        return;
-      }
-      sendImage(res, row.data);
-    } catch (error) {
-      console.error("[images] hata:", error);
-      res.status(500).send("Sunucu hatası");
-    }
-  });
 }

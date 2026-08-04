@@ -455,16 +455,6 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
     onError: e => toast.error(e.message),
   });
 
-  const convert = trpc.dev.convert.useMutation({
-    onSuccess: () => {
-      utils.dev.get.invalidate({ id });
-      utils.dev.list.invalidate();
-      utils.products.list.invalidate();
-      toast.success("Ürün oluşturuldu! Formülü ve fiyatı hazır. 🎉");
-    },
-    onError: e => toast.error(e.message),
-  });
-
   // Ürün motoru v2: bu projenin varyant çıktıları (Adım 5'te üretilir).
   const { data: generations } = trpc.dev.generations.useQuery({ projectId: id });
   const generateContent = trpc.dev.generateProductContent.useMutation({
@@ -1110,7 +1100,7 @@ function ProjectDetail({ id, onBack }: { id: number; onBack: () => void }) {
             <div className="text-center space-y-3 py-4">
               <CheckCircle2 className="h-10 w-10 mx-auto text-emerald-500" />
               <p className="font-semibold">Bu proje ürüne dönüştürüldü</p>
-              <Button onClick={() => setLocation("/urunler")}>
+              <Button onClick={() => setLocation("/katalog")}>
                 <Package className="h-4 w-4 mr-1" /> Ürünlere Git
               </Button>
             </div>

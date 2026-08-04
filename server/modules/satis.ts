@@ -15,7 +15,6 @@ import { executeAssistantCommand, generateOrderNo, generateQuoteNo } from "../as
 import { buildSaleTitle, deriveCombos, parseSetCount, renameVariantTitle } from "../productUtils";
 import { computePrice, extractJson, parseFeatures, pickReferenceProduct, scoreReference, suggestSku } from "../autofill";
 import { computeReorderSuggestions, summarizeReorder } from "../reorder";
-import { importUrunKayit } from "../importSeed";
 import { answerTrendyolQuestion, syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf, getTrendyolCommonLabelZpl, TrendyolLabelNotAllowedError, isTrendyolConfigured } from "../trendyol";
 import { zplToPdf } from "../labelary";
 import { isHepsiburadaConfigured } from "../hepsiburada";
@@ -24,7 +23,6 @@ import { isCiceksepetiConfigured } from "../ciceksepeti";
 import {
   fetchTrendyolCategoryAttributes,
   getTrendyolProductBatchStatus,
-  mapProductsToTrendyolItems,
   parseCardSettings,
   pushTrendyolProductCards,
   searchTrendyolBrands,
@@ -113,17 +111,6 @@ export const ordersRouter = router({
   itemsBulk: protectedProcedure
     .input(z.object({ orderIds: z.array(z.number()).min(1).max(300) }))
     .query(({ input }) => db.listOrderItemsBulk(input.orderIds)),
-  syncTrendyol: protectedProcedure.mutation(async () => {
-    try {
-      return await syncTrendyolOrders();
-    } catch (error) {
-      throw new TRPCError({
-        code: "BAD_REQUEST",
-        message: error instanceof Error ? error.message : "Trendyol senkronizasyonu başarısız",
-      });
-    }
-  }),
-  // Hangi pazaryerinin bağlı olduğunu / hangi ayarın eksik olduğunu döner.
   marketplaceStatus: protectedProcedure.query(() => marketplaceStatus()),
   // Yapılandırılmış tüm pazaryerlerinden tek seferde çeker; her biri için sonuç döner.
   syncAll: protectedProcedure.mutation(() => syncAllMarketplaces()),

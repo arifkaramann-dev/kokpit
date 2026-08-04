@@ -16,7 +16,6 @@ import { executeAssistantCommand, generateOrderNo, generateQuoteNo } from "../as
 import { buildSaleTitle, deriveCombos, parseSetCount, planGenerationSync, renameVariantTitle } from "../productUtils";
 import { computePrice, extractJson, parseFeatures, pickReferenceProduct, scoreReference, suggestSku } from "../autofill";
 import { computeReorderSuggestions, summarizeReorder } from "../reorder";
-import { importUrunKayit } from "../importSeed";
 import { answerTrendyolQuestion, syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf, TrendyolLabelNotAllowedError, isTrendyolConfigured } from "../trendyol";
 import { isHepsiburadaConfigured } from "../hepsiburada";
 import { isN11Configured } from "../n11";
@@ -24,7 +23,6 @@ import { isCiceksepetiConfigured } from "../ciceksepeti";
 import {
   fetchTrendyolCategoryAttributes,
   getTrendyolProductBatchStatus,
-  mapProductsToTrendyolItems,
   parseCardSettings,
   pushTrendyolProductCards,
   searchTrendyolBrands,
@@ -297,81 +295,6 @@ export const devRouter = router({
   chooseTrial: protectedProcedure
     .input(z.object({ projectId: z.number(), trialId: z.number() }))
     .mutation(({ input }) => db.chooseDevTrial(input.projectId, input.trialId)),
-  // Adım 5: projeyi formülü ve fiyatıyla eksiksiz bir ürüne dönüştürür.
-  convert: protectedProcedure
-    .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
-      const project = await db.getDevProject(input.id);
-      if (!project) throw new TRPCError({ code: "NOT_FOUND", message: "Proje bulunamadı" });
-      if (project.productId) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "Bu proje zaten ürüne dönüştürülmüş" });
-      }
-      const chosenItems = await db.getChosenDevTrialItems(input.id);
-      if (!chosenItems || chosenItems.length === 0) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "Önce 2. adımda başarılı bir reçeteyi 'Seçili Reçete' yapın.",
-        });
-      }
-      const descriptionParts = [
-        project.targetUse ? `Kullanım alanı: ${project.targetUse}` : null,
-        project.applicationNotes ? `Uygulama: ${project.applicationNotes}` : null,
-        project.dryingTime ? `Kuruma süresi: ${project.dryingTime}` : null,
-        project.coats ? `Önerilen kat sayısı: ${project.coats}` : null,
-        project.testNotes ? `Test notları: ${project.testNotes}` : null,
-      ].filter(Boolean);
-      // Seri şablonu varsa açıklamalar/kâr oranı otomatik dolar; projede fiyat
-      // girilmediyse seçili reçete maliyetinden seri kârıyla fiyat önerilir.
-      const seriesRec = project.series ? await db.getProductSeriesByName(project.series) : null;
-      const projectPrice = parseFloat(String(project.salePrice)) || 0;
-      let suggestedPrice = projectPrice;
-      if (!projectPrice && seriesRec) {
-        const materialCost = chosenItems.reduce(
-          (sum, item) => sum + (parseFloat(String(item.qty)) || 0) * (parseFloat(String(item.unitCost ?? 0)) || 0),
-          0,
-        );
-        suggestedPrice = computePrice({
-          materialCost,
-          packagingCost: parseFloat(String(project.packagingCost)) || 0,
-          shippingCost: parseFloat(String(project.shippingCost)) || 0,
-          profitMargin: parseFloat(String(seriesRec.profitMargin)) || 35,
-          vatRate: parseFloat(String(seriesRec.vatRate)) || 20,
-        }).salePrice;
-      }
-      const productId = await db.createProduct({
-        name: project.name,
-        series: project.series,
-        colorCode: project.colorCode,
-        colorHex: project.colorHex,
-        surfaceType: project.targetUse,
-        // Projede açıklama yazıldıysa onu kullan; yoksa test notlarından derle.
-        description: project.description || descriptionParts.join("\n") || null,
-        packaging: project.packaging,
-        labelSize: project.labelSize,
-        labelText: project.labelText,
-        usageGuide: project.usageGuide,
-        safetyNotes: project.safetyNotes,
-        salePrice: String(suggestedPrice),
-        packagingCost: project.packagingCost,
-        shippingCost: project.shippingCost,
-        sku: suggestSku(project.name, project.packaging),
-        category: seriesRec?.category ?? null,
-        profitMargin: seriesRec?.profitMargin ?? null,
-        vatRate: seriesRec?.vatRate ?? null,
-        shortDescription: seriesRec?.shortDescription ?? null,
-        longDescription: seriesRec?.longDescription ?? null,
-        applicationText: seriesRec?.applicationText ?? null,
-      });
-      for (const item of chosenItems) {
-        await db.addFormulaItem(Number(productId), item.materialId, parseFloat(item.qty), item.note ?? undefined);
-      }
-      await db.updateDevProject(input.id, {
-        status: "done",
-        currentStep: 5,
-        productId: Number(productId),
-      });
-      return { productId: Number(productId) };
-    }),
 
   /* ---------------- Ürün motoru v2: Ürünleştirme çıktıları ---------------- */
 
@@ -451,157 +374,6 @@ export const devRouter = router({
       };
     }),
 
-  // Varyant çıktılarını (productGenerations) ana Ürünler tablosuna aktarır:
-  // TEK bir ana (parent) ürün + her varyant için o ana ürünün altında türev (child) ürün.
-  // Böylece varyantlar ayrı ayrı ürün değil, tek ürünün varyantları olarak listelenir.
-  // Zaten aktarılmış varyantlar (productId dolu) atlanır — mükerrer kayıt olmaz.
-  publishToProducts: protectedProcedure
-    .input(z.object({ projectId: z.number() }))
-    .mutation(async ({ input }) => {
-      const project = await db.getDevProject(input.projectId);
-      if (!project) throw new TRPCError({ code: "NOT_FOUND", message: "Proje bulunamadı" });
-
-      const gens = await db.listProductGenerations(input.projectId);
-      if (!gens.length) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "Aktarılacak varyant yok. Önce varyantları oluşturun." });
-      }
-
-      const chosenItems = (await db.getChosenDevTrialItems(input.projectId)) ?? [];
-      const seriesRec = project.series ? await db.getProductSeriesByName(project.series) : null;
-
-      // 1) Ana (parent) ürünü bul ya da oluştur. Proje daha önce ürüne dönüştürüldüyse
-      //    (project.productId) ve o ürün bir ana ürünse onu kullan; yoksa yeni ana ürün aç.
-      let parentId: number | null = null;
-      if (project.productId) {
-        const existing = await db.getProduct(project.productId);
-        if (existing && !existing.parentId) parentId = existing.id;
-      }
-      if (!parentId) {
-        const descriptionParts = [
-          project.targetUse ? `Kullanım alanı: ${project.targetUse}` : null,
-          project.applicationNotes ? `Uygulama: ${project.applicationNotes}` : null,
-          project.dryingTime ? `Kuruma süresi: ${project.dryingTime}` : null,
-          project.coats ? `Önerilen kat sayısı: ${project.coats}` : null,
-        ].filter(Boolean);
-        const newParentId = await db.createProduct({
-          name: project.name,
-          series: project.series,
-          colorCode: project.colorCode,
-          colorHex: project.colorHex,
-          surfaceType: project.targetUse,
-          description: project.description || descriptionParts.join("\n") || null,
-          status: "taslak",
-          salePrice: String(parseFloat(String(project.salePrice)) || 0),
-          packagingCost: project.packagingCost,
-          shippingCost: project.shippingCost,
-          sku: suggestSku(project.name, "ANA"),
-          category: seriesRec?.category ?? null,
-          profitMargin: seriesRec?.profitMargin ?? null,
-          vatRate: seriesRec?.vatRate ?? null,
-          shortDescription: seriesRec?.shortDescription ?? null,
-          longDescription: seriesRec?.longDescription ?? null,
-          applicationText: seriesRec?.applicationText ?? null,
-        });
-        parentId = Number(newParentId);
-        // Ana ürünün reçetesi de seçili denemeden kopyalanır.
-        for (const item of chosenItems) {
-          await db.addFormulaItem(parentId, item.materialId, parseFloat(item.qty), item.note ?? undefined);
-        }
-        await db.updateDevProject(input.projectId, { productId: parentId });
-      }
-
-      // Mevcut SKU'larla çakışmayı önlemek için tekil SKU üretici.
-      const existingSkus = new Set(
-        (await db.listProducts()).map(p => p.sku?.trim()).filter((s): s is string => !!s),
-      );
-      const uniqueSku = (base: string) => {
-        let candidate = base;
-        for (let i = 2; existingSkus.has(candidate); i++) candidate = `${base}-${i}`;
-        existingSkus.add(candidate);
-        return candidate;
-      };
-
-      const parent = await db.getProduct(parentId);
-      // Emniyet ağı: generation kaydı (eski sürümde silinip yeniden açıldığı
-      // için) productId bağını kaybetmiş olabilir. Bu ana ürünün altındaki
-      // türevleri SKU'ya göre de eşleştir ki aynı varyant ikinci kez ürün
-      // olarak açılmasın.
-      const siblingBySku = new Map<string, number>();
-      for (const p of await db.listProducts()) {
-        if (p.parentId === parentId && p.sku?.trim()) siblingBySku.set(p.sku.trim(), p.id);
-      }
-      let created = 0;
-      let updated = 0;
-      let skipped = 0;
-
-      // 2) Her varyant çıktısı için türev (child) ürün oluştur ya da güncelle.
-      for (const g of gens) {
-        // AI metinlerini ürün alanlarına eşle.
-        const images = [g.packagingImageUrl, g.beforeAfterImageUrl, g.marketingImageUrl].filter(Boolean) as string[];
-        const variantData = {
-          parentId,
-          name: buildSaleTitle(project.name, null, g.packaging, g.color ?? null, null),
-          series: project.series,
-          colorCode: g.color ?? project.colorCode,
-          colorHex: g.colorHex ?? project.colorHex,
-          surfaceType: project.targetUse,
-          packaging: g.packaging,
-          description: g.trendyolDescription || parent?.description || null,
-          shortDescription: g.trendyolTitle || seriesRec?.shortDescription || null,
-          longDescription: g.hepsiburadaDescription || seriesRec?.longDescription || null,
-          applicationText: g.applicationNotes || seriesRec?.applicationText || null,
-          labelText: g.labelContent ?? null,
-          usageGuide: g.guideContent ?? null,
-          salePrice: String(parseFloat(String(g.suggestedPrice)) || parseFloat(String(project.salePrice)) || 0),
-          packagingCost: project.packagingCost,
-          shippingCost: project.shippingCost,
-          category: seriesRec?.category ?? null,
-          profitMargin: seriesRec?.profitMargin ?? null,
-          vatRate: seriesRec?.vatRate ?? null,
-          imageUrls: images.length ? JSON.stringify(images) : null,
-          mockupUrl: g.packagingImageUrl ?? null,
-        };
-
-        // Bağlı ürün varsa onu, yoksa aynı SKU'lu mevcut türevi güncelle.
-        const linkedId =
-          g.productId ??
-          siblingBySku.get(g.variantCode || suggestSku(project.name, g.packaging)) ??
-          null;
-        if (linkedId) {
-          const existingVariant = await db.getProduct(linkedId);
-          if (existingVariant) {
-            await db.updateProduct(linkedId, variantData as never);
-            // Kopan bağ yeniden kurulur ki sonraki aktarımlar da güncelleme olsun.
-            if (g.productId !== linkedId) {
-              await db.updateProductGeneration(g.id, { productId: linkedId, status: "listed" });
-            }
-            updated++;
-            continue;
-          }
-          // Ürün silinmişse yeniden oluştur (aşağı düşer).
-        }
-
-        const variantId = await db.createProduct({
-          ...variantData,
-          sku: uniqueSku(g.variantCode || suggestSku(project.name, g.packaging)),
-        });
-        // Reçeteyi türev ürüne kopyala (maliyet analizi boş kalmasın).
-        for (const item of chosenItems) {
-          await db.addFormulaItem(Number(variantId), item.materialId, parseFloat(item.qty), item.note ?? undefined);
-        }
-        await db.updateProductGeneration(g.id, { productId: Number(variantId), status: "listed" });
-        created++;
-      }
-
-      // Proje artık ürünleşti: liste kartı ve pano "Adım 5/5"te takılı kalmasın.
-      // (Eski `convert` ucu arayüzden çağrılmadığı için status hep "active"
-      // kalıyor, proje bitmiş görünmüyordu.)
-      if (project.status !== "done") {
-        await db.updateDevProject(input.projectId, { status: "done", currentStep: 5 });
-      }
-
-      return { parentId, created, updated, skipped, total: gens.length };
-    }),
 
   // Adım 5 "Ürünleştir" ana aksiyonu: her seçili ambalaj için bir varyant kaydı
   // açar ve AI ile pazaryeri metinleri, etiket içeriği, kullanım kılavuzu ve
@@ -995,7 +767,6 @@ export const templatesRouter = router({
 
 export const campaignsRouter = router({
   list: protectedProcedure.query(() => db.listCampaigns()),
-  upcoming: protectedProcedure.query(() => db.upcomingCampaigns(30)),
   create: protectedProcedure.input(campaignInput).mutation(({ input }) =>
     db.createCampaign(toDecimalFields(input, ["discountPercent"]) as never),
   ),
@@ -1240,67 +1011,7 @@ export const storefrontRouter = router({
     const v3 = await loadV3Storefront();
     if (v3) return v3.map(toStoreWire);
 
-    const products = await db.listProducts();
-    const sellable = products.filter(
-      p => p.status === "satista" && parseFloat(String(p.salePrice)) > 0,
-    );
-    const view = (p: (typeof products)[number]) => ({
-      id: p.id,
-      name: p.name,
-      packaging: p.packaging,
-      colorCode: p.colorCode,
-      colorHex: p.colorHex,
-      salePrice: parseFloat(String(p.salePrice)) || 0,
-      discountPercent: parseFloat(String(p.discountPercent)) || 0,
-      inStock: (p.stockQty ?? 0) > 0,
-    });
-    const net = (v: { salePrice: number; discountPercent: number }) =>
-      v.salePrice * (1 - v.discountPercent / 100);
-
-    const childrenOf = new Map<number, typeof sellable>();
-    for (const p of sellable) {
-      if (p.parentId == null) continue;
-      childrenOf.set(p.parentId, [...(childrenOf.get(p.parentId) ?? []), p]);
-    }
-
-    // Ana ürünü satışta olmayan ama türevi satışta olan gruplar da görünmeli;
-    // başlık/görsel için ana ürün kaydı katalogdan okunur.
-    const byId = new Map(products.map(p => [p.id, p]));
-    const groupIds = new Set<number>([
-      ...sellable.filter(p => p.parentId == null).map(p => p.id),
-      ...Array.from(childrenOf.keys()),
-    ]);
-
-    const groups = [];
-    for (const id of Array.from(groupIds)) {
-      const head = byId.get(id);
-      if (!head || head.status === "arsiv") continue;
-      const variants = (childrenOf.get(id) ?? []).map(view);
-      // Türevi yoksa ana ürünün kendisi tek seçenektir.
-      const options =
-        variants.length > 0
-          ? variants
-          : head.status === "satista" && parseFloat(String(head.salePrice)) > 0
-            ? [view(head)]
-            : [];
-      if (options.length === 0) continue;
-
-      const prices = options.map(net);
-      groups.push({
-        id: head.id,
-        name: head.name,
-        series: head.series,
-        shortDescription: head.shortDescription,
-        // Görsel ana üründen, yoksa ilk seçenekten.
-        imageUrls: head.imageUrls ?? byId.get(options[0].id)?.imageUrls ?? null,
-        mockupUrl: head.mockupUrl ?? byId.get(options[0].id)?.mockupUrl ?? null,
-        minPrice: Math.min(...prices),
-        maxPrice: Math.max(...prices),
-        inStock: options.some(o => o.inStock),
-        options,
-      });
-    }
-    return groups.sort((a, b) => a.name.localeCompare(b.name, "tr"));
+    return [];
   }),
   product: publicProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
     const v3 = await loadV3Storefront();
@@ -1338,22 +1049,7 @@ export const storefrontRouter = router({
       };
     }
 
-    const p = await db.getProduct(input.id);
-    // Taslak ürün de vitrine açılmamalı — kart hazırlanırken müşteriye görünüyordu.
-    if (!p || p.status !== "satista") throw new TRPCError({ code: "NOT_FOUND", message: "Ürün bulunamadı" });
-    return {
-      id: p.id,
-      name: p.name,
-      series: p.series,
-      salePrice: parseFloat(String(p.salePrice)) || 0,
-      discountPercent: parseFloat(String(p.discountPercent)) || 0,
-      shortDescription: p.shortDescription,
-      description: p.description,
-      usageGuide: p.usageGuide,
-      imageUrls: p.imageUrls,
-      mockupUrl: p.mockupUrl,
-      inStock: (p.stockQty ?? 0) > 0,
-    };
+    throw new TRPCError({ code: "NOT_FOUND", message: "Ürün bulunamadı" });
   }),
   // Kupon doğrulama (sepet ekranında anında geri bildirim).
   checkCoupon: publicProcedure
@@ -1403,19 +1099,6 @@ export const storefrontRouter = router({
             masterId: it.productId,
           });
           subtotal += hit.option.netPrice * it.quantity;
-        }
-      } else {
-        const products = await db.listProducts();
-        const byId = new Map(products.map(p => [p.id, p]));
-        for (const it of input.items) {
-          const p = byId.get(it.productId);
-          if (!p || p.status === "arsiv") continue;
-          const base = parseFloat(String(p.salePrice)) || 0;
-          const disc = parseFloat(String(p.discountPercent)) || 0;
-          const unit = +(base * (1 - disc / 100)).toFixed(2);
-          if (unit <= 0) continue;
-          lines.push({ productName: p.name, quantity: it.quantity, unitPrice: unit });
-          subtotal += unit * it.quantity;
         }
       }
       if (lines.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Sepette geçerli ürün yok" });

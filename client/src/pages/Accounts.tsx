@@ -20,7 +20,7 @@ import { formatDate, formatTL } from "@/lib/format";
 import { printReceipt } from "@/lib/receipt";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { trpc } from "@/lib/trpc";
-import { ArrowDownLeft, ArrowUpRight, ArrowLeftRight, Banknote, Landmark, Plus, Printer, Trash2, Wallet } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, ArrowLeftRight, Banknote, Landmark, Pencil, Plus, Printer, Trash2, Wallet } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -57,6 +57,8 @@ export default function Accounts() {
   const { data: customers } = trpc.customers.list.useQuery();
 
   const [accDialog, setAccDialog] = useState(false);
+  /** Düzenlenen hesap; null ise yeni hesap açılıyor. */
+  const [editAccId, setEditAccId] = useState<number | null>(null);
   const [accForm, setAccForm] = useState({ name: "", kind: "kasa" as "kasa" | "banka", openingBalance: "", note: "" });
   const [transferDialog, setTransferDialog] = useState(false);
   const [transfer, setTransfer] = useState({ fromId: "", toId: "", amount: "" });
@@ -67,6 +69,20 @@ export default function Accounts() {
     customerName: "",
     description: "",
     txnDate: todayStr(),
+  });
+
+  /*
+   * Güncelleme ucu yazılmıştı ama hiçbir düğmeye bağlı değildi: hesap
+   * açılabiliyor ve silinebiliyordu, adı düzeltilemiyordu.
+   */
+  const updateAccount = trpc.accounts.update.useMutation({
+    onSuccess: () => {
+      utils.accounts.invalidate();
+      setAccDialog(false);
+      setEditAccId(null);
+      toast.success("Hesap güncellendi");
+    },
+    onError: e => toast.error(e.message),
   });
 
   const createAccount = trpc.accounts.create.useMutation({
@@ -193,6 +209,24 @@ export default function Accounts() {
                 <Banknote className="h-4 w-4 text-emerald-600" />
               )}
               <span className="font-medium text-sm flex-1 truncate">{a.name}</span>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-6 w-6"
+                title="Hesabı düzenle"
+                onClick={() => {
+                  setEditAccId(a.id);
+                  setAccForm({
+                    name: a.name,
+                    kind: a.kind === "banka" ? "banka" : "kasa",
+                    openingBalance: String(parseFloat(String(a.openingBalance ?? 0)) || 0),
+                    note: "",
+                  });
+                  setAccDialog(true);
+                }}
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </Button>
               <Button
                 size="icon"
                 variant="ghost"
@@ -392,10 +426,10 @@ export default function Accounts() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={accDialog} onOpenChange={setAccDialog}>
+      <Dialog open={accDialog} onOpenChange={o => { setAccDialog(o); if (!o) setEditAccId(null); }}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>Yeni Hesap</DialogTitle>
+            <DialogTitle>{editAccId ? "Hesabı Düzenle" : "Yeni Hesap"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1.5">
@@ -428,6 +462,17 @@ export default function Accounts() {
             <Button
               onClick={() => {
                 if (!accForm.name.trim()) return toast.error("Hesap adı gerekli");
+                if (editAccId) {
+                  updateAccount.mutate({
+                    id: editAccId,
+                    data: {
+                      name: accForm.name.trim(),
+                      kind: accForm.kind,
+                      note: accForm.note || null,
+                    },
+                  });
+                  return;
+                }
                 createAccount.mutate({
                   name: accForm.name.trim(),
                   kind: accForm.kind,

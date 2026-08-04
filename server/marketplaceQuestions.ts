@@ -72,21 +72,6 @@ async function masterContext(masterId: number): Promise<string | null> {
   return parts.length > 0 ? parts.join("\n") : null;
 }
 
-/** Eski `products` kaydından bağlam — v3'e taşınmamış sorular için. */
-async function legacyProductContext(productId?: number | null): Promise<string | null> {
-  if (!productId) return null;
-  const product = await db.getProduct(productId);
-  if (!product) return null;
-  return [
-    `Ürün: ${product.name}`,
-    product.usageGuide ? `Kullanım kılavuzu: ${product.usageGuide}` : null,
-    product.applicationText ? `Uygulama: ${product.applicationText}` : null,
-    product.shortDescription ? `Açıklama: ${product.shortDescription}` : null,
-    product.safetyNotes ? `Güvenlik: ${product.safetyNotes}` : null,
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
 
 /**
  * Bir soru için AI cevap taslağı üretir. Ürün seçiliyse cevap o ürünün
@@ -99,10 +84,9 @@ export async function generateQuestionAnswer(q: {
   masterId?: number | null;
   productName?: string | null;
 }): Promise<DraftResult> {
-  // v3 bağı varsa ilan içeriğinden beslenir; yoksa eski ürün kaydına düşer.
+  // Bağlam v3 ilan içeriğinden gelir; bağ yoksa sorudaki ürün adına düşülür.
   const context =
     (q.masterId ? await masterContext(q.masterId) : null) ??
-    (await legacyProductContext(q.productId)) ??
     (q.productName ? `Ürün: ${q.productName}` : "Ürün bilgisi yok.");
 
   const response = await invokeLLM({
@@ -190,7 +174,9 @@ async function runSync(): Promise<QuestionSyncResult> {
     return result;
   }
 
-  const [cfg, products] = await Promise.all([db.getSettings(), db.listProducts()]);
+  const [cfg, masters] = await Promise.all([db.getSettings(), db.listMasterProducts()]);
+  // Ad eşleştirmesi master ürünler üzerinden; adı girilmemiş ürün SKU'suyla eşleşir.
+  const products = masters.map(m => ({ id: m.id, name: m.name ?? m.internalSku }));
   const autoAnswer = isAutoAnswerEnabled(cfg);
 
   // Bağlı her pazaryerinden çek; biri hata verirse diğeri yine işlensin.

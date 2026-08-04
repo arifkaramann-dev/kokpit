@@ -59,11 +59,11 @@ export default function Settings() {
   const [brandQuery, setBrandQuery] = useState("");
   const [categoryIdQuery, setCategoryIdQuery] = useState("");
   const [discovery, setDiscovery] = useState<unknown>(null);
-  const brandSearch = trpc.products.trendyolBrandSearch.useMutation({
+  const brandSearch = trpc.katalog.trendyolBrandSearch.useMutation({
     onSuccess: r => setDiscovery(r),
     onError: e => toast.error(e.message, { duration: 8000 }),
   });
-  const catAttrs = trpc.products.trendyolCategoryAttributes.useMutation({
+  const catAttrs = trpc.katalog.trendyolCategoryAttributes.useMutation({
     onSuccess: r => setDiscovery(r),
     onError: e => toast.error(e.message, { duration: 8000 }),
   });
@@ -73,7 +73,6 @@ export default function Settings() {
     series: number;
     materials: number;
     templates: number;
-    products: number;
   } | null>(null);
   const logoutAll = trpc.auth.logoutAll.useMutation({
     onSuccess: () => {
@@ -375,8 +374,8 @@ export default function Settings() {
             {importResult && (
               <p className="text-sm font-medium text-emerald-600">
                 Eklendi → seri: {importResult.series}, hammadde: {importResult.materials}, şablon:{" "}
-                {importResult.templates}, ürün: {importResult.products}
-                {importResult.series + importResult.materials + importResult.templates + importResult.products === 0 &&
+                {importResult.templates}
+                {importResult.series + importResult.materials + importResult.templates === 0 &&
                   " (her şey zaten yüklüymüş)"}
               </p>
             )}
