@@ -16,7 +16,6 @@ import { executeAssistantCommand, generateOrderNo, generateQuoteNo } from "../as
 import { buildSaleTitle, deriveCombos, parseSetCount, planGenerationSync, renameVariantTitle } from "../productUtils";
 import { computePrice, extractJson, parseFeatures, pickReferenceProduct, scoreReference, suggestSku } from "../autofill";
 import { computeReorderSuggestions, summarizeReorder } from "../reorder";
-import { importUrunKayit } from "../importSeed";
 import { answerTrendyolQuestion, syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf, TrendyolLabelNotAllowedError, isTrendyolConfigured } from "../trendyol";
 import { isHepsiburadaConfigured } from "../hepsiburada";
 import { isN11Configured } from "../n11";
@@ -24,7 +23,6 @@ import { isCiceksepetiConfigured } from "../ciceksepeti";
 import {
   fetchTrendyolCategoryAttributes,
   getTrendyolProductBatchStatus,
-  mapProductsToTrendyolItems,
   parseCardSettings,
   pushTrendyolProductCards,
   searchTrendyolBrands,
@@ -1014,67 +1012,7 @@ export const storefrontRouter = router({
     const v3 = await loadV3Storefront();
     if (v3) return v3.map(toStoreWire);
 
-    const products = await db.listProducts();
-    const sellable = products.filter(
-      p => p.status === "satista" && parseFloat(String(p.salePrice)) > 0,
-    );
-    const view = (p: (typeof products)[number]) => ({
-      id: p.id,
-      name: p.name,
-      packaging: p.packaging,
-      colorCode: p.colorCode,
-      colorHex: p.colorHex,
-      salePrice: parseFloat(String(p.salePrice)) || 0,
-      discountPercent: parseFloat(String(p.discountPercent)) || 0,
-      inStock: (p.stockQty ?? 0) > 0,
-    });
-    const net = (v: { salePrice: number; discountPercent: number }) =>
-      v.salePrice * (1 - v.discountPercent / 100);
-
-    const childrenOf = new Map<number, typeof sellable>();
-    for (const p of sellable) {
-      if (p.parentId == null) continue;
-      childrenOf.set(p.parentId, [...(childrenOf.get(p.parentId) ?? []), p]);
-    }
-
-    // Ana ürünü satışta olmayan ama türevi satışta olan gruplar da görünmeli;
-    // başlık/görsel için ana ürün kaydı katalogdan okunur.
-    const byId = new Map(products.map(p => [p.id, p]));
-    const groupIds = new Set<number>([
-      ...sellable.filter(p => p.parentId == null).map(p => p.id),
-      ...Array.from(childrenOf.keys()),
-    ]);
-
-    const groups = [];
-    for (const id of Array.from(groupIds)) {
-      const head = byId.get(id);
-      if (!head || head.status === "arsiv") continue;
-      const variants = (childrenOf.get(id) ?? []).map(view);
-      // Türevi yoksa ana ürünün kendisi tek seçenektir.
-      const options =
-        variants.length > 0
-          ? variants
-          : head.status === "satista" && parseFloat(String(head.salePrice)) > 0
-            ? [view(head)]
-            : [];
-      if (options.length === 0) continue;
-
-      const prices = options.map(net);
-      groups.push({
-        id: head.id,
-        name: head.name,
-        series: head.series,
-        shortDescription: head.shortDescription,
-        // Görsel ana üründen, yoksa ilk seçenekten.
-        imageUrls: head.imageUrls ?? byId.get(options[0].id)?.imageUrls ?? null,
-        mockupUrl: head.mockupUrl ?? byId.get(options[0].id)?.mockupUrl ?? null,
-        minPrice: Math.min(...prices),
-        maxPrice: Math.max(...prices),
-        inStock: options.some(o => o.inStock),
-        options,
-      });
-    }
-    return groups.sort((a, b) => a.name.localeCompare(b.name, "tr"));
+    return [];
   }),
   product: publicProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
     const v3 = await loadV3Storefront();
@@ -1112,22 +1050,7 @@ export const storefrontRouter = router({
       };
     }
 
-    const p = await db.getProduct(input.id);
-    // Taslak ürün de vitrine açılmamalı — kart hazırlanırken müşteriye görünüyordu.
-    if (!p || p.status !== "satista") throw new TRPCError({ code: "NOT_FOUND", message: "Ürün bulunamadı" });
-    return {
-      id: p.id,
-      name: p.name,
-      series: p.series,
-      salePrice: parseFloat(String(p.salePrice)) || 0,
-      discountPercent: parseFloat(String(p.discountPercent)) || 0,
-      shortDescription: p.shortDescription,
-      description: p.description,
-      usageGuide: p.usageGuide,
-      imageUrls: p.imageUrls,
-      mockupUrl: p.mockupUrl,
-      inStock: (p.stockQty ?? 0) > 0,
-    };
+    throw new TRPCError({ code: "NOT_FOUND", message: "Ürün bulunamadı" });
   }),
   // Kupon doğrulama (sepet ekranında anında geri bildirim).
   checkCoupon: publicProcedure
@@ -1177,19 +1100,6 @@ export const storefrontRouter = router({
             masterId: it.productId,
           });
           subtotal += hit.option.netPrice * it.quantity;
-        }
-      } else {
-        const products = await db.listProducts();
-        const byId = new Map(products.map(p => [p.id, p]));
-        for (const it of input.items) {
-          const p = byId.get(it.productId);
-          if (!p || p.status === "arsiv") continue;
-          const base = parseFloat(String(p.salePrice)) || 0;
-          const disc = parseFloat(String(p.discountPercent)) || 0;
-          const unit = +(base * (1 - disc / 100)).toFixed(2);
-          if (unit <= 0) continue;
-          lines.push({ productName: p.name, quantity: it.quantity, unitPrice: unit });
-          subtotal += unit * it.quantity;
         }
       }
       if (lines.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Sepette geçerli ürün yok" });

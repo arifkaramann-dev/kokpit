@@ -15,7 +15,6 @@ import { executeAssistantCommand, generateOrderNo, generateQuoteNo } from "../as
 import { buildSaleTitle, deriveCombos, parseSetCount, renameVariantTitle } from "../productUtils";
 import { computePrice, extractJson, parseFeatures, pickReferenceProduct, scoreReference, suggestSku } from "../autofill";
 import { computeReorderSuggestions, summarizeReorder } from "../reorder";
-import { importUrunKayit } from "../importSeed";
 import { answerTrendyolQuestion, syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf, getTrendyolCommonLabelZpl, TrendyolLabelNotAllowedError, isTrendyolConfigured } from "../trendyol";
 import { zplToPdf } from "../labelary";
 import { isHepsiburadaConfigured } from "../hepsiburada";
@@ -24,7 +23,6 @@ import { isCiceksepetiConfigured } from "../ciceksepeti";
 import {
   fetchTrendyolCategoryAttributes,
   getTrendyolProductBatchStatus,
-  mapProductsToTrendyolItems,
   parseCardSettings,
   pushTrendyolProductCards,
   searchTrendyolBrands,

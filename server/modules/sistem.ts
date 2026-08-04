@@ -24,7 +24,6 @@ import { isCiceksepetiConfigured } from "../ciceksepeti";
 import {
   fetchTrendyolCategoryAttributes,
   getTrendyolProductBatchStatus,
-  mapProductsToTrendyolItems,
   parseCardSettings,
   pushTrendyolProductCards,
   searchTrendyolBrands,
@@ -221,7 +220,7 @@ export const dashboardRouter = router({
         db.financeSummary(),
         db.listUnpaidOrders(6),
         db.countNewMarketplaceQuestions(),
-        db.listProducts(),
+        db.listMasterProducts(),
         db.listCheques(),
         db.getSettings(),
       ]);

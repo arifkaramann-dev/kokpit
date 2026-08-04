@@ -231,7 +231,7 @@ async function runMarketplaceSync() {
 async function runStockSentry() {
   const [critical, products, openTasks] = await Promise.all([
     db.listCriticalMaterials(),
-    db.listProducts(),
+    db.listMasterProducts(),
     db.listTasks("eksik", "open"),
   ]);
 
@@ -266,8 +266,8 @@ async function runStockSentry() {
         .slice(0, 15)
         .map(p =>
           (p.stockQty ?? 0) < 0
-            ? `• ${p.name}: ${p.stockQty} adet (eksi stok)`
-            : `• ${p.name}: ${p.stockQty} adet (eşik ${p.criticalQty})`,
+            ? `• ${p.name ?? p.internalSku}: ${p.stockQty} adet (eksi stok)`
+            : `• ${p.name ?? p.internalSku}: ${p.stockQty} adet (eşik ${p.criticalQty})`,
         )
         .join("\n"),
       link: "/uretim",

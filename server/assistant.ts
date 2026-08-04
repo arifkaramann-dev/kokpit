@@ -74,7 +74,7 @@ export async function buildBusinessSnapshot(): Promise<string> {
     db.countOrdersToday(),
     db.listCriticalMaterials(),
     db.listMaterials(),
-    db.listProducts(),
+    db.listMasterProducts(),
     db.listOrders(),
     db.listTasks(undefined, "open"),
     db.financeSummary(),
@@ -114,7 +114,7 @@ export async function buildBusinessSnapshot(): Promise<string> {
     `Bu ay giderler (kategori | tutar): ${Array.from(byCategory.entries()).map(([k, v]) => `${k} | ${v.toFixed(2)} TL`).join("; ") || "yok"}`,
     `Ürünler (ad | satış fiyatı): ${products
       .slice(0, 40)
-      .map(p => `${p.name} | ${p.salePrice} TL`)
+      .map(p => `${p.name ?? p.internalSku} | ${p.basePrice} TL`)
       .join("; ") || "yok"}`,
     `Hammadde sayısı: ${materials.length}`,
     `Kritik stok altındaki hammaddeler: ${critical.map(m => `${m.name} (${m.stockQty} ${m.unit})`).join(", ") || "yok"}`,

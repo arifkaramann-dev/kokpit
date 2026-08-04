@@ -19,7 +19,6 @@ import {
   planMaterialImport,
   type MaterialIORecord,
 } from "@shared/materialIO";
-import { importUrunKayit } from "../importSeed";
 import { answerTrendyolQuestion, syncTrendyolOrders, pushTrendyolStockPrice, getTrendyolCommonLabelPdf, TrendyolLabelNotAllowedError, isTrendyolConfigured } from "../trendyol";
 import { isHepsiburadaConfigured } from "../hepsiburada";
 import { isN11Configured } from "../n11";
@@ -27,7 +26,6 @@ import { isCiceksepetiConfigured } from "../ciceksepeti";
 import {
   fetchTrendyolCategoryAttributes,
   getTrendyolProductBatchStatus,
-  mapProductsToTrendyolItems,
   parseCardSettings,
   pushTrendyolProductCards,
   searchTrendyolBrands,
@@ -130,53 +128,8 @@ const productInput = z.object({
   status: z.enum(["taslak", "satista", "arsiv"]).optional(),
 });
 
-/** Barkod/SKU tekilliği (Faz A1): dolu değer katalogda başka üründe olamaz. */
-async function assertUniqueIdentity(
-  barcode: string | null | undefined,
-  sku: string | null | undefined,
-  excludeId?: number,
-) {
-  const wantedBarcode = barcode?.trim();
-  const wantedSku = sku?.trim();
-  if (!wantedBarcode && !wantedSku) return;
-  const all = await db.listProducts();
-  for (const p of all) {
-    if (excludeId !== undefined && p.id === excludeId) continue;
-    if (wantedBarcode && p.barcode?.trim() === wantedBarcode) {
-      throw new TRPCError({
-        code: "BAD_REQUEST",
-        message: `Bu barkod zaten "${p.name}" ürününde kayıtlı — çift barkod pazaryeri eşleşmesini bozar.`,
-      });
-    }
-    if (wantedSku && p.sku?.trim() === wantedSku) {
-      throw new TRPCError({
-        code: "BAD_REQUEST",
-        message: `Bu SKU zaten "${p.name}" ürününde kayıtlı.`,
-      });
-    }
-  }
-}
 
-/** Seri bağı (Faz A2): ürüne yazılan seri adı kayıtlı değilse varsayılanlarla açılır. */
-async function ensureSeriesRecord(series: string | null | undefined) {
-  const name = series?.trim();
-  if (!name) return;
-  const existing = await db.getProductSeriesByName(name);
-  if (!existing) await db.createProductSeries({ name });
-}
 
-/** Hiyerarşi koruması (Faz A4): türevin altına türev eklenemez. */
-async function assertValidParent(parentId: number | null | undefined) {
-  if (!parentId) return;
-  const parent = await db.getProduct(parentId);
-  if (!parent) throw new TRPCError({ code: "NOT_FOUND", message: "Ana ürün bulunamadı" });
-  if (parent.parentId) {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: "Türev ürünün altına türev eklenemez — ana ürünü seçin.",
-    });
-  }
-}
 
 /** Arşive alınan ürün eski isActive bayrağıyla da tutarlı kalsın (geriye uyum). */
 function withStatusFlags<T extends { status?: "taslak" | "satista" | "arsiv" }>(data: T) {

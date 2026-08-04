@@ -9,7 +9,6 @@ import {
   devTrialItems,
   devTrials,
   expenses,
-  formulaItems,
   transactions,
   InsertAccount,
   InsertCheque,
@@ -20,7 +19,6 @@ import {
   InsertTransaction,
   InsertOrder,
   InsertOrderItem,
-  InsertProduct,
   InsertUser,
   marketingTexts,
   marketplaceQuestions,
@@ -32,14 +30,11 @@ import {
   orderItems,
   orderEvents,
   orders,
-  products,
-  productImages,
-  productMovements,
   productSeries,
+  productionRuns,
   InsertProductSeries,
   productGenerations,
   InsertProductGeneration,
-  productionRuns,
   purchaseItems,
   purchases,
   quoteItems,
@@ -215,7 +210,7 @@ export async function updateMaterial(id: number, data: Partial<InsertMaterial>) 
 
 export async function deleteMaterial(id: number) {
   const db = await requireDb();
-  await db.delete(formulaItems).where(eq(formulaItems.materialId, id));
+  await db.delete(formulaInputs).where(eq(formulaInputs.inputMaterialId, id));
   await db.delete(stockMovements).where(eq(stockMovements.materialId, id));
   await db.delete(materials).where(eq(materials.id, id));
 }
@@ -251,33 +246,29 @@ export async function listCriticalMaterials() {
 
 /* ------------------------- Products (Ürünler) ------------------------- */
 
-export async function listProducts() {
-  const db = await requireDb();
-  return db.select().from(products).orderBy(products.parentId, products.name);
-}
 
-export async function getProduct(id: number) {
-  const db = await requireDb();
-  const rows = await db.select().from(products).where(eq(products.id, id)).limit(1);
-  return rows[0];
-}
 
 /* ------------------------- Formula (Formül Defteri) ------------------------- */
 
 /** Hammaddenin geçtiği ürün reçeteleri (kritik stok "neyi etkiliyor" analizi). */
 export async function listMaterialUsage(materialId: number) {
   const db = await requireDb();
+  /*
+   * Hangi ürünlerin reçetesinde geçiyor — küp modelden.
+   * Eskiden `formulaItems` + emekli `products` üzerinden okunuyordu; reçeteler
+   * v3'e taşındığı için liste her zaman boş çıkıyordu.
+   */
   return db
     .select({
-      productId: formulaItems.productId,
-      qty: formulaItems.qty,
-      productName: products.name,
-      parentId: products.parentId,
+      productId: masterProducts.id,
+      qty: formulaInputs.qtyPerBase,
+      productName: masterProducts.name,
+      parentId: masterProducts.seriesId,
     })
-    .from(formulaItems)
-    .leftJoin(products, eq(formulaItems.productId, products.id))
-    .where(eq(formulaItems.materialId, materialId))
-    .orderBy(products.name);
+    .from(formulaInputs)
+    .innerJoin(formulas, eq(formulaInputs.formulaId, formulas.id))
+    .innerJoin(masterProducts, eq(masterProducts.formulaId, formulas.id))
+    .where(eq(formulaInputs.inputMaterialId, materialId));
 }
 
 /* ------------------------- Orders (Siparişler) ------------------------- */
@@ -963,9 +954,11 @@ export async function replaceQuoteItems(
   const db = await requireDb();
   await db.delete(quoteItems).where(eq(quoteItems.quoteId, quoteId));
   if (items.length === 0) return;
-  const refs = await db
-    .select({ id: products.id, name: products.name, barcode: products.barcode })
-    .from(products);
+  const masterRows = await db
+    .select({ id: masterProducts.id, name: masterProducts.name, sku: masterProducts.internalSku, barcode: masterProducts.gtin })
+    .from(masterProducts);
+  // Adı girilmemiş ürün SKU'suyla eşleşir; boş ad eşleşmeyi tamamen bozardı.
+  const refs = masterRows.map(r => ({ id: r.id, name: r.name ?? r.sku, barcode: r.barcode }));
   const rows = items.map(({ barcode, ...item }) => ({
     ...item,
     productId: item.productId ?? resolveProductIdForItem({ productName: item.productName, barcode }, refs),
@@ -1167,7 +1160,7 @@ export async function productSalesSince(days: number) {
 export async function listAllOrderItemRefs() {
   const db = await requireDb();
   return db
-    .select({ orderId: orderItems.orderId, productId: orderItems.productId, quantity: orderItems.quantity })
+    .select({ orderId: orderItems.orderId, productId: orderItems.masterId, quantity: orderItems.quantity })
     .from(orderItems);
 }
 
@@ -1187,19 +1180,19 @@ export async function recordProductMovement(
 ) {
   if (!(qty > 0)) return;
   const db = await requireDb();
-  await db.insert(productMovements).values({
-    productId,
-    type,
-    qty: String(qty),
-    note: note ?? null,
-    orderId: orderId ?? null,
-  });
+  /*
+   * Hareket defteri emekli `productMovements` + `products` üzerindeydi; sipariş
+   * kalemleri v3 master'a bağlandığı için stok yanlış kayda işleniyordu.
+   * Artık doğrudan master stoğu güncellenir.
+   */
   const delta = Math.round(qty);
   if (delta !== 0) {
     await db
-      .update(products)
-      .set({ stockQty: sql`${products.stockQty} ${type === "in" ? sql`+` : sql`-`} ${delta}` })
-      .where(eq(products.id, productId));
+      .update(masterProducts)
+      .set({
+        stockQty: sql`GREATEST(${masterProducts.stockQty} ${type === "in" ? sql`+` : sql`-`} ${delta}, 0)`,
+      })
+      .where(eq(masterProducts.id, productId));
   }
 }
 
@@ -1228,7 +1221,7 @@ export async function recordMasterProductionRun(
   note?: string | null,
 ) {
   const db = await requireDb();
-  await db.insert(productionRuns).values({ productId: 0, masterId, qty, note: note ?? null });
+  await db.insert(productionRuns).values({ masterId, qty, note: note ?? null });
   await db
     .update(masterProducts)
     .set({ stockQty: sql`${masterProducts.stockQty} + ${qty}` })
@@ -1269,9 +1262,16 @@ export async function replaceOrderItems(
   }
   await db.delete(orderItems).where(eq(orderItems.orderId, orderId));
   if (items.length > 0) {
-    const refs = await db
-      .select({ id: products.id, name: products.name, barcode: products.barcode })
-      .from(products);
+    const masterRows = await db
+      .select({
+        id: masterProducts.id,
+        name: masterProducts.name,
+        sku: masterProducts.internalSku,
+        barcode: masterProducts.gtin,
+      })
+      .from(masterProducts);
+    // Adı girilmemiş ürün SKU'suyla eşleşir; boş ad eşleşmeyi bozardı.
+    const refs = masterRows.map(r => ({ id: r.id, name: r.name ?? r.sku, barcode: r.barcode }));
     // v3 bağı: gelen barkod/SKU kendi ürettiğimiz kanal koduyla eşleştirilir.
     // Barkod artık SAKLANIR — eskiden eşleşmede kullanılıp atılıyordu, bu
     // yüzden sipariş↔master bağı her okumada başlıktan tahmin ediliyordu.
@@ -1651,32 +1651,41 @@ export async function getChosenDevTrialItems(projectId: number) {
 
 /* ------------------------- Strateji & Rapor ------------------------- */
 
-/** Rapor sayfasının tek seferde ihtiyaç duyduğu tüm veri kümeleri. */
+/**
+ * Rapor sayfasının tek seferde ihtiyaç duyduğu tüm veri kümeleri.
+ *
+ * Ürün tarafı KÜP katalogdan gelir. Eskiden emekli `products` tablosunu
+ * okuyordu; yani Strateji sayfası ölü veriyi analiz ediyor, canlı katalog
+ * hakkında hiçbir şey söylemiyordu.
+ */
 export async function reportData() {
   const db = await requireDb();
-  const [allProducts, formulaRows, textRows, allOrders, allOrderItems, allMaterials, allCampaigns, imageRows, expenseRows] =
+  const [masters, textRows, allOrders, allOrderItems, allMaterials, allCampaigns, imageRows, expenseRows] =
     await Promise.all([
-      db.select().from(products),
-      db
-        .select({
-          productId: formulaItems.productId,
-          qty: formulaItems.qty,
-          unitCost: materials.unitCost,
-        })
-        .from(formulaItems)
-        .leftJoin(materials, eq(formulaItems.materialId, materials.id)),
+      db.select().from(masterProducts),
       db.select({ productName: marketingTexts.productName }).from(marketingTexts),
       db.select().from(orders),
       db.select().from(orderItems),
       db.select().from(materials),
       db.select().from(campaigns),
-      // Görsel verisinin kendisi ağır (base64); tamamlama kontrolü için kimlikler yeter.
-      db.select({ productId: productImages.productId, kind: productImages.kind }).from(productImages),
+      // Görselin kendisi ağır (base64); tamamlama kontrolü için kimlik yeter.
+      db.select({ productId: masterImages.masterId }).from(masterImages),
       db.select().from(expenses),
     ]);
   return {
-    products: allProducts,
-    formulas: formulaRows,
+    // Strateji sayfasının beklediği biçim; adı girilmemiş ürün SKU'suyla anılır.
+    products: masters.map(m => ({
+      id: m.id,
+      name: m.name ?? m.internalSku,
+      internalSku: m.internalSku,
+      salePrice: m.basePrice,
+      discountPercent: m.discountPercent,
+      status: m.status,
+      formulaId: m.formulaId,
+      gtin: m.gtin,
+      stockQty: m.stockQty,
+      buildableQty: m.buildableQty,
+    })),
     marketingTexts: textRows,
     // İptal/iade siparişler analiz/ciro grafiklerine girmez.
     orders: allOrders.filter(o => o.status !== "cancelled"),
@@ -1920,15 +1929,6 @@ export async function deleteTemplate(id: number) {
   await db.delete(templates).where(eq(templates.id, id));
 }
 
-export async function getProductImage(productId: number, kind: "main" | "packaging" | "usage") {
-  const db = await requireDb();
-  const rows = await db
-    .select()
-    .from(productImages)
-    .where(and(eq(productImages.productId, productId), eq(productImages.kind, kind)))
-    .limit(1);
-  return rows[0];
-}
 
 /* ------------------------- Görevler & Eksik Listesi ------------------------- */
 
@@ -1964,22 +1964,6 @@ export async function deleteTask(id: number) {
 
 /* ------------------------- Toplu Fiyat Güncelleme ------------------------- */
 
-/** Tüm ürünlerin (ya da bir serinin) satış fiyatını yüzdeyle günceller. */
-/**
- * Tüm ürünlerin formülden gelen hammadde maliyetini TEK sorguda hesaplar
- * (Fiyat & Kâr tablosu ürün başına ayrı sorgu atmasın diye).
- */
-export async function listProductMaterialCosts() {
-  const db = await requireDb();
-  return db
-    .select({
-      productId: formulaItems.productId,
-      materialCost: sql<string>`COALESCE(SUM(${formulaItems.qty} * ${materials.unitCost}), 0)`,
-    })
-    .from(formulaItems)
-    .leftJoin(materials, eq(formulaItems.materialId, materials.id))
-    .groupBy(formulaItems.productId);
-}
 
 /* ------------------------- Ürün Serileri ------------------------- */
 

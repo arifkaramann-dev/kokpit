@@ -23,7 +23,6 @@ import { isCiceksepetiConfigured } from "../ciceksepeti";
 import {
   fetchTrendyolCategoryAttributes,
   getTrendyolProductBatchStatus,
-  mapProductsToTrendyolItems,
   parseCardSettings,
   pushTrendyolProductCards,
   searchTrendyolBrands,
@@ -55,6 +54,8 @@ import { openShipment, buyShipmentOffer, isKargoConfigured, extractCityFromAddre
 import { applyCoupon, findCoupon, parseCoupons } from "@shared/campaigns";
 import { parseBankStatement, reconcile } from "@shared/reconcile";
 import { channelProfitReport } from "../reportUtils";
+import { computeMasterCosts } from "../costing";
+import { loadCapacityInputs } from "../capacityInputs";
 import { DEFAULT_CHANNEL_PROFILES, deriveUnitLaborOverhead, normalizeChannelProfile } from "@shared/pricing";
 import { ENV } from "../_core/env";
 import { toDecimalFields } from "./util";
@@ -198,11 +199,10 @@ export const reportRouter = router({
     .query(async ({ input }) => {
       const days = input?.days ?? 30;
       const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-      const [orders, items, costRows, products, cfg] = await Promise.all([
+      const [orders, items, capacity, cfg] = await Promise.all([
         db.listOrders(),
         db.listAllOrderItemRefs(),
-        db.listProductMaterialCosts(),
-        db.listProducts(),
+        loadCapacityInputs(),
         db.getSettings(),
       ]);
       let profiles = DEFAULT_CHANNEL_PROFILES;
@@ -212,16 +212,21 @@ export const reportRouter = router({
       } catch {
         /* kayıtlı profil yoksa varsayılanlar */
       }
-      const costByProduct = new Map(costRows.map(r => [r.productId, parseFloat(String(r.materialCost)) || 0]));
-      const num = (v: unknown) => parseFloat(String(v ?? 0)) || 0;
+      /*
+       * Maliyet küp katalogdan gelir. Eskiden emekli `products` tablosundan
+       * okunuyordu; sipariş kalemleri v3 master'a bağlandığı için eşleşme
+       * bulunamıyor ve kâr raporu boş çıkıyordu.
+       */
+      const masterCosts = computeMasterCosts({
+        masters: capacity.masters,
+        materials: capacity.costMaterials,
+        formulas: capacity.formulas,
+        packagings: capacity.packagings,
+      });
       const costs = new Map(
-        products.map(p => [
-          p.id,
-          {
-            materialCost: costByProduct.get(p.id) ?? 0,
-            packagingCost: num(p.packagingCost),
-            shippingCost: num(p.shippingCost),
-          },
+        masterCosts.map(c => [
+          c.masterId,
+          { materialCost: c.materialCost, packagingCost: c.packagingCost, shippingCost: 0 },
         ]),
       );
       const laborOverhead = deriveUnitLaborOverhead(cfg).value;

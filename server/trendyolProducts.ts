@@ -1,4 +1,3 @@
-import type { Product } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
 /**
@@ -124,102 +123,11 @@ export type CardMappingResult = {
   problems: string[];
 };
 
-type ProductLike = Product & { status?: string };
-
 const num = (v: string | number | null | undefined, fallback = 0) => {
   const n = parseFloat(String(v ?? ""));
   return Number.isFinite(n) ? n : fallback;
 };
 
-/**
- * Ana ürün + türevlerini Trendyol ürün kartı kalemlerine çevirir.
- * Tüm kalemler ana ürünün productMainId'sini paylaşır → tek ilan, varyant seçici.
- * imageKinds: productId → yüklü görsel türleri (main/packaging/usage).
- */
-export function mapProductsToTrendyolItems(
-  parent: ProductLike,
-  variants: ProductLike[],
-  imageKinds: Map<number, string[]>,
-  cfg: TrendyolCardSettings,
-): CardMappingResult {
-  const problems: string[] = [];
-  const items: TrendyolProductItem[] = [];
-  const productMainId = (parent.sku ?? parent.barcode ?? `AOC-${parent.id}`).trim();
-
-  // Türevi olan ana üründe ilan varyantlardan oluşur; türevsüz ana ürün tek başına gider.
-  const candidates = variants.length > 0 ? variants : [parent];
-
-  for (const p of candidates) {
-    if (p.status && p.status !== "satista") {
-      problems.push(`${p.name}: durumu "${p.status}" — yalnız Satışta ürünler gönderilir`);
-      continue;
-    }
-    const barcode = p.barcode?.trim();
-    if (!barcode) {
-      problems.push(`${p.name}: barkod yok (zorunlu)`);
-      continue;
-    }
-    const categoryName = (p.category ?? parent.category ?? "").trim();
-    const categoryId = cfg.categoryMap[categoryName];
-    if (!categoryId) {
-      problems.push(
-        `${p.name}: "${categoryName || "(kategori boş)"}" için Trendyol kategori eşlemesi yok (trendyolCategoryMap)`,
-      );
-      continue;
-    }
-
-    const urls: string[] = [];
-    try {
-      const external = JSON.parse(p.imageUrls ?? "[]");
-      if (Array.isArray(external)) urls.push(...external.filter(u => typeof u === "string"));
-    } catch {
-      // bozuk JSON — harici link yok say
-    }
-    for (const kind of imageKinds.get(p.id) ?? []) {
-      urls.push(`${cfg.publicBaseUrl}/api/img/${p.id}/${kind}`);
-    }
-    if (urls.length === 0) {
-      // Türevin görseli yoksa ana ürünün görselleri kullanılır.
-      for (const kind of imageKinds.get(parent.id) ?? []) {
-        urls.push(`${cfg.publicBaseUrl}/api/img/${parent.id}/${kind}`);
-      }
-    }
-    if (urls.length === 0) {
-      problems.push(`${p.name}: görsel yok (zorunlu — ürüne veya ana ürüne görsel ekleyin)`);
-      continue;
-    }
-
-    const listPrice = num(p.salePrice);
-    if (listPrice <= 0) {
-      problems.push(`${p.name}: satış fiyatı 0 (zorunlu)`);
-      continue;
-    }
-    const salePrice = +(listPrice * (1 - num(p.discountPercent) / 100)).toFixed(2);
-    const description =
-      p.longDescription?.trim() || p.description?.trim() || p.shortDescription?.trim() || p.name;
-
-    items.push({
-      barcode,
-      title: p.name.slice(0, 100),
-      productMainId,
-      brandId: cfg.brandId,
-      categoryId,
-      quantity: Math.max(0, p.stockQty ?? 0),
-      stockCode: (p.sku ?? barcode).trim(),
-      dimensionalWeight: num(p.desi, 1),
-      description,
-      currencyType: "TRY",
-      listPrice,
-      salePrice,
-      vatRate: num(p.vatRate ?? parent.vatRate, 20),
-      cargoCompanyId: cfg.cargoCompanyId,
-      images: urls.slice(0, 8).map(url => ({ url })),
-      attributes: cfg.attributeDefaults[String(categoryId)] ?? [],
-    });
-  }
-
-  return { items, problems };
-}
 
 /* ------------------------- API çağrıları (canlıda test) ------------------------- */
 

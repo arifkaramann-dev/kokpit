@@ -41,14 +41,8 @@ export default function Strategy() {
 
   const model = useMemo(() => {
     if (!data) return null;
-    const { products, formulas, marketingTexts, orders, orderItems, materials, campaigns, productImages, expenses } = data;
+    const { products, marketingTexts, orders, orderItems, materials, campaigns, productImages, expenses } = data;
     const imagedProducts = new Set(productImages.map(i => i.productId));
-
-    // Ürün başına hammadde maliyeti (formülden)
-    const matCost = new Map<number, number>();
-    for (const f of formulas) {
-      matCost.set(f.productId, (matCost.get(f.productId) ?? 0) + num(f.qty) * num(f.unitCost));
-    }
     const mktNames = new Set(marketingTexts.map(t => t.productName).filter(Boolean));
 
     // Satış istatistikleri (kalemlerden, ürün adına göre)
@@ -62,36 +56,34 @@ export default function Strategy() {
       );
     }
 
+    /*
+     * Kontroller küp katalogun alanlarına bakar. Eski liste emekli `products`
+     * tablosunun alanlarını (description/labelSize/usageGuide…) sorguluyordu
+     * ve aslında masterHealth'in ölü veri üzerindeki bir kopyasıydı.
+     * Ayrıntılı, tıklanabilir sürüm Ürünler sayfasındaki kartlarda.
+     */
     const productRows = products.map(p => {
-      const material = matCost.get(p.id) ?? 0;
-      const totalCost = material + num(p.packagingCost) + num(p.shippingCost);
+      const totalCost = num(p.salePrice) > 0 ? 0 : 0; // maliyet ürün kartında hesaplanır
       const netPrice = num(p.salePrice) * (1 - num(p.discountPercent) / 100);
       const profit = netPrice - totalCost;
       const margin = netPrice > 0 ? (profit / netPrice) * 100 : 0;
       const checks = [
-        { label: "Seri / renk kodu", ok: Boolean(p.series || p.colorCode), fix: "/urunler" },
-        { label: "Ürün açıklaması", ok: Boolean(p.description), fix: "/urunler" },
-        { label: "Formül kayıtlı", ok: matCost.has(p.id), fix: "/formuller" },
-        { label: "Satış fiyatı", ok: num(p.salePrice) > 0, fix: "/maliyet" },
+        { label: "Satış adı girilmiş", ok: p.name !== p.internalSku, fix: "/katalog" },
+        { label: "Reçete bağlı", ok: p.formulaId != null, fix: "/recete" },
+        { label: "Satış fiyatı", ok: num(p.salePrice) > 0, fix: "/fiyat" },
+        { label: "Barkod", ok: Boolean(p.gtin?.trim()), fix: "/katalog" },
+        { label: "Ürün görseli", ok: imagedProducts.has(p.id), fix: "/katalog" },
         {
-          label: "Maliyet bilgisi",
-          ok: matCost.has(p.id) || num(p.packagingCost) > 0 || num(p.shippingCost) > 0,
-          fix: "/maliyet",
+          label: "Satılabilir (stok ya da kapasite)",
+          ok: (p.stockQty ?? 0) > 0 || (p.buildableQty ?? 0) > 0,
+          fix: "/katalog",
         },
-        {
-          label: "Sağlıklı kâr marjı (≥%20)",
-          ok: num(p.salePrice) > 0 && totalCost > 0 && margin >= 20,
-          fix: "/maliyet",
-        },
+        { label: "Satışta", ok: p.status === "aktif", fix: "/katalog" },
         { label: "Pazarlama metni", ok: mktNames.has(p.name), fix: "/pazarlama" },
         { label: "Satış görmüş", ok: (soldQty.get(p.name) ?? 0) > 0, fix: "/siparisler" },
-        { label: "Etiket bilgisi", ok: Boolean(p.labelSize || p.labelText), fix: "/urunler" },
-        { label: "Kullanım kılavuzu", ok: Boolean(p.usageGuide), fix: "/urunler" },
-        { label: "Ambalaj bilgisi", ok: Boolean(p.packaging), fix: "/urunler" },
-        { label: "Ürün görseli", ok: imagedProducts.has(p.id), fix: "/urunler" },
       ];
       const done = checks.filter(c => c.ok).length;
-      return { p, material, totalCost, netPrice, profit, margin, checks, done, total: checks.length };
+      return { p, totalCost, netPrice, profit, margin, checks, done, total: checks.length };
     });
 
     // Son 30 gün sipariş istatistikleri
@@ -144,14 +136,14 @@ export default function Strategy() {
         text: `${critical.length} hammadde kritik stok seviyesinde — üretim durabilir. Tedarikçilere sipariş ver.`,
         go: "/stok",
       });
-    const noFormula = productRows.filter(r => !r.checks[2].ok);
+    const noFormula = productRows.filter(r => !r.checks[1].ok);
     if (noFormula.length > 0)
       tips.push({
         severity: "mid",
         text: `${noFormula.length} ürünün formülü kayıtlı değil — maliyet hesabı ve tekrar üretim riskte. Reçeteleri Formül Defteri'ne işle.`,
         go: "/formuller",
       });
-    const noSale = productRows.filter(r => num(r.p.salePrice) > 0 && !r.checks[7].ok);
+    const noSale = productRows.filter(r => num(r.p.salePrice) > 0 && !r.checks[8].ok);
     if (noSale.length > 0)
       tips.push({
         severity: "low",
@@ -255,7 +247,7 @@ export default function Strategy() {
             <Card key={p.id} className="p-4 space-y-2.5">
               <div className="flex items-center gap-2 flex-wrap">
                 <p className="font-semibold flex-1 min-w-0 truncate">{p.name}</p>
-                {p.series && <Badge variant="outline">{p.series}</Badge>}
+                <Badge variant="outline" className="font-mono text-[10px]">{p.internalSku}</Badge>
                 <span
                   className={`text-sm font-bold ${done === total ? "text-emerald-600" : "text-amber-600"}`}
                 >
