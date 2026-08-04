@@ -244,12 +244,29 @@ Bu belge yazıldıktan sonra Faz 1-3'ün bir kısmı uygulandı. Gerçekleşen:
 | Trendyol sahte kategori engeli | ✅ | Yeni modelin kullanmadığı bir ayar zorunlu tutuluyordu |
 | İşçilik + genel gider maliyete | ✅ | `computeMasterCosts` artık payı alıyor; maliyetler ARTACAK, doğrusu bu |
 | Ölü ağırlık | ✅ | 3 router, 3 shared modül, 27 db fonksiyonu, 36 boş test kaldırıldı |
-| Kârlılık raporu (F1.3) | ⬜ | `report.productSales` yetim, eski modeli okuyor |
-| N11/Çiçeksepeti (F1.4) | ⬜ | Push kodu ölü modele bağlı |
-| Net kâr (F3.1) | 🟡 | **Zaten yazılmış**: `report.channelProfit` komisyon profilleriyle hesaplıyor ve Analiz'e bağlı — ama eski modelin ürünlerini okuyor. Yapılacak iş taşımak, yazmak değil |
+| Kârlılık raporu (F1.3) | ✅ | `report.productSales` kaldırıldı: `katalog.revenue` aynı işi master bazında yapıyor ve zaten Analiz'e bağlıydı — bir ikizlik daha |
+| Net kâr (F3.1) | ✅ | `report.channelProfit` maliyeti `computeMasterCosts`tan alıyor; eski tablodan okuduğu için rapor boş çıkıyordu |
+| İkiliği kökten kaldır | ✅ | Emekli model koddan VE veritabanından söküldü (migration 0046) |
+| Yetim uçlar | ✅ | 43 → 1. Kalan tek yetim `system.health` (Render sağlık kontrolü, HTTP rotası) |
+| N11/Çiçeksepeti (F1.4) | ⬜ | Push kodu ölü modele bağlıydı, model silinince kodu da gitti. Yeni modele **yeniden yazılacak** |
 | Renk kodu araması (F4) | ⬜ | — |
 
-### Yeni bulgu: Strateji sayfası ölü veriyi analiz ediyor
+### Yetim uçlarda ne yapıldı
+
+Her yetim için tek soru soruldu: bu gerçek bir boşluk mu, yoksa ikizlik mi?
+
+**Bağlandı** (gerçek boşluk — eklenebiliyordu ama kaldırılamıyordu):
+`deleteChannelAttribute`, `deleteChannelAttributeValue` (özellik/eşleme silme
+düğmeleri), `accounts.update` (hesap adı düzeltilemiyordu).
+
+**Kaldırıldı** (ikizlik ya da vazgeçilmiş fikir): `report.productSales`
+(→ `katalog.revenue`), `orders.syncTrendyol` (→ `syncAll`), `publishListing`
+(→ `bulkPublish`), `setChannelPrice` (→ `setBasePrice` + applyToChannels),
+`masterImages` (→ `masterCard`), `capacityOf` (→ `trackList`),
+`reserveForOrder`/`releaseForOrder` (rezervasyon fikri D2'de zaten gereksiz
+bulunmuştu; otomatik yol `orderReservation.ts`'te duruyor), `campaigns.upcoming`.
+
+### Çözüldü: Strateji sayfası ölü veriyi analiz ediyordu
 
 `report.data` → `reportData()` eski `products` tablosunu okuyor. Strateji
 sayfasındaki 12 maddelik ürün tamamlanma listesi (`Strategy.tsx:65-92`)
@@ -261,8 +278,9 @@ kontrol listesini tutmayı bırakıp `katalog.trackList`'in sağlık verisini
 okumalı. Ürünler sayfasındaki kartlar bunu zaten canlı veriyle ve tıklanabilir
 düzeltmelerle yapıyor.
 
-**Neden bu turda yapılmadı:** sayfayı yarım taşımak, ölü veriyi analiz
-etmekten daha kötü olurdu. Ayrı bir iş olarak duruyor.
+**Yapıldı:** kontrol listesi küp alanlarına göre 9 maddeye indi (satış adı,
+reçete, fiyat, barkod, görsel, satılabilirlik, satışta, pazarlama metni, satış
+görmüş) ve `reportData` artık `masterProducts` okuyor.
 
 ## Bölüm 6 — Yol haritası
 

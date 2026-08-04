@@ -1210,68 +1210,6 @@ export const katalogRouter = router({
 
   /* ---- Kanal yayını ----------------------------------------------------- */
 
-  /**
-   * İlanı bir kanalda yayına hazırlar. Pazaryeri SKU'su ve barkodu BURADA
-   * bir kez üretilip saklanır; gönderim anında yeniden hesaplanmaz — türetme
-   * kuralı değişirse tüm eşleşmeler kalıcı kopar.
-   */
-  publishListing: protectedProcedure
-    .input(
-      z.object({
-        listingId: z.number(),
-        channelId: z.number(),
-        channelCategoryId: z.string().nullable().optional(),
-        price: z.number().min(0).default(0),
-      }),
-    )
-    .mutation(async ({ input }) => {
-      const [listings, channels, existing] = await Promise.all([
-        db.listListings(),
-        db.listSalesChannels(),
-        db.listChannelListings(),
-      ]);
-      const listing = (listings as { id: number; masterId: number }[]).find(l => l.id === input.listingId);
-      if (!listing) throw new TRPCError({ code: "NOT_FOUND", message: "İlan bulunamadı" });
-      const channel = (channels as { id: number; code: string }[]).find(c => c.id === input.channelId);
-      if (!channel) throw new TRPCError({ code: "NOT_FOUND", message: "Kanal bulunamadı" });
-
-      const already = (existing as { listingId: number; channelId: number }[]).find(
-        c => c.listingId === input.listingId && c.channelId === input.channelId,
-      );
-      if (already) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "Bu ilan zaten bu kanalda yayında." });
-      }
-
-      // Mükerrer ilan kilidi: aynı master, aynı kanal, aynı kategori.
-      const clash = (existing as { masterId: number; channelId: number; channelCategoryId: string | null }[]).find(
-        c =>
-          c.masterId === listing.masterId &&
-          c.channelId === input.channelId &&
-          (c.channelCategoryId ?? null) === (input.channelCategoryId ?? null),
-      );
-      if (clash) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message:
-            "Bu ürünün bu kanalda aynı kategoride ilanı zaten var. Pazaryerleri aynı kategorideki mükerrer ilanı yaptırıma tabi tutar — farklı kategori seçin.",
-        });
-      }
-
-      const seq = await db.nextChannelSequence();
-      const id = await db.createChannelListing({
-        listingId: input.listingId,
-        masterId: listing.masterId,
-        channelId: input.channelId,
-        channelSku: buildChannelSku(channel.code, seq),
-        channelBarcode: buildChannelBarcode(seq),
-        channelCategoryId: input.channelCategoryId ?? null,
-        price: String(input.price),
-        syncState: "kirli",
-        status: "taslak",
-      });
-      return { id, channelSku: buildChannelSku(channel.code, seq), channelBarcode: buildChannelBarcode(seq) };
-    }),
-
   channelListings: protectedProcedure.query(() => db.listChannelListings()),
 
   /** Kullanım alanı × kanal → pazaryeri kategorisi. Toplu yayının ön koşulu. */
@@ -1531,87 +1469,6 @@ export const katalogRouter = router({
     }));
   }),
 
-  /** Bir master'ın kapasitesi ve darboğazı (ürün kartı için). */
-  capacityOf: protectedProcedure
-    .input(z.object({ masterId: z.number() }))
-    .query(async ({ input }) => {
-      const data = await loadCapacityInputs();
-      const report = computeCapacity(data);
-      const row = report.masters.find(m => m.masterId === input.masterId);
-      if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Master bulunamadı" });
-      return row;
-    }),
-
-  /* ---- Hammadde rezervasyonu -------------------------------------------- */
-
-  /**
-   * Sipariş için hammadde rezerve eder. Atomik WHERE koşulu aşırı satış
-   * kalkanıdır: yetmezse rezerv açılmaz ve eksik kalemler bildirilir.
-   * Sipariş yine de kabul edilir (müşteri kaybedilmez), yalnız işaretlenir.
-   */
-  reserveForOrder: protectedProcedure
-    .input(
-      z.object({
-        items: z.array(z.object({ masterId: z.number(), qty: z.number().positive() })).min(1),
-      }),
-    )
-    .mutation(async ({ input }) => {
-      const data = await loadCapacityInputs();
-      const formulaById = new Map(data.formulas.map(f => [f.id, f]));
-      const masterById = new Map(data.masters.map(m => [m.id, m]));
-      const packById = new Map(data.packagings.map(p => [p.id, p]));
-      const matName = new Map(data.materials.map(m => [m.id, m.name]));
-
-      // Master başına hammadde ihtiyacını topla (aynı kalem birden çok üründe).
-      const need = new Map<number, number>();
-      for (const item of input.items) {
-        const master = masterById.get(item.masterId);
-        if (!master?.formulaId) continue;
-        const f = formulaById.get(master.formulaId);
-        if (!f) continue;
-        const waste = Math.min(Math.max(num(f.wastePercent), 0), 99);
-        const scale = num(master.formulaScale) || 1;
-        for (const inp of f.inputs) {
-          const per = (num(inp.qtyPerBase) * scale) / (1 - waste / 100);
-          need.set(inp.inputMaterialId, (need.get(inp.inputMaterialId) ?? 0) + per * item.qty);
-        }
-        const pack = master.packagingId != null ? packById.get(master.packagingId) : undefined;
-        if (pack?.materialId != null) {
-          need.set(pack.materialId, (need.get(pack.materialId) ?? 0) + item.qty);
-        }
-        for (const pi of pack?.inputs ?? []) {
-          need.set(pi.materialId, (need.get(pi.materialId) ?? 0) + num(pi.qtyPerUnit) * item.qty);
-        }
-      }
-
-      const reserved: { materialId: number; qty: number }[] = [];
-      const short: { materialId: number; name: string; qty: number }[] = [];
-      for (const [materialId, qty] of Array.from(need.entries())) {
-        if (qty <= 0) continue;
-        const ok = await db.reserveMaterial(materialId, qty);
-        if (ok) reserved.push({ materialId, qty });
-        else short.push({ materialId, name: matName.get(materialId) ?? `#${materialId}`, qty });
-      }
-
-      // Kısmi rezervasyon bırakma: bir kalem yetmediyse hepsini geri aç ki
-      // yarım rezerv başka siparişlerin kapasitesini boşuna kilitlemesin.
-      if (short.length > 0) {
-        for (const r of reserved) await db.releaseMaterial(r.materialId, r.qty);
-        return { ok: false, reserved: 0, short };
-      }
-      return { ok: true, reserved: reserved.length, short: [] };
-    }),
-
-  releaseForOrder: protectedProcedure
-    .input(z.object({ items: z.array(z.object({ materialId: z.number(), qty: z.number().positive() })) }))
-    .mutation(async ({ input }) => {
-      for (const i of input.items) await db.releaseMaterial(i.materialId, i.qty);
-      return { released: input.items.length };
-    }),
-
-  /* ---- Reçeteler (çok seviyeli BOM) ------------------------------------- */
-
-  /** Reçeteler + girdileri + hangi master'lara bağlı oldukları. */
   formulas: protectedProcedure.query(async () => {
     const [formulas, inputs, masters, scopeRows, materials] = await Promise.all([
       db.listFormulas(),
@@ -3061,28 +2918,6 @@ export const katalogRouter = router({
       return { updated };
     }),
 
-  /** Kanala özel fiyat — taban fiyattan farklıysa. */
-  setChannelPrice: protectedProcedure
-    .input(
-      z.object({
-        channelListingId: z.number(),
-        price: z.number().min(0).max(1000000),
-        discountPercent: z.number().min(0).max(100).default(0),
-      }),
-    )
-    .mutation(async ({ input }) => {
-      await db.updateChannelListing(input.channelListingId, {
-        price: String(input.price),
-        discountPercent: String(input.discountPercent),
-        syncState: "kirli",
-      });
-      return { ok: true };
-    }),
-
-  /**
-   * Kokpit özeti — ana ekran v3'ten habersizdi, `listProducts()` sayıyordu.
-   * Sabah açınca yeni sistemin durumu görünsün.
-   */
   cockpit: protectedProcedure.query(async () => {
     const [masters, listings, channelListings, dirty] = await Promise.all([
       db.listMasterProducts(),
@@ -3706,10 +3541,6 @@ export const katalogRouter = router({
     }),
 
   /* ---- Master görselleri: ilanlar devralır ------------------------------ */
-
-  masterImages: protectedProcedure
-    .input(z.object({ masterId: z.number().optional() }).default({}))
-    .query(({ input }) => db.listMasterImages(input.masterId)),
 
   addMasterImage: protectedProcedure
     .input(

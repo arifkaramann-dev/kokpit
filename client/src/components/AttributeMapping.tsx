@@ -11,7 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { trpc } from "@/lib/trpc";
-import { Download, Loader2 } from "lucide-react";
+import { Download, Loader2, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -80,6 +80,31 @@ export default function AttributeMapping({ channelId }: { channelId: number }) {
       utils.katalog.channelAttributes.invalidate();
       utils.katalog.attributeCoverage.invalidate();
       toast.success("Özellik kaydedildi");
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  /*
+   * Silme uçları yazılmıştı ama hiçbir düğmeye bağlı değildi: özellik ve eşleme
+   * eklenebiliyor, kaldırılamıyordu. Yanlış eklenen bir kayıt kalıcı oluyordu.
+   */
+  const deleteAttr = trpc.katalog.deleteChannelAttribute.useMutation({
+    onSuccess: () => {
+      utils.katalog.channelAttributes.invalidate();
+      utils.katalog.attributeCoverage.invalidate();
+      toast.success("Özellik kaldırıldı");
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  /** Kurulu eşlemeler — yanlış eşleneni kaldırabilmek için listelenir. */
+  const { data: mappedValues } = trpc.katalog.channelAttributeValues.useQuery({ channelId });
+
+  const deleteValue = trpc.katalog.deleteChannelAttributeValue.useMutation({
+    onSuccess: () => {
+      utils.katalog.attributeCoverage.invalidate();
+      utils.katalog.channelAttributeValues.invalidate();
+      toast.success("Eşleme kaldırıldı");
     },
     onError: e => toast.error(e.message),
   });
@@ -156,6 +181,7 @@ export default function AttributeMapping({ channelId }: { channelId: number }) {
                 <th className="p-2 text-left">Kaynak</th>
                 <th className="p-2 text-left">Sabit değer</th>
                 <th className="p-2 text-left">Durum</th>
+                <th className="p-2 w-10" />
               </tr>
             </thead>
             <tbody>
@@ -179,6 +205,7 @@ export default function AttributeMapping({ channelId }: { channelId: number }) {
                       ...patch,
                     })
                   }
+                  onDelete={() => deleteAttr.mutate({ id: a.id })}
                 />
               ))}
             </tbody>
@@ -201,6 +228,29 @@ export default function AttributeMapping({ channelId }: { channelId: number }) {
               Bu değerler eşlenmeden kart açılamaz — pazaryerindeki karşılık kimliğini (ya da
               serbest metni) girin.
             </p>
+            {/* Kurulu eşlemeler: yanlış eşleneni kaldırmanın tek yolu. */}
+            {(mappedValues ?? []).filter(v => v.attributeId === c.attributeId).length > 0 && (
+              <div className="flex flex-wrap gap-1.5 border-b pb-2">
+                {(mappedValues ?? [])
+                  .filter(v => v.attributeId === c.attributeId)
+                  .map(v => (
+                    <span
+                      key={v.id}
+                      className="inline-flex items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-[11px]"
+                    >
+                      {v.attributeText || v.attributeValueId || `#${v.dimensionId}`}
+                      <button
+                        type="button"
+                        title="Eşlemeyi kaldır"
+                        onClick={() => deleteValue.mutate({ id: v.id })}
+                        className="text-destructive hover:opacity-70"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+              </div>
+            )}
             <div className="space-y-1.5">
               {c.missing.map(m => (
                 <MissingRow
@@ -234,6 +284,7 @@ function AttributeRow({
   isRequired,
   coverage,
   onSave,
+  onDelete,
 }: {
   attributeId: number;
   attributeName: string | null;
@@ -247,6 +298,7 @@ function AttributeRow({
     constantValueId?: number | null;
     constantText?: string | null;
   }) => void;
+  onDelete: () => void;
 }) {
   const [src, setSrc] = useState(source);
   const [valueId, setValueId] = useState(constantValueId ? String(constantValueId) : "");
@@ -322,6 +374,17 @@ function AttributeRow({
             Kaydet
           </Button>
         )}
+      </td>
+      <td className="p-2">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          title="Özelliği kaldır"
+          onClick={onDelete}
+        >
+          <Trash2 className="h-3.5 w-3.5 text-destructive" />
+        </Button>
       </td>
     </tr>
   );

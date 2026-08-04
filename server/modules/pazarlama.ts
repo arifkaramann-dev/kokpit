@@ -767,7 +767,6 @@ export const templatesRouter = router({
 
 export const campaignsRouter = router({
   list: protectedProcedure.query(() => db.listCampaigns()),
-  upcoming: protectedProcedure.query(() => db.upcomingCampaigns(30)),
   create: protectedProcedure.input(campaignInput).mutation(({ input }) =>
     db.createCampaign(toDecimalFields(input, ["discountPercent"]) as never),
   ),
