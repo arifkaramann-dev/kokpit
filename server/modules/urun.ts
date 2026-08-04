@@ -186,6 +186,8 @@ function withStatusFlags<T extends { status?: "taslak" | "satista" | "arsiv" }>(
 
 const productSeriesInput = z.object({
   name: z.string().min(1),
+  /** Serinin satış adındaki karşılığı — "CANDY" değil "CANDY PAINT". */
+  nameEn: z.string().max(128).nullable().optional(),
   profitMargin: z.number().min(0).max(999).default(35),
   vatRate: z.number().min(0).max(100).default(20),
   category: z.string().nullable().optional(),
@@ -936,6 +938,7 @@ export const seriesRouter = router({
     return rows.map(s => ({
       id: s.id,
       name: s.name,
+      nameEn: (s as { nameEn?: string | null }).nameEn ?? null,
       prefix: (s.prefix ?? "").trim() || null,
       profitMargin: s.profitMargin,
       vatRate: s.vatRate,

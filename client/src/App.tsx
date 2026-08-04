@@ -9,7 +9,6 @@ import Campaigns from "@/pages/Campaigns";
 import Briefing from "@/pages/Briefing";
 import Catalog from "@/pages/Catalog";
 import ContentBlocks from "@/pages/ContentBlocks";
-import Definitions from "@/pages/Definitions";
 import Cheques from "@/pages/Cheques";
 import Crm from "@/pages/Crm";
 import Customers from "@/pages/Customers";
@@ -76,7 +75,12 @@ function AdminApp() {
         <Route path={"/katalog"} component={Catalog} />
         <Route path={"/icerik"} component={ContentBlocks} />
         <Route path={"/yayin"} component={Publish} />
-        <Route path={"/tanimlar"} component={Definitions} />
+        {/* Tanımlar Ürünler sayfasına sekme oldu; renk eklemek için ürün
+            ekranından çıkmak gerekmiyor. Yer imleri ve eski bağlantılar
+            sessizce doğru sekmeye düşsün. */}
+        <Route path={"/tanimlar"}>
+          <Redirect to="/katalog?sekme=tanimlar" replace />
+        </Route>
         <Route path={"/recete"} component={Recipes} />
         <Route path={"/urun/:id"} component={MasterCard} />
         <Route path={"/sorular"} component={Questions} />

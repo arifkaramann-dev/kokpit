@@ -52,6 +52,8 @@ export type TrackRow = {
   gtin: string | null;
   /** Elle girilmiş satış adı; boşsa koordinattan türetilir. */
   name: string | null;
+  /** Koordinattan üretilen satış adı — kartta yer tutucu, toplu doldurmada yazılan. */
+  suggestedName: string;
   /** Kapak görselinin adresi; yüklenmemişse null. */
   imageUrl: string | null;
   imageId: number | null;
@@ -183,16 +185,6 @@ export default function ProductTree({
         </Button>
       </div>
 
-      {/* Metin tek <p> içinde: Card `flex flex-col gap-6` olduğu için çıplak
-          metin düğümleri ve <strong> ayrı flex öğesi olup alt alta kırılıyordu. */}
-      <Card className="p-4 text-xs text-muted-foreground">
-        <p>
-          Bir <strong className="text-foreground">varyant</strong> = bir fiziksel şişe
-          (renk × ürün tipi × ambalaj). Stok, reçete ve barkod ona aittir. Renk satırı onları
-          toplar; tıklayınca açılır. Aynı varyant birden çok isimle satılabilir — o pazarlama
-          kimliğidir, ayrı varyant değil.
-        </p>
-      </Card>
 
       {tree.length === 0 ? (
         <Card className="p-10 text-center text-sm text-muted-foreground">

@@ -380,7 +380,7 @@ export default function SeriesWizard() {
               <Button size="sm" variant="outline" onClick={() => setLocation("/recete")}>
                 Reçete yaz
               </Button>
-              <Button size="sm" variant="outline" onClick={() => setLocation("/tanimlar")}>
+              <Button size="sm" variant="outline" onClick={() => setLocation("/katalog?sekme=tanimlar")}>
                 Ambalaj maliyeti
               </Button>
               <Button size="sm" variant="outline" onClick={() => setLocation("/fiyat")}>

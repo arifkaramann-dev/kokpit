@@ -298,7 +298,7 @@ export default function VariantCard({ row }: { row: TrackRow }) {
                   görünür — kullanıcı neyi değiştireceğini görsün. */}
               <InlineField
                 value={row.name ?? ""}
-                placeholder={derivedNameOf(row) || row.internalSku}
+                placeholder={row.suggestedName || derivedNameOf(row) || row.internalSku}
                 saving={setName.isPending}
                 onSave={v => setName.mutate({ masterId: row.masterId, name: v })}
                 className="h-7 border-transparent px-1 font-medium hover:border-input focus:border-input"

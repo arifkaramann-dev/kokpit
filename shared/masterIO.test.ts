@@ -8,7 +8,7 @@ import {
   type MasterDimensions,
   type MasterIORecord,
 } from "./masterIO";
-import { derivedNameOf, displayNameOf } from "./productName";
+import { derivedNameOf, displayNameOf, salesNameOf } from "./productName";
 
 const dims: MasterDimensions = {
   series: [{ id: 1, name: "CANDY" }],
@@ -329,5 +329,62 @@ describe("displayNameOf", () => {
 
   it("koordinat da yoksa SKU'ya düşer", () => {
     expect(displayNameOf({ internalSku: "aoc-x" })).toBe("aoc-x");
+  });
+});
+
+describe("salesNameOf", () => {
+  const full = {
+    seriesNameEn: "CANDY PAINT",
+    seriesName: "CANDY",
+    colorNameEn: "Magenta",
+    colorName: "Fuşya",
+    family: "Airbrush",
+    packaging: "100 ml",
+    readiness: "konsantre",
+  };
+
+  it("markadan ambalaja tam adı kurar", () => {
+    expect(salesNameOf(full)).toBe("ARTOFCOLOUR CANDY PAINT MAGENTA (FUŞYA) - AİRBRUSH 100 ML");
+  });
+
+  /* Türkçe büyük harf: ad etikete ve pazaryeri kartına gidiyor. */
+  it("Türkçe büyük harf kuralını uygular", () => {
+    expect(salesNameOf({ family: "Airbrush", colorName: "Işıltı" })).toContain("AİRBRUSH");
+    expect(salesNameOf({ colorName: "Işıltı" })).toContain("IŞILTI");
+  });
+
+  it("İngilizce renk yoksa parantez açmaz", () => {
+    expect(salesNameOf({ ...full, colorNameEn: null })).toBe(
+      "ARTOFCOLOUR CANDY PAINT FUŞYA - AİRBRUSH 100 ML",
+    );
+  });
+
+  it("iki ad aynıysa kendini tekrar etmez", () => {
+    expect(salesNameOf({ ...full, colorNameEn: "fuşya" })).toBe(
+      "ARTOFCOLOUR CANDY PAINT FUŞYA - AİRBRUSH 100 ML",
+    );
+  });
+
+  it("seri İngilizce adı yoksa seri adına düşer", () => {
+    expect(salesNameOf({ ...full, seriesNameEn: null })).toContain("ARTOFCOLOUR CANDY MAGENTA");
+  });
+
+  /*
+   * Hazırlık koordinatın parçası: aynı renk ve ambalajın konsantre ve
+   * kullanıma-hazır hâli ayrı üründür, ek olmasa ikisi aynı adı alırdı.
+   */
+  it("r2u ürünü ayırt eder", () => {
+    expect(salesNameOf({ ...full, readiness: "r2u" })).toBe(
+      "ARTOFCOLOUR CANDY PAINT MAGENTA (FUŞYA) - AİRBRUSH 100 ML R2U",
+    );
+  });
+
+  it("marka değiştirilebilir", () => {
+    expect(salesNameOf({ brand: "AOC", colorName: "Fuşya" })).toBe("AOC FUŞYA");
+  });
+
+  it("eksik parçaları atlar", () => {
+    expect(salesNameOf({ colorName: "Fuşya" })).toBe("ARTOFCOLOUR FUŞYA");
+    expect(salesNameOf({ packaging: "100 ml" })).toBe("ARTOFCOLOUR - 100 ML");
   });
 });

@@ -5,6 +5,8 @@ import CatalogRestructure from "@/components/CatalogRestructure";
 import SeriesMatrix from "@/components/SeriesMatrix";
 import MasterImport from "@/components/MasterImport";
 import MissingImages from "@/components/MissingImages";
+import SeriesManager from "@/components/SeriesManager";
+import Definitions from "@/pages/Definitions";
 import UnboundOrderItems from "@/components/UnboundOrderItems";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -48,12 +50,45 @@ export default function Catalog() {
   const [, setLocation] = useLocation();
   const [onlyProblem, setOnlyProblem] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [namePreview, setNamePreview] = useState<{
+    willUpdate: number;
+    sample: { masterId: number; sku: string; old: string; next: string }[];
+  } | null>(null);
+
+  /*
+   * Ad üretimi iki adımlı: önce ne yazılacağı gösterilir, sonra yazılır.
+   * Tek tıkla 88 kaydı değiştirmek, kullanıcının "ürünler kendi kendine
+   * değişiyor" şikayetini haklı çıkaran davranışın ta kendisi olurdu.
+   */
+  const nameRun = trpc.katalog.generateNames.useMutation({
+    onSuccess: r => {
+      if (r.dryRun) {
+        setNamePreview({ willUpdate: r.willUpdate, sample: r.sample });
+        return;
+      }
+      setNamePreview(null);
+      utils.katalog.invalidate();
+      toast.success(`${r.updated} ürünün satış adı yazıldı`);
+    },
+    onError: e => toast.error(e.message),
+  });
 
   // Diğer ekranlar sekmeye doğrudan link verebilsin: /katalog?sekme=baglar
   const urlTab =
     typeof window !== "undefined"
       ? new URLSearchParams(window.location.search).get("sekme")
       : null;
+
+  /*
+   * Durum sekmeleri eskiden üst düzeydeydi ve dış ekranlar onlara doğrudan
+   * link veriyordu (?sekme=baglar). Alt sekmeye taşındıkları için bu adresler
+   * "Durum" üst sekmesine, oradan da doğru alt sekmeye düşer — yer imleri ve
+   * mevcut bağlantılar kırılmasın.
+   */
+  const STATUS_TABS = ["seriler", "getiri", "gorseller", "baglar"];
+  const isStatus = urlTab != null && STATUS_TABS.includes(urlTab);
+  const statusTab = isStatus ? urlTab : "seriler";
+  const topTab = isStatus ? "durum" : urlTab;
 
   const [selectedSeries, setSelectedSeries] = useState<Set<number>>(new Set());
   type Breakdown = {
@@ -178,8 +213,8 @@ export default function Catalog() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Ürünler</h1>
         <p className="text-sm text-muted-foreground">
-          Master ürün = fiziksel gerçeklik (stok, reçete, kapasite). İlan = aynı ürünün farklı
-          pazarlama açısı. Tek şişe, çok ilan — stok bölünmez.
+          Sattığınız her şey burada. Seriyi açın, rengi açın, ürünün kartında ne eksikse yerinde
+          tamamlayın.
         </p>
       </div>
 
@@ -200,36 +235,110 @@ export default function Catalog() {
       {isLoading && <div className="h-32 animate-pulse rounded-xl bg-muted" />}
 
       {/* Sekme URL'den seçilebilir (?sekme=baglar): başka ekranlardan gelen
-          "Bağla" bağlantısı doğrudan ilgili sekmeyi açsın, kullanıcı altı
-          sekme arasından doğru olanı aramasın. */}
+          "Bağla" bağlantısı doğrudan ilgili sekmeyi açsın. Durum sekmeleri
+          alta indiği için eski adresler `topTab`/`statusTab` ile çözülür. */}
       <Tabs
         defaultValue={
-          urlTab ?? ((masters?.length ?? 0) > 0 ? "liste" : "kurulum")
+          topTab ?? ((masters?.length ?? 0) > 0 ? "liste" : "kurulum")
         }
       >
-        <TabsList>
-          <TabsTrigger value="liste">Ürün Listesi</TabsTrigger>
-          <TabsTrigger value="seriler">Seri Takibi</TabsTrigger>
-          <TabsTrigger value="getiri">Getiri</TabsTrigger>
-          <TabsTrigger value="gorseller">Görseller</TabsTrigger>
-          <TabsTrigger value="baglar">Bağlanmamış Satırlar</TabsTrigger>
-          <TabsTrigger value="kurulum">Kurulum</TabsTrigger>
+        {/* Dört üst sekme, iş akışı sırasıyla: neyi satıyorum → nasıl
+            kuruyorum → sözlüğüm → nerede duruyorum. Altı düz sekme, ürün
+            kurmakla durum izlemeyi aynı düzleme koyuyordu. */}
+        <TabsList className="flex-wrap">
+          <TabsTrigger value="liste">Ürünler</TabsTrigger>
+          <TabsTrigger value="kurulum">Seri kurgusu</TabsTrigger>
+          <TabsTrigger value="tanimlar">Tanımlar</TabsTrigger>
+          <TabsTrigger value="durum">Durum</TabsTrigger>
         </TabsList>
 
-        {/* Getiri — hangi renk para kazandırıyor */}
-        <TabsContent value="getiri" className="pt-3">
-          <CatalogRevenue />
+        {/* Durum — "ne eksik, ne kazandırıyor" soruları tek yerde. Dördü de
+            ayrı üst sekmeydi; ürün kurma akışıyla karışıyorlardı. */}
+        <TabsContent value="durum" className="pt-3">
+          <Tabs defaultValue={statusTab}>
+            <TabsList>
+              <TabsTrigger value="seriler">Seri durumu</TabsTrigger>
+              <TabsTrigger value="getiri">Kazanç</TabsTrigger>
+              <TabsTrigger value="gorseller">Eksik görseller</TabsTrigger>
+              <TabsTrigger value="baglar">Eşleşmeyen siparişler</TabsTrigger>
+            </TabsList>
+          <TabsContent value="seriler" className="space-y-3 pt-3">
+            <Card className="overflow-hidden p-0">
+              <div className="border-b p-4">
+                <p className="font-semibold">Seri Takibi</p>
+                <p className="text-sm text-muted-foreground">
+                  En zayıf seri üstte. "İlansız" sütunu açılmamış pazarı, "üretilemeyen" hammadde
+                  sorununu gösterir.
+                </p>
+              </div>
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50 text-xs text-muted-foreground">
+                  <tr>
+                    <th className="p-2 text-left">Seri</th>
+                    <th className="p-2 text-right">Ürün</th>
+                    <th className="p-2 text-right">Ort. tamamlanma</th>
+                    <th className="p-2 text-right">İlansız</th>
+                    <th className="p-2 text-right">Üretilemeyen</th>
+                    <th className="p-2 text-right">Canlı ilan</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(track?.series ?? []).map(s => (
+                    <tr key={s.seriesId} className="border-t">
+                      <td className="p-2 font-medium">{s.seriesName}</td>
+                      <td className="p-2 text-right tabular-nums">{s.masterCount}</td>
+                      <td className="p-2 text-right tabular-nums">%{s.avgScore}</td>
+                      <td className="p-2 text-right tabular-nums">
+                        {s.withoutListing > 0 ? (
+                          <span className="font-medium text-amber-600">{s.withoutListing}</span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="p-2 text-right tabular-nums">
+                        {s.notBuildable > 0 ? (
+                          <span className="font-medium text-rose-600">{s.notBuildable}</span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="p-2 text-right tabular-nums text-emerald-600">{s.liveListings}</td>
+                    </tr>
+                  ))}
+                  {(track?.series ?? []).length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="p-6 text-center text-sm text-muted-foreground">
+                        Henüz ürün yok.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </Card>
+          </TabsContent>
+          {/* Getiri — hangi renk para kazandırıyor */}
+          <TabsContent value="getiri" className="pt-3">
+            <CatalogRevenue />
+          </TabsContent>
+          {/* Görseller — kart açmanın önündeki tek fiziksel engel */}
+          <TabsContent value="gorseller" className="pt-3">
+            <MissingImages />
+          </TabsContent>
+          {/* Bağlanmamış satırlar — üretim planı ve getiri bunlara bağlı */}
+          <TabsContent value="baglar" className="pt-3">
+            <UnboundOrderItems />
+          </TabsContent>
+          </Tabs>
         </TabsContent>
 
-        {/* Görseller — kart açmanın önündeki tek fiziksel engel */}
-        <TabsContent value="gorseller" className="pt-3">
-          <MissingImages />
+        {/* Tanımlar ayrı sayfaydı ve menüde "Analiz & Tanımlar" altında
+            duruyordu; renk eklemek için ürün ekranından çıkmak gerekiyordu. */}
+        <TabsContent value="tanimlar" className="pt-3">
+          <Definitions embedded />
         </TabsContent>
 
-        {/* Bağlanmamış satırlar — üretim planı ve getiri bunlara bağlı */}
-        <TabsContent value="baglar" className="pt-3">
-          <UnboundOrderItems />
-        </TabsContent>
+
+
 
         {/* Ürün listesi — takip sütunlarıyla. Eksikler, getiri (maliyet/kâr),
             hedef pazar (ilan sayısı) ve fırsat (açılmamış kullanım alanı). */}
@@ -249,67 +358,76 @@ export default function Catalog() {
             <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
               <FileSpreadsheet className="mr-1 h-3.5 w-3.5" /> Excel
             </Button>
+            {/* Adsız ürünlerin adını koordinattan doldurur. Önce kaç ürüne ne
+                yazılacağı gösterilir — 88 kaydı görmeden değiştirmek, tam da
+                "kendi kendine değişiyor" hissini yaratan şeydir. */}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={nameRun.isPending}
+              onClick={() => nameRun.mutate({ dryRun: true, overwrite: false })}
+            >
+              {nameRun.isPending ? (
+                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="mr-1 h-3.5 w-3.5" />
+              )}
+              Satış adlarını üret
+            </Button>
           </div>
+
+          {namePreview && (
+            <Card className="space-y-2 border-primary/30 bg-primary/5 p-3">
+              {namePreview.willUpdate === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Adsız ürün yok — hepsinin satış adı girilmiş.
+                </p>
+              ) : (
+                <>
+                  <p className="text-sm">
+                    <strong>{namePreview.willUpdate}</strong> ürünün satış adı yazılacak. Elle
+                    yazdığınız adlara dokunulmaz.
+                  </p>
+                  <div className="max-h-40 space-y-0.5 overflow-y-auto rounded-md border bg-background p-2">
+                    {namePreview.sample.map(s => (
+                      <p key={s.masterId} className="text-xs">
+                        <span className="font-mono text-[10px] text-muted-foreground">{s.sku}</span>{" "}
+                        <span className="font-medium">{s.next}</span>
+                      </p>
+                    ))}
+                    {namePreview.willUpdate > namePreview.sample.length && (
+                      <p className="text-xs text-muted-foreground">
+                        …ve {namePreview.willUpdate - namePreview.sample.length} tane daha
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      disabled={nameRun.isPending}
+                      onClick={() => nameRun.mutate({ dryRun: false, overwrite: false })}
+                    >
+                      {namePreview.willUpdate} adı yaz
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setNamePreview(null)}>
+                      Vazgeç
+                    </Button>
+                  </div>
+                </>
+              )}
+            </Card>
+          )}
           <ProductTree rows={(track?.rows ?? []) as never} onlyProblem={onlyProblem} />
           <MasterImport open={importOpen} onOpenChange={setImportOpen} />
         </TabsContent>
 
-        <TabsContent value="seriler" className="space-y-3 pt-3">
-          <Card className="overflow-hidden p-0">
-            <div className="border-b p-4">
-              <p className="font-semibold">Seri Takibi</p>
-              <p className="text-sm text-muted-foreground">
-                En zayıf seri üstte. "İlansız" sütunu açılmamış pazarı, "üretilemeyen" hammadde
-                sorununu gösterir.
-              </p>
-            </div>
-            <table className="w-full text-sm">
-              <thead className="bg-muted/50 text-xs text-muted-foreground">
-                <tr>
-                  <th className="p-2 text-left">Seri</th>
-                  <th className="p-2 text-right">Ürün</th>
-                  <th className="p-2 text-right">Ort. tamamlanma</th>
-                  <th className="p-2 text-right">İlansız</th>
-                  <th className="p-2 text-right">Üretilemeyen</th>
-                  <th className="p-2 text-right">Canlı ilan</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(track?.series ?? []).map(s => (
-                  <tr key={s.seriesId} className="border-t">
-                    <td className="p-2 font-medium">{s.seriesName}</td>
-                    <td className="p-2 text-right tabular-nums">{s.masterCount}</td>
-                    <td className="p-2 text-right tabular-nums">%{s.avgScore}</td>
-                    <td className="p-2 text-right tabular-nums">
-                      {s.withoutListing > 0 ? (
-                        <span className="font-medium text-amber-600">{s.withoutListing}</span>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td className="p-2 text-right tabular-nums">
-                      {s.notBuildable > 0 ? (
-                        <span className="font-medium text-rose-600">{s.notBuildable}</span>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td className="p-2 text-right tabular-nums text-emerald-600">{s.liveListings}</td>
-                  </tr>
-                ))}
-                {(track?.series ?? []).length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="p-6 text-center text-sm text-muted-foreground">
-                      Henüz ürün yok.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </Card>
-        </TabsContent>
 
         <TabsContent value="kurulum" className="space-y-4 pt-3">
+
+      {/* Seriler burada: seri tanımı /sablonlar sayfasının içindeydi ve o
+          sayfa menüde hiç yoktu — seri düzenlemek için adresi elle yazmak
+          gerekiyordu. Seri kurgusunun ilk adımı serinin kendisidir. */}
+      <SeriesManager />
 
       {/* 1 — Boyutlar */}
       <Card className="space-y-3 p-5">
