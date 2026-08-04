@@ -1,6 +1,7 @@
 import AttributeMapping from "@/components/AttributeMapping";
 import CategoryMapping from "@/components/CategoryMapping";
 import MarketplaceReconcile from "@/components/MarketplaceReconcile";
+import PushPreview, { type PushItem } from "@/components/PushPreview";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -185,6 +186,17 @@ export default function Publish() {
 
   const { data: status } = trpc.katalog.syncStatus.useQuery();
   const [cardProblems, setCardProblems] = useState<string[]>([]);
+  const [pushItems, setPushItems] = useState<PushItem[]>([]);
+
+  /** Önizlemeyi tazeler — kalem düzeltilince yeni hâli görünsün. */
+  const refreshPreview = () =>
+    pushCards.mutate({
+      channelId: activeChannel,
+      seriesIds: Array.from(selectedSeries),
+      includeUnbuildable,
+      updateExisting,
+      dryRun: true,
+    });
 
   const syncNow = trpc.katalog.syncChannel.useMutation({
     onSuccess: r => {
@@ -205,13 +217,15 @@ export default function Publish() {
       setCardProblems(r.problems);
       utils.katalog.invalidate();
       if (r.dryRun) {
-        toast.info(
-          `${r.willSend} yeni kart · ${r.willUpdate} güncelleme gönderilecek` +
-            (r.problems.length ? ` · ${r.problems.length} sorun` : ""),
-          { duration: 9000 },
-        );
+        // Önizleme artık bildirim değil sayfa: kalemler düzeltilebilir halde
+        // listelenir, gönderim oradan tetiklenir.
+        setPushItems(r.items ?? []);
+        if ((r.items ?? []).length === 0) {
+          toast.info("Gönderilecek kalem yok — sebepler aşağıda.", { duration: 9000 });
+        }
         return;
       }
+      setPushItems([]);
       toast.success(
         `${r.sent} kart açıldı · ${r.updated} kart güncellendi` +
           (r.problems.length ? ` · ${r.problems.length} sorun` : ""),
@@ -544,6 +558,25 @@ export default function Publish() {
               </div>
             )}
           </Card>
+
+          {/* Önizleme: ne gideceği ve gönderim öncesi düzeltme. */}
+          {pushItems.length > 0 && (
+            <PushPreview
+              items={pushItems}
+              problems={cardProblems}
+              sending={pushCards.isPending}
+              onRefresh={refreshPreview}
+              onSend={() =>
+                pushCards.mutate({
+                  channelId: activeChannel,
+                  seriesIds: Array.from(selectedSeries),
+                  includeUnbuildable,
+                  updateExisting,
+                  dryRun: false,
+                })
+              }
+            />
+          )}
         </TabsContent>
 
         <TabsContent value="kategori" className="pt-3">

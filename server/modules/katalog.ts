@@ -3959,6 +3959,41 @@ export const katalogRouter = router({
     }),
 
   /**
+   * Gönderim önizlemesinden tek ilanı düzeltir.
+   *
+   * Metin normalde içerik zincirinden (blok → seri) türetilir. Buradaki yazma
+   * o ilana ÖZELDİR ve zinciri ezer: tek bir ilanın başlığını düzeltmek için
+   * blok metnini değiştirmek, aynı bloğu paylaşan bütün ilanları etkilerdi.
+   */
+  saveListingForPush: protectedProcedure
+    .input(
+      z.object({
+        listingId: z.number(),
+        channelListingId: z.number().optional(),
+        title: z.string().trim().min(1).optional(),
+        longDescription: z.string().optional(),
+        price: z.number().nonnegative().optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const patch: Record<string, unknown> = {};
+      if (input.title !== undefined) patch.title = input.title;
+      if (input.longDescription !== undefined) patch.longDescription = input.longDescription;
+      if (Object.keys(patch).length > 0) {
+        await db.updateListing(input.listingId, patch as never);
+      }
+
+      if (input.price !== undefined && input.channelListingId) {
+        // Fiyat değişince satır kirlenir ki stok/fiyat gönderimi de yakalasın.
+        await db.updateChannelListing(input.channelListingId, {
+          price: String(input.price),
+          syncState: "kirli",
+        } as never);
+      }
+      return { ok: true };
+    }),
+
+  /**
    * Pazaryerinde olup Kokpit'te olmayan ürünlerden master üretir.
    *
    * Kataloğumuz küp (seri × renk × ambalaj × form); pazaryeri kaydı bu
@@ -4573,6 +4608,39 @@ export const katalogRouter = router({
       }
 
       if (input.dryRun) {
+        /*
+         * Önizleme artık SAYI değil KALEM döner.
+         *
+         * "1 yeni kart · 0 güncelleme" bildirimi ne gideceğini göstermiyordu:
+         * başlık, açıklama ve fiyat ancak pazaryerine düştükten sonra görülüyor,
+         * yanlışsa ürün yayına yanlış çıkıyordu. Kalemler ilan kimliğiyle
+         * birlikte döner ki ekran gönderim öncesi düzeltme yapabilsin.
+         */
+        const bySku = new Map(
+          (channelListings as Record<string, unknown>[])
+            .filter(c => c.channelId === input.channelId)
+            .map(c => [String(c.channelSku ?? ""), c]),
+        );
+        const detail = (rows: typeof items, mode: "yeni" | "guncelleme") =>
+          rows.map(i => {
+            const cl = bySku.get(i.stockCode);
+            const item = i as unknown as Record<string, unknown>;
+            return {
+              mode,
+              barcode: String(item.barcode ?? ""),
+              stockCode: i.stockCode,
+              title: String(item.title ?? ""),
+              description: String(item.description ?? ""),
+              listPrice: Number(item.listPrice ?? 0),
+              salePrice: Number(item.salePrice ?? 0),
+              imageCount: Array.isArray(item.images) ? item.images.length : 0,
+              attributeCount: Array.isArray(item.attributes) ? item.attributes.length : 0,
+              categoryId: Number(item.categoryId ?? 0) || null,
+              listingId: (cl?.listingId as number) ?? null,
+              channelListingId: (cl?.id as number) ?? null,
+            };
+          });
+
         return {
           dryRun: true,
           willSend: fresh.length,
@@ -4582,6 +4650,7 @@ export const katalogRouter = router({
           batchRequestId: null,
           updateBatchRequestId: null,
           alreadyOnMarketplace: items.length - fresh.length,
+          items: [...detail(fresh, "yeni"), ...detail(stale, "guncelleme")],
           problems: allProblems,
         };
       }
