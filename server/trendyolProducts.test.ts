@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseCardSettings,
-  type TrendyolCardSettings,
-} from "./trendyolProducts";
+  type TrendyolCardSettings, explainTrendyolError } from "./trendyolProducts";
 import type { Product } from "../drizzle/schema";
 
 const cfg: TrendyolCardSettings = {
@@ -121,5 +120,34 @@ describe("parseCardSettings", () => {
     });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.missing.join(" ")).toContain("geçersiz JSON");
+  });
+});
+
+describe("Trendyol hata çevirisi", () => {
+  /*
+   * Trendyol'un message alanı çoğu zaman "Bilinmeyen bir hata oluştu" diyor;
+   * asıl bilgi key'de. Kullanıcıya ham JSON gösterilmemeli.
+   */
+  it("bilinen anahtarı Türkçe açıklamaya çevirir", () => {
+    const body = JSON.stringify({
+      errors: [
+        {
+          key: "batchRequest.recurring.product.create.not.allowed",
+          message: "Bilinmeyen bir hata oluştu",
+        },
+      ],
+    });
+    const out = explainTrendyolError(body);
+    expect(out).toContain("zaten kayıtlı");
+    expect(out).not.toContain("Bilinmeyen");
+  });
+
+  it("bilinmeyen anahtarda mesajla birlikte anahtarı gösterir", () => {
+    const body = JSON.stringify({ errors: [{ key: "some.new.key", message: "Hata" }] });
+    expect(explainTrendyolError(body)).toBe("Hata (some.new.key)");
+  });
+
+  it("JSON değilse gövdeyi kırpar", () => {
+    expect(explainTrendyolError("<html>502</html>")).toBe("<html>502</html>");
   });
 });

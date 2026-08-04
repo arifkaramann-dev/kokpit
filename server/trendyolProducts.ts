@@ -135,6 +135,43 @@ export function isTrendyolConfigured(): boolean {
   return Boolean(ENV.trendyolSellerId && ENV.trendyolApiKey && ENV.trendyolApiSecret);
 }
 
+/**
+ * Trendyol hata anahtarlarının Türkçe karşılığı.
+ *
+ * Trendyol'un `message` alanı çoğu zaman "Bilinmeyen bir hata oluştu" diyor;
+ * asıl bilgi `key` alanında. Ham JSON'u kullanıcıya göstermek ne olduğunu
+ * anlatmıyordu.
+ */
+const TRENDYOL_ERROR_HINTS: Record<string, string> = {
+  "batchRequest.recurring.product.create.not.allowed":
+    "Bu barkod Trendyol'da zaten kayıtlı — mevcut ürün için yeniden 'oluştur' gönderilemez. " +
+    "Ürün Trendyol'da varsa kart açmak yerine stok/fiyat gönderimini kullanın; " +
+    "gerçekten yeni ürünse barkodu değiştirin.",
+  "barcode.already.exists": "Bu barkod başka bir üründe kayıtlı.",
+  "product.barcode.invalid": "Barkod biçimi Trendyol tarafından kabul edilmedi.",
+  "category.not.found": "Seçilen Trendyol kategorisi bulunamadı — Kategori Eşlemesi'ni kontrol edin.",
+  "brand.not.found": "Marka ID Trendyol'da bulunamadı — Ayarlar'daki marka kimliğini kontrol edin.",
+};
+
+/** Trendyol hata gövdesini okunur tek satıra çevirir. */
+export function explainTrendyolError(body: string): string {
+  try {
+    const parsed = JSON.parse(body) as {
+      errors?: { key?: string; message?: string }[];
+    };
+    const parts = (parsed.errors ?? []).map(e => {
+      const hint = e.key ? TRENDYOL_ERROR_HINTS[e.key] : null;
+      if (hint) return hint;
+      const msg = (e.message ?? "").trim();
+      // "Bilinmeyen bir hata" tek başına bilgi taşımıyor; anahtarı da göster.
+      return e.key ? `${msg || "hata"} (${e.key})` : msg;
+    });
+    return parts.filter(Boolean).join(" · ") || body.slice(0, 300);
+  } catch {
+    return body.slice(0, 300);
+  }
+}
+
 /** Ürün kartlarını gönderir; asenkron sonuç için batchRequestId döner. */
 export async function pushTrendyolProductCards(items: TrendyolProductItem[]) {
   if (!isTrendyolConfigured()) {
@@ -147,8 +184,8 @@ export async function pushTrendyolProductCards(items: TrendyolProductItem[]) {
     throw new Error("Trendyol API bilgileri reddedildi (yetki hatası).");
   }
   if (!res.ok) {
-    const body = (await res.text()).slice(0, 400);
-    throw new Error(`Trendyol ürün kartı gönderimi başarısız (${res.status}): ${body}`);
+    const body = await res.text();
+    throw new Error(`Trendyol ürün kartı açılamadı: ${explainTrendyolError(body)}`);
   }
   const data = (await res.json()) as { batchRequestId?: string };
   return { batchRequestId: data.batchRequestId ?? null, sent: items.length };
