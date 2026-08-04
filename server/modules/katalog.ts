@@ -86,6 +86,7 @@ import {
   resolveOrderLines,
 } from "../productionPlan";
 import { matchAttributeValues } from "../attributeMatch";
+import { reconcileCatalogs, reconcileSummary } from "../marketplaceReconcile";
 import { planPublications, summarizeSkips } from "../publishPlan";
 import { GENERIC_USE_CASE_CODE, seedCatalogDimensions } from "../seedCatalog";
 import { fetchHepsiburadaCategories, fetchHepsiburadaCategoryAttributes } from "../hepsiburada";
@@ -93,6 +94,7 @@ import {
   fetchTrendyolCategories,
   fetchTrendyolCategoryAttributes,
   fetchTrendyolExistingBarcodes,
+  fetchTrendyolProducts,
   parseCardSettings,
   pushTrendyolProductCards,
   searchTrendyolBrands,
@@ -3875,6 +3877,107 @@ export const katalogRouter = router({
         else updated += 1;
       }
       return { added, updated, total: rows.length, options };
+    }),
+
+  /**
+   * Pazaryeri ↔ Kokpit ürün mutabakatı.
+   *
+   * "Trendyol'daki ürünler sistemde var mı, güncelleyebilir miyim?" sorusunun
+   * cevabı. Güncelleme yalnız iki tarafta da kaydı olan ürün için mümkün;
+   * bu uç hangilerinin öyle olduğunu ve kalanların neden olmadığını söyler.
+   */
+  reconcileMarketplace: protectedProcedure
+    .input(z.object({ channelId: z.number() }))
+    .mutation(async ({ input }) => {
+      const channels = (await db.listSalesChannels()) as { id: number; code: string }[];
+      const channel = channels.find(c => c.id === input.channelId);
+      if (!channel) throw new TRPCError({ code: "NOT_FOUND", message: "Kanal bulunamadı" });
+      if (channel.code !== "trendyol") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `"${channel.code}" kanalı için ürün listesi çekilemiyor — şimdilik yalnız Trendyol.`,
+        });
+      }
+
+      let remoteRows;
+      try {
+        remoteRows = await fetchTrendyolProducts();
+      } catch (error) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: error instanceof Error ? error.message : "Pazaryeri ürün listesi alınamadı",
+        });
+      }
+
+      const [channelListings, listings] = await Promise.all([
+        db.listChannelListings(),
+        db.listListings(),
+      ]);
+      const titleById = new Map(
+        (listings as Record<string, unknown>[]).map(l => [l.id as number, String(l.title ?? "")]),
+      );
+
+      const localRows = (channelListings as Record<string, unknown>[])
+        .filter(c => c.channelId === input.channelId)
+        .map(c => ({
+          channelListingId: c.id as number,
+          barcode: String(c.channelBarcode ?? ""),
+          sku: String(c.channelSku ?? ""),
+          title: titleById.get(c.listingId as number) ?? String(c.channelSku ?? ""),
+        }));
+
+      const result = reconcileCatalogs(
+        localRows,
+        remoteRows.map(r => ({
+          barcode: r.barcode,
+          title: r.title,
+          stockCode: r.stockCode,
+          approved: r.approved,
+          onSale: r.onSale,
+          quantity: r.quantity,
+          salePrice: r.salePrice,
+        })),
+      );
+
+      return {
+        summary: reconcileSummary(result),
+        // Ekran listeleri sınırlanır: binlerce satır tarayıcıyı kilitler.
+        matched: result.matched.slice(0, 200),
+        onlyRemote: result.onlyRemote.slice(0, 200),
+        onlyLocal: result.onlyLocal.slice(0, 200),
+      };
+    }),
+
+  /**
+   * Pazaryerindeki bir ürünü bizdeki ilana bağlar (barkodu ona çevirir).
+   *
+   * Bağlandıktan sonra güncellemeler o ürüne gider. Yanlış bağlama, sonraki
+   * güncellemede BAŞKA bir ürünün başlığını ezeceği için otomatik yapılmaz;
+   * kullanıcı onaylar.
+   */
+  linkMarketplaceProduct: protectedProcedure
+    .input(z.object({ channelListingId: z.number(), barcode: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      const rows = (await db.listChannelListings()) as Record<string, unknown>[];
+      const target = rows.find(r => r.id === input.channelListingId);
+      if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "İlan bulunamadı" });
+
+      // Barkod kanal içinde tekil: başka ilan bu barkodu tutuyorsa çakışır.
+      const clash = rows.find(
+        r =>
+          r.channelId === target.channelId &&
+          r.id !== target.id &&
+          String(r.channelBarcode ?? "").trim() === input.barcode.trim(),
+      );
+      if (clash) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Bu barkod başka bir ilana bağlı (${String(clash.channelSku ?? clash.id)}). Önce onu çözün.`,
+        });
+      }
+
+      await db.setChannelListingBarcode(input.channelListingId, input.barcode.trim());
+      return { ok: true };
     }),
 
   /**
