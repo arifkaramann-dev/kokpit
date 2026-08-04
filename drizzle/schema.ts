@@ -1650,6 +1650,43 @@ export const channelAttributeValues = mysqlTable(
 export type ChannelAttributeValue = typeof channelAttributeValues.$inferSelect;
 
 /**
+ * Pazaryerinin bir özellik için KABUL ETTİĞİ değerler (seçenek kataloğu).
+ *
+ * "Pazaryerinden çek" yanıtı bu listeyi zaten taşıyordu ama atılıyordu; sonuçta
+ * kullanıcı "Fuşya"nın Trendyol karşılığını panelde arayıp kimliği elle
+ * yazıyordu — her renk, her özellik, her kanal için ayrı ayrı. Liste burada
+ * saklanınca eşleme yazmak değil SEÇMEK olur, üstelik ada göre otomatik
+ * eşleştirilebilir.
+ *
+ * Bu tablo pazaryerinin kataloğudur (bizim seçimimiz değil); her çekmede
+ * kategori+özellik için tazelenir. Bizim seçimimiz `channelAttributeValues`.
+ */
+export const channelAttributeOptions = mysqlTable(
+  "channelAttributeOptions",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    channelId: int("channelId").notNull(),
+    categoryId: varchar("categoryId", { length: 64 }).notNull(),
+    attributeId: int("attributeId").notNull(),
+    valueId: int("valueId").notNull(),
+    valueName: varchar("valueName", { length: 255 }).notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  t => [
+    unique("channelAttributeOptions_uq").on(
+      t.channelId,
+      t.categoryId,
+      t.attributeId,
+      t.valueId,
+    ),
+    index("channelAttributeOptions_attr_idx").on(t.channelId, t.categoryId, t.attributeId),
+  ],
+);
+
+export type ChannelAttributeOption = typeof channelAttributeOptions.$inferSelect;
+
+/**
  * Pazaryeri ürün kartı batch işleri.
  *
  * Trendyol/Hepsiburada/N11 ürün kartı açma (create) ve güncelleme asenkron
@@ -1670,7 +1707,9 @@ export const marketplaceBatchJobs = mysqlTable(
     companyId: int("companyId").notNull().default(1),
     channelListingId: int("channelListingId").notNull(),
     marketplace: varchar("marketplace", { length: 50 }).notNull(),
-    batchRequestId: varchar("batchRequestId", { length: 255 }).notNull().unique(),
+    // Tekil DEĞİL: bir batch birden çok ilanı kapsar, her ilan için bir satır
+    // yazılır. Tekil kısıt ikinci satırı duplicate key ile düşürürdü.
+    batchRequestId: varchar("batchRequestId", { length: 255 }).notNull(),
     status: mysqlEnum("status", ["pending", "success", "failed"])
       .notNull()
       .default("pending"),

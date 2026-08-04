@@ -180,6 +180,14 @@ export default function CategoryMapping({
   );
 }
 
+/**
+ * Bir kullanım alanının kanal kategorisi.
+ *
+ * Eskiden satırda iki boş kutu vardı (kimlik + ad) ve arama 14 piksellik
+ * etiketsiz bir büyüteçti; sonuç olarak kimlik pazaryeri panelinden tek tek
+ * kopyalanıyordu. Artık arama ana kontrol, eşlenen kategori okunur biçimde
+ * görünüyor, elle kimlik girişi yalnız istendiğinde açılıyor.
+ */
 function CategoryRow({
   channelId,
   useCaseName,
@@ -191,6 +199,7 @@ function CategoryRow({
   current: { categoryId: string; categoryName: string | null } | undefined;
   onSave: (categoryId: string, categoryName: string | null) => void;
 }) {
+  const [manual, setManual] = useState(false);
   const [id, setId] = useState(current?.categoryId ?? "");
   const [name, setName] = useState(current?.categoryName ?? "");
   const dirty = id !== (current?.categoryId ?? "") || name !== (current?.categoryName ?? "");
@@ -199,35 +208,64 @@ function CategoryRow({
     <tr className="border-t">
       <td className="p-2 font-medium">{useCaseName}</td>
       <td className="p-2">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <Input
-            value={id}
-            onChange={e => setId(e.target.value)}
-            placeholder="kimlik"
-            className="h-8 w-28 font-mono text-xs"
-          />
-          <Input
-            value={name}
-            onChange={e => setName(e.target.value)}
-            placeholder="kategori adı"
-            className="h-8 w-56 text-xs"
-          />
-          <CategorySearch
-            channelId={channelId}
-            onPick={(categoryId, categoryName) => {
-              setId(categoryId);
-              setName(categoryName);
-              onSave(categoryId, categoryName);
-            }}
-          />
-        </div>
+        {manual ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Input
+              value={id}
+              onChange={e => setId(e.target.value)}
+              placeholder="kimlik"
+              className="h-8 w-28 font-mono text-xs"
+            />
+            <Input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="kategori adı"
+              className="h-8 w-56 text-xs"
+            />
+            {dirty && id.trim() && (
+              <Button
+                size="sm"
+                className="h-8"
+                onClick={() => onSave(id.trim(), name.trim() || null)}
+              >
+                Kaydet
+              </Button>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            {current ? (
+              <span className="inline-flex min-w-0 items-center gap-1.5 text-sm">
+                <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                <span className="truncate">{current.categoryName || current.categoryId}</span>
+                <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                  {current.categoryId}
+                </span>
+              </span>
+            ) : (
+              <span className="text-xs text-muted-foreground">eşlenmedi</span>
+            )}
+            <CategorySearch
+              channelId={channelId}
+              label={current ? "Değiştir" : "Kategori seç"}
+              onPick={(categoryId, categoryName) => {
+                setId(categoryId);
+                setName(categoryName);
+                onSave(categoryId, categoryName);
+              }}
+            />
+          </div>
+        )}
       </td>
       <td className="p-2">
-        {dirty && id.trim() && (
-          <Button size="sm" className="h-8" onClick={() => onSave(id.trim(), name.trim() || null)}>
-            Kaydet
-          </Button>
-        )}
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-8 text-xs text-muted-foreground"
+          onClick={() => setManual(v => !v)}
+        >
+          {manual ? "Aramaya dön" : "Elle gir"}
+        </Button>
       </td>
     </tr>
   );
@@ -236,9 +274,11 @@ function CategoryRow({
 /** Pazaryerinin kendi kategori ağacında canlı arama. */
 function CategorySearch({
   channelId,
+  label,
   onPick,
 }: {
   channelId: number;
+  label: string;
   onPick: (categoryId: string, categoryName: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -251,8 +291,9 @@ function CategorySearch({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button size="sm" variant="ghost" className="h-8">
-          <Search className="h-3.5 w-3.5" />
+        <Button size="sm" variant="outline" className="ml-auto h-8 shrink-0 text-xs">
+          <Search className="mr-1.5 h-3.5 w-3.5" />
+          {label}
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-[32rem] p-0" align="start">

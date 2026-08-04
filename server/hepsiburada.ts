@@ -437,6 +437,59 @@ export async function fetchHepsiburadaCategories(): Promise<unknown> {
   throw new Error(`Hepsiburada kategori listesi alınamadı — ${errors.join(" · ")}`);
 }
 
+/**
+ * Bir Hepsiburada kategorisinin özellik (attribute) listesi.
+ *
+ * Kategori servisi gibi bu uç da MPOP tarafındadır; taban adlandırması
+ * kurulumdan kuruluma değiştiği için `fetchHepsiburadaCategories` ile aynı
+ * taban listesi sırayla denenir. Yanıt şekli sürümler arasında değiştiğinden
+ * ham veri döner; ayrıştırma çağıran tarafta savunmacı yapılır.
+ */
+export async function fetchHepsiburadaCategoryAttributes(categoryId: number): Promise<unknown> {
+  if (!ENV.hepsiburadaMerchantId) {
+    throw new Error(
+      "Hepsiburada özellik listesi için HEPSIBURADA_MERCHANT_ID gerekli — Render → Environment'a girin.",
+    );
+  }
+
+  const bases = [
+    process.env.HEPSIBURADA_MPOP_BASE_URL,
+    HB_SIT ? "https://mpop-sit.hepsiburada.com" : "https://mpop.hepsiburada.com",
+    HB_LISTING_API_BASE,
+  ].filter((b): b is string => Boolean(b));
+
+  const errors: string[] = [];
+  for (const base of bases) {
+    const url = new URL(`${base}/product/api/categories/${categoryId}/attributes`);
+    url.searchParams.set("merchantId", ENV.hepsiburadaMerchantId);
+
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        headers: {
+          Authorization: `Basic ${hbListingAuth()}`,
+          "User-Agent": hbUserAgent(),
+          Accept: "application/json",
+        },
+      });
+    } catch (error) {
+      errors.push(`${base}: ${error instanceof Error ? error.message : "bağlanılamadı"}`);
+      continue;
+    }
+
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(
+        "Hepsiburada yetki hatası: HEPSIBURADA_SERVICE_KEY (Servis Anahtarı) Render'a girilmeli — panelden 'API Entegrasyon İşlemleri' altında üretilir.",
+      );
+    }
+    if (res.ok) return res.json().catch(() => ({}));
+
+    errors.push(`${base} (${res.status}): ${(await res.text()).slice(0, 200)}`);
+  }
+
+  throw new Error(`Hepsiburada özellik listesi alınamadı — ${errors.join(" · ")}`);
+}
+
 async function hbListingPost(path: string, payload: unknown): Promise<string | null> {
   const res = await fetch(`${HB_LISTING_API_BASE}${path}`, {
     method: "POST",

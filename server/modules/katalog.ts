@@ -85,10 +85,10 @@ import {
   planProduction,
   resolveOrderLines,
 } from "../productionPlan";
+import { matchAttributeValues } from "../attributeMatch";
 import { planPublications, summarizeSkips } from "../publishPlan";
 import { GENERIC_USE_CASE_CODE, seedCatalogDimensions } from "../seedCatalog";
-import { fetchHepsiburadaCategories } from "../hepsiburada";
-import { pushHepsiburadaProductCards } from "../hepsiburadaProducts";
+import { fetchHepsiburadaCategories, fetchHepsiburadaCategoryAttributes } from "../hepsiburada";
 import {
   fetchTrendyolCategories,
   fetchTrendyolCategoryAttributes,
@@ -131,6 +131,87 @@ async function loadChannelCategories(channelCode: string): Promise<FlatCategory[
   const rows = flattenCategories(raw);
   categoryCache.set(channelCode, { at: Date.now(), rows });
   return rows;
+}
+
+/* ---- Pazaryeri özellik (attribute) normalizasyonu ------------------------ */
+
+/**
+ * Kanal farkı gözetmeyen özellik satırı — kayıt katmanı bunu bekler.
+ *
+ * `options`: pazaryerinin o özellik için KABUL ETTİĞİ değerler. Yanıt bunu
+ * zaten taşıyordu ama atılıyordu; saklanınca eşleme yazmak değil seçmek olur.
+ */
+type NormalizedAttribute = {
+  attributeId: number;
+  attributeName: string;
+  isRequired: boolean;
+  options: { valueId: number; valueName: string }[];
+};
+
+/** Ham değer dizisini `{valueId,valueName}` listesine indirger. */
+function normalizeOptionList(raw: unknown): { valueId: number; valueName: string }[] {
+  const rows = (Array.isArray(raw) ? raw : []) as Record<string, unknown>[];
+  const out: { valueId: number; valueName: string }[] = [];
+  for (const v of rows) {
+    const valueId = Number(v.id ?? v.valueId ?? 0);
+    const valueName = String(v.name ?? v.valueName ?? "").trim();
+    if (!valueId || !valueName) continue;
+    out.push({ valueId, valueName });
+  }
+  return out;
+}
+
+/**
+ * Trendyol:
+ * `{ categoryAttributes: [{ attribute: {id,name}, attributeValues: [{id,name}], required }] }`
+ */
+function normalizeTrendyolAttributes(raw: unknown): NormalizedAttribute[] {
+  const rows = ((raw as Record<string, unknown>)?.categoryAttributes ?? []) as Record<
+    string,
+    unknown
+  >[];
+  const out: NormalizedAttribute[] = [];
+  for (const row of rows) {
+    const attr = (row.attribute ?? {}) as Record<string, unknown>;
+    const attributeId = Number(attr.id ?? 0);
+    if (!attributeId) continue;
+    out.push({
+      attributeId,
+      attributeName: String(attr.name ?? ""),
+      isRequired: Boolean(row.required),
+      options: normalizeOptionList(row.attributeValues),
+    });
+  }
+  return out;
+}
+
+/**
+ * Hepsiburada: yanıt sarmalayıcısı sürümden sürüme değişiyor
+ * (`data` / `attributes` / düz dizi), zorunluluk alanı da
+ * `mandatory` ya da `required` olabiliyor. Hepsi savunmacı denenir.
+ */
+function normalizeHepsiburadaAttributes(raw: unknown): NormalizedAttribute[] {
+  const envelope = raw as Record<string, unknown> | unknown[] | null;
+  const rows = (
+    Array.isArray(envelope)
+      ? envelope
+      : ((envelope?.["data"] ?? envelope?.["attributes"] ?? envelope?.["categoryAttributes"] ?? []) as unknown[])
+  ) as Record<string, unknown>[];
+
+  const out: NormalizedAttribute[] = [];
+  for (const row of rows) {
+    // Kimlik sayısal olmayabilir (HB bazı özelliklerde metin anahtar verir);
+    // sayıya çevrilemeyen satır atlanır — şemamız sayısal kimlik tutuyor.
+    const attributeId = Number(row.id ?? row.attributeId ?? 0);
+    if (!attributeId) continue;
+    out.push({
+      attributeId,
+      attributeName: String(row.name ?? row.attributeName ?? ""),
+      isRequired: Boolean(row.mandatory ?? row.required ?? false),
+      options: normalizeOptionList(row.values ?? row.attributeValues ?? row.options),
+    });
+  }
+  return out;
 }
 
 /**
@@ -3682,19 +3763,36 @@ export const katalogRouter = router({
       if (!categoryId) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Kategori kimliği sayı olmalı" });
       }
-      let raw: unknown;
+      /*
+       * Özellikler kanalın KENDİ ucundan çekilir. Eskiden kanal ne olursa olsun
+       * Trendyol'a sorulurdu: Hepsiburada kategorisiyle (ör. 60007334) Trendyol'a
+       * gidilince "category.not.found" 404'ü dönüyordu — kullanıcı Hepsiburada
+       * ekranındayken Trendyol hatası görüyordu.
+       */
+      const channels = (await db.listSalesChannels()) as { id: number; code: string }[];
+      const channel = channels.find(c => c.id === input.channelId);
+      if (!channel) throw new TRPCError({ code: "NOT_FOUND", message: "Kanal bulunamadı" });
+
+      let rows: NormalizedAttribute[];
       try {
-        raw = await fetchTrendyolCategoryAttributes(categoryId);
+        if (channel.code === "trendyol") {
+          rows = normalizeTrendyolAttributes(await fetchTrendyolCategoryAttributes(categoryId));
+        } else if (channel.code === "hepsiburada") {
+          rows = normalizeHepsiburadaAttributes(await fetchHepsiburadaCategoryAttributes(categoryId));
+        } else {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `"${channel.code}" kanalı için özellik listesi çekilemiyor — özellikleri elle tanımlayın.`,
+          });
+        }
       } catch (error) {
+        if (error instanceof TRPCError) throw error;
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: error instanceof Error ? error.message : "Kategori özellikleri alınamadı",
         });
       }
-      const rows = ((raw as Record<string, unknown>)?.categoryAttributes ?? []) as Record<
-        string,
-        unknown
-      >[];
+
       const existing = (await db.listChannelAttributes(input.channelId)) as Record<string, unknown>[];
       const known = new Set(
         existing
@@ -3704,26 +3802,113 @@ export const katalogRouter = router({
 
       let added = 0;
       let updated = 0;
+      let options = 0;
       for (const row of rows) {
-        const attr = (row.attribute ?? {}) as Record<string, unknown>;
-        const attributeId = Number(attr.id ?? 0);
-        if (!attributeId) continue;
-        const attributeName = String(attr.name ?? "");
-        const isNew = !known.has(attributeId);
+        const isNew = !known.has(row.attributeId);
         await db.upsertChannelAttribute({
           channelId: input.channelId,
           categoryId: input.categoryId,
-          attributeId,
-          attributeName,
-          source: guessSource(attributeName),
-          isRequired: Boolean(row.required),
+          attributeId: row.attributeId,
+          attributeName: row.attributeName,
+          source: guessSource(row.attributeName),
+          isRequired: row.isRequired,
           // Mevcut satırda kullanıcının seçimi korunur.
           keepSource: !isNew,
         });
+        // Seçenek kataloğu: eşlemeyi elle YAZMAK yerine SEÇMEYİ mümkün kılar.
+        await db.replaceChannelAttributeOptions(
+          input.channelId,
+          input.categoryId,
+          row.attributeId,
+          row.options,
+        );
+        options += row.options.length;
         if (isNew) added += 1;
         else updated += 1;
       }
-      return { added, updated, total: rows.length };
+      return { added, updated, total: rows.length, options };
+    }),
+
+  /** Pazaryerinin kabul ettiği değerler — eşleme ekranındaki seçim listesi. */
+  channelAttributeOptions: protectedProcedure
+    .input(z.object({ channelId: z.number(), categoryId: z.string().optional() }))
+    .query(({ input }) => db.listChannelAttributeOptions(input.channelId, input.categoryId)),
+
+  /**
+   * Eşlenmemiş boyut değerlerini pazaryeri seçenekleriyle ada göre eşleştirir.
+   *
+   * `dryRun` ile ne yazılacağı önce gösterilir — yanlış değer ürünü yanlış
+   * renkle listeler, onaysız yazılmaz. Yalnız EKSİK olanlara dokunur; kullanıcı
+   * elle düzelttiği bir eşleme varsa üzerine yazmaz.
+   */
+  autoMatchAttributeValues: protectedProcedure
+    .input(
+      z.object({
+        channelId: z.number(),
+        categoryId: z.string().min(1),
+        attributeId: z.number(),
+        dryRun: z.boolean().default(true),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const [defs, existing, options, colors, packagings, families, series] = await Promise.all([
+        db.listChannelAttributes(input.channelId),
+        db.listChannelAttributeValues(input.channelId),
+        db.listChannelAttributeOptions(input.channelId, input.categoryId),
+        db.listColors(),
+        db.listPackagings(),
+        db.listProductFamilies(),
+        db.listProductSeries(),
+      ]);
+
+      const def = (defs as Record<string, unknown>[]).find(
+        d => d.attributeId === input.attributeId && String(d.categoryId) === input.categoryId,
+      );
+      if (!def) throw new TRPCError({ code: "NOT_FOUND", message: "Özellik tanımı bulunamadı" });
+
+      const kind = String(def.source);
+      if (kind === "sabit" || kind === "hacim") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Bu özellik bir eksene bağlı değil — otomatik eşleme yalnız eksenli özellikler için.",
+        });
+      }
+
+      const src =
+        kind === "renk" ? colors : kind === "ambalaj" ? packagings : kind === "form" ? families : series;
+      const already = new Set(
+        (existing as Record<string, unknown>[])
+          .filter(v => v.attributeId === input.attributeId)
+          .map(v => v.dimensionId as number),
+      );
+      // Elle eşlenmişe dokunulmaz: otomatik eşleme kullanıcının kararını ezmez.
+      const pending = (src as Record<string, unknown>[])
+        .map(r => ({ id: r.id as number, name: String(r.name ?? "") }))
+        .filter(r => !already.has(r.id));
+
+      const { proposals, unmatched } = matchAttributeValues(
+        pending,
+        (options as Record<string, unknown>[]).map(o => ({
+          valueId: o.valueId as number,
+          valueName: String(o.valueName ?? ""),
+        })),
+      );
+
+      if (input.dryRun) {
+        return { dryRun: true, applied: 0, proposals, unmatched };
+      }
+
+      for (const p of proposals) {
+        await db.upsertChannelAttributeValue({
+          channelId: input.channelId,
+          attributeId: input.attributeId,
+          dimensionKind: kind as "renk" | "ambalaj" | "form" | "seri",
+          dimensionId: p.dimensionId,
+          attributeValueId: p.valueId,
+          attributeText: null,
+        });
+      }
+      return { dryRun: false, applied: proposals.length, proposals, unmatched };
     }),
 
   channelAttributeValues: protectedProcedure
@@ -4027,98 +4212,44 @@ export const katalogRouter = router({
           message: `Gönderilebilir kart yok — ${problems.slice(0, 3).join(" · ")}`,
         });
       }
+      let result: { batchRequestId: string | null; sent: number };
       try {
-        const result = await pushTrendyolProductCards(items as never);
-
-        if (result.batchRequestId) {
-          const allListings = await db.listChannelListings();
-          for (const item of items) {
-            const listing = (allListings as Record<string, unknown>[]).find(
-              l => l.channelId === input.channelId && (l as any).channelSku === item.stockCode,
-            );
-            if (listing?.id) {
-              await db.saveMarketplaceBatchJob(listing.id as number, "trendyol", result.batchRequestId);
-            }
-          }
-        }
-
-        return { dryRun: false, willSend: items.length, ...result, problems };
+        result = await pushTrendyolProductCards(items as never);
       } catch (error) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: error instanceof Error ? error.message : "Trendyol ürün gönderimi başarısız",
         });
       }
-    }),
 
-  pushCardsToHepsiburada: protectedProcedure
-    .input(
-      z.object({
-        channelId: z.number(),
-        seriesIds: z.array(z.number()).default([]),
-        dryRun: z.boolean().default(true),
-      }),
-    )
-    .mutation(async ({ input }) => {
-      const [channelListings, masters] = await Promise.all([
-        db.listChannelListings(),
-        db.listMasterProducts(),
-      ]);
-
-      const wantedSeries = input.seriesIds.length ? new Set(input.seriesIds) : null;
-      const masterRows = (masters as Record<string, unknown>[]).filter(
-        m => !wantedSeries || wantedSeries.has(m.seriesId as number),
-      );
-      const allowed = new Set(masterRows.map(m => m.id as number));
-
-      const items = (channelListings as Record<string, unknown>[])
-        .filter(c => c.channelId === input.channelId && allowed.has(c.masterId as number))
-        .map(c => ({
-          barcode: String(c.channelBarcode ?? ""),
-          title: "", // İlan başlığını kullan
-          categoryId: 1, // TODO: kategori eşlemesi
-          quantity: Number(c.quantity ?? 0),
-          price: num(c.price),
-          stock: Number(c.quantity ?? 0),
-          description: "",
-          images: [],
-        }));
-
-      const problems = items.length === 0 ? ["Gönderilecek geçerli ürün kalemi yok"] : [];
-
-      if (input.dryRun) {
-        return { dryRun: true, willSend: items.length, sent: 0, batchRequestId: null, problems };
-      }
-
-      if (items.length === 0) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: `Gönderilebilir kart yok — ${problems.join(" · ")}`,
-        });
-      }
-
-      try {
-        const result = await pushHepsiburadaProductCards(items as never);
-
-        if (result.batchRequestId) {
-          const allListings = await db.listChannelListings();
+      /*
+       * Kartlar Trendyol'a GİTTİ. Buradan sonrası yalnızca takip kaydı —
+       * hata verirse gönderimi başarısız SAYMAYIZ: kullanıcı "başarısız" görüp
+       * tekrar denerse aynı barkodlar ikinci kez gider ve "barkod zaten kayıtlı"
+       * hatasına düşer. Takip kaydı kaybolur, kart açılışı kaybolmaz.
+       */
+      let tracked = 0;
+      if (result.batchRequestId) {
+        try {
+          const allListings = (await db.listChannelListings()) as Record<string, unknown>[];
+          const bySku = new Map(
+            allListings
+              .filter(l => l.channelId === input.channelId)
+              .map(l => [String(l.channelSku ?? ""), l.id as number]),
+          );
           for (const item of items) {
-            const listing = (allListings as Record<string, unknown>[]).find(
-              l => l.channelId === input.channelId && (l as any).channelBarcode === item.barcode,
-            );
-            if (listing?.id) {
-              await db.saveMarketplaceBatchJob(listing.id as number, "hepsiburada", result.batchRequestId);
+            const listingId = bySku.get(item.stockCode);
+            if (listingId) {
+              await db.saveMarketplaceBatchJob(listingId, "trendyol", result.batchRequestId);
+              tracked += 1;
             }
           }
+        } catch (error) {
+          console.error("[katalog] batch takip kaydı yazılamadı:", error);
         }
-
-        return { dryRun: false, willSend: items.length, ...result, problems };
-      } catch (error) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: error instanceof Error ? error.message : "Hepsiburada ürün gönderimi başarısız",
-        });
       }
+
+      return { dryRun: false, willSend: items.length, ...result, tracked, problems };
     }),
 
   /**

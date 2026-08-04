@@ -69,6 +69,7 @@ import {
   masterImages,
   channelAttributes,
   channelAttributeValues,
+  channelAttributeOptions,
   materialReservations,
   salesChannels,
   channelListings,
@@ -2959,6 +2960,57 @@ export async function listChannelAttributeValues(channelId?: number) {
   const db = await requireDb();
   const q = db.select().from(channelAttributeValues);
   return channelId ? q.where(eq(channelAttributeValues.channelId, channelId)) : q;
+}
+
+/* ---- Pazaryeri seçenek kataloğu (izin verilen değerler) ---- */
+
+export async function listChannelAttributeOptions(channelId: number, categoryId?: string) {
+  const db = await requireDb();
+  return db
+    .select()
+    .from(channelAttributeOptions)
+    .where(
+      categoryId
+        ? and(
+            eq(channelAttributeOptions.channelId, channelId),
+            eq(channelAttributeOptions.categoryId, categoryId),
+          )
+        : eq(channelAttributeOptions.channelId, channelId),
+    );
+}
+
+/**
+ * Bir özelliğin seçenek listesini TAZELER (sil→yaz).
+ *
+ * Pazaryeri değeri kaldırdığında bizde asılı kalmasın diye birleştirme değil
+ * değiştirme yapılır: liste pazaryerinin o anki gerçeğidir.
+ */
+export async function replaceChannelAttributeOptions(
+  channelId: number,
+  categoryId: string,
+  attributeId: number,
+  options: { valueId: number; valueName: string }[],
+) {
+  const db = await requireDb();
+  await db
+    .delete(channelAttributeOptions)
+    .where(
+      and(
+        eq(channelAttributeOptions.channelId, channelId),
+        eq(channelAttributeOptions.categoryId, categoryId),
+        eq(channelAttributeOptions.attributeId, attributeId),
+      ),
+    );
+  if (options.length === 0) return;
+  await db.insert(channelAttributeOptions).values(
+    options.map(o => ({
+      channelId,
+      categoryId,
+      attributeId,
+      valueId: o.valueId,
+      valueName: o.valueName.slice(0, 255),
+    })),
+  );
 }
 
 export async function upsertChannelAttributeValue(input: {

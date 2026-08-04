@@ -6,11 +6,6 @@ import {
   extractTrendyolBatchStatus,
   isTrendyolConfigured,
 } from "../trendyolProducts";
-import {
-  getHepsiburadaProductBatchStatus,
-  extractHepsiburadaBatchStatus,
-  isHepsiburadaConfigured,
-} from "../hepsiburadaProducts";
 
 /**
  * Pazaryeri batch status polling daemon.
@@ -29,47 +24,45 @@ export async function pollMarketplaceBatches() {
 
   if (pendingBatches.length === 0) return;
 
+  /*
+   * Bir batch birden çok ilanı kapsar ve her ilan için bir satır yazılır.
+   * Kimlik başına TEK sorgu atılır; sonuç o kimliğin tüm satırlarına yazılır —
+   * yoksa 20 kalemlik bir parti pazaryerine 20 kez sorulurdu.
+   */
+  const byBatchId = new Map<string, typeof pendingBatches>();
   for (const batch of pendingBatches) {
+    const list = byBatchId.get(batch.batchRequestId) ?? [];
+    list.push(batch);
+    byBatchId.set(batch.batchRequestId, list);
+  }
+
+  for (const [batchRequestId, rows] of Array.from(byBatchId.entries())) {
+    const marketplace = rows[0].marketplace;
+    // Kart açma şu an yalnız Trendyol'da var; başka kanal eklenince buraya
+    // kendi durum sorgusuyla girer (uydurma uç yerine gerçek sözleşmeyle).
+    if (marketplace !== "trendyol" || !isTrendyolConfigured()) continue;
+
     try {
-      if (batch.marketplace === "trendyol" && isTrendyolConfigured()) {
-        const batchData = await getTrendyolProductBatchStatus(batch.batchRequestId);
-        const { finalStatus, errorMessage } = extractTrendyolBatchStatus(batchData);
+      const batchData = await getTrendyolProductBatchStatus(batchRequestId);
+      const { finalStatus, errorMessage } = extractTrendyolBatchStatus(batchData);
+      if (finalStatus === "pending") continue;
 
-        await db
-          .update(marketplaceBatchJobs)
-          .set({
-            status: finalStatus,
-            errorMessage,
-            completedAt: finalStatus !== "pending" ? new Date() : null,
-            updatedAt: new Date(),
-          })
-          .where(eq(marketplaceBatchJobs.id, batch.id));
-      } else if (batch.marketplace === "hepsiburada" && isHepsiburadaConfigured()) {
-        const batchData = await getHepsiburadaProductBatchStatus(batch.batchRequestId);
-        const { finalStatus, errorMessage } = extractHepsiburadaBatchStatus(batchData);
-
-        await db
-          .update(marketplaceBatchJobs)
-          .set({
-            status: finalStatus,
-            errorMessage,
-            completedAt: finalStatus !== "pending" ? new Date() : null,
-            updatedAt: new Date(),
-          })
-          .where(eq(marketplaceBatchJobs.id, batch.id));
-      }
-      // TODO: N11 için benzer polling
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : "Bilinmeyen hata";
       await db
         .update(marketplaceBatchJobs)
         .set({
-          status: "failed",
-          errorMessage: `Polling hatası: ${errorMsg.slice(0, 200)}`,
+          status: finalStatus,
+          errorMessage,
           completedAt: new Date(),
           updatedAt: new Date(),
         })
-        .where(eq(marketplaceBatchJobs.id, batch.id));
+        .where(eq(marketplaceBatchJobs.batchRequestId, batchRequestId));
+    } catch (error) {
+      /*
+       * Sorgu hatası batch'in BAŞARISIZ olduğu anlamına gelmez (ağ, kota,
+       * pazaryeri 5xx). "failed" yazmak yanlış bilgi olurdu; satır pending
+       * kalır ve sonraki turda yeniden sorulur.
+       */
+      console.error(`[batch] ${batchRequestId} durumu sorulamadı:`, error);
     }
   }
 }
