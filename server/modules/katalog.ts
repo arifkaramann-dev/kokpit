@@ -4011,6 +4011,8 @@ export const katalogRouter = router({
         seriesId: z.number(),
         useCaseId: z.number(),
         barcodes: z.array(z.string()).default([]),
+        /** Pazaryerinden okunan ama Tanımlar'da olmayan değerler eklensin mi? */
+        createMissingDefinitions: z.boolean().default(false),
         dryRun: z.boolean().default(true),
       }),
     )
@@ -4061,7 +4063,7 @@ export const katalogRouter = router({
         }));
 
       const plan = planProductImport({
-        candidates,
+        candidates: candidates.map(c => ({ ...c })),
         colors: dim(colors),
         packagings: dim(packagings),
         families: dim(families),
@@ -4071,11 +4073,50 @@ export const katalogRouter = router({
         return {
           dryRun: true,
           created: 0,
+          createdDefinitions: 0,
           ready: plan.ready.slice(0, 200),
           blocked: plan.blocked.slice(0, 200),
+          missingDefinitions: plan.missingDefinitions,
           readyCount: plan.ready.length,
           blockedCount: plan.blocked.length,
         };
+      }
+
+      /*
+       * Eksik tanımları oluşturma — yalnız istenirse.
+       *
+       * Pazaryerinden okunan renk/ambalaj/form adları Tanımlar'da yoksa ürün
+       * oluşturulamıyordu ve kullanıcı her birini elle eklemek zorundaydı.
+       * Yine de sessizce yapılmaz: tanım yaratmak kataloğu kalıcı olarak
+       * büyütür, kararı kullanıcı verir.
+       */
+      let createdDefinitions = 0;
+      let effectivePlan = plan;
+      if (input.createMissingDefinitions && plan.missingDefinitions.length > 0) {
+        const table = { renk: "colors", ambalaj: "packagings", form: "families" } as const;
+        for (const def of plan.missingDefinitions) {
+          try {
+            await db.createDimension(table[def.axis], { name: def.name, isActive: 1 });
+            createdDefinitions += 1;
+          } catch (error) {
+            console.error(`[katalog] ${def.axis} tanımı eklenemedi (${def.name}):`, error);
+          }
+        }
+        // Plan yeni tanımlarla YENİDEN kurulur; yoksa az önce eklenen renk
+        // için ürün hâlâ "çözülemedi" sayılır ve içe aktarma boşa çıkardı.
+        if (createdDefinitions > 0) {
+          const [c2, p2, f2] = await Promise.all([
+            db.listColors(),
+            db.listPackagings(),
+            db.listProductFamilies(),
+          ]);
+          effectivePlan = planProductImport({
+            candidates: candidates.map(c => ({ ...c })),
+            colors: dim(c2),
+            packagings: dim(p2),
+            families: dim(f2),
+          });
+        }
       }
 
       /*
@@ -4087,7 +4128,7 @@ export const katalogRouter = router({
       const failures: string[] = [];
       const brand = "Artofcolour";
 
-      for (const row of plan.ready) {
+      for (const row of effectivePlan.ready) {
         try {
           const baseCode = buildBaseCode({
             brand,
@@ -4142,10 +4183,12 @@ export const katalogRouter = router({
       return {
         dryRun: false,
         created,
+        createdDefinitions,
         ready: [],
-        blocked: plan.blocked.slice(0, 200),
-        readyCount: plan.ready.length,
-        blockedCount: plan.blocked.length,
+        blocked: effectivePlan.blocked.slice(0, 200),
+        missingDefinitions: effectivePlan.missingDefinitions,
+        readyCount: effectivePlan.ready.length,
+        blockedCount: effectivePlan.blocked.length,
         failures,
       };
     }),
