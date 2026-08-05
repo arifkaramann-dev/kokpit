@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -52,7 +53,11 @@ function ImportPanel({ channelId, onDone }: { channelId: number; onDone: () => v
         );
         return;
       }
-      toast.success(`${r.created} ürün Kokpit'e eklendi`, { duration: 10000 });
+      toast.success(
+        `${r.created} ürün Kokpit'e eklendi` +
+          (r.createdDefinitions ? ` · ${r.createdDefinitions} yeni tanım` : ""),
+        { duration: 10000 },
+      );
       if (r.failures?.length) {
         toast.error(`${r.failures.length} kalem yazılamadı: ${r.failures[0]}`, { duration: 12000 });
       }
@@ -63,14 +68,23 @@ function ImportPanel({ channelId, onDone }: { channelId: number; onDone: () => v
 
   const ready = runImport.data?.dryRun ? runImport.data.ready : [];
   const blocked = runImport.data?.blocked ?? [];
+  const missingDefs = runImport.data?.missingDefinitions ?? [];
   const canRun = seriesId !== "" && useCaseId !== "";
+  const [createDefs, setCreateDefs] = useState(false);
+
+  const axisLabel: Record<string, string> = {
+    renk: "Renk",
+    ambalaj: "Ambalaj",
+    form: "Form",
+  };
 
   return (
     <Card className="space-y-3 p-4">
       <p className="text-sm font-medium">Pazaryeri ürünlerinden Kokpit ürünü oluştur</p>
       <p className="text-xs text-muted-foreground">
-        Renk, ambalaj ve form ürün adından çözülür — yalnız Tanımlar&apos;da <em>zaten var olan</em>{" "}
-        değerlerle eşleşir, yenisini uydurmaz. Seri ürün adında geçmediği için burada seçilir.
+        Renk, ambalaj ve form önce ürünün pazaryerindeki <em>kendi özelliklerinden</em> okunur,
+        bulunamazsa ürün adından çözülür. Tanımlar&apos;da karşılığı olmayan değerler aşağıda
+        listelenir ve istenirse eklenir. Seri ürün adında geçmediği için burada seçilir.
       </p>
 
       <div className="flex flex-wrap items-end gap-3">
@@ -124,7 +138,7 @@ function ImportPanel({ channelId, onDone }: { channelId: number; onDone: () => v
           )}
           Önce Göster
         </Button>
-        {ready.length > 0 && (
+        {(ready.length > 0 || (createDefs && missingDefs.length > 0)) && (
           <Button
             className="h-9"
             disabled={runImport.isPending}
@@ -133,11 +147,12 @@ function ImportPanel({ channelId, onDone }: { channelId: number; onDone: () => v
                 channelId,
                 seriesId: Number(seriesId),
                 useCaseId: Number(useCaseId),
+                createMissingDefinitions: createDefs,
                 dryRun: false,
               })
             }
           >
-            {ready.length} ürünü oluştur
+            {ready.length > 0 ? `${ready.length} ürünü oluştur` : "Tanımları ekle ve oluştur"}
           </Button>
         )}
       </div>
@@ -152,6 +167,30 @@ function ImportPanel({ channelId, onDone }: { channelId: number; onDone: () => v
               </span>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Pazaryerinden okunan ama bizde tanımı olmayan değerler. */}
+      {missingDefs.length > 0 && (
+        <div className="space-y-2 rounded-lg border border-primary/40 bg-primary/5 p-3">
+          <p className="text-xs font-medium">
+            Pazaryerinde olup Tanımlar&apos;da olmayan {missingDefs.length} değer
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {missingDefs.map(d => (
+              <Badge key={`${d.axis}-${d.name}`} variant="outline">
+                {axisLabel[d.axis] ?? d.axis}: {d.name}
+                {d.count > 1 && <span className="ml-1 opacity-60">×{d.count}</span>}
+              </Badge>
+            ))}
+          </div>
+          <label className="flex w-fit cursor-pointer items-center gap-2 text-xs">
+            <Checkbox checked={createDefs} onCheckedChange={c => setCreateDefs(c === true)} />
+            Bu tanımları Kokpit&apos;e ekle
+            <span className="text-muted-foreground">
+              — eklenince bu ürünler de oluşturulabilir hâle gelir
+            </span>
+          </label>
         </div>
       )}
 
