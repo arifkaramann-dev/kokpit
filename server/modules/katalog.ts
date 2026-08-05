@@ -138,6 +138,29 @@ async function loadChannelCategories(channelCode: string): Promise<FlatCategory[
   return rows;
 }
 
+/**
+ * Kullanıcının kurduğu "pazaryeri özelliği → eksen" eşlemesini haritaya çevirir.
+ *
+ * `channelAttributes.source` zaten bu bilgiyi tutuyor (Özellik Eşlemesi
+ * ekranı). İçe aktarma bunu okumak yerine ad tahmini yapıyordu; Trendyol'un
+ * "Renk" özelliği bu katalogda YARI-MAT/ŞEFFAF gibi YÜZEY değerleri taşıdığı
+ * için tahmin yanlış eksene yazıyordu.
+ *
+ * Yalnız eksene bağlı kaynaklar alınır: "sabit" ve "hacim" bir boyut eksenine
+ * karşılık gelmez.
+ */
+export function buildAxisMapping(rows: unknown): Record<string, "renk" | "ambalaj" | "form"> {
+  const out: Record<string, "renk" | "ambalaj" | "form"> = {};
+  for (const r of (rows as Record<string, unknown>[]) ?? []) {
+    const name = normalizeName(String(r.attributeName ?? ""));
+    const source = String(r.source ?? "");
+    if (!name) continue;
+    if (source !== "renk" && source !== "ambalaj" && source !== "form") continue;
+    out[name] = source;
+  }
+  return out;
+}
+
 /* ---- Pazaryeri özellik (attribute) normalizasyonu ------------------------ */
 
 /**
@@ -3958,16 +3981,26 @@ export const katalogRouter = router({
        * olacağını anlamıyordu. Karşılık ve eksik burada hesaplanır ki tek
        * satırda "şu olacak" ya da "şu eksik" yazabilelim.
        */
-      const [colors, packagings, families] = await Promise.all([
+      const [colors, packagings, families, attrDefs] = await Promise.all([
         db.listColors(),
         db.listPackagings(),
         db.listProductFamilies(),
+        db.listChannelAttributes(input.channelId),
       ]);
       const dim = (rows: unknown) =>
         (rows as Record<string, unknown>[]).map(r => ({
           id: r.id as number,
           name: String(r.name ?? ""),
         }));
+
+      /*
+       * Hangi pazaryeri özelliğinin hangi eksenimize denk geldiği TAHMİN
+       * EDİLMEZ: kullanıcı bunu Özellik Eşlemesi'nde belirliyor. İçe aktarma
+       * eskiden ad tahmini yapıyordu ve Trendyol'un "Renk" özelliği bu
+       * katalogda YARI-MAT, ŞEFFAF gibi yüzey değerleri taşıdığı için
+       * bunları renk sanıyordu.
+       */
+      const axisMapping = buildAxisMapping(attrDefs);
 
       const byBarcode = new Map(remoteRows.map(r => [r.barcode, r]));
       const plan = planProductImport({
@@ -3981,13 +4014,19 @@ export const katalogRouter = router({
         colors: dim(colors),
         packagings: dim(packagings),
         families: dim(families),
+        axisMapping,
       });
       const planByBarcode = new Map(
         [...plan.ready, ...plan.blocked].map(r => [r.candidate.barcode, r]),
       );
 
       return {
-        summary: { ...reconcileSummary(result), creatable: plan.ready.length },
+        summary: {
+          ...reconcileSummary(result),
+          creatable: plan.ready.length,
+          // Eşleme kurulmamışsa ekran uyarır: okuma ad tahminine düşer.
+          axisMapped: Object.keys(axisMapping).length,
+        },
         // Ekran listeleri sınırlanır: binlerce satır tarayıcıyı kilitler.
         matched: result.matched.slice(0, 200),
         onlyRemote: result.onlyRemote.slice(0, 200).map(x => {

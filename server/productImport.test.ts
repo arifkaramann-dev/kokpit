@@ -214,3 +214,54 @@ describe("planProductImport — ürün özellikleri ve eksik tanımlar", () => {
     expect(plan.ready[0].colorId).toBe(1);
   });
 });
+
+/**
+ * Eksen eşlemesi — kullanıcının kararı tahmini yener.
+ *
+ * Canlıda Trendyol'un "Renk" özelliği YARI-MAT, ŞEFFAF, Metalik gibi YÜZEY
+ * değerleri taşıyordu. Ad tahmini bunları renk sanıp 1099 ürünü yanlış
+ * eksende doğuracaktı.
+ */
+describe("attributeValueFor — eksen eşlemesi", () => {
+  const attrs = [
+    { name: "Renk", value: "YARI-MAT" },
+    { name: "Ana Renk", value: "Fuşya" },
+  ];
+
+  it("eşleme yokken ad tahminine düşer", () => {
+    // "Renk" tahmin listesinde önce geliyor.
+    expect(attributeValueFor(attrs, "renk")).toBe("YARI-MAT");
+  });
+
+  it("eşleme varsa tahmin devre dışı kalır", () => {
+    const mapping = { "ana renk": "renk" as const };
+    expect(attributeValueFor(attrs, "renk", mapping)).toBe("Fuşya");
+  });
+
+  it("kullanıcı o ekseni hiçbir özelliğe bağlamadıysa null döner", () => {
+    // Eşleme kurulmuş ama renk bağlanmamış: tahmine düşmek kararı ezerdi.
+    const mapping = { hacim: "ambalaj" as const };
+    expect(attributeValueFor(attrs, "renk", mapping)).toBeNull();
+  });
+
+  it("plan eşlemeyi kullanır — yanlış eksene yazmaz", () => {
+    const plan = planProductImport({
+      candidates: [
+        {
+          ...cand("Artofcolour Airbrush Boyası 100 ml"),
+          attributes: [
+            { name: "Renk", value: "YARI-MAT" },
+            { name: "Ana Renk", value: "Fuşya" },
+          ],
+        },
+      ],
+      colors,
+      packagings,
+      families,
+      axisMapping: { "ana renk": "renk" },
+    });
+    expect(plan.ready[0]?.colorId).toBe(1);
+    // YARI-MAT eksik tanım olarak önerilmemeli.
+    expect(plan.missingDefinitions.some(d => d.name === "YARI-MAT")).toBe(false);
+  });
+});

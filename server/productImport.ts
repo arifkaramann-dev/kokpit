@@ -29,26 +29,59 @@ export type ImportCandidate = {
   attributes?: { name: string; value: string }[];
 };
 
+export type Axis = "renk" | "ambalaj" | "form";
+
 /**
- * Bir eksenin pazaryerindeki özellik adları.
+ * Eksen tahmininde kullanılan ad listesi — YALNIZ SON ÇARE.
  *
- * Trendyol "Renk", Hepsiburada "Ürün Rengi" diyebiliyor; eşleşme ad üzerinden
- * kurulduğu için birden çok karşılık denenir.
+ * Hangi pazaryeri özelliğinin hangi eksenimize denk geldiği tahmin edilecek
+ * bir şey değil: kullanıcı bunu Özellik Eşlemesi ekranında zaten belirliyor
+ * (`channelAttributes.source`). Tahmin, eşleme kurulmamışken bir şey
+ * gösterebilmek içindir.
+ *
+ * Tahminin neden yetersiz olduğu canlıda görüldü: Trendyol'un "Renk"
+ * özelliği bu katalogda YARI-MAT, ŞEFFAF, Metalik gibi YÜZEY değerleri
+ * taşıyor. Bunları renk sanıp eklemek kataloğu bozardı.
  */
-const AXIS_ATTRIBUTE_NAMES: Record<"renk" | "ambalaj" | "form", string[]> = {
+const AXIS_ATTRIBUTE_NAMES: Record<Axis, string[]> = {
   renk: ["renk", "ürün rengi", "color", "ana renk"],
   ambalaj: ["hacim", "ambalaj", "boyut", "litre", "mililitre", "gramaj", "ağırlık"],
   form: ["ürün tipi", "tip", "form", "tür", "ürün türü"],
 };
 
-/** Ürünün kendi özelliklerinden bir eksenin değerini okur. */
+/**
+ * Pazaryeri özellik adı → bizim eksen eşlemesi.
+ *
+ * Kullanıcının Özellik Eşlemesi'nde kurduğu eşlemeden üretilir. Boş harita
+ * verilirse ad tahminine düşülür.
+ */
+export type AxisMapping = Record<string, Axis>;
+
+/**
+ * Ürünün kendi özelliklerinden bir eksenin değerini okur.
+ *
+ * Önce kullanıcının kurduğu eşleme, sonra ad tahmini. Eşleme varsa tahmin
+ * hiç devreye girmez — kullanıcı "bu özellik renk DEĞİL" dediyse ona uyulur.
+ */
 export function attributeValueFor(
   attributes: { name: string; value: string }[] | undefined,
-  axis: "renk" | "ambalaj" | "form",
+  axis: Axis,
+  mapping?: AxisMapping,
 ): string | null {
+  const rows = (attributes ?? []).filter(a => a.value.trim());
+
+  if (mapping && Object.keys(mapping).length > 0) {
+    for (const a of rows) {
+      if (mapping[normalizeName(a.name)] === axis) return a.value.trim();
+    }
+    // Eşleme kurulmuş ama bu eksene bir özellik bağlanmamışsa, tahmine
+    // düşmek kullanıcının kararını ezmek olur.
+    return null;
+  }
+
   const wanted = AXIS_ATTRIBUTE_NAMES[axis].map(normalizeName);
-  for (const a of attributes ?? []) {
-    if (wanted.includes(normalizeName(a.name)) && a.value.trim()) return a.value.trim();
+  for (const a of rows) {
+    if (wanted.includes(normalizeName(a.name))) return a.value.trim();
   }
   return null;
 }
@@ -69,14 +102,14 @@ export type ImportPlanRow = {
    * "Renk çözülemedi" demek yetmiyordu: hangi rengin eksik olduğu
    * bilinmeden Tanımlar'a ne ekleneceği de bilinmiyor. Ad buradan gelir.
    */
-  suggested: { axis: "renk" | "ambalaj" | "form"; name: string }[];
+  suggested: { axis: Axis; name: string }[];
 };
 
 export type ImportPlan = {
   ready: ImportPlanRow[];
   blocked: ImportPlanRow[];
   /** Eklenmesi gereken tanımlar, eksen başına tekilleştirilmiş. */
-  missingDefinitions: { axis: "renk" | "ambalaj" | "form"; name: string; count: number }[];
+  missingDefinitions: { axis: Axis; name: string; count: number }[];
 };
 
 /**
@@ -119,10 +152,12 @@ export function planProductImport(input: {
   colors: DimensionOption[];
   packagings: DimensionOption[];
   families: DimensionOption[];
+  /** Kullanıcının Özellik Eşlemesi'nde kurduğu pazaryeri özelliği → eksen. */
+  axisMapping?: AxisMapping;
 }): ImportPlan {
   const ready: ImportPlanRow[] = [];
   const blocked: ImportPlanRow[] = [];
-  const suggestions = new Map<string, { axis: "renk" | "ambalaj" | "form"; name: string; count: number }>();
+  const suggestions = new Map<string, { axis: Axis; name: string; count: number }>();
 
   /**
    * Bir ekseni çözer.
@@ -136,10 +171,10 @@ export function planProductImport(input: {
    */
   const resolve = (
     candidate: ImportCandidate,
-    axis: "renk" | "ambalaj" | "form",
+    axis: Axis,
     options: DimensionOption[],
   ): { hit: DimensionOption | null; suggestion: string | null } => {
-    const remote = attributeValueFor(candidate.attributes, axis);
+    const remote = attributeValueFor(candidate.attributes, axis, input.axisMapping);
     if (remote) {
       const norm = normalizeName(remote);
       const exact = options.find(o => normalizeName(o.name) === norm);
@@ -157,7 +192,7 @@ export function planProductImport(input: {
 
     const missing: string[] = [];
     const suggested: ImportPlanRow["suggested"] = [];
-    const note = (axis: "renk" | "ambalaj" | "form", r: { hit: unknown; suggestion: string | null }) => {
+    const note = (axis: Axis, r: { hit: unknown; suggestion: string | null }) => {
       if (r.hit) return;
       missing.push(axis);
       if (!r.suggestion) return;
