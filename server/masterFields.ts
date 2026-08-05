@@ -305,12 +305,61 @@ export function resolveImages(input: {
 
 /* ---- Özellik adından kaynak tahmini ------------------------------------- */
 
-const SOURCE_HINTS: [RegExp, AttributeSource][] = [
-  [/\brenk\b|renk kodu|color/i, "renk"],
-  [/hacim|miktar|litre|mililitre|\bml\b|net miktar/i, "hacim"],
-  [/ambalaj|paket|şişe|kap tipi|kutu/i, "ambalaj"],
-  [/ürün tipi|ürün türü|tür|tip|çeşit|form/i, "form"],
-  [/seri|ürün grubu|ürün ailesi|model/i, "seri"],
+/**
+ * Eksene ASLA bağlanmayan özellikler.
+ *
+ * Trendyol her kategoriye ürün güvenliği (GPSR) alanları ekledi: "Üretici Adı",
+ * "Birincil İthalatçı Mail Adresi", "Menşei", "Kullanım Talimatı/Uyarıları",
+ * "Paket Görseli (ön)"… Bunlar ürünün küp koordinatıyla değil ŞİRKETLE
+ * ilgilidir; hepsi sabit değerdir ve çoğunun değer listesi yoktur.
+ *
+ * Bu kontrol ipuçlarından ÖNCE çalışır. "Paket Görseli (ön)" içindeki "paket"
+ * kelimesi özelliği ambalaj eksenine bağlıyordu; ekranda "Eksik eşleme: Paket
+ * Görseli (ön) — 0/12" paneli çıkıyor, ama seçenek listesi olmadığı için
+ * hiçbir ambalaj eşlenemiyordu. Gerçek ambalaj/hacim özelliği de bu sahte
+ * panellerin arasında kayboluyordu.
+ */
+const CONSTANT_ONLY =
+  /ithalatç|üretici|imalatç|menşe|görsel|resim|mail|e-?posta|adres|telefon|iletişim|talimat|uyarı|güvenli|belge|sertifika|garanti|firma|marka sahibi|sorumlu|web sitesi|gtip|barkod/i;
+
+/**
+ * Ad, ürünün eksenlerinden türetilemeyecek kurumsal/yasal bir alanı mı
+ * gösteriyor? İçe aktarma bunu kullanarak eski hatalı tahminleri de düzeltir.
+ */
+export function isConstantOnlyAttribute(attributeName: string): boolean {
+  return CONSTANT_ONLY.test(attributeName.trim());
+}
+
+/** Türkçe ek payı: "tip" kökü "tipi"yi yakalar ama "Türkiye"yi yakalamaz. */
+const SUFFIX_TOLERANCE = 3;
+
+/** Adı sözcüklere böler: "Paket Görseli (ön)" → ["paket","görseli","ön"]. */
+function attributeWords(name: string): string[] {
+  return name
+    .toLocaleLowerCase("tr")
+    .split(/[^a-zçğıiöşü0-9]+/)
+    .filter(Boolean);
+}
+
+/** Sözcüklerden biri bu kökle mi başlıyor (kısa Türkçe eki tolere ederek)? */
+function hasStem(words: string[], stem: string): boolean {
+  return words.some(
+    w => w === stem || (w.startsWith(stem) && w.length - stem.length <= SUFFIX_TOLERANCE),
+  );
+}
+
+/*
+ * Kökler sözcük başına eşleşir; serbest `RegExp.test` değil. Eski liste çıplak
+ * "tür"/"tip"/"paket" arıyordu ve ad içinde nerede geçerse geçsin kabul
+ * ediyordu — bu yüzden yasal alanlar eksenlere dağılıyordu.
+ * Sıra önemli: "Ambalaj Tipi" ambalajdır, ürün tipi değil.
+ */
+const SOURCE_HINTS: { source: AttributeSource; stems: string[]; phrases: string[] }[] = [
+  { source: "renk", stems: ["renk", "color"], phrases: [] },
+  { source: "hacim", stems: ["hacim", "miktar", "litre", "mililitre", "ml", "gramaj"], phrases: [] },
+  { source: "ambalaj", stems: ["ambalaj", "paket", "şişe", "kutu"], phrases: ["kap tipi"] },
+  { source: "form", stems: ["tip", "tür", "çeşit", "form"], phrases: ["ürün tipi", "ürün türü"] },
+  { source: "seri", stems: ["seri", "model"], phrases: ["ürün grubu", "ürün ailesi"] },
 ];
 
 /**
@@ -322,8 +371,13 @@ const SOURCE_HINTS: [RegExp, AttributeSource][] = [
 export function guessSource(attributeName: string): AttributeSource {
   const name = attributeName.trim();
   if (!name) return "sabit";
-  for (const [pattern, source] of SOURCE_HINTS) {
-    if (pattern.test(name)) return source;
+  if (isConstantOnlyAttribute(name)) return "sabit";
+
+  const words = attributeWords(name);
+  const joined = words.join(" ");
+  for (const hint of SOURCE_HINTS) {
+    if (hint.phrases.some(p => joined.includes(p))) return hint.source;
+    if (hint.stems.some(s => hasStem(words, s))) return hint.source;
   }
   return "sabit";
 }

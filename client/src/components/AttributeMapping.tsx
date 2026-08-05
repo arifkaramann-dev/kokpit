@@ -20,7 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { trpc } from "@/lib/trpc";
-import { Download, Loader2, Search, Trash2, Wand2 } from "lucide-react";
+import { Copy, Download, Loader2, Search, Trash2, Wand2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -59,6 +59,14 @@ export default function AttributeMapping({ channelId }: { channelId: number }) {
   );
 
   const [categoryId, setCategoryId] = useState("");
+  const [query, setQuery] = useState("");
+  /*
+   * Trendyol her kategoriye ~18 yasal alan ekliyor (üretici/ithalatçı/menşei).
+   * Bunlar bir kez doldurulur ve bir daha bakılmaz; eşleme yapılacak asıl
+   * özellikleri (renk, ambalaj, ürün tipi) ekranın dışına itiyorlardı.
+   * Bu yüzden sabitler ayrı bölümde ve kapalı başlar.
+   */
+  const [showConstants, setShowConstants] = useState(false);
 
   // Eşlenmiş kategoriler — özellikler kategori başına tanımlanır.
   const categoryOptions = useMemo(() => {
@@ -71,7 +79,35 @@ export default function AttributeMapping({ channelId }: { channelId: number }) {
   }, [categories, channelId]);
 
   const activeCategory = categoryId || categoryOptions[0]?.id || "";
-  const rows = (attributes ?? []).filter(a => String(a.categoryId) === activeCategory);
+
+  /*
+   * Sıra pazaryerinden geldiği gibiydi: "İkincil İthalatçı Mail Adresi" en
+   * üstte, "Renk" yirminci satırda. Zorunlular ve eksene bağlı olanlar öne
+   * alınır; ad araması uzun listede satır aramayı bitirir.
+   */
+  const rows = useMemo(() => {
+    const list = (attributes ?? []).filter(a => String(a.categoryId) === activeCategory);
+    const term = query.trim().toLocaleLowerCase("tr");
+    const filtered = term
+      ? list.filter(a =>
+          `${a.attributeName ?? ""} ${a.attributeId}`.toLocaleLowerCase("tr").includes(term),
+        )
+      : list;
+    return [...filtered].sort((a, b) => {
+      const ar = Number(a.isRequired ?? 1);
+      const br = Number(b.isRequired ?? 1);
+      if (ar !== br) return br - ar;
+      return String(a.attributeName ?? "").localeCompare(String(b.attributeName ?? ""), "tr");
+    });
+  }, [attributes, activeCategory, query]);
+
+  /** Eksene bağlı olanlar iş gerektirir; sabitler bir kez doldurulur. */
+  const axisRows = rows.filter(a => String(a.source) !== "sabit");
+  const constantRows = rows.filter(a => String(a.source) === "sabit");
+  /** Zorunlu ama değeri girilmemiş sabitler — kart açılışını düşürürler. */
+  const emptyRequiredConstants = constantRows.filter(
+    a => Number(a.isRequired ?? 1) === 1 && !a.constantValueId && !a.constantText?.trim(),
+  ).length;
 
   const importAttrs = trpc.katalog.importChannelAttributes.useMutation({
     onSuccess: r => {
@@ -80,7 +116,10 @@ export default function AttributeMapping({ channelId }: { channelId: number }) {
       utils.katalog.channelAttributeOptions.invalidate();
       toast.success(
         `${r.added} yeni · ${r.updated} güncellendi (${r.total} özellik)` +
-          (r.options > 0 ? ` · ${r.options} seçenek — artık listeden seçebilirsiniz` : ""),
+          (r.options > 0 ? ` · ${r.options} seçenek — artık listeden seçebilirsiniz` : "") +
+          (r.repaired > 0
+            ? ` · ${r.repaired} yanlış eksene bağlanmış yasal alan sabite çekildi`
+            : ""),
         { duration: 8000 },
       );
     },
@@ -173,6 +212,53 @@ export default function AttributeMapping({ channelId }: { channelId: number }) {
     onError: e => toast.error(e.message),
   });
 
+  /*
+   * Yasal alanların değeri her kategoride aynıdır ("Üretici Adı: Art of
+   * Colour"). Kategori başına tekrar yazmak 18 alan × kategori sayısı kadar
+   * aynı metni yazmak demekti; bir kez girip buradan yayılır.
+   */
+  const applyConstant = trpc.katalog.applyChannelAttributeConstant.useMutation({
+    onSuccess: r => {
+      utils.katalog.channelAttributes.invalidate();
+      toast.success(`${r.applied} kategoriye uygulandı`);
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  const renderRow = (a: (typeof rows)[number]) => (
+    <AttributeRow
+      key={a.id}
+      attributeId={a.attributeId}
+      attributeName={a.attributeName}
+      source={String(a.source)}
+      constantValueId={a.constantValueId}
+      constantText={a.constantText}
+      isRequired={Number(a.isRequired ?? 1) === 1}
+      options={optionsFor(a.attributeId)}
+      coverage={(coverage ?? []).find(c => c.id === a.id) ?? null}
+      categoryCount={categoryOptions.length}
+      onSave={patch =>
+        saveAttr.mutate({
+          channelId,
+          categoryId: activeCategory,
+          attributeId: a.attributeId,
+          attributeName: a.attributeName,
+          isRequired: Number(a.isRequired ?? 1) === 1,
+          ...patch,
+        })
+      }
+      onApplyAll={() =>
+        applyConstant.mutate({
+          channelId,
+          attributeId: a.attributeId,
+          constantValueId: a.constantValueId,
+          constantText: a.constantText,
+        })
+      }
+      onDelete={() => deleteAttr.mutate({ id: a.id })}
+    />
+  );
+
   if (categoryOptions.length === 0) {
     return (
       <Card className="p-4 text-sm text-muted-foreground">
@@ -220,9 +306,18 @@ export default function AttributeMapping({ channelId }: { channelId: number }) {
           )}
           Pazaryerinden çek
         </Button>
+        <div className="space-y-1.5">
+          <Label>Özellik ara</Label>
+          <Input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="renk, ambalaj, menşei…"
+            className="h-9 w-56"
+          />
+        </div>
       </div>
 
-      {rows.length === 0 ? (
+      {rows.length === 0 && query.trim() === "" ? (
         <Card className="p-4 text-sm text-muted-foreground">
           Bu kategori için özellik tanımı yok. "Pazaryerinden çek" ile zorunlu özellikler
           alınır; kaynak tahmini yapılır ve aşağıdan düzeltilebilir.
@@ -240,30 +335,44 @@ export default function AttributeMapping({ channelId }: { channelId: number }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map(a => (
-                <AttributeRow
-                  key={a.id}
-                  attributeId={a.attributeId}
-                  attributeName={a.attributeName}
-                  source={String(a.source)}
-                  constantValueId={a.constantValueId}
-                  constantText={a.constantText}
-                  isRequired={Number(a.isRequired ?? 1) === 1}
-                  options={optionsFor(a.attributeId)}
-                  coverage={(coverage ?? []).find(c => c.id === a.id) ?? null}
-                  onSave={patch =>
-                    saveAttr.mutate({
-                      channelId,
-                      categoryId: activeCategory,
-                      attributeId: a.attributeId,
-                      attributeName: a.attributeName,
-                      isRequired: Number(a.isRequired ?? 1) === 1,
-                      ...patch,
-                    })
-                  }
-                  onDelete={() => deleteAttr.mutate({ id: a.id })}
-                />
-              ))}
+              <tr className="border-t bg-muted/30">
+                <td colSpan={5} className="px-2 py-1.5 text-xs font-medium">
+                  Ürüne göre değişen özellikler ({axisRows.length})
+                  <span className="ml-2 font-normal text-muted-foreground">
+                    değerleri aşağıdaki panellerden eşlenir
+                  </span>
+                </td>
+              </tr>
+              {axisRows.length === 0 && (
+                <tr className="border-t">
+                  <td colSpan={5} className="p-3 text-xs text-muted-foreground">
+                    Bu kategoride eksene bağlı özellik yok. Renk/ambalaj/ürün tipi özelliği
+                    varsa aşağıdaki sabit listeden kaynağını değiştirin.
+                  </td>
+                </tr>
+              )}
+              {axisRows.map(a => renderRow(a))}
+
+              <tr className="border-t bg-muted/30">
+                <td colSpan={5} className="px-2 py-1.5">
+                  <button
+                    type="button"
+                    className="text-xs font-medium hover:underline"
+                    onClick={() => setShowConstants(v => !v)}
+                  >
+                    {showConstants ? "▾" : "▸"} Sabit / yasal bilgiler ({constantRows.length})
+                  </button>
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">
+                    üretici, ithalatçı, menşei — bir kez doldurulur
+                  </span>
+                  {emptyRequiredConstants > 0 && (
+                    <Badge variant="destructive" className="ml-2">
+                      {emptyRequiredConstants} zorunlu alan boş
+                    </Badge>
+                  )}
+                </td>
+              </tr>
+              {showConstants && constantRows.map(a => renderRow(a))}
             </tbody>
           </table>
         </Card>
@@ -424,7 +533,9 @@ function AttributeRow({
   isRequired,
   options,
   coverage,
+  categoryCount,
   onSave,
+  onApplyAll,
   onDelete,
 }: {
   attributeId: number;
@@ -435,11 +546,13 @@ function AttributeRow({
   isRequired: boolean;
   options: { valueId: number; valueName: string }[];
   coverage: { total: number; mapped: number } | null;
+  categoryCount: number;
   onSave: (patch: {
     source: "renk" | "ambalaj" | "form" | "seri" | "hacim" | "sabit";
     constantValueId?: number | null;
     constantText?: string | null;
   }) => void;
+  onApplyAll: () => void;
   onDelete: () => void;
 }) {
   const [src, setSrc] = useState(source);
@@ -517,13 +630,29 @@ function AttributeRow({
           </div>
         )}
       </td>
-      <td className="flex items-center gap-2 p-2">
+      <td className="flex flex-wrap items-center gap-2 p-2">
         {coverage ? (
           <Badge variant={coverage.mapped === coverage.total ? "secondary" : "destructive"}>
             {coverage.mapped}/{coverage.total}
           </Badge>
+        ) : src === "sabit" && isRequired && !constantValueId && !constantText?.trim() ? (
+          /* Zorunlu sabit boşsa kart açılışı bu alanda düşer — önden söyle. */
+          <Badge variant="destructive">değer girilmemiş</Badge>
         ) : (
           <span className="text-xs text-muted-foreground">—</span>
+        )}
+        {/* Aynı yasal alan her kategoride aynı değeri alır; tek tıkla yayılır. */}
+        {src === "sabit" && !dirty && (constantValueId || constantText?.trim()) && categoryCount > 1 && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-8 text-xs text-muted-foreground"
+            title={`Bu değeri ${categoryCount} kategoriye birden yaz`}
+            onClick={onApplyAll}
+          >
+            <Copy className="mr-1 h-3 w-3" />
+            Tüm kategorilere
+          </Button>
         )}
         {dirty && (
           <Button

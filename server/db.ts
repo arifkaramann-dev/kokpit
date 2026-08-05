@@ -2940,6 +2940,11 @@ export async function upsertChannelAttribute(input: {
   isRequired?: boolean;
   /** true ise mevcut satırın kaynağı korunur (içe aktarma modu). */
   keepSource?: boolean;
+  /**
+   * true ise kaynak güncellenir ama girilmiş sabit değer/metin korunur.
+   * Hatalı tahmini düzeltirken kullanıcının doldurduğu değeri silmemek için.
+   */
+  keepConstants?: boolean;
 }) {
   const db = await requireDb();
   const values = {
@@ -2958,8 +2963,10 @@ export async function upsertChannelAttribute(input: {
   };
   if (!input.keepSource) {
     update.source = values.source;
-    update.constantValueId = values.constantValueId;
-    update.constantText = values.constantText;
+    if (!input.keepConstants) {
+      update.constantValueId = values.constantValueId;
+      update.constantText = values.constantText;
+    }
   }
   await db.insert(channelAttributes).values(values).onDuplicateKeyUpdate({ set: update });
 }
