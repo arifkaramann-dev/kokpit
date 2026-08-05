@@ -269,4 +269,40 @@ describe("guessSource", () => {
   for (const [name, expected] of cases) {
     it(`"${name}" → ${expected}`, () => expect(guessSource(name)).toBe(expected));
   }
+
+  /*
+   * Trendyol'un her kategoriye eklediği GPSR alanları. Hepsi şirket bilgisidir;
+   * hiçbiri ürünün eksenlerinden türetilemez. "Paket Görseli" ambalaj eksenine
+   * bağlanınca ekranda eşlenemeyen sahte bir "Eksik eşleme" paneli çıkıyor ve
+   * gerçek ambalaj özelliği bunların arasında kayboluyordu.
+   */
+  const yasal = [
+    "Paket Görseli (ön)",
+    "Paket Görseli (arka)",
+    "Üretici Adı",
+    "Üretici Mail Adresi",
+    "Üretici Adres Bilgisi",
+    "Birincil İthalatçı Adı",
+    "İkincil İthalatçı Mail Adresi",
+    "Üçüncül İthalatçı Adres Bilgisi",
+    "Menşei",
+    "Kullanım Talimatı/Uyarıları",
+    "Ürün Güvenliği Bilgisi",
+    "Garanti Süresi",
+  ];
+  for (const name of yasal) {
+    it(`yasal alan "${name}" eksene bağlanmaz`, () => expect(guessSource(name)).toBe("sabit"));
+  }
+
+  it("çıplak kök adın ortasında geçince eşleşmez", () => {
+    // Eski liste "tür"ü serbest arıyordu: "Türkiye" form eksenine düşüyordu.
+    expect(guessSource("Türkiye'de Üretim")).toBe("sabit");
+    expect(guessSource("Kapasite")).toBe("sabit");
+  });
+
+  it("Türkçe ekli hâlleri tanır", () => {
+    expect(guessSource("Ambalaj Türü")).toBe("ambalaj");
+    expect(guessSource("Şişe Tipi")).toBe("ambalaj");
+    expect(guessSource("Serisi")).toBe("seri");
+  });
 });

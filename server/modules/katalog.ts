@@ -63,6 +63,7 @@ import {
 import {
   guessSource,
   imageUrlOf,
+  isConstantOnlyAttribute,
   masterImagePath,
   resolveImages,
   resolveLogistics,
@@ -3819,6 +3820,44 @@ export const katalogRouter = router({
     }),
 
   /**
+   * Bir sabit değeri kanaldaki TÜM kategorilere yayar.
+   *
+   * Trendyol'un yasal alanları (Üretici Adı, İthalatçı Mail Adresi, Menşei…)
+   * her kategoride aynı kimlikle ve aynı değerle tekrarlanır. Elle doldurmak
+   * 18 alan × kategori sayısı kadar aynı metni yazmak demekti; bir kategoride
+   * girilen değer buradan diğerlerine kopyalanır. Yalnız aynı özellik kimliği
+   * tanımlı kategorilere yazılır — olmayan yere satır uydurulmaz.
+   */
+  applyChannelAttributeConstant: protectedProcedure
+    .input(
+      z.object({
+        channelId: z.number(),
+        attributeId: z.number(),
+        constantValueId: z.number().nullish(),
+        constantText: z.string().max(255).nullish(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const rows = (await db.listChannelAttributes(input.channelId)) as Record<string, unknown>[];
+      const targets = rows.filter(
+        r => (r.attributeId as number) === input.attributeId && String(r.source) === "sabit",
+      );
+      for (const r of targets) {
+        await db.upsertChannelAttribute({
+          channelId: input.channelId,
+          categoryId: String(r.categoryId),
+          attributeId: input.attributeId,
+          attributeName: (r.attributeName as string | null) ?? null,
+          source: "sabit",
+          constantValueId: input.constantValueId ?? null,
+          constantText: input.constantText ?? null,
+          isRequired: Number(r.isRequired ?? 1) === 1,
+        });
+      }
+      return { applied: targets.length };
+    }),
+
+  /**
    * Kategorinin zorunlu özelliklerini Trendyol'dan çeker ve tanım olarak
    * kaydeder. `source` ada bakılarak tahmin edilir (Renk → renk ekseni);
    * tahmin yalnız YENİ satırda uygulanır — kullanıcının seçtiği kaynak
@@ -3877,17 +3916,28 @@ export const katalogRouter = router({
       }
 
       const existing = (await db.listChannelAttributes(input.channelId)) as Record<string, unknown>[];
-      const known = new Set(
+      const inCategory = new Map(
         existing
           .filter(e => String(e.categoryId) === input.categoryId)
-          .map(e => e.attributeId as number),
+          .map(e => [e.attributeId as number, String(e.source ?? "sabit")]),
       );
 
       let added = 0;
       let updated = 0;
       let options = 0;
+      let repaired = 0;
       for (const row of rows) {
-        const isNew = !known.has(row.attributeId);
+        const previousSource = inCategory.get(row.attributeId);
+        const isNew = previousSource === undefined;
+        /*
+         * Yasal/kurumsal alan bir eksene bağlanmışsa bu eski hatalı tahmindir
+         * ("Paket Görseli" → ambalaj) ve kullanıcı düzeltemeden ekranda
+         * eşlenemeyen bir panel üretir. Yeniden çekmek düzeltsin: kaynak
+         * "sabit"e çekilir, girilmiş sabit değer korunur.
+         */
+        const needsRepair =
+          !isNew && previousSource !== "sabit" && isConstantOnlyAttribute(row.attributeName);
+        if (needsRepair) repaired += 1;
         await db.upsertChannelAttribute({
           channelId: input.channelId,
           categoryId: input.categoryId,
@@ -3896,7 +3946,8 @@ export const katalogRouter = router({
           source: guessSource(row.attributeName),
           isRequired: row.isRequired,
           // Mevcut satırda kullanıcının seçimi korunur.
-          keepSource: !isNew,
+          keepSource: !isNew && !needsRepair,
+          keepConstants: true,
         });
         // Seçenek kataloğu: eşlemeyi elle YAZMAK yerine SEÇMEYİ mümkün kılar.
         await db.replaceChannelAttributeOptions(
@@ -3909,7 +3960,7 @@ export const katalogRouter = router({
         if (isNew) added += 1;
         else updated += 1;
       }
-      return { added, updated, total: rows.length, options };
+      return { added, updated, total: rows.length, options, repaired };
     }),
 
   /**
