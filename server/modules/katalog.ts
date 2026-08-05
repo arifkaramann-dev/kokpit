@@ -3949,12 +3949,60 @@ export const katalogRouter = router({
         })),
       );
 
+      /*
+       * "Bu ürün Kokpit'te ne olur?" cevabı aynı çağrıda dönüyor.
+       *
+       * Önce yalnız karşılaştırma dönüyordu; ürün oluşturmak için ekranda ayrı
+       * bir panel açıp İKİNCİ bir önizleme çalıştırmak gerekiyordu. Kullanıcı
+       * ortada sadece metin listesi görüyor, pazaryerindeki ürünün nasıl ürün
+       * olacağını anlamıyordu. Karşılık ve eksik burada hesaplanır ki tek
+       * satırda "şu olacak" ya da "şu eksik" yazabilelim.
+       */
+      const [colors, packagings, families] = await Promise.all([
+        db.listColors(),
+        db.listPackagings(),
+        db.listProductFamilies(),
+      ]);
+      const dim = (rows: unknown) =>
+        (rows as Record<string, unknown>[]).map(r => ({
+          id: r.id as number,
+          name: String(r.name ?? ""),
+        }));
+
+      const byBarcode = new Map(remoteRows.map(r => [r.barcode, r]));
+      const plan = planProductImport({
+        candidates: result.onlyRemote.map(x => ({
+          barcode: x.remote.barcode,
+          title: x.remote.title,
+          stockCode: x.remote.stockCode,
+          salePrice: x.remote.salePrice,
+          attributes: byBarcode.get(x.remote.barcode)?.attributes ?? [],
+        })),
+        colors: dim(colors),
+        packagings: dim(packagings),
+        families: dim(families),
+      });
+      const planByBarcode = new Map(
+        [...plan.ready, ...plan.blocked].map(r => [r.candidate.barcode, r]),
+      );
+
       return {
-        summary: reconcileSummary(result),
+        summary: { ...reconcileSummary(result), creatable: plan.ready.length },
         // Ekran listeleri sınırlanır: binlerce satır tarayıcıyı kilitler.
         matched: result.matched.slice(0, 200),
-        onlyRemote: result.onlyRemote.slice(0, 200),
+        onlyRemote: result.onlyRemote.slice(0, 200).map(x => {
+          const p = planByBarcode.get(x.remote.barcode);
+          return {
+            ...x,
+            colorName: p?.colorName ?? null,
+            packagingName: p?.packagingName ?? null,
+            familyName: p?.familyName ?? null,
+            missing: p?.missing ?? [],
+            suggested: p?.suggested ?? [],
+          };
+        }),
         onlyLocal: result.onlyLocal.slice(0, 200),
+        missingDefinitions: plan.missingDefinitions,
       };
     }),
 
