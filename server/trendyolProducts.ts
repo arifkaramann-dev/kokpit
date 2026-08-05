@@ -257,6 +257,14 @@ export type TrendyolRemoteProduct = {
   approved: boolean;
   onSale: boolean;
   images: string[];
+  /**
+   * Ürünün pazaryerindeki KENDİ özellikleri (Renk: Fuşya, Hacim: 100 ml…).
+   *
+   * Koordinatı başlıktan ayrıştırmak kırılgan: başlık yazımı serbest, sıra
+   * değişebilir, kelime eksik olabilir. Bu liste değerin kendisini veriyor —
+   * önce buna bakmak doğru, başlık yedek kalır.
+   */
+  attributes: { name: string; value: string }[];
 };
 
 /**
@@ -289,6 +297,22 @@ export async function fetchTrendyolProducts(): Promise<TrendyolRemoteProduct[]> 
             .map(i => String(i?.url ?? "").trim())
             .filter(Boolean)
         : [];
+      // Trendyol özellik satırı: {attributeName, attributeValue} ya da
+      // {attribute:{name}, attributeValue:{name}} — ikisi de karşılanır.
+      const attributes = Array.isArray(r.attributes)
+        ? (r.attributes as Record<string, unknown>[])
+            .map(a => {
+              const attr = (a.attribute ?? {}) as Record<string, unknown>;
+              const val = (a.attributeValue ?? {}) as Record<string, unknown>;
+              return {
+                name: String(a.attributeName ?? attr.name ?? "").trim(),
+                value: String(
+                  typeof a.attributeValue === "string" ? a.attributeValue : (val.name ?? ""),
+                ).trim(),
+              };
+            })
+            .filter(a => a.name && a.value)
+        : [];
       out.push({
         barcode,
         title: String(r.title ?? ""),
@@ -304,6 +328,7 @@ export async function fetchTrendyolProducts(): Promise<TrendyolRemoteProduct[]> 
         approved: Boolean(r.approved),
         onSale: Boolean(r.onSale),
         images,
+        attributes,
       });
     }
 
