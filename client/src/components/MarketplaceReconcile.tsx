@@ -174,6 +174,26 @@ export default function MarketplaceReconcile({
         )}
       </Card>
 
+      {/*
+        Eksen eşlemesi kurulmadan okunan değerler güvenilmez: Trendyol'un
+        "Renk" özelliği bu katalogda YARI-MAT, ŞEFFAF gibi YÜZEY değerleri
+        taşıyor ve tahmin bunları renk sanıyor.
+      */}
+      {data && data.summary.axisMapped === 0 && (
+        <Card className="space-y-1 border-amber-300 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/40">
+          <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+            Özellik eşlemesi kurulmamış — aşağıdaki okumalar tahmin
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Hangi pazaryeri özelliğinin renk, hangisinin ambalaj olduğu{" "}
+            <strong className="text-foreground">Özellik Eşlemesi</strong> sekmesinde belirlenir.
+            Kurulmadan ürün oluşturursanız yanlış eksende ürün doğabilir — örneğin
+            &quot;YARI-MAT&quot; renk sanılabilir. Önce oradan özellikleri çekip eksenleri
+            eşleyin.
+          </p>
+        </Card>
+      )}
+
       {/* Pazaryerinden okunan ama Tanımlar'da olmayan değerler. */}
       {data && data.missingDefinitions.length > 0 && (
         <Card className="space-y-2 p-4">
@@ -182,6 +202,12 @@ export default function MarketplaceReconcile({
           </p>
           <p className="text-xs text-muted-foreground">
             Bu değerler pazaryerinde var, Kokpit&apos;te yok. Eklenmeden o ürünler oluşturulamıyor.
+            {data.summary.axisMapped === 0 && (
+              <strong className="text-foreground">
+                {" "}
+                Eşleme kurulmadan eklemeyin: bu adlar yanlış eksene yazılmış olabilir.
+              </strong>
+            )}
           </p>
           <div className="flex flex-wrap gap-1.5">
             {data.missingDefinitions.map(d => (
