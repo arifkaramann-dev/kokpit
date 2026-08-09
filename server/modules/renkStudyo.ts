@@ -78,7 +78,29 @@ export const renkStudyoRouter = router({
   }),
 
   /** Referans obje listesi — görsel verisi olmadan (liste hafif kalsın). */
-  references: protectedProcedure.query(() => db.listSampleMasters()),
+  references: protectedProcedure.query(() => db.listSampleMasters({ kind: "referans" })),
+
+  /**
+   * Şablon varlıkları — kullanıcının yüklediği ambalaj, logo, doku.
+   *
+   * Referanslardan ayrı listeleniyor: biri üretime girer (şekli sabitler),
+   * diğeri karta çizilir. Aynı listede karışırlarsa kullanıcı üretimde
+   * logosunu, kartta gümüş bazını seçer.
+   */
+  assets: protectedProcedure.query(() => db.listSampleMasters({ kind: "gorsel" })),
+
+  saveAsset: protectedProcedure
+    .input(
+      z.object({
+        objectType: objectTypeKey,
+        label: z.string().trim().min(1).max(128),
+        data: dataUrl,
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const id = await db.saveSampleMaster({ ...input, kind: "gorsel", prompt: null });
+      return { id };
+    }),
 
   /**
    * Kendi referans fotoğrafını yükle.

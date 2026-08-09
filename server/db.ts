@@ -3314,24 +3314,24 @@ export async function saveMarketplaceBatchJob(
  * Obje tipi başına bir master. `data` büyük olduğu için liste sorgusunda
  * dışarıda bırakılır — 20 master × 1,5 MB'lık bir yanıt arayüzü kilitler.
  */
-export async function listSampleMasters(opts: { withData?: boolean } = {}) {
+export async function listSampleMasters(opts: { kind?: "referans" | "gorsel" } = {}) {
   const db = await requireDb();
-  if (opts.withData) {
-    return db.select().from(sampleMasters).orderBy(sampleMasters.objectType);
-  }
-  return db
+  const q = db
     .select({
       id: sampleMasters.id,
       objectType: sampleMasters.objectType,
       label: sampleMasters.label,
+      kind: sampleMasters.kind,
       baseHex: sampleMasters.baseHex,
       prompt: sampleMasters.prompt,
       isActive: sampleMasters.isActive,
       createdAt: sampleMasters.createdAt,
       updatedAt: sampleMasters.updatedAt,
     })
-    .from(sampleMasters)
-    .orderBy(sampleMasters.objectType);
+    .from(sampleMasters);
+  return opts.kind
+    ? q.where(eq(sampleMasters.kind, opts.kind)).orderBy(sampleMasters.objectType)
+    : q.orderBy(sampleMasters.objectType);
 }
 
 export async function getSampleMaster(objectType: string) {
@@ -3362,6 +3362,7 @@ export async function saveSampleMaster(input: {
   objectType: string;
   label: string;
   data: string;
+  kind?: "referans" | "gorsel";
   baseHex?: string | null;
   prompt?: string | null;
 }) {
@@ -3373,6 +3374,7 @@ export async function saveSampleMaster(input: {
       .set({
         label: input.label,
         data: input.data,
+        kind: input.kind ?? "referans",
         baseHex: input.baseHex ?? null,
         prompt: input.prompt ?? null,
       })
@@ -3383,6 +3385,7 @@ export async function saveSampleMaster(input: {
     objectType: input.objectType,
     label: input.label,
     data: input.data,
+    kind: input.kind ?? "referans",
     baseHex: input.baseHex ?? null,
     prompt: input.prompt ?? null,
   });

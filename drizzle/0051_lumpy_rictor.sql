@@ -1,0 +1,1 @@
+ALTER TABLE `sampleMasters` ADD `kind` enum('referans','gorsel') DEFAULT 'referans' NOT NULL;
