@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -oE '\"[^\"\\\\\\\\]{2,70}\"' app.js)",
+      "Bash(grep -oE \"[\\\\\"'\\\\`][^\\\\\"'\\\\`\\\\\\\\\\\\\\\\]{2,80}[\\\\\"'\\\\`]\" app.js)",
+      "PowerShell(node -v)",
+      "PowerShell(npm -v)",
+      "Bash(mkdir -p \"/c/Users/arifk/Desktop/sde/src/data\")",
+      "Bash(node -e ' *)",
+      "Bash(node --input-type=module -e ' *)",
+      "Bash(sed -i \"s/'-> metallic =', Math.min\\(1,obs.lightnessRange\\\\*1.4\\).toFixed\\(2\\)/'\\(malzemede kullanilmiyor\\)'/\" .tmp/diag.mjs)",
+      "Bash(node .tmp/diag.mjs)",
+      "Bash(node test/fingerprint.test.mjs)",
+      "Bash(node .tmp/contam.mjs)"
+    ]
+  }
+}
