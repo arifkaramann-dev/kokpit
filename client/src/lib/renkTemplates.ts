@@ -374,6 +374,45 @@ export function applyCoats(
   return canvas;
 }
 
+/**
+ * Marka yazı tipini yükler.
+ *
+ * Canvas, yazı tipi hazır değilken çizerse HATA VERMEZ — sessizce sistem
+ * fontuna düşer ve kart markasız görünür. Bu yüzden çizimden önce beklenmesi
+ * şart; "font ismini yazmak" yetmiyor.
+ *
+ * Bir kez yüklenir ve `document.fonts` içinde kalır. Yüklenemezse hata
+ * atmaz: kart sistem fontuyla da üretilebilmeli, hiç üretilememesindense.
+ */
+let fontPromise: Promise<boolean> | null = null;
+
+export function ensureBrandFont(): Promise<boolean> {
+  if (fontPromise) return fontPromise;
+  fontPromise = (async () => {
+    if (typeof document === 'undefined' || !('fonts' in document)) return false;
+    try {
+      const faces = [
+        new FontFace('Goldman', 'url(/renk/fonts/goldman-400-latin.woff2)', { weight: '400' }),
+        new FontFace('Goldman', 'url(/renk/fonts/goldman-700-latin.woff2)', { weight: '700' }),
+        new FontFace('Goldman', 'url(/renk/fonts/goldman-400-latin-ext.woff2)', {
+          weight: '400',
+          unicodeRange: 'U+0100-024F, U+0259, U+1E00-1EFF, U+2020, U+20A0-20AB',
+        }),
+        new FontFace('Goldman', 'url(/renk/fonts/goldman-700-latin-ext.woff2)', {
+          weight: '700',
+          unicodeRange: 'U+0100-024F, U+0259, U+1E00-1EFF, U+2020, U+20A0-20AB',
+        }),
+      ];
+      const loaded = await Promise.all(faces.map(f => f.load()));
+      loaded.forEach(f => document.fonts.add(f));
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  return fontPromise;
+}
+
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new window.Image();
@@ -405,6 +444,10 @@ export async function renderTemplate({
 }): Promise<HTMLCanvasElement> {
   const tpl = getTemplate(templateId);
   const series = getSeries(paint.seriesCode);
+
+  // Çizimden ÖNCE: canvas hazır olmayan fontu bekleyemez, sessizce sistem
+  // fontuna düşer ve kart markasız çıkar.
+  await ensureBrandFont();
 
   const canvas = document.createElement('canvas');
   canvas.width = tpl.width;
