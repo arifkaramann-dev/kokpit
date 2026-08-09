@@ -116,6 +116,9 @@ function UrunGorseli() {
   const [query, setQuery] = useState("");
   const [masterId, setMasterId] = useState<number | null>(null);
   const [referenceId, setReferenceId] = useState<string>("");
+  // Kat progresyonu için gümüş metalik baz numunesi. Kayıtlı referanslardan
+  // seçiliyor; candy katları bundan türetiliyor.
+  const [silverBaseId, setSilverBaseId] = useState<string>("");
   const [subjectId, setSubjectId] = useState(SUBJECT_PRESETS[0].id);
   const [subject, setSubject] = useState(SUBJECT_PRESETS[0].text);
   const [exact, setExact] = useState(false);
@@ -270,12 +273,21 @@ function UrunGorseli() {
       };
       paint.packaging = defaultPackagingFor(paint.seriesCode);
 
+      // Gümüş baz yalnız kat progresyonunda kullanılıyor; kayıtlı referanstan
+      // getiriliyor ve aynı kaynaktan servis edildiği için canvas kirlenmiyor.
+      const baseImage = silverBaseId ? `/api/img/sample/${silverBaseId}` : null;
+
       const out: Array<{ id: string; label: string; data: string }> = [];
       for (const tpl of TEMPLATES) {
         out.push({
           id: tpl.id,
           label: tpl.label,
-          data: await renderToDataUrl({ templateId: tpl.id, objectImage: preview, paint }),
+          data: await renderToDataUrl({
+            templateId: tpl.id,
+            objectImage: preview,
+            baseImage,
+            paint,
+          }),
         });
       }
       setCards(out);
@@ -518,6 +530,29 @@ function UrunGorseli() {
           <p className="text-xs text-muted-foreground">
             Sık kullandığın bir kareyi her seferinde yeniden yüklememek için
             kaydedebilirsin. Yukarıdaki yüklemelere ek olarak gönderilir.
+          </p>
+        </div>
+
+        {/* Gümüş baz — kat progresyonu için */}
+        <div className="space-y-2">
+          <Label>Gümüş baz (kat progresyonu için)</Label>
+          <Select value={silverBaseId} onValueChange={setSilverBaseId}>
+            <SelectTrigger>
+              <SelectValue placeholder="Yok — kat progresyonu üretilemez" />
+            </SelectTrigger>
+            <SelectContent>
+              {(references ?? []).map(r => (
+                <SelectItem key={r.id} value={String(r.id)}>
+                  {r.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            Candy'de altta gümüş metalik baz vardır, üstüne saydam renk katmanları
+            biner. Katlar bu numuneden fizikle türetiliyor: 1. kat gümüş, 2. yarı
+            saydam, 3. doygun. Referans Objeler sekmesinden bir gümüş numune
+            kaydet.
           </p>
         </div>
 

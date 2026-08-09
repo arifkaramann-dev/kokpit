@@ -45,6 +45,57 @@ export type SubjectMask = {
 /** Köşenin fon tohumu olabilmesi için gereken asgari parlaklık. */
 const MIN_CORNER_LUMA = 170;
 
+/** Uyarlanabilir toleransın inebileceği en düşük değer. */
+const MIN_TOLERANCE = 6;
+
+/**
+ * Fonun kendi düzgünlüğünden tolerans türetir.
+ *
+ * ── Neden gerekli ─────────────────────────────────────────────────────────
+ * Sabit tolerans iki durumu aynı anda karşılayamıyor:
+ *   - gradyanlı stüdyo fonu  → GENİŞ tolerans ister, yoksa zincir kopar
+ *   - parlak gümüş numune    → DAR tolerans ister, yoksa dolgu objeye sızar
+ *
+ * İkincisi sessiz ve pahalı bir hata: gümüş bazın parlak üst kenarı beyaz
+ * fona yeterince yakın olduğunda dolgu objenin içine giriyor, o bölge "fon"
+ * sayılıyor ve hiç boyanmıyor. Sonuç, numunenin ortasında kocaman beyaz bir
+ * leke — üstelik hiçbir yerde hata görünmüyor.
+ *
+ * Çözüm toleransı fondan ölçmek: kenar şeridi ne kadar tekdüzeyse tolerans o
+ * kadar dar olur. Düz beyaz fonlu bir çekimde dolgu objeye giremez; gradyanlı
+ * fonda ise ölçülen yayılma kadar genişler ve zincir yine kopmaz.
+ */
+function borderTolerance(src: Raster, cap: number): number {
+  const { data, width: w, height: h } = src;
+  let lo = 255;
+  let hi = 0;
+  const seen = (x: number, y: number) => {
+    const p = (y * w + x) * 4;
+    if (data[p + 3] < 8) return;
+    for (let c = 0; c < 3; c += 1) {
+      const v = data[p + c];
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+  };
+  const step = Math.max(1, Math.floor(Math.min(w, h) / 64));
+  for (let x = 0; x < w; x += step) {
+    seen(x, 0);
+    seen(x, h - 1);
+  }
+  for (let y = 0; y < h; y += step) {
+    seen(0, y);
+    seen(w - 1, y);
+  }
+  if (hi < lo) return cap;
+  // Ölçülen yayılmanın TAMAMI + küçük bir pay.
+  //
+  // Yarısını almak yetmiyor: gradyanlı bir fonda zincir, tohum köşesinden
+  // uzaklaştıkça yayılmanın tamamı kadar sapar ve yarı tolerans zinciri
+  // ortada kopar. Üst sınır yine istenen değer.
+  return Math.max(MIN_TOLERANCE, Math.min(cap, hi - lo + MIN_TOLERANCE));
+}
+
 /**
  * Fonu bulur ve obje maskesini üretir. Girdi DEĞİŞTİRİLMEZ.
  *
@@ -53,6 +104,8 @@ const MIN_CORNER_LUMA = 170;
  */
 export function extractSubjectMask(src: Raster, tolerance = 26): SubjectMask {
   const { data, width: w, height: h } = src;
+  // İstenen tolerans bir ÜST SINIR; gerçek değer fonun düzgünlüğünden gelir.
+  const tol = borderTolerance(src, tolerance);
   const count = w * h;
   const isBackground = new Uint8Array(count);
   const visited = new Uint8Array(count);
@@ -95,7 +148,7 @@ export function extractSubjectMask(src: Raster, tolerance = 26): SubjectMask {
       const transparent = data[p + 3] < 8;
       const diff =
         Math.abs(data[p] - sr) + Math.abs(data[p + 1] - sg) + Math.abs(data[p + 2] - sb);
-      if (!transparent && diff > tolerance * 3) continue;
+      if (!transparent && diff > tol * 3) continue;
 
       isBackground[idx] = 1;
       background += 1;

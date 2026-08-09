@@ -15,6 +15,11 @@
  */
 
 
+import { hexToLab, type Lab } from "@shared/color/color";
+import { renderCoat } from "@shared/color/candy";
+import type { Raster } from "@shared/color/recolor";
+import { extractSubjectMask, measureSubjectLab } from "@shared/color/subject";
+
 export type PackagingOption = {
   id: string;
   line: string;
@@ -301,80 +306,6 @@ export function forceWhiteBackground(
 }
 
 /**
- * Numuneye ek kat uygular.
- *
- * Candy ve şeffaf renklerde her kat, altındakinin üstüne renkli saydam bir
- * katman koyar. Işık o katmandan geçerken Beer-Lambert soğurmasına uğrar:
- * boyanın kendi renginde geçiren, tamamlayıcı renkte soğuran bir filtre.
- * Yani N kat = geçirgenliğin N-1 kez daha uygulanması.
- *
- * Bu yüzden 2. ve 3. kat için AI'ye tekrar gitmiyoruz — tek numuneden fizik
- * doğru şekilde türetiliyor. Hem bedava hem üç kare birbiriyle tutarlı.
- *
- * @param {HTMLImageElement|HTMLCanvasElement} source
- * @param {string} hex boyanın rengi
- * @param {number} coats 1 = dokunma
- */
-export function applyCoats(
-  source: HTMLImageElement | HTMLCanvasElement,
-  hex: string | null | undefined,
-  coats = 1,
-): HTMLCanvasElement {
-  const w = "naturalWidth" in source ? source.naturalWidth || source.width : source.width;
-  const h = "naturalHeight" in source ? source.naturalHeight || source.height : source.height;
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) throw new Error('Canvas bağlamı alınamadı');
-  ctx.drawImage(source, 0, 0, w, h);
-  if (coats <= 1) return canvas;
-
-  // Katmanın geçirgenliği.
-  //
-  // Dikkat: numune ZATEN boyanın renginde. Onu bir kez daha boyanın tam
-  // rengiyle çarpmak katlamalı soğurma yapıyor ve kare siyaha düşüyor
-  // (magenta'nın yeşil kanalı 0.2 → üç katta 0.04 → yeşil tamamen ölüyor).
-  // Gerçekte ek kat rengi DERİNLEŞTİRİR, öldürmez.
-  //
-  // İki bileşen birlikte çalışıyor:
-  //
-  //   SELECTIVITY — rengin hangi kanalı ne kadar geçirdiği. Hue derinleşmesi
-  //                 bundan geliyor.
-  //   DENSITY     — katmanın genel yoğunluğu, her kanalı eşit koyultur.
-  //
-  // Yalnızca seçici soğurma kullanınca ilerleme cılız kalıyordu: en parlak
-  // kanalın geçirgenliği tanım gereği 1.0 olduğu için magenta'nın kırmızısı
-  // hiç koyulaşmıyor, üç kat arasında gözle fark edilir değişim olmuyordu.
-  // Gerçek candy'de her kat genel yoğunluğu da artırır.
-  const SELECTIVITY = 0.45;
-  const DENSITY = 0.82;
-
-  const n = String(hex).replace('#', '');
-  const full = n.length === 3 ? n.split('').map((c) => c + c).join('') : n;
-  const v = parseInt(full, 16);
-  const rgb = [(v >> 16) & 255, (v >> 8) & 255, v & 255];
-  const peak = Math.max(...rgb) || 255;
-
-  const t = rgb.map((c) => DENSITY * (1 - (1 - Math.max(0.12, c / peak)) * SELECTIVITY));
-
-  const extra = coats - 1;
-  const gain = t.map((x) => Math.pow(x, extra));
-
-  const img = ctx.getImageData(0, 0, w, h);
-  const d = img.data;
-  for (let i = 0; i < d.length; i += 4) {
-    // Beyaz fona dokunma — yalnızca numunenin kendisi katman alsın
-    if (d[i] > 246 && d[i + 1] > 246 && d[i + 2] > 246) continue;
-    d[i] *= gain[0];
-    d[i + 1] *= gain[1];
-    d[i + 2] *= gain[2];
-  }
-  ctx.putImageData(img, 0, 0);
-  return canvas;
-}
-
-/**
  * Marka yazı tipini yükler.
  *
  * Canvas, yazı tipi hazır değilken çizerse HATA VERMEZ — sessizce sistem
@@ -435,11 +366,20 @@ function loadImage(src: string): Promise<HTMLImageElement> {
 export async function renderTemplate({
   templateId,
   objectImage,
+  baseImage,
   paint,
 }: {
   templateId: string;
   /** data: URI — AI üretimi obje görseli */
   objectImage?: string | null;
+  /**
+   * data: URI — GÜMÜŞ METALİK BAZ numunesi. Yalnız kat progresyonu kullanır.
+   *
+   * Katlar bundan türetiliyor: candy'de altta gümüş baz vardır, üstüne saydam
+   * renk katmanları biner. Zaten renkli bir numuneden başlanırsa birinci kat
+   * asla gümüş çıkamaz.
+   */
+  baseImage?: string | null;
   paint: PaintInfo;
 }): Promise<HTMLCanvasElement> {
   const tpl = getTemplate(templateId);
@@ -483,7 +423,8 @@ export async function renderTemplate({
     return canvas;
   }
   if (tpl.kind === 'coats') {
-    await drawCoats(ctx, tpl, obj, paint, series);
+    const base = baseImage ? await loadImage(baseImage) : null;
+    await drawCoats(ctx, tpl, base ?? obj, paint, series, base != null);
     return canvas;
   }
 
@@ -618,12 +559,51 @@ async function drawProduct(
  * müşterinin en çok sorduğu şey bu. Üç kare AI'ye üç kez gitmeden, tek
  * numuneden Beer-Lambert ile türetiliyor.
  */
+/** Canvas'ı rastere çevirir ve boya maskesini çıkarır. */
+function toRasterWithMask(
+  img: HTMLImageElement | HTMLCanvasElement,
+): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; image: ImageData; raster: Raster; mask: Uint8Array } {
+  const w = "naturalWidth" in img ? img.naturalWidth || img.width : img.width;
+  const h = "naturalHeight" in img ? img.naturalHeight || img.height : img.height;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) throw new Error('Canvas bağlamı alınamadı');
+  ctx.drawImage(img, 0, 0, w, h);
+  const image = ctx.getImageData(0, 0, w, h);
+  const raster: Raster = { data: image.data, width: image.width, height: image.height };
+  const { mask } = extractSubjectMask(raster);
+  return { canvas, ctx, image, raster, mask };
+}
+
+/**
+ * Kat progresyonu.
+ *
+ * ── Neden gümüş bazdan ────────────────────────────────────────────────────
+ * Candy iki katmandır: altta gümüş metalik baz, üstünde saydam renk. Kat
+ * sayısı arttıkça ışığın soğurulduğu yol uzar ve renk derinleşir. Müşterinin
+ * en çok sorduğu şey bu.
+ *
+ * Önceki hâli katları, ZATEN hedef renkteki numuneyi her katta biraz daha
+ * karartarak üretiyordu. Birinci kat asla gümüş çıkamıyor, katlar rengi
+ * derinleştirmek yerine siyaha götürüyordu — yani kare üçlüsü müşteriye
+ * yanlış bir şey anlatıyordu.
+ *
+ * Artık gümüş baz numunesinden Beer-Lambert ile türetiliyor:
+ *   1 KAT → baz, gümüş gri
+ *   2 KAT → yarı saydam, açık renk
+ *   3 KAT → doygun hedef renk
+ *
+ * Üçü de TEK numuneden çıkıyor, yani kareler arasında obje değişmiyor.
+ */
 async function drawCoats(
   ctx: CanvasRenderingContext2D,
   tpl: TemplateDef,
   obj: HTMLImageElement | null,
   paint: PaintInfo,
   series: SeriesInfo,
+  hasSilverBase: boolean,
 ): Promise<void> {
   const W = tpl.width;
   const H = tpl.height;
@@ -635,28 +615,54 @@ async function drawCoats(
 
   drawHeading(ctx, W, pad, pad * 0.6, paint, series);
 
+  const available = footerTop - top - pad * 0.6;
+
   if (!obj) {
     ctx.fillStyle = paint.hex || '#cccccc';
-    ctx.fillRect(pad, top, W - pad * 2, footerTop - top - pad);
+    ctx.fillRect(pad, top, W - pad * 2, available);
     return;
   }
 
-  const cleaned = forceWhiteBackground(obj).canvas;
-  const available = footerTop - top - pad * 0.6;
+  const COATS = 3;
+  const src = toRasterWithMask(forceWhiteBackground(obj).canvas);
+  const baseLab = measureSubjectLab(src.raster, src.mask);
+  const targetLab: Lab | null = paint.hex ? hexToLab(paint.hex) : null;
 
-  // Ana numune (3 kat — en derin hali, ürünün vaadi)
+  /**
+   * Bir katın karesini üretir.
+   *
+   * Gümüş baz ya da hedef renk yoksa katman hesaplanamaz; numune olduğu gibi
+   * çizilir. Uydurma bir progresyon basmak, müşteriye yanlış bilgi vermektir.
+   */
+  const coatCanvas = (coat: number): HTMLCanvasElement => {
+    if (!hasSilverBase || !baseLab || !targetLab) return src.canvas;
+    const out = renderCoat(src.raster, src.mask, baseLab, targetLab, coat, {
+      totalCoats: COATS,
+    });
+    const c = document.createElement('canvas');
+    c.width = out.width;
+    c.height = out.height;
+    const cctx = c.getContext('2d');
+    if (!cctx) throw new Error('Canvas bağlamı alınamadı');
+    const img = cctx.createImageData(out.width, out.height);
+    img.data.set(out.data);
+    cctx.putImageData(img, 0, 0);
+    return c;
+  };
+
+  // Ana kare: son kat — ürünün vaadi, en derin hâli.
   const mainH = available * 0.62;
-  const main = applyCoats(cleaned, paint.hex, 3);
+  const main = coatCanvas(COATS);
   const mainBox = contain(main.width, main.height, W - pad * 2, mainH);
   ctx.drawImage(main, pad + mainBox.x, top + mainBox.y, mainBox.w, mainBox.h);
 
   // Üç küçük kare: 1, 2, 3 kat
   const smallTop = top + mainH + pad * 0.3;
   const smallH = available - mainH - pad * 0.3;
-  const cellW = (W - pad * 2) / 3;
+  const cellW = (W - pad * 2) / COATS;
 
-  for (let i = 0; i < 3; i += 1) {
-    const coat = applyCoats(cleaned, paint.hex, i + 1);
+  for (let i = 0; i < COATS; i += 1) {
+    const coat = coatCanvas(i + 1);
     const box = contain(coat.width, coat.height, cellW * 0.86, smallH * 0.74);
     ctx.drawImage(
       coat,
@@ -671,6 +677,15 @@ async function drawCoats(
     ctx.font = `700 ${Math.round(W * 0.022)}px Goldman, sans-serif`;
     ctx.fillStyle = '#52525b';
     ctx.fillText(`${i + 1} KAT`, pad + cellW * i + cellW / 2, smallTop + smallH);
+  }
+
+  // Gümüş baz yoksa kullanıcıya söyle — üç aynı kare basıp susmaktansa.
+  if (!hasSilverBase) {
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.font = `400 ${Math.round(W * 0.018)}px Goldman, sans-serif`;
+    ctx.fillStyle = '#b45309';
+    ctx.fillText('Kat progresyonu için gümüş baz numunesi gerekli', pad, top - pad * 0.35);
   }
 }
 
