@@ -131,7 +131,13 @@ export const renkStudyoRouter = router({
         hex,
         colorName: z.string().trim().max(128).optional(),
         finish: z.string().trim().max(32).optional(),
-        /** Şekli sabitleyen referans obje. Yoksa model serbest çizer. */
+        /**
+         * Boyanın referans fotoğrafları — model rengi ve kaplamayı BUNLARDAN
+         * okur. Tek kare yanıltabilir (parlama ya da gölge rengi kaydırır),
+         * farklı açılardan birkaç kare çok daha güvenilir anlatır.
+         */
+        referenceImages: z.array(dataUrl).max(6).optional(),
+        /** Kayıtlı referans obje — yüklenen görsellere ek olarak gönderilir. */
         referenceId: z.number().int().positive().nullish(),
         /** Ne çizileceği. Referans varsa da yön vermek için kullanılır. */
         subject: z.string().trim().min(1).max(500),
@@ -153,33 +159,49 @@ export const renkStudyoRouter = router({
     .mutation(async ({ input }) => {
       const finishHint = input.finish ? FINISH_HINT[input.finish] : undefined;
 
-      const parts = [
-        input.subject,
-        `painted in the exact colour ${input.hex}`,
-        input.colorName ? `(${input.colorName})` : null,
-        finishHint,
-        "plain pure white background, studio lighting, centred, no text, no watermark, product photography",
-      ].filter(Boolean);
-
-      // Referans varsa şekli oradan al, YALNIZ rengi değiştir. Bu cümle
-      // olmadan model referansı "ilham" sayıp formu değiştiriyor.
-      const prompt = input.referenceId
-        ? `Keep the shape, angle, lighting and composition of the reference image exactly as they are. Change ONLY the paint colour: ${parts.join(", ")}.`
-        : parts.join(", ");
-
-      let reference: string | null = null;
+      const refs = [...(input.referenceImages ?? [])];
       if (input.referenceId) {
         const ref = await db.getSampleMasterById(input.referenceId);
         if (!ref?.data) {
           throw new TRPCError({ code: "NOT_FOUND", message: "Referans obje bulunamadı" });
         }
-        reference = ref.data;
+        refs.push(ref.data);
       }
+
+      // İki farklı istem, çünkü iki farklı soru soruluyor.
+      //
+      // Referans VARSA rengin kaynağı referanstır, hex değil: boyanın gerçek
+      // fotoğrafı, katalogdaki hex kodunun anlatamadığı şeyi (pulcuk çakması,
+      // açıyla derinleşme, kaplamanın dokusu) taşır. Hex yalnız destekleyici
+      // ipucu olarak veriliyor; çelişirse referans kazanmalı.
+      //
+      // Referans YOKSA elimizdeki tek bilgi hex ve kaplama etiketi.
+      const prompt = refs.length
+        ? [
+            "Look at the reference images and identify the exact paint colour and finish of the painted surface.",
+            `Generate a photorealistic studio photograph of ${input.subject} painted in that exact colour and finish.`,
+            "Match the hue, saturation, lightness, metallic flake and depth of the reference paint as closely as possible.",
+            input.colorName ? `The paint is named ${input.colorName}.` : null,
+            `Its catalogue reference is ${input.hex}${finishHint ? `, ${finishHint}` : ""} — use this only as a hint; the reference images are the truth.`,
+            "White seamless studio background, professional automotive catalogue lighting with large softboxes,",
+            "sharp elongated highlights along the body, visible clearcoat depth. No text, no watermark, no people.",
+          ]
+            .filter(Boolean)
+            .join(" ")
+        : [
+            input.subject,
+            `painted in the exact colour ${input.hex}`,
+            input.colorName ? `(${input.colorName})` : null,
+            finishHint,
+            "plain pure white background, studio lighting, centred, no text, no watermark, product photography",
+          ]
+            .filter(Boolean)
+            .join(", ");
 
       try {
         const result = await generateProductImage({
           prompt,
-          reference: reference ? splitDataUrl(reference) : null,
+          references: refs.map(splitDataUrl),
           model: input.model ?? null,
         });
         return {

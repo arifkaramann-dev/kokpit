@@ -76,6 +76,46 @@ export async function forceExactColor(src: string, hex: string): Promise<ExactCo
   return { data: canvas.toDataURL("image/png"), noBackgroundFound };
 }
 
+/**
+ * Dosyayı küçülterek data URL'e çevirir.
+ *
+ * Referans görsel modele rengi anlatmak için var; 4000 px'lik bir telefon
+ * fotoğrafı bu işi 1024 px'likten daha iyi yapmıyor ama isteği megabaytlarca
+ * şişiriyor ve yanıtı geciktiriyor. Altı referansta fark dakikalara çıkıyor.
+ *
+ * JPEG çünkü referansta saydamlık gerekmiyor ve boyut farkı büyük.
+ */
+export function downscaleToDataUrl(file: File, max = 1024, quality = 0.9): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.round(img.naturalWidth * scale);
+      const h = Math.round(img.naturalHeight * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        reject(new Error("Canvas bağlamı alınamadı"));
+        return;
+      }
+      // Fon beyaz: saydam PNG yüklenirse JPEG'e çevrilirken siyahlaşmasın.
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Görsel okunamadı"));
+    };
+    img.src = url;
+  });
+}
+
 /** Dosyayı data URL'e çevirir. */
 export function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {

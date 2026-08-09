@@ -13,7 +13,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { forceExactColor, readAsDataUrl, slug } from "@/lib/renkStudyo";
+import { downscaleToDataUrl, forceExactColor, readAsDataUrl, slug } from "@/lib/renkStudyo";
 import { trpc } from "@/lib/trpc";
 import {
   AlertTriangle,
@@ -24,6 +24,7 @@ import {
   Sparkles,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -93,6 +94,12 @@ function UrunGorseli() {
     () => localStorage.getItem("renkStudyo.model") ?? "",
   );
 
+  // Boyanın referans fotoğrafları. Kalıcı DEĞİL — istekle birlikte gidiyor,
+  // veritabanına yazılmıyor. Her renk için farklı kareler yüklenebilsin diye:
+  // bunlar bir "obje kütüphanesi" değil, o üretimin renk kaynağı.
+  const [refImages, setRefImages] = useState<string[]>([]);
+  const refFileRef = useRef<HTMLInputElement>(null);
+
   const [preview, setPreview] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -122,6 +129,20 @@ function UrunGorseli() {
   // Kayıtlı seçim bu sağlayıcıda yoksa (sağlayıcı değişmiş olabilir) ilkine düş.
   const activeModel = models.some(m => m.id === model) ? model : (models[0]?.id ?? "");
 
+  const addRefImages = async (files: File[]) => {
+    const room = 6 - refImages.length;
+    if (room <= 0) {
+      toast.error("En fazla 6 referans görsel");
+      return;
+    }
+    try {
+      const added = await Promise.all(files.slice(0, room).map(f => downscaleToDataUrl(f)));
+      setRefImages(prev => [...prev, ...added].slice(0, 6));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Görsel okunamadı");
+    }
+  };
+
   const generate = trpc.renkStudyo.generateForColor.useMutation();
 
   const onGenerate = async () => {
@@ -136,6 +157,7 @@ function UrunGorseli() {
         hex: color.hex,
         colorName: [color.name, color.nameEn].filter(Boolean).join(" / ") || undefined,
         finish: color.finish ?? undefined,
+        referenceImages: refImages.length ? refImages : undefined,
         referenceId: referenceId ? Number(referenceId) : null,
         subject,
         model: activeModel || undefined,
@@ -263,6 +285,66 @@ function UrunGorseli() {
           )}
         </div>
 
+        {/* Renk örneği — boyanın gerçek fotoğrafları */}
+        <div className="space-y-2 border-t pt-4">
+          <Label>Renk örneği (referans fotoğraflar)</Label>
+          <p className="text-xs text-muted-foreground">
+            Boyanın gerçek fotoğraflarını yükle; model rengi ve kaplamayı
+            bunlardan okur. Farklı açılardan 2-3 kare tek kareden çok daha doğru
+            sonuç verir — tek karede parlama ya da gölge rengi kaydırabilir.
+          </p>
+
+          {refImages.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {refImages.map((src, i) => (
+                <div key={i} className="group relative">
+                  <img
+                    src={src}
+                    alt={`Referans ${i + 1}`}
+                    className="size-20 rounded border object-cover"
+                  />
+                  <button
+                    type="button"
+                    aria-label="Kaldır"
+                    onClick={() => setRefImages(prev => prev.filter((_, j) => j !== i))}
+                    className="absolute -right-1.5 -top-1.5 rounded-full border bg-background p-0.5 shadow"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <input
+            ref={refFileRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            multiple
+            className="hidden"
+            onChange={e => {
+              const files = Array.from(e.target.files ?? []);
+              if (files.length) void addRefImages(files);
+              e.target.value = "";
+            }}
+          />
+          <Button
+            variant="outline"
+            className="w-full"
+            disabled={refImages.length >= 6}
+            onClick={() => refFileRef.current?.click()}
+          >
+            <Upload className="mr-2 size-4" />
+            {refImages.length ? `Görsel ekle (${refImages.length}/6)` : "Renk örneği yükle"}
+          </Button>
+          {refImages.length === 0 && (
+            <p className="text-xs text-muted-foreground">
+              Yüklemezsen model rengi yalnız hex kodundan üretir — kaplamanın
+              dokusunu bilemez.
+            </p>
+          )}
+        </div>
+
         {/* Ne çizilecek */}
         <div className="space-y-2 border-t pt-4">
           <Label>Ne çizilsin</Label>
@@ -304,8 +386,8 @@ function UrunGorseli() {
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">
-            Referans verilirse model şekli, açıyı ve ışığı aynen korur, yalnız rengi
-            değiştirir — katalogdaki bütün renkler aynı formda çıkar.
+            Sık kullandığın bir kareyi her seferinde yeniden yüklememek için
+            kaydedebilirsin. Yukarıdaki yüklemelere ek olarak gönderilir.
           </p>
         </div>
 

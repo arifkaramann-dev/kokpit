@@ -16,8 +16,8 @@
  *
  * ── Sağlayıcı seçimi ──────────────────────────────────────────────────────
  * Hangi anahtar tanımlıysa o kullanılır. İkisi de varsa OpenAI tercih edilir:
- * `gpt-image-1` referans görselle düzenlemeyi (images/edits) doğrudan
- * destekliyor ve referansla üretim bu ekranın ana akışı.
+ * `gpt-image-1` çoklu referans görselle düzenlemeyi (images/edits) doğrudan
+ * destekliyor ve referanstan renk okuma bu ekranın ana akışı.
  *
  * Hiçbiri yoksa `null` döner — çağıran taraf kullanıcıya ne yapması
  * gerektiğini söyleyebilsin diye, sessizce boş görsel üretilmez.
@@ -27,8 +27,12 @@ export type ImageProviderId = "openai" | "gemini";
 
 export type GenerateInput = {
   prompt: string;
-  /** Şekli sabitleyen referans görsel. Verilirse düzenleme modunda çalışılır. */
-  reference?: { b64: string; mimeType: string } | null;
+  /**
+   * Referans görseller (en fazla 6). Boyanın gerçek fotoğrafları buraya gelir;
+   * model rengi ve kaplamayı BUNLARDAN okur. Verilirse düzenleme modunda
+   * çalışılır.
+   */
+  references?: Array<{ b64: string; mimeType: string }>;
   /** Model kimliği. Boşsa sağlayıcının varsayılanı kullanılır. */
   model?: string | null;
 };
@@ -102,21 +106,27 @@ async function failure(provider: string, res: Response): Promise<never> {
 
 async function generateWithOpenAi({
   prompt,
-  reference,
+  references = [],
   model,
 }: GenerateInput): Promise<GenerateOutput> {
   const key = process.env.OPENAI_API_KEY!;
   const chosen = model?.trim() || OPENAI_MODEL;
 
-  // Referans varsa düzenleme ucu: model şekli korur, yalnız isteneni değiştirir.
+  // Referans varsa düzenleme ucu: model görselleri okuyup isteneni üretir.
   // Üretim ucuna referans veremiyoruz, o yüzden iki ayrı yol.
-  const res = reference
+  //
+  // Alan adı `image[]`: gpt-image-1 birden çok referans kabul ediyor ve boyanın
+  // farklı açılardan çekilmiş kareleri rengi tek kareden çok daha güvenilir
+  // anlatıyor — tek karede parlama ya da gölge rengi yanıltabilir.
+  const res = references.length
     ? await (async () => {
         const form = new FormData();
         form.append("model", chosen);
         form.append("prompt", prompt);
         form.append("size", "1024x1024");
-        form.append("image", b64ToBlob(reference.b64, reference.mimeType), "reference.png");
+        references.forEach((ref, i) => {
+          form.append("image[]", b64ToBlob(ref.b64, ref.mimeType), `reference-${i + 1}.png`);
+        });
         return fetch("https://api.openai.com/v1/images/edits", {
           method: "POST",
           headers: { authorization: `Bearer ${key}` },
@@ -147,15 +157,15 @@ async function generateWithOpenAi({
 
 async function generateWithGemini({
   prompt,
-  reference,
+  references = [],
   model,
 }: GenerateInput): Promise<GenerateOutput> {
   const key = process.env.GEMINI_API_KEY!;
   const chosen = model?.trim() || GEMINI_MODEL;
 
   const parts: Array<Record<string, unknown>> = [{ text: prompt }];
-  if (reference) {
-    parts.push({ inline_data: { mime_type: reference.mimeType, data: reference.b64 } });
+  for (const ref of references) {
+    parts.push({ inline_data: { mime_type: ref.mimeType, data: ref.b64 } });
   }
 
   const res = await fetch(
