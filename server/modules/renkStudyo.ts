@@ -1,20 +1,20 @@
 /**
- * Renk Stüdyosu — renk × ambalaj → pazaryeri kart görseli.
+ * Renk Stüdyosu — bir ürünün renginde görsel üretir ve ürüne kaydeder.
  *
- * ── Hat ───────────────────────────────────────────────────────────────────
- *   1. Numune master'ı   obje tipi başına BİR kez üretilir/yüklenir (bu modül)
- *   2. Renklendirme      master'ın rengi hedefe zorlanır (shared/color/recolor)
- *   3. Kompozisyon       beyaz fon + gerçek ambalaj fotoğrafı + numune + marka
- *   4. Depolama          rengin tüm master ürünlerine bağlanır (masterImages)
+ * ── Akış ──────────────────────────────────────────────────────────────────
+ *   ürün (master) seç  →  rengi üründen gelir
+ *     →  AI o renkte objeyi üretir
+ *     →  önizle, beğenmezsen yeniden üret
+ *     →  bu ürüne ya da o rengin tüm ürünlerine kaydet
  *
- * 2 ve 3 istemcide çalışır: ikisi de canvas gerektirir ve sunucuda canvas yok.
- * Bu modül 1 ve 4'ü yürütür — üretim/saklama ve ürüne bağlama.
+ * ── Referans obje ─────────────────────────────────────────────────────────
+ * Üretim isteğe bağlı olarak bir REFERANS görselle yapılır. Referans yoksa AI
+ * her renkte farklı bir şekil çizer ve katalogda yeşil damla ile magenta damla
+ * farklı formda çıkar; müşteri iki kareyi yan yana koyduğunda rengi değil şekil
+ * farkını görür. Referans verildiğinde modele "bu objeyi şu renkte üret"
+ * denir, şekil ve kompozisyon sabit kalır.
  *
- * ── Neden numune master'ı ─────────────────────────────────────────────────
- * Her rengi ayrı ayrı AI'a ürettirmek hem pahalı (renk başına bir çağrı) hem
- * tutarsız: AI her seferinde farklı şekil çiziyor, katalogda yeşil damla ile
- * magenta damla farklı formda çıkıyor ve müşteri rengi değil şekil farkını
- * görüyor. Tek master + matematiksel renklendirme ikisini de çözer.
+ * Referans objeler `sampleMasters` tablosunda durur ve bir kez kurulur.
  */
 
 import { z } from "zod";
@@ -35,15 +35,14 @@ const objectTypeKey = z
   .max(64)
   .regex(/^[a-z0-9-]+$/, "Obje tipi yalnız küçük harf, rakam ve tire içerebilir");
 
+const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Geçersiz renk kodu");
+
 /**
  * Dış adresteki görseli data URL'e çevirir.
  *
- * Neden zorunlu: istemci bu görseli canvas'a çizip `getImageData` ile piksel
- * okuyacak. Çapraz kaynaktan gelen bir görsel canvas'ı "kirletir" ve okuma
- * güvenlik hatasıyla düşer. Kendi sunucumuzdan servis etmek tek yol.
- *
- * Ayrıca kalıcılık: üretim servisinin adresi süreli olabilir, katalog ise
- * kalıcı olmak zorunda.
+ * İki sebep: (1) istemci bu görseli canvas'a çizebilmeli, çapraz kaynak bir
+ * görsel canvas'ı kirletir ve piksel okuma güvenlik hatasıyla düşer;
+ * (2) üretim servisinin adresi süreli olabilir, katalog ise kalıcı olmalı.
  */
 async function inlineImage(url: string): Promise<string> {
   const res = await fetch(url);
@@ -58,26 +57,52 @@ async function inlineImage(url: string): Promise<string> {
   return `data:${mime};base64,${buf.toString("base64")}`;
 }
 
+/** `data:image/png;base64,AAA...` → { b64Json, mimeType } */
+function splitDataUrl(value: string): { b64Json: string; mimeType: string } {
+  const comma = value.indexOf(",");
+  const mimeType = value.slice(5, value.indexOf(";")) || "image/png";
+  return { b64Json: value.slice(comma + 1), mimeType };
+}
+
+/**
+ * Bitiş türünü modele anlatan sıfat.
+ *
+ * `colors.finish` bir SATIŞ etiketidir ama görsel üretiminde de karşılığı var:
+ * metalik boya pulcuk parıltısıyla, sedef iridesan geçişle, candy derin camsı
+ * katmanla görünür. Bunu isteme yazmazsak model hepsini düz boya çizer ve
+ * seriler arasındaki fark kaybolur.
+ */
+const FINISH_HINT: Record<string, string> = {
+  duz: "solid gloss finish",
+  metalik: "metallic finish with fine aluminium flake sparkle",
+  sedef: "pearlescent finish with iridescent colour shift",
+  candy: "candy finish, deep translucent glassy layer over a metallic base",
+  neon: "vivid fluorescent neon finish",
+  seffaf: "translucent clear-tinted finish",
+};
+
 export const renkStudyoRouter = router({
-  /** Numune master listesi — görsel verisi olmadan (liste hafif kalsın). */
-  masters: protectedProcedure.query(() => db.listSampleMasters()),
+  // -------------------------------------------------------------------------
+  // Referans objeler
+  // -------------------------------------------------------------------------
+
+  /** Referans obje listesi — görsel verisi olmadan (liste hafif kalsın). */
+  references: protectedProcedure.query(() => db.listSampleMasters()),
 
   /**
-   * Kendi numune fotoğrafını yükle.
+   * Kendi referans fotoğrafını yükle.
    *
-   * AI üretiminden ÖNCE gelir: elde gerçek bir numune çekimi varsa onu
-   * kullanmak her zaman daha iyidir — hem bedava hem markanın gerçek görünümü.
+   * AI üretiminden önce gelir: elde gerçek bir ürün/numune çekimi varsa
+   * referans olarak onu vermek en tutarlı sonucu üretir, çünkü katalogdaki
+   * şekil gerçekten var olan şekildir.
    */
-  saveMaster: protectedProcedure
+  saveReference: protectedProcedure
     .input(
       z.object({
         objectType: objectTypeKey,
         label: z.string().trim().min(1).max(128),
         data: dataUrl,
-        baseHex: z
-          .string()
-          .regex(/^#[0-9a-fA-F]{6}$/)
-          .optional(),
+        baseHex: hex.optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -91,58 +116,116 @@ export const renkStudyoRouter = router({
       return { id };
     }),
 
-  /**
-   * Numune master'ını AI ile üret.
-   *
-   * İstem nötr renk ister: master ne kadar nötrse yeniden renklendirme o kadar
-   * geniş bir renk aralığında doğal durur. Doymuş bir master'dan çok farklı
-   * bir renge gitmek, kaynak rengin izini bırakabilir.
-   */
-  generateMaster: protectedProcedure
-    .input(
-      z.object({
-        objectType: objectTypeKey,
-        label: z.string().trim().min(1).max(128),
-        prompt: z.string().trim().min(1).max(2000),
-      }),
-    )
-    .mutation(async ({ input }) => {
-      const { url } = await generateImage({
-        prompt: `${input.prompt}. Neutral mid-grey paint colour, plain pure white background, studio lighting, centred, no text, no watermark, product photography.`,
-        quality: "high",
-      });
-      if (!url) {
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: "Görsel üretilemedi",
-        });
-      }
-      const data = await inlineImage(url);
-      const id = await db.saveSampleMaster({
-        objectType: input.objectType,
-        label: input.label,
-        data,
-        baseHex: null,
-        prompt: input.prompt,
-      });
-      return { id };
-    }),
-
-  deleteMaster: protectedProcedure
+  deleteReference: protectedProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .mutation(async ({ input }) => {
       await db.deleteSampleMaster(input.id);
       return { ok: true };
     }),
 
+  // -------------------------------------------------------------------------
+  // Üretim
+  // -------------------------------------------------------------------------
+
   /**
-   * Üretilen kart görselini rengin TÜM master ürünlerine bağlar.
+   * Verilen renkte görsel üretir. KAYDETMEZ — data URL döner, kullanıcı
+   * önizler ve beğenirse ayrı bir çağrıyla kaydeder.
    *
-   * Neden tek tek değil: bir rengin 30/100/250/500 ml'si aynı kart görselini
-   * kullanır. `assignImageToColor` aynı görsele sahip master'ı atlar, yani
-   * tekrar çalıştırmak mükerrer satır açmaz.
+   * Beğenilmeyen her üretimi veritabanına yazmak kataloğu çöple doldururdu;
+   * kaydetme kararı insanın.
    */
-  saveCard: protectedProcedure
+  generateForColor: protectedProcedure
+    .input(
+      z.object({
+        hex,
+        colorName: z.string().trim().max(128).optional(),
+        finish: z.string().trim().max(32).optional(),
+        /** Şekli sabitleyen referans obje. Yoksa model serbest çizer. */
+        referenceId: z.number().int().positive().nullish(),
+        /** Ne çizileceği. Referans varsa da yön vermek için kullanılır. */
+        subject: z.string().trim().min(1).max(500),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const finishHint = input.finish ? FINISH_HINT[input.finish] : undefined;
+
+      const parts = [
+        input.subject,
+        `painted in the exact colour ${input.hex}`,
+        input.colorName ? `(${input.colorName})` : null,
+        finishHint,
+        "plain pure white background, studio lighting, centred, no text, no watermark, product photography",
+      ].filter(Boolean);
+
+      // Referans varsa şekli oradan al, YALNIZ rengi değiştir. Bu cümle
+      // olmadan model referansı "ilham" sayıp formu değiştiriyor.
+      const prompt = input.referenceId
+        ? `Keep the shape, angle, lighting and composition of the reference image exactly as they are. Change ONLY the paint colour: ${parts.join(", ")}.`
+        : parts.join(", ");
+
+      let originalImages: Array<{ b64Json: string; mimeType: string }> | undefined;
+      if (input.referenceId) {
+        const ref = await db.getSampleMasterById(input.referenceId);
+        if (!ref?.data) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Referans obje bulunamadı" });
+        }
+        originalImages = [splitDataUrl(ref.data)];
+      }
+
+      let url: string | undefined;
+      try {
+        ({ url } = await generateImage({ prompt, originalImages, quality: "high" }));
+      } catch (err) {
+        // Yapılandırma eksikse hata İngilizce ve teknik geliyor ("... is not
+        // configured"). Bu ekranın tamamı üretime bağlı olduğu için kullanıcı
+        // ne yapacağını bilmeli, yoksa "çalışmıyor" deyip bırakır.
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes("not configured")) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message:
+              "Görsel üretim servisi yapılandırılmamış. Render → Environment altında " +
+              "BUILT_IN_FORGE_API_URL ve BUILT_IN_FORGE_API_KEY değerleri girilmeli.",
+          });
+        }
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message });
+      }
+      if (!url) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Görsel üretilemedi" });
+      }
+      return { data: await inlineImage(url), prompt };
+    }),
+
+  // -------------------------------------------------------------------------
+  // Kaydetme
+  // -------------------------------------------------------------------------
+
+  /** Görseli TEK bir ürüne kaydeder. */
+  saveToMaster: protectedProcedure
+    .input(
+      z.object({
+        masterId: z.number().int().positive(),
+        data: dataUrl,
+        role: z.string().trim().max(32).optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      await db.addMasterImage({
+        masterId: input.masterId,
+        data: input.data,
+        role: input.role ?? "studyo",
+      });
+      return { added: 1 };
+    }),
+
+  /**
+   * Görseli o rengin TÜM ürünlerine kaydeder.
+   *
+   * Bir rengin 30/100/250/500 ml'si aynı görseli kullanır; tek tek eklemek
+   * dört kat iş demekti. Aynı görsele sahip ürün atlanır — tekrar çalıştırmak
+   * mükerrer satır açmaz.
+   */
+  saveToColor: protectedProcedure
     .input(
       z.object({
         colorId: z.number().int().positive(),
@@ -161,8 +244,7 @@ export const renkStudyoRouter = router({
       if (result.added === 0 && result.skipped === 0) {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
-          message:
-            "Bu renge bağlı master ürün yok. Önce katalogda bu renkte ürün üretilmeli.",
+          message: "Bu renge bağlı ürün yok. Önce katalogda bu renkte ürün üretilmeli.",
         });
       }
       return result;

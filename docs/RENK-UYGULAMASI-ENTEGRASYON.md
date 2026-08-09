@@ -27,8 +27,10 @@ bütün renkler aynı formda, aynı ışıkta, yalnız renk ekseninde ayrışan 
 | `normalize.js` — kayıt tamamlama | `shared/color/paint.ts` | ✅ taşındı |
 | `match.js` — en yakın renk | `shared/color/match.ts` | ✅ taşındı |
 | `recolor.js` — görsel yeniden renklendirme | `shared/color/recolor.ts` | ✅ taşındı |
-| `colorLibrary`, `masterStore`, `assetStore`, `packagingStore` | tRPC + `colors` / `masterImages` | ⏳ sırada |
-| `AiStudio`, `Templates`, `Packaging`, `Library`, `PaintDetail` sayfaları | `client/src/pages/` | ⏳ sırada |
+| `subject` — fon ayıklama + obje maskesi | `shared/color/subject.ts` | ✅ taşındı |
+| `AiStudio` — renk başına AI üretimi | Renk Stüdyosu (`/renk-studyo`) | ✅ kuruldu |
+| `masterStore` — referans obje | `sampleMasters` + tRPC | ✅ kuruldu |
+| `Templates` — kart kompozisyonu (fon+ambalaj+marka) | — | ⏳ sırada |
 
 ### Dondurulan
 
@@ -109,18 +111,52 @@ regresyon testi eklendi.
 etiketidir ve pazaryeri kartında "Renk Tipi" olarak gider, ikincisi malzeme
 davranışıdır. Birbirine çevrilmeye çalışılırsa ikisi de bozulur.
 
+## Akış kararı — 2026-08-09
+
+İlk kurulumda üretim hattını "obje tipi başına bir NÖTR master üret, sonra her
+rengi `recolor` ile matematiksel bas" olarak tasarladım. Gerekçe maliyet ve
+tutarlılıktı: renk başına sıfır AI çağrısı ve şekil sabitliği.
+
+Bu **yanlış kurgu oldu** ve ekranda karşılığı görülünce düzeltildi. İstenen akış:
+
+> **Her renk için AI üretir.** Ürün (master) seçilir, renk üründen gelir, AI o
+> renkte objeyi üretir, sonuç ürüne kaydedilir.
+
+Nötr master yaklaşımı kaldırıldı. Şekil tutarlılığı ise kaybolmadı: üretim
+isteğe bağlı bir **referans obje** ile yapılıyor ve modele "şekli, açıyı, ışığı
+aynen koru, yalnız rengi değiştir" deniyor — kaynak uygulamadaki `masterStore`
+fikrinin ta kendisi, ama rengi AI basıyor.
+
+`recolor` çöpe gitmedi: **"Rengi tam tutur"** anahtarı olarak duruyor (varsayılan
+kapalı). Görüntü modelleri kesin hex tutturmaz; anahtar açıkken üretim sonrası
+renk hedefe oturtulur, gölge ve parlama korunur.
+
+**Eksen de düzeltildi:** ekran önce renk + kodda sabit ambalaj listesinden
+çalışıyordu; oysa kokpit'te gerçek nesne `masterProducts` ve renk onun bir
+ekseni. Artık ürün seçiliyor, renk üründen türetiliyor.
+
+Kart kompozisyonu (beyaz fon + ambalaj fotoğrafı + marka) bu turda akıştan
+çıkarıldı; ona ait ambalaj/marka/font varlıkları da depodan kaldırıldı. İkisi de
+`_transfer/renk-uygulamasi/` arşivinde ve git geçmişinde duruyor.
+
 ## Uygulama planı
 
 1. ✅ **Renk motoru** → `shared/color/` (TypeScript, 75 test)
 2. ✅ **`recolor`** → ölü koddan çıktı, `shared/color/recolor.ts` (9 test).
    Bağımlılığı olmadığı için şemadan önce alındı; hattın belirleyici parçası
    ve tek başına doğrulanabiliyor.
-3. ⏳ **Şema** → `colors` tablosuna Lab sütunları
-4. ⏳ **tRPC** → renk kütüphanesi ve master görsel router'ları; localStorage /
-   IndexedDB depolarının yerine
-5. ⏳ **Sayfalar** → AiStudio, Templates, Packaging, Library, PaintDetail
-6. ⏳ **Bağlantı** → üretilen görsel `masterImages` / `listingImages` üzerinden
-   pazaryeri kartına
+3. ✅ **Fon ayıklama** → `shared/color/subject.ts` (8 test). Kaynakta canvas'a
+   gömülü olduğu için hiç test edilememişti.
+4. ✅ **Şema + tRPC** → `sampleMasters` tablosu (tek CREATE TABLE) ve
+   `renkStudyo` router'ı: referans objeler, renk başına üretim, ürüne kaydetme.
+5. ✅ **Ekran** → `/renk-studyo`: ürün seç → AI üretir → ürüne kaydet.
+6. ⏳ **Kart kompozisyonu** → beyaz fon + ambalaj fotoğrafı + marka; ambalaj
+   ekseni kokpit'in `packagings` tablosuna bağlanacak.
+7. ⏳ **Pazaryeri** → `masterImages` → `listingImages` → kanal kartı.
+
+`colors` tablosuna Lab sütunu EKLENMEDİ: `normalizePaint` Lab'ı hex'ten
+türetiyor ve bugünkü akışta sunucu tarafı ΔE eşleştirmesi yok. Yazıcısı ve
+okuyucusu olmayan sütun, sonradan taşınacak ölü şema demek olurdu.
 
 Sıra tesadüfi değil: her adım bir öncekine dayanıyor ve her adım tek başına
 doğrulanabilir. Zincirin ucu (6) çalışana kadar hiçbir adım "bitti" sayılmaz.
