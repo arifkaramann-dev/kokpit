@@ -100,6 +100,8 @@ function UrunGorseli() {
   const [refImages, setRefImages] = useState<string[]>([]);
   const refFileRef = useRef<HTMLInputElement>(null);
 
+  const [extra, setExtra] = useState("");
+  const [usedPrompt, setUsedPrompt] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -157,6 +159,7 @@ function UrunGorseli() {
     }
     setBusy(true);
     setWarning(null);
+    setUsedPrompt(null);
     try {
       const res = await generate.mutateAsync({
         hex: color?.hex || undefined,
@@ -165,8 +168,13 @@ function UrunGorseli() {
         referenceImages: refImages.length ? refImages : undefined,
         referenceId: referenceId ? Number(referenceId) : null,
         subject,
+        extra: extra.trim() || undefined,
         model: activeModel || undefined,
       });
+
+      // Modele gerçekten ne gittiğini göster: sonuç beklenenden farklıysa
+      // ilk bakılacak yer istemdir, tahmin etmek yerine okunabilsin.
+      setUsedPrompt(res.prompt);
 
       // Düzeltme bir HEDEF gerektiriyor; hex yoksa oturtulacak bir renk yok.
       if (!exact || !color?.hex) {
@@ -388,6 +396,20 @@ function UrunGorseli() {
           <Textarea value={subject} onChange={e => setSubject(e.target.value)} rows={2} />
         </div>
 
+        <div className="space-y-2">
+          <Label>Ek yönerge (isteğe bağlı)</Label>
+          <Textarea
+            value={extra}
+            onChange={e => setExtra(e.target.value)}
+            rows={2}
+            placeholder="Örn. üstten çekim, damla daha küçük, zemin hafif gri"
+          />
+          <p className="text-xs text-muted-foreground">
+            İstemin sonuna olduğu gibi eklenir; sonraki talimat öncekini ezdiği
+            için senin sözün hazır kalıpların üstünde kalır.
+          </p>
+        </div>
+
         {/* Referans */}
         <div className="space-y-2">
           <Label>Referans obje (isteğe bağlı)</Label>
@@ -522,6 +544,16 @@ function UrunGorseli() {
                 <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
                 {warning}
               </p>
+            )}
+            {usedPrompt && (
+              <details className="w-full max-w-2xl">
+                <summary className="cursor-pointer text-xs text-muted-foreground">
+                  Kullanılan istem
+                </summary>
+                <p className="mt-2 whitespace-pre-wrap rounded border bg-muted/40 p-3 text-xs text-muted-foreground">
+                  {usedPrompt}
+                </p>
+              </details>
             )}
           </>
         ) : (
