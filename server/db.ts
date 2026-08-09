@@ -67,6 +67,7 @@ import {
   listings,
   listingImages,
   masterImages,
+  sampleMasters,
   channelAttributes,
   channelAttributeValues,
   channelAttributeOptions,
@@ -3302,4 +3303,92 @@ export async function saveMarketplaceBatchJob(
     batchRequestId,
     status: "pending",
   });
+}
+
+// ---------------------------------------------------------------------------
+// Numune master görselleri (renk stüdyosu)
+// ---------------------------------------------------------------------------
+
+/**
+ * Obje tipi başına bir master. `data` büyük olduğu için liste sorgusunda
+ * dışarıda bırakılır — 20 master × 1,5 MB'lık bir yanıt arayüzü kilitler.
+ */
+export async function listSampleMasters(opts: { withData?: boolean } = {}) {
+  const db = await requireDb();
+  if (opts.withData) {
+    return db.select().from(sampleMasters).orderBy(sampleMasters.objectType);
+  }
+  return db
+    .select({
+      id: sampleMasters.id,
+      objectType: sampleMasters.objectType,
+      label: sampleMasters.label,
+      baseHex: sampleMasters.baseHex,
+      prompt: sampleMasters.prompt,
+      isActive: sampleMasters.isActive,
+      createdAt: sampleMasters.createdAt,
+      updatedAt: sampleMasters.updatedAt,
+    })
+    .from(sampleMasters)
+    .orderBy(sampleMasters.objectType);
+}
+
+export async function getSampleMaster(objectType: string) {
+  const db = await requireDb();
+  const [row] = await db
+    .select()
+    .from(sampleMasters)
+    .where(eq(sampleMasters.objectType, objectType))
+    .limit(1);
+  return row ?? null;
+}
+
+export async function getSampleMasterById(id: number) {
+  const db = await requireDb();
+  const [row] = await db.select().from(sampleMasters).where(eq(sampleMasters.id, id)).limit(1);
+  return row ?? null;
+}
+
+/**
+ * Kaydeder ya da üzerine yazar.
+ *
+ * Obje tipi şirket başına tekil: aynı tip için ikinci kez üretim yapıldığında
+ * yeni satır açılmaz, mevcut master değiştirilir. Aksi halde katalogda hangi
+ * master'ın kullanıldığı belirsizleşir ve tutarlılık — bu tablonun tek varlık
+ * sebebi — kaybolur.
+ */
+export async function saveSampleMaster(input: {
+  objectType: string;
+  label: string;
+  data: string;
+  baseHex?: string | null;
+  prompt?: string | null;
+}) {
+  const db = await requireDb();
+  const existing = await getSampleMaster(input.objectType);
+  if (existing) {
+    await db
+      .update(sampleMasters)
+      .set({
+        label: input.label,
+        data: input.data,
+        baseHex: input.baseHex ?? null,
+        prompt: input.prompt ?? null,
+      })
+      .where(eq(sampleMasters.id, existing.id));
+    return existing.id;
+  }
+  const [res] = await db.insert(sampleMasters).values({
+    objectType: input.objectType,
+    label: input.label,
+    data: input.data,
+    baseHex: input.baseHex ?? null,
+    prompt: input.prompt ?? null,
+  });
+  return Number(res.insertId);
+}
+
+export async function deleteSampleMaster(id: number) {
+  const db = await requireDb();
+  await db.delete(sampleMasters).where(eq(sampleMasters.id, id));
 }

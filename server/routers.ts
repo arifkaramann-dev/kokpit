@@ -5,6 +5,7 @@ import { systemRouter } from "./_core/systemRouter";
 import { router } from "./_core/trpc";
 import { materialsRouter, seriesRouter } from "./modules/urun";
 import { katalogRouter } from "./modules/katalog";
+import { renkStudyoRouter } from "./modules/renkStudyo";
 import { crmRouter, ordersRouter, quotesRouter } from "./modules/satis";
 import {
   purchasesRouter, reportRouter, customersRouter, chequesRouter, accountsRouter, transactionsRouter, expensesRouter, suppliersRouter, invoicesRouter, kargoRouter, reconcileRouter,
@@ -26,6 +27,7 @@ export const appRouter = router({
   // Ürün mimarisi v3 (Master/Listing/ChannelListing + kapasite). Eski
   // products router'ı geçiş boyunca yerinde kalır.
   katalog: katalogRouter,
+  renkStudyo: renkStudyoRouter,
   series: seriesRouter,
   orders: ordersRouter,
   quotes: quotesRouter,

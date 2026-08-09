@@ -63,4 +63,35 @@ export function registerImageRoutes(app: Express) {
       res.status(500).send("Sunucu hatası");
     }
   });
+
+  /**
+   * Numune master görseli: /api/img/sample/{id}
+   *
+   * Renk stüdyosu bu görseli canvas'a çizip yeniden renklendiriyor. tRPC ile
+   * base64 taşımak yerine normal bir görsel adresi veriliyor: tarayıcı onu
+   * önbelleğe alabilir ve aynı master onlarca renk için tekrar tekrar
+   * indirilmez.
+   *
+   * DİKKAT: canvas'tan piksel okunacağı için aynı kaynaktan servis edilmesi
+   * şart — çapraz kaynak bir görsel canvas'ı kirletir ve `getImageData`
+   * güvenlik hatası verir.
+   */
+  app.get("/api/img/sample/:id", async (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      res.status(400).send("Geçersiz istek");
+      return;
+    }
+    try {
+      const row = await db.getSampleMasterById(id);
+      if (!row?.data) {
+        res.status(404).send("Görsel yok");
+        return;
+      }
+      sendImage(res, row.data);
+    } catch (error) {
+      console.error("[images] numune master görseli hatası:", error);
+      res.status(500).send("Sunucu hatası");
+    }
+  });
 }
