@@ -166,3 +166,32 @@ describe("measureSubjectLab", () => {
     expect(measureSubjectLab(img, mask)).toBeNull();
   });
 });
+
+describe("uyarlanabilir tolerans", () => {
+  it("parlak obje kenarı düz beyaz fona yakınken dolgu içeri sızmaz", () => {
+    // Gerçek hata buydu: gümüş bazın parlak üst kenarı (240) beyaz fona (255)
+    // yeterince yakın olduğu için sabit tolerans dolgunun objeye girmesine
+    // izin veriyordu. O bölge "fon" sayılıp hiç boyanmıyor, numunenin
+    // ortasında kocaman beyaz bir leke kalıyordu.
+    const img = build((x, y) => {
+      if (!inBox(x, y)) return [255, 255, 255, 255];
+      // Üstte neredeyse beyaz, aşağı indikçe koyulaşan gümüş gövde.
+      const t = (y - 10) / 20;
+      const v = Math.round(240 - t * 60);
+      return [v, v, v + 4, 255];
+    });
+    const { mask, subject } = extractSubjectMask(img);
+
+    expect(subject).toBe(20 * 20);
+    expect(maskAt(mask, 20, 11)).toBe(1); // parlak üst kenar hâlâ obje
+  });
+
+  it("gradyanlı fonda tolerans genişler — zincir kopmaz", () => {
+    const img = build((x, y) => {
+      if (inBox(x, y)) return [30, 90, 200, 255];
+      const v = 255 - Math.round((x / W) * 23);
+      return [v, v, v, 255];
+    });
+    expect(extractSubjectMask(img).subject).toBe(20 * 20);
+  });
+});
