@@ -1734,3 +1734,59 @@ export const marketplaceBatchJobs = mysqlTable(
 
 export type MarketplaceBatchJob = typeof marketplaceBatchJobs.$inferSelect;
 export type InsertMarketplaceBatchJob = typeof marketplaceBatchJobs.$inferInsert;
+
+/**
+ * Numune master görselleri — renk stüdyosunun tohum görselleri.
+ *
+ * ── Neden var ─────────────────────────────────────────────────────────────
+ * Pazaryeri kartındaki iki görsel katmanı farklı kaynaklardan gelir:
+ * ambalaj bizim GERÇEK ürün fotoğrafımızdır ve hiç değişmez; boya numunesi
+ * ise renge göre değişir ve üretilmesi gerekir.
+ *
+ * Numuneyi her renk için ayrı ayrı AI'a ürettirmek iki şeyi birden bozuyordu:
+ * maliyet (her renk bir çağrı) ve tutarlılık (AI her seferinde farklı şekil
+ * çiziyor; yeşil damla ile magenta damla farklı formda çıkınca müşteri
+ * kataloğa baktığında rengi değil şekil farkını görüyor).
+ *
+ * Çözüm: obje tipi başına BİR master üretilir ve burada saklanır. Sonraki
+ * renkler AI'a hiç gitmez — master'ın rengi `shared/color/recolor.ts` ile
+ * matematiksel olarak değiştirilir. Şekil, ışık ve kompozisyon sabit kalır,
+ * renk konstrüksiyon gereği doğrudur.
+ *
+ * `baseHex` master'ın KENDİ rengidir. Yeniden renklendirme kaynağın renginden
+ * bağımsız çalışır (bkz. recolor testleri), ama kayıt teşhis için tutulur:
+ * bir master beklenmedik sonuç veriyorsa ilk bakılacak yer orasıdır.
+ *
+ * Üretilen kart görselleri burada DEĞİL `masterImages` içinde durur — onlar
+ * ürüne bağlıdır, bunlar ürüne değil obje tipine bağlıdır.
+ */
+export const sampleMasters = mysqlTable(
+  "sampleMasters",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    /** Obje tipi anahtarı — 'damla', 'kasik', 'panel'. Şirket başına tekil. */
+    objectType: varchar("objectType", { length: 64 }).notNull(),
+    /** Arayüzde görünen ad. */
+    label: varchar("label", { length: 128 }).notNull(),
+    /**
+     * Görselin kendisi (data URL / base64).
+     *
+     * Neden veritabanında: `masterImages` ile aynı gerekçe — Render'da kalıcı
+     * disk yok, S3 yapılandırılmamış olabilir. Numune master sayısı düşüktür
+     * (obje tipi kadar), bu yüzden satır boyutu sorun olmaz.
+     */
+    data: mediumtext("data"),
+    /** Master'ın kendi rengi — teşhis için. */
+    baseHex: varchar("baseHex", { length: 16 }),
+    /** Hangi istemle üretildi — yeniden üretilebilirlik için. */
+    prompt: text("prompt"),
+    isActive: tinyint("isActive").notNull().default(1),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  t => [unique("sampleMasters_company_object_uq").on(t.companyId, t.objectType)],
+);
+
+export type SampleMaster = typeof sampleMasters.$inferSelect;
+export type InsertSampleMaster = typeof sampleMasters.$inferInsert;

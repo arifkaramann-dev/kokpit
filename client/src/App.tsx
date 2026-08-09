@@ -29,6 +29,7 @@ import Purchases from "@/pages/Purchases";
 import Questions from "@/pages/Questions";
 import Quotes from "@/pages/Quotes";
 import Recipes from "@/pages/Recipes";
+import RenkStudyo from "@/pages/RenkStudyo";
 import Reconcile from "@/pages/Reconcile";
 import Settings from "@/pages/Settings";
 import Stock from "@/pages/Stock";
@@ -48,6 +49,7 @@ function AdminApp() {
         <Route path={"/"} component={Home} />
         <Route path={"/siparisler"} component={Orders} />
         <Route path={"/teklifler"} component={Quotes} />
+        <Route path={"/renk-studyo"} component={RenkStudyo} />
         <Route path={"/firsatlar"} component={Crm} />
         <Route path={"/musteriler"} component={Customers} />
         <Route path={"/giderler"} component={Expenses} />
