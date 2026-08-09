@@ -79,6 +79,7 @@ function UrunGorseli() {
   const { data: masters, isLoading: mastersLoading } = trpc.katalog.masters.useQuery();
   const { data: dims } = trpc.katalog.dimensions.useQuery();
   const { data: references } = trpc.renkStudyo.references.useQuery();
+  const { data: status } = trpc.renkStudyo.status.useQuery();
 
   const [query, setQuery] = useState("");
   const [masterId, setMasterId] = useState<number | null>(null);
@@ -171,7 +172,22 @@ function UrunGorseli() {
   const saving = saveMaster.isPending || saveColor.isPending;
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[380px_1fr]">
+    <div className="space-y-4">
+      {status && !status.provider && (
+        <Card className="flex items-start gap-3 border-amber-300 bg-amber-50 p-4 text-amber-900">
+          <AlertTriangle className="mt-0.5 size-5 shrink-0" />
+          <div className="space-y-1 text-sm">
+            <p className="font-medium">Görsel üretimi yapılandırılmamış</p>
+            <p>
+              Render → Environment altında <code>OPENAI_API_KEY</code> ya da{" "}
+              <code>GEMINI_API_KEY</code> girilmeli. Anahtar olmadan üretim çalışmaz;
+              referans obje yükleme ve mevcut görselleri ürüne kaydetme çalışır.
+            </p>
+          </div>
+        </Card>
+      )}
+
+      <div className="grid gap-4 lg:grid-cols-[380px_1fr]">
       <Card className="space-y-4 p-4">
         {/* Ürün seçimi */}
         <div className="space-y-2">
@@ -374,6 +390,7 @@ function UrunGorseli() {
           </span>
         )}
       </Card>
+      </div>
     </div>
   );
 }

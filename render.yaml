@@ -36,12 +36,15 @@ services:
         sync: false # Hepsiburada OMS şifresi (opsiyonel)
       - key: ANTHROPIC_API_KEY
         sync: false # AI pazarlama metinleri + WhatsApp asistanı için (opsiyonel)
-      # Görsel üretimi (Renk Stüdyosu → numune master'ı "Üret" düğmesi).
-      # Boşsa üretim düğmesi hata verir; kendi numune fotoğrafını YÜKLEME
-      # yolu bu anahtarlar olmadan da çalışır ve zaten tercih edilen yoldur.
-      - key: BUILT_IN_FORGE_API_URL
+      # Görsel üretimi (Renk Stüdyosu). İkisinden BİRİ yeterli; ikisi de
+      # varsa OpenAI kullanılır (referans görselle düzenlemeyi doğrudan
+      # destekliyor). Anahtarsız: üretim çalışmaz, referans yükleme ve
+      # ürüne kaydetme çalışır.
+      #   OPENAI_API_KEY  → platform.openai.com/api-keys (hesapta kredi gerekir)
+      #   GEMINI_API_KEY  → aistudio.google.com/apikey
+      - key: OPENAI_API_KEY
         sync: false
-      - key: BUILT_IN_FORGE_API_KEY
+      - key: GEMINI_API_KEY
         sync: false
       - key: WHATSAPP_ENABLED
         sync: false # "1" ise WhatsApp köprüsü açılır (kendine mesaj → taslak sipariş). Kurulum: WHATSAPP.md

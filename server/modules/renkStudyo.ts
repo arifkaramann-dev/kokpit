@@ -19,7 +19,7 @@
 
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { generateImage } from "../_core/imageGeneration";
+import { activeImageProvider, generateProductImage } from "../imageProviders";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 
@@ -37,31 +37,11 @@ const objectTypeKey = z
 
 const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Geçersiz renk kodu");
 
-/**
- * Dış adresteki görseli data URL'e çevirir.
- *
- * İki sebep: (1) istemci bu görseli canvas'a çizebilmeli, çapraz kaynak bir
- * görsel canvas'ı kirletir ve piksel okuma güvenlik hatasıyla düşer;
- * (2) üretim servisinin adresi süreli olabilir, katalog ise kalıcı olmalı.
- */
-async function inlineImage(url: string): Promise<string> {
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new TRPCError({
-      code: "INTERNAL_SERVER_ERROR",
-      message: `Üretilen görsel indirilemedi (HTTP ${res.status})`,
-    });
-  }
-  const mime = res.headers.get("content-type")?.split(";")[0] || "image/png";
-  const buf = Buffer.from(await res.arrayBuffer());
-  return `data:${mime};base64,${buf.toString("base64")}`;
-}
-
-/** `data:image/png;base64,AAA...` → { b64Json, mimeType } */
-function splitDataUrl(value: string): { b64Json: string; mimeType: string } {
+/** `data:image/png;base64,AAA...` → { b64, mimeType } */
+function splitDataUrl(value: string): { b64: string; mimeType: string } {
   const comma = value.indexOf(",");
   const mimeType = value.slice(5, value.indexOf(";")) || "image/png";
-  return { b64Json: value.slice(comma + 1), mimeType };
+  return { b64: value.slice(comma + 1), mimeType };
 }
 
 /**
@@ -85,6 +65,14 @@ export const renkStudyoRouter = router({
   // -------------------------------------------------------------------------
   // Referans objeler
   // -------------------------------------------------------------------------
+
+  /**
+   * Üretim yapılandırılmış mı?
+   *
+   * Ekran bunu açılışta soruyor: sağlayıcı anahtarı yoksa kullanıcı düğmeye
+   * basıp hata almadan önce ne eksik olduğunu görmeli.
+   */
+  status: protectedProcedure.query(() => ({ provider: activeImageProvider() })),
 
   /** Referans obje listesi — görsel verisi olmadan (liste hafif kalsın). */
   references: protectedProcedure.query(() => db.listSampleMasters()),
@@ -163,37 +151,29 @@ export const renkStudyoRouter = router({
         ? `Keep the shape, angle, lighting and composition of the reference image exactly as they are. Change ONLY the paint colour: ${parts.join(", ")}.`
         : parts.join(", ");
 
-      let originalImages: Array<{ b64Json: string; mimeType: string }> | undefined;
+      let reference: string | null = null;
       if (input.referenceId) {
         const ref = await db.getSampleMasterById(input.referenceId);
         if (!ref?.data) {
           throw new TRPCError({ code: "NOT_FOUND", message: "Referans obje bulunamadı" });
         }
-        originalImages = [splitDataUrl(ref.data)];
+        reference = ref.data;
       }
 
-      let url: string | undefined;
       try {
-        ({ url } = await generateImage({ prompt, originalImages, quality: "high" }));
+        const result = await generateProductImage({
+          prompt,
+          reference: reference ? splitDataUrl(reference) : null,
+        });
+        return { data: result.dataUrl, provider: result.provider, prompt };
       } catch (err) {
-        // Yapılandırma eksikse hata İngilizce ve teknik geliyor ("... is not
-        // configured"). Bu ekranın tamamı üretime bağlı olduğu için kullanıcı
-        // ne yapacağını bilmeli, yoksa "çalışmıyor" deyip bırakır.
-        const message = err instanceof Error ? err.message : String(err);
-        if (message.includes("not configured")) {
-          throw new TRPCError({
-            code: "PRECONDITION_FAILED",
-            message:
-              "Görsel üretim servisi yapılandırılmamış. Render → Environment altında " +
-              "BUILT_IN_FORGE_API_URL ve BUILT_IN_FORGE_API_KEY değerleri girilmeli.",
-          });
-        }
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message });
+        // Sağlayıcı mesajı (kota bitti, anahtar geçersiz, içerik reddedildi)
+        // kullanıcının görmesi gereken tek bilgi — yutulmaz.
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: err instanceof Error ? err.message : "Görsel üretilemedi",
+        });
       }
-      if (!url) {
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Görsel üretilemedi" });
-      }
-      return { data: await inlineImage(url), prompt };
     }),
 
   // -------------------------------------------------------------------------
