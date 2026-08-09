@@ -19,7 +19,7 @@
 
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { activeImageProvider, generateProductImage } from "../imageProviders";
+import { IMAGE_MODELS, activeImageProvider, generateProductImage } from "../imageProviders";
 import { protectedProcedure, router } from "../_core/trpc";
 import * as db from "../db";
 
@@ -72,7 +72,10 @@ export const renkStudyoRouter = router({
    * Ekran bunu açılışta soruyor: sağlayıcı anahtarı yoksa kullanıcı düğmeye
    * basıp hata almadan önce ne eksik olduğunu görmeli.
    */
-  status: protectedProcedure.query(() => ({ provider: activeImageProvider() })),
+  status: protectedProcedure.query(() => {
+    const provider = activeImageProvider();
+    return { provider, models: provider ? IMAGE_MODELS[provider] : [] };
+  }),
 
   /** Referans obje listesi — görsel verisi olmadan (liste hafif kalsın). */
   references: protectedProcedure.query(() => db.listSampleMasters()),
@@ -132,6 +135,19 @@ export const renkStudyoRouter = router({
         referenceId: z.number().int().positive().nullish(),
         /** Ne çizileceği. Referans varsa da yön vermek için kullanılır. */
         subject: z.string().trim().min(1).max(500),
+        /**
+         * Model kimliği. Boşsa sağlayıcının varsayılanı kullanılır.
+         *
+         * Bilinen listeye karşı DOĞRULANMAZ: sağlayıcı yeni bir model
+         * çıkardığında kod değişmeden kullanılabilsin. Tanınmayan bir kimlik
+         * gelirse hatayı sağlayıcı verir ve mesajı kullanıcıya ulaşır.
+         */
+        model: z
+          .string()
+          .trim()
+          .max(64)
+          .regex(/^[a-z0-9][a-z0-9.\-]*$/i, "Geçersiz model kimliği")
+          .optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -164,8 +180,14 @@ export const renkStudyoRouter = router({
         const result = await generateProductImage({
           prompt,
           reference: reference ? splitDataUrl(reference) : null,
+          model: input.model ?? null,
         });
-        return { data: result.dataUrl, provider: result.provider, prompt };
+        return {
+          data: result.dataUrl,
+          provider: result.provider,
+          model: result.model,
+          prompt,
+        };
       } catch (err) {
         // Sağlayıcı mesajı (kota bitti, anahtar geçersiz, içerik reddedildi)
         // kullanıcının görmesi gereken tek bilgi — yutulmaz.

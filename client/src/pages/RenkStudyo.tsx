@@ -87,6 +87,11 @@ function UrunGorseli() {
   const [subjectId, setSubjectId] = useState(SUBJECT_PRESETS[0].id);
   const [subject, setSubject] = useState(SUBJECT_PRESETS[0].text);
   const [exact, setExact] = useState(false);
+  // Model seçimi tarayıcıda hatırlanıyor: her açılışta yeniden seçmek,
+  // arka arkaya renk üretirken en sık tekrarlanan tıklama olurdu.
+  const [model, setModel] = useState<string>(
+    () => localStorage.getItem("renkStudyo.model") ?? "",
+  );
 
   const [preview, setPreview] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
@@ -113,6 +118,10 @@ function UrunGorseli() {
   const master = rows.find(m => m.id === masterId) ?? null;
   const color = master ? (colorById.get(master.colorId) ?? null) : null;
 
+  const models = status?.models ?? [];
+  // Kayıtlı seçim bu sağlayıcıda yoksa (sağlayıcı değişmiş olabilir) ilkine düş.
+  const activeModel = models.some(m => m.id === model) ? model : (models[0]?.id ?? "");
+
   const generate = trpc.renkStudyo.generateForColor.useMutation();
 
   const onGenerate = async () => {
@@ -129,6 +138,7 @@ function UrunGorseli() {
         finish: color.finish ?? undefined,
         referenceId: referenceId ? Number(referenceId) : null,
         subject,
+        model: activeModel || undefined,
       });
 
       if (!exact) {
@@ -298,6 +308,35 @@ function UrunGorseli() {
             değiştirir — katalogdaki bütün renkler aynı formda çıkar.
           </p>
         </div>
+
+        {/* Model */}
+        {models.length > 0 && (
+          <div className="space-y-2">
+            <Label>Model</Label>
+            <Select
+              value={activeModel}
+              onValueChange={v => {
+                setModel(v);
+                localStorage.setItem("renkStudyo.model", v);
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {models.map(m => (
+                  <SelectItem key={m.id} value={m.id}>
+                    {m.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Sağlayıcı: {status?.provider === "openai" ? "OpenAI" : "Gemini"}. Model
+              hesabında açık değilse sağlayıcının hata mesajı olduğu gibi gösterilir.
+            </p>
+          </div>
+        )}
 
         {/* Renk düzeltmesi */}
         <div className="flex items-start justify-between gap-3 rounded border p-3">
