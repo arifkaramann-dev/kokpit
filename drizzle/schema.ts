@@ -1790,3 +1790,31 @@ export const sampleMasters = mysqlTable(
 
 export type SampleMaster = typeof sampleMasters.$inferSelect;
 export type InsertSampleMaster = typeof sampleMasters.$inferInsert;
+
+/**
+ * Kullanıcının düzenlediği şablon yerleşimleri.
+ *
+ * Şablonlar `shared/color/layoutDefaults.ts` içinde fabrika ayarıyla gelir.
+ * Kullanıcı bir şablonu düzenlediğinde kendi sürümü buraya yazılır ve
+ * fabrika tarifi yalnız "sıfırla" için kalır.
+ *
+ * Neden JSON: yerleşim bir katman listesi ve şeması evrilecek — yeni katman
+ * türü, yeni özellik. Bunları sütuna açmak her eklemede migration demek
+ * olurdu ve hiçbiri sorgulanmıyor; şablon her zaman kimliğiyle okunuyor.
+ */
+export const templateLayouts = mysqlTable(
+  "templateLayouts",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    /** Şablon kimliği — product, coats, marketplace, card, social, story. */
+    templateId: varchar("templateId", { length: 64 }).notNull(),
+    /** TemplateLayout serisi. */
+    layout: json("layout").notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  t => [unique("templateLayouts_company_template_uq").on(t.companyId, t.templateId)],
+);
+
+export type TemplateLayoutRow = typeof templateLayouts.$inferSelect;

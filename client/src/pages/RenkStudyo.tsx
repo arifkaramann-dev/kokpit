@@ -21,12 +21,10 @@ import {
   readAsDataUrl,
   slug,
 } from "@/lib/renkStudyo";
-import {
-  TEMPLATES,
-  defaultPackagingFor,
-  renderToDataUrl,
-  type PaintInfo,
-} from "@/lib/renkTemplates";
+import SablonEditor from "@/components/SablonEditor";
+import { buildCards } from "@/lib/renkCards";
+import { defaultPackagingFor, type PaintInfo } from "@/lib/renkTemplates";
+import type { TemplateLayout } from "@shared/color/layout";
 import { trpc } from "@/lib/trpc";
 import {
   AlertTriangle,
@@ -258,6 +256,20 @@ function UrunGorseli() {
    * Her şablon için yeniden üretmek hem pahalı hem tutarsız olurdu — kareler
    * arasında obje değişirse seri dağılır.
    */
+  const { data: layoutRows } = trpc.renkStudyo.layouts.useQuery();
+  const layouts = useMemo(() => {
+    const out: Record<string, TemplateLayout> = {};
+    for (const r of layoutRows ?? []) out[r.templateId] = r.layout as TemplateLayout;
+    return out;
+  }, [layoutRows]);
+
+  /**
+   * Pazarlama görsellerini basar.
+   *
+   * Obje görseli AI'den bir kez gelir; şablonlar aynı görselden türetilir.
+   * Her şablon için yeniden üretmek hem pahalı hem tutarsız olurdu — kareler
+   * arasında obje değişirse seri dağılır.
+   */
   const renderCards = async () => {
     if (!preview || !color) return;
     setRendering(true);
@@ -266,31 +278,19 @@ function UrunGorseli() {
         code: color.code,
         nameTr: color.name,
         nameEn: color.nameEn,
-        // Şablonun seri kodu (VP/VM/VC/VS/MT) katalogdaki bitiş türünden
-        // türetiliyor; ikisi farklı sözlükler ama kapak yazısı için yeterli.
         seriesCode: SERIES_CODE_BY_FINISH[color.finish ?? "duz"] ?? "VS",
         hex: color.hex || measured || undefined,
       };
       paint.packaging = defaultPackagingFor(paint.seriesCode);
 
-      // Gümüş baz yalnız kat progresyonunda kullanılıyor; kayıtlı referanstan
-      // getiriliyor ve aynı kaynaktan servis edildiği için canvas kirlenmiyor.
-      const baseImage = silverBaseId ? `/api/img/sample/${silverBaseId}` : null;
-
-      const out: Array<{ id: string; label: string; data: string }> = [];
-      for (const tpl of TEMPLATES) {
-        out.push({
-          id: tpl.id,
-          label: tpl.label,
-          data: await renderToDataUrl({
-            templateId: tpl.id,
-            objectImage: preview,
-            baseImage,
-            paint,
-          }),
-        });
-      }
+      const out = await buildCards({
+        objectImage: preview,
+        baseImage: silverBaseId ? `/api/img/sample/${silverBaseId}` : null,
+        paint,
+        layouts,
+      });
       setCards(out);
+      if (!out.length) toast.error("Hiçbir şablon üretilemedi");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Şablonlar üretilemedi");
     } finally {
@@ -306,6 +306,30 @@ function UrunGorseli() {
     onError: e => toast.error(e.message),
   });
 
+  const saveMany = trpc.renkStudyo.saveManyToMaster.useMutation({
+    onSuccess: r => {
+      toast.success(`${r.added} görsel ürüne kaydedildi`);
+      void utils.katalog.invalidate();
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  const saveLayout = trpc.renkStudyo.saveLayout.useMutation({
+    onSuccess: () => {
+      toast.success("Şablon kaydedildi");
+      void utils.renkStudyo.layouts.invalidate();
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  const resetLayout = trpc.renkStudyo.resetLayout.useMutation({
+    onSuccess: () => {
+      toast.success("Fabrika ayarına dönüldü");
+      void utils.renkStudyo.layouts.invalidate();
+    },
+    onError: e => toast.error(e.message),
+  });
+
   const saveColor = trpc.renkStudyo.saveToColor.useMutation({
     onSuccess: r =>
       toast.success(
@@ -316,7 +340,7 @@ function UrunGorseli() {
     onError: e => toast.error(e.message),
   });
 
-  const saving = saveMaster.isPending || saveColor.isPending;
+  const saving = saveMaster.isPending || saveColor.isPending || saveMany.isPending;
 
   return (
     <div className="space-y-4">
@@ -682,7 +706,7 @@ function UrunGorseli() {
                 ) : (
                   <Layers className="mr-2 size-4" />
                 )}
-                Pazarlama görsellerini üret ({TEMPLATES.length} şablon)
+                Pazarlama görsellerini üret
               </Button>
               {measured && (
                 <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -715,13 +739,32 @@ function UrunGorseli() {
 
       {cards.length > 0 && (
         <Card className="space-y-3 p-4">
-          <div>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
             <h2 className="text-sm font-medium">Pazarlama görselleri</h2>
             <p className="text-xs text-muted-foreground">
               Hepsi aynı obje görselinden türetildi — kareler arasında obje
               değişmiyor, seri dağılmıyor. Pazaryeri ana görseli metin taşımaz
               (Amazon/Trendyol şartı).
             </p>
+            </div>
+            <Button
+              disabled={!master || saving}
+              onClick={() =>
+                master &&
+                saveMany.mutate({
+                  masterId: master.id,
+                  images: cards.map(c => ({ data: c.data, role: c.id })),
+                })
+              }
+            >
+              {saveMany.isPending ? (
+                <Loader2 className="mr-2 size-4 animate-spin" />
+              ) : (
+                <Layers className="mr-2 size-4" />
+              )}
+              Hepsini ürüne kaydet ({cards.length})
+            </Button>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {cards.map(c => (
@@ -903,6 +946,59 @@ function ReferansObjeler() {
 
 // ---------------------------------------------------------------------------
 
+/** Editör sekmesi — kayıtlı yerleşimleri okur, düzenlemeyi geri yazar. */
+function SablonlarSekmesi() {
+  const utils = trpc.useUtils();
+  const { data: dims } = trpc.katalog.dimensions.useQuery();
+  const { data: layoutRows } = trpc.renkStudyo.layouts.useQuery();
+
+  const saved = useMemo(() => {
+    const out: Record<string, TemplateLayout> = {};
+    for (const r of layoutRows ?? []) out[r.templateId] = r.layout as TemplateLayout;
+    return out;
+  }, [layoutRows]);
+
+  const save = trpc.renkStudyo.saveLayout.useMutation({
+    onSuccess: () => {
+      toast.success("Şablon kaydedildi");
+      void utils.renkStudyo.layouts.invalidate();
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  const reset = trpc.renkStudyo.resetLayout.useMutation({
+    onSuccess: () => {
+      toast.success("Fabrika ayarına dönüldü");
+      void utils.renkStudyo.layouts.invalidate();
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  // Örnek olarak katalogdaki ilk renk: editörde gerçek bir kare görünsün,
+  // boş yer tutucularla düzenlemek yanıltıcı olur.
+  const colors = (dims?.colors ?? []) as ColorRow[];
+  const örnek = colors[0];
+  const paint: PaintInfo = {
+    code: örnek?.code ?? "VC1282",
+    nameTr: örnek?.name ?? "FUŞYA",
+    nameEn: örnek?.nameEn ?? "FUCHSIA",
+    seriesCode: SERIES_CODE_BY_FINISH[örnek?.finish ?? "candy"] ?? "VC",
+    hex: örnek?.hex || "#c2185b",
+  };
+
+  return (
+    <SablonEditor
+      paint={paint}
+      saved={saved}
+      saving={save.isPending || reset.isPending}
+      onSave={(templateId, layout) =>
+        save.mutateAsync({ templateId, layout: layout as unknown as Record<string, unknown> }).then(() => undefined)
+      }
+      onReset={templateId => reset.mutateAsync({ templateId }).then(() => undefined)}
+    />
+  );
+}
+
 export default function RenkStudyo() {
   return (
     <div className="space-y-4 p-4">
@@ -917,12 +1013,16 @@ export default function RenkStudyo() {
         <TabsList>
           <TabsTrigger value="uret">Ürün Görseli</TabsTrigger>
           <TabsTrigger value="referans">Referans Objeler</TabsTrigger>
+          <TabsTrigger value="sablon">Şablon Editörü</TabsTrigger>
         </TabsList>
         <TabsContent value="uret" className="mt-4">
           <UrunGorseli />
         </TabsContent>
         <TabsContent value="referans" className="mt-4">
           <ReferansObjeler />
+        </TabsContent>
+        <TabsContent value="sablon" className="mt-4">
+          <SablonlarSekmesi />
         </TabsContent>
       </Tabs>
     </div>

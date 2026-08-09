@@ -296,8 +296,76 @@ export const renkStudyoRouter = router({
     }),
 
   // -------------------------------------------------------------------------
+  // Şablon yerleşimleri
+  // -------------------------------------------------------------------------
+
+  /**
+   * Kullanıcının düzenlediği yerleşimler.
+   *
+   * Yalnız DÜZENLENMİŞ olanlar dönüyor; dokunulmamış şablonlar istemcideki
+   * fabrika tarifinden geliyor. Böylece varsayılan tasarım iyileştiğinde
+   * kullanıcının hiç açmadığı şablonlar da kendiliğinden iyileşir.
+   */
+  layouts: protectedProcedure.query(() => db.listTemplateLayouts()),
+
+  saveLayout: protectedProcedure
+    .input(
+      z.object({
+        templateId: z.string().trim().min(1).max(64),
+        /**
+         * Yerleşim tarifi.
+         *
+         * Şeması sunucuda doğrulanmıyor: katman türleri ve özellikleri
+         * evriliyor ve her eklemede sunucu şemasını da güncellemek, iki yerin
+         * birbirinden kayması demek. Çizen taraf istemci; tanımadığı katmanı
+         * atlıyor, bozuk yerleşim kartı çökertmiyor.
+         */
+        layout: z.record(z.string(), z.unknown()),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const id = await db.saveTemplateLayout(input.templateId, input.layout);
+      return { id };
+    }),
+
+  resetLayout: protectedProcedure
+    .input(z.object({ templateId: z.string().trim().min(1).max(64) }))
+    .mutation(async ({ input }) => {
+      await db.deleteTemplateLayout(input.templateId);
+      return { ok: true };
+    }),
+
+  // -------------------------------------------------------------------------
   // Kaydetme
   // -------------------------------------------------------------------------
+
+  /**
+   * Birden çok görseli TEK ürüne kaydeder.
+   *
+   * Altı pazarlama karesini tek tek kaydettirmek, her renk için altı tıklama
+   * demekti. Sıra korunuyor: `role` alanına şablon kimliği yazıldığı için
+   * hangi karenin hangi şablondan geldiği sonradan da belli.
+   */
+  saveManyToMaster: protectedProcedure
+    .input(
+      z.object({
+        masterId: z.number().int().positive(),
+        images: z
+          .array(z.object({ data: dataUrl, role: z.string().trim().max(32).optional() }))
+          .min(1)
+          .max(20),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      for (const img of input.images) {
+        await db.addMasterImage({
+          masterId: input.masterId,
+          data: img.data,
+          role: img.role ?? "studyo",
+        });
+      }
+      return { added: input.images.length };
+    }),
 
   /** Görseli TEK bir ürüne kaydeder. */
   saveToMaster: protectedProcedure
