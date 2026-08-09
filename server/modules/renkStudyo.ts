@@ -149,6 +149,15 @@ export const renkStudyoRouter = router({
         /** Ne çizileceği. Referans varsa da yön vermek için kullanılır. */
         subject: z.string().trim().min(1).max(500),
         /**
+         * Serbest ek yönerge — istemin sonuna olduğu gibi eklenir.
+         *
+         * Hazır kalıplar her durumu karşılamıyor ("daha koyu bir zemin",
+         * "üstten çekim", "damla daha küçük olsun"). Kullanıcının modele
+         * doğrudan bir şey söyleyebilmesi, her istek için kod değiştirmekten
+         * iyidir.
+         */
+        extra: z.string().trim().max(500).optional(),
+        /**
          * Model kimliği. Boşsa sağlayıcının varsayılanı kullanılır.
          *
          * Bilinen listeye karşı DOĞRULANMAZ: sağlayıcı yeni bir model
@@ -191,16 +200,28 @@ export const renkStudyoRouter = router({
         });
       }
 
-      // İpucu satırı yalnız hex varsa kuruluyor — yoksa modele "undefined"
-      // diye bir renk söylemek, hiç söylememekten kötü.
-      const hint = [
-        input.colorName ? `The paint is named ${input.colorName}.` : null,
-        input.hex
-          ? `Its catalogue reference is ${input.hex}${finishHint ? `, ${finishHint}` : ""} — use this only as a hint; the reference images are the truth.`
-          : finishHint
-            ? `The finish is a ${finishHint}.`
-            : null,
+      // Referans varken kaplama İDDİA EDİLMEZ.
+      //
+      // Buradaki ilk hâli modele önce "kaplamayı referanstan oku" diyor, sonra
+      // iki cümle aşağıda "kaplama düz parlaktır" diye dayatıyordu. Katalogdaki
+      // `finish` alanı yanlış olabiliyor (SKU'su candy olan bir ürünün alanı
+      // `duz` kalmış olabilir) ve o yanlış değer referansın önüne geçiyordu.
+      //
+      // Kural: referans varsa renk de kaplama da referanstan gelir. Katalog
+      // bilgisi yalnız "ipucu" olarak ve açıkça ikincil olduğu söylenerek
+      // geçer; çelişirse referans kazanır.
+      const catalogue = [
+        input.colorName ? `named ${input.colorName}` : null,
+        input.hex ? `catalogue colour ${input.hex}` : null,
+        finishHint ? `catalogue finish "${finishHint}"` : null,
       ].filter(Boolean);
+
+      const hint = catalogue.length
+        ? [
+            `For context only, the catalogue lists this paint as ${catalogue.join(", ")}.`,
+            "The catalogue may be out of date — if it disagrees with the reference images, follow the reference images.",
+          ]
+        : [];
 
       const prompt = refs.length
         ? [
@@ -221,9 +242,13 @@ export const renkStudyoRouter = router({
             .filter(Boolean)
             .join(", ");
 
+      // Ek yönerge EN SONA: sonraki talimat öncekini ezdiği için, kullanıcının
+      // sözü hazır kalıpların üstünde kalsın.
+      const finalPrompt = input.extra ? `${prompt} ${input.extra}` : prompt;
+
       try {
         const result = await generateProductImage({
-          prompt,
+          prompt: finalPrompt,
           references: refs.map(splitDataUrl),
           model: input.model ?? null,
         });
@@ -231,7 +256,7 @@ export const renkStudyoRouter = router({
           data: result.dataUrl,
           provider: result.provider,
           model: result.model,
-          prompt,
+          prompt: finalPrompt,
         };
       } catch (err) {
         // Sağlayıcı mesajı (kota bitti, anahtar geçersiz, içerik reddedildi)
