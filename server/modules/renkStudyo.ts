@@ -144,7 +144,14 @@ export const renkStudyoRouter = router({
          * farklı açılardan birkaç kare çok daha güvenilir anlatır.
          */
         referenceImages: z.array(dataUrl).max(6).optional(),
-        /** Kayıtlı referans obje — yüklenen görsellere ek olarak gönderilir. */
+        /**
+         * Kayıtlı ŞEKİL referansı — üretilecek objenin formu.
+         *
+         * Renk referanslarından ayrı tutuluyor ve isteme İLK sırada giriyor:
+         * OpenAI düzenleme ucunda ilk görsel yeniden çizilecek olan, sonrakiler
+         * bağlam. Hepsini aynı torbaya atınca model hangisinin şekil hangisinin
+         * renk olduğunu bilemiyor ve ikisini karıştırıyordu.
+         */
         referenceId: z.number().int().positive().nullish(),
         /** Ne çizileceği. Referans varsa da yön vermek için kullanılır. */
         subject: z.string().trim().min(1).max(500),
@@ -175,14 +182,20 @@ export const renkStudyoRouter = router({
     .mutation(async ({ input }) => {
       const finishHint = input.finish ? FINISH_HINT[input.finish] : undefined;
 
-      const refs = [...(input.referenceImages ?? [])];
+      const colourRefs = input.referenceImages ?? [];
+
+      let shapeRef: string | null = null;
       if (input.referenceId) {
         const ref = await db.getSampleMasterById(input.referenceId);
         if (!ref?.data) {
           throw new TRPCError({ code: "NOT_FOUND", message: "Referans obje bulunamadı" });
         }
-        refs.push(ref.data);
+        shapeRef = ref.data;
       }
+
+      // Şekil referansı İLK sırada: düzenleme ucunda ilk görsel yeniden
+      // çizilecek olan, sonrakiler bağlam.
+      const refs = shapeRef ? [shapeRef, ...colourRefs] : [...colourRefs];
 
       // İki farklı istem, çünkü iki farklı soru soruluyor.
       //
@@ -223,10 +236,24 @@ export const renkStudyoRouter = router({
           ]
         : [];
 
-      const prompt = refs.length
+      // Şekil referansı varsa görsellerin ROLLERİ açıkça söylenir; yoksa
+      // hepsi renk kaynağıdır. Model "birinci görsel şu, kalanlar bu" diye
+      // duymazsa ikisini karıştırıp referans şekli de rengi de yok sayıyor.
+      const roles = shapeRef
         ? [
+            "The FIRST image is the object to reproduce: keep its shape, silhouette, camera angle, framing and lighting exactly as they are.",
+            colourRefs.length
+              ? "The REMAINING images show the target paint. Identify its exact colour and finish from them and apply that paint to the object from the first image. Change ONLY the paint."
+              : "Change ONLY the paint colour of that object.",
+          ]
+        : [
             "Look at the reference images and identify the exact paint colour and finish of the painted surface.",
             `Generate a photorealistic studio photograph of ${input.subject} painted in that exact colour and finish.`,
+          ];
+
+      const prompt = refs.length
+        ? [
+            ...roles,
             "Match the hue, saturation, lightness, metallic flake and depth of the reference paint as closely as possible.",
             ...hint,
             "White seamless studio background, professional automotive catalogue lighting with large softboxes,",

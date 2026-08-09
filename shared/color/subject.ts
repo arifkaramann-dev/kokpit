@@ -24,6 +24,7 @@
  * bağlı olmadığı için sunucuda ve testte de koşar.
  */
 
+import { rgbToLab, type Lab } from "./color";
 import type { Raster } from "./recolor";
 
 export type SubjectMask = {
@@ -135,4 +136,85 @@ export function whitenBackground(src: Raster, mask: Uint8Array): void {
     data[p + 2] = 255;
     data[p + 3] = 255;
   }
+}
+
+/**
+ * Obje bölgesinin baskın rengini ölçer.
+ *
+ * ── Neden ortalama değil ──────────────────────────────────────────────────
+ * Bir boya fotoğrafında obje bölgesi parlak tepe noktasından koyu gölgeye
+ * kadar uzanır. Bu aralığın DÜZ ORTALAMASI gölge ağırlıklı çıkar ve renk
+ * kartında göreceğin renk olmaz. Üstelik specular parlama boyanın değil
+ * ışığın rengidir; ortalamaya karışınca rengi beyaza doğru soldurur.
+ *
+ * Onun yerine:
+ *   üst %4      → specular, atılır
+ *   L* kovaları → her piksel kendi kovasının yoğunluğuyla ağırlıklanır
+ *
+ * Davranış kendiliğinden doğru tarafa gider: geniş düz bir yüzey varsa o
+ * kovanın ağırlığı baskın olur ve plato rengi kazanır; dağılım düzse tüm
+ * ağırlıklar eşitlenir ve sonuç ortalamaya iner.
+ *
+ * ── Nerede kullanılıyor ───────────────────────────────────────────────────
+ * Katalogdaki her rengin hex kodu tanımlı değil. Boyanın fotoğrafı varken
+ * "hedef renk yok" demek yerine ölçüyoruz; böylece üretilen görselin rengi
+ * fotoğraftaki boyaya oturtulabiliyor.
+ *
+ * @returns bölge çok küçükse `null` — uydurma bir renk döndürmek, renk
+ *          düzeltmesini sessizce yanlış hedefe çalıştırmak olurdu.
+ */
+export function measureSubjectLab(
+  src: Raster,
+  mask: Uint8Array,
+  { binSize = 1.5, sharpness = 2 }: { binSize?: number; sharpness?: number } = {},
+): Lab | null {
+  const { data } = src;
+  const labs: Lab[] = [];
+  for (let i = 0; i < mask.length; i += 1) {
+    if (!mask[i]) continue;
+    const p = i * 4;
+    if (data[p + 3] < 128) continue;
+    labs.push(rgbToLab({ r: data[p], g: data[p + 1], b: data[p + 2] }));
+  }
+  if (labs.length < 100) return null;
+
+  labs.sort((a, b) => a.l - b.l);
+  // Specular parlama boyanın değil ışığın rengi — ağırlıklandırmadan önce at.
+  const pool = labs.slice(0, Math.max(1, Math.floor(labs.length * 0.96)));
+
+  const lo = pool[0].l;
+  const hi = pool[pool.length - 1].l;
+  const span = hi - lo;
+  if (span < binSize) return meanLab(pool);
+
+  const binCount = Math.ceil(span / binSize) + 1;
+  const bins = new Int32Array(binCount);
+  const binOf = (v: Lab) => Math.min(binCount - 1, Math.floor((v.l - lo) / binSize));
+  for (const v of pool) bins[binOf(v)] += 1;
+
+  let maxCount = 1;
+  for (let i = 0; i < bins.length; i += 1) if (bins[i] > maxCount) maxCount = bins[i];
+
+  let wl = 0;
+  let wa = 0;
+  let wb = 0;
+  let wsum = 0;
+  for (const v of pool) {
+    const w = Math.pow(bins[binOf(v)] / maxCount, sharpness);
+    wl += v.l * w;
+    wa += v.a * w;
+    wb += v.b * w;
+    wsum += w;
+  }
+  if (wsum <= 0) return meanLab(pool);
+  return { l: wl / wsum, a: wa / wsum, b: wb / wsum };
+}
+
+function meanLab(labs: readonly Lab[]): Lab {
+  const n = labs.length;
+  return {
+    l: labs.reduce((a, x) => a + x.l, 0) / n,
+    a: labs.reduce((a, x) => a + x.a, 0) / n,
+    b: labs.reduce((a, x) => a + x.b, 0) / n,
+  };
 }

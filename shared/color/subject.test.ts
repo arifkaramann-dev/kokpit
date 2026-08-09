@@ -6,7 +6,8 @@
  * olduğu için hiç test edilmemişti.
  */
 import { describe, expect, it } from "vitest";
-import { extractSubjectMask, whitenBackground } from "@shared/color/subject";
+import { deltaE2000, rgbToLab } from "@shared/color/color";
+import { extractSubjectMask, measureSubjectLab, whitenBackground } from "@shared/color/subject";
 import type { Raster } from "@shared/color/recolor";
 
 const W = 40;
@@ -123,5 +124,45 @@ describe("whitenBackground", () => {
     };
     expect(at(2, 2)).toEqual([255, 255, 255, 255]);
     expect(at(20, 20)).toEqual([200, 20, 40, 255]);
+  });
+});
+
+describe("measureSubjectLab", () => {
+  it("objenin rengini ölçer, fonu karıştırmaz", () => {
+    const img = build((x, y) => (inBox(x, y) ? [200, 20, 40, 255] : [255, 255, 255, 255]));
+    const { mask } = extractSubjectMask(img);
+    const lab = measureSubjectLab(img, mask)!;
+    expect(deltaE2000(lab, rgbToLab({ r: 200, g: 20, b: 40 }))).toBeLessThan(1);
+  });
+
+  it("specular lekeyi rengin dışında tutar", () => {
+    // Objenin %3'ü neredeyse beyaz. Düz ortalama rengi soldururdu; yoğunluk
+    // ağırlıklı ölçüm gövde rengini korumalı.
+    const img = build((x, y) => {
+      if (!inBox(x, y)) return [255, 255, 255, 255];
+      return Math.hypot(x - 20, y - 20) < 2 ? [252, 252, 252, 255] : [30, 120, 60, 255];
+    });
+    const { mask } = extractSubjectMask(img);
+    const lab = measureSubjectLab(img, mask)!;
+    expect(deltaE2000(lab, rgbToLab({ r: 30, g: 120, b: 60 }))).toBeLessThan(2);
+  });
+
+  it("gölgeli gövdede plato rengini seçer, gölgeye kaymaz", () => {
+    // Alt üçte bir gölgede. Düz ortalama koyuya kayar; plato baskın olmalı.
+    const img = build((x, y) => {
+      if (!inBox(x, y)) return [255, 255, 255, 255];
+      return y > 24 ? [15, 60, 30, 255] : [30, 120, 60, 255];
+    });
+    const { mask } = extractSubjectMask(img);
+    const lab = measureSubjectLab(img, mask)!;
+    const plato = rgbToLab({ r: 30, g: 120, b: 60 });
+    const golge = rgbToLab({ r: 15, g: 60, b: 30 });
+    expect(deltaE2000(lab, plato)).toBeLessThan(deltaE2000(lab, golge));
+  });
+
+  it("bölge çok küçükse null döner — uydurma renk üretmez", () => {
+    const img = build((x, y) => (x < 3 && y < 3 ? [10, 10, 10, 255] : [255, 255, 255, 255]));
+    const { mask } = extractSubjectMask(img);
+    expect(measureSubjectLab(img, mask)).toBeNull();
   });
 });
