@@ -1767,6 +1767,17 @@ export const sampleMasters = mysqlTable(
     companyId: int("companyId").notNull().default(1),
     /** Obje tipi anahtarı — 'damla', 'kasik', 'panel'. Şirket başına tekil. */
     objectType: varchar("objectType", { length: 64 }).notNull(),
+    /**
+     * Görselin ne işe yaradığı.
+     *
+     * `referans` → üretimde şekli sabitleyen numune ya da gümüş baz.
+     * `gorsel`   → şablon katmanlarında kullanılan varlık: kendi ambalaj
+     *              çekimin, kendi logon, arka plan dokusu.
+     *
+     * İkisi aynı tabloda çünkü depolama ve servis yolu birebir aynı; ayrı
+     * tablo açmak aynı kodu iki kez yazmak olurdu. Ayrım yalnız listelemede.
+     */
+    kind: mysqlEnum("kind", ["referans", "gorsel"]).notNull().default("referans"),
     /** Arayüzde görünen ad. */
     label: varchar("label", { length: 128 }).notNull(),
     /**

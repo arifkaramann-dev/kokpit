@@ -74,7 +74,16 @@ export type TextLayer = {
   visible: boolean;
 };
 
-/** Görsel katmanının kaynağı. */
+/**
+ * Görsel katmanının kaynağı.
+ *
+ * Sabit kaynaklar üretimden gelir: `object` AI çıktısı, `coat1..3` kat
+ * progresyonu, `packaging` ve `logo` yerleşik varlıklar.
+ *
+ * `asset:<id>` ise KULLANICININ yüklediği görsel — kendi ambalaj çekimi,
+ * kendi logosu, arka plan dokusu. Kimlik dizeye gömülü çünkü yerleşim JSON
+ * olarak saklanıyor ve ayrı bir alan açmak her katman türüne bulaşırdı.
+ */
 export type ImageSource =
   | "object"
   | "packaging"
@@ -82,7 +91,15 @@ export type ImageSource =
   /** Kat progresyonu kareleri — 1 tabanlı. */
   | "coat1"
   | "coat2"
-  | "coat3";
+  | "coat3"
+  | `asset:${number}`;
+
+/** `asset:12` → 12; sabit kaynaklarda null. */
+export function assetIdOf(source: ImageSource): number | null {
+  if (!source.startsWith("asset:")) return null;
+  const id = Number(source.slice(6));
+  return Number.isFinite(id) && id > 0 ? id : null;
+}
 
 export type ImageLayer = {
   id: string;

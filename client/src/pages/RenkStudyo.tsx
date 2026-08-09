@@ -555,6 +555,13 @@ function UrunGorseli() {
             Sık kullandığın bir kareyi her seferinde yeniden yüklememek için
             kaydedebilirsin. Yukarıdaki yüklemelere ek olarak gönderilir.
           </p>
+          {!referenceId && (references?.length ?? 0) > 0 && (
+            <p className="flex items-start gap-1.5 text-xs text-amber-600">
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+              Seçili referans obje yok — üretimde şekil sabitlenmeyecek, model
+              her renkte farklı bir form çizebilir.
+            </p>
+          )}
         </div>
 
         {/* Gümüş baz — kat progresyonu için */}
@@ -809,6 +816,116 @@ function UrunGorseli() {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * Şablon görselleri — kullanıcının yüklediği ambalaj, logo, doku.
+ *
+ * Referans objelerden AYRI: biri üretime girip şekli sabitler, diğeri karta
+ * çizilir. Aynı listede karışırlarsa kullanıcı üretimde logosunu, kartta
+ * gümüş bazını seçer.
+ */
+function SablonGorselleri() {
+  const utils = trpc.useUtils();
+  const { data: assets, isLoading } = trpc.renkStudyo.assets.useQuery();
+  const [label, setLabel] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const save = trpc.renkStudyo.saveAsset.useMutation({
+    onSuccess: () => {
+      toast.success("Görsel kaydedildi");
+      setLabel("");
+      void utils.renkStudyo.assets.invalidate();
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  const remove = trpc.renkStudyo.deleteReference.useMutation({
+    onSuccess: () => {
+      toast.success("Silindi");
+      void utils.renkStudyo.assets.invalidate();
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  return (
+    <Card className="space-y-3 p-4">
+      <div>
+        <h2 className="text-sm font-medium">Şablon görselleri</h2>
+        <p className="text-xs text-muted-foreground">
+          Kendi ambalaj çekimin, logon, arka plan dokun. Yükledikten sonra Şablon
+          Editörü'nde bir görsel katmanının <strong>Kaynak</strong> listesinde
+          çıkar ve karta yerleştirilebilir.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="min-w-48 flex-1 space-y-1">
+          <Label className="text-xs">Ad</Label>
+          <Input
+            value={label}
+            onChange={e => setLabel(e.target.value)}
+            placeholder="Örn. 250 ML şişe çekimi"
+          />
+        </div>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          className="hidden"
+          onChange={e => {
+            const f = e.target.files?.[0];
+            if (f) {
+              if (!label.trim()) toast.error("Önce bir ad yaz");
+              else
+                void readAsDataUrl(f).then(data =>
+                  save.mutate({ objectType: slug(label), label: label.trim(), data }),
+                );
+            }
+            e.target.value = "";
+          }}
+        />
+        <Button variant="outline" disabled={save.isPending} onClick={() => fileRef.current?.click()}>
+          {save.isPending ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Upload className="mr-2 size-4" />}
+          Görsel yükle
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" /> Yükleniyor…
+        </div>
+      ) : !assets?.length ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">
+          Henüz şablon görseli yok.
+        </p>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-5">
+          {assets.map(a => (
+            <div key={a.id} className="overflow-hidden rounded border">
+              <img
+                src={`/api/img/sample/${a.id}`}
+                alt={a.label}
+                className="aspect-square w-full bg-white object-contain"
+              />
+              <div className="flex items-center justify-between gap-1 border-t p-1.5">
+                <span className="truncate text-xs">{a.label}</span>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="size-6"
+                  disabled={remove.isPending}
+                  onClick={() => remove.mutate({ id: a.id })}
+                >
+                  <Trash2 className="size-3.5" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function ReferansObjeler() {
   const utils = trpc.useUtils();
   const { data: references, isLoading } = trpc.renkStudyo.references.useQuery();
@@ -951,6 +1068,7 @@ function SablonlarSekmesi() {
   const utils = trpc.useUtils();
   const { data: dims } = trpc.katalog.dimensions.useQuery();
   const { data: layoutRows } = trpc.renkStudyo.layouts.useQuery();
+  const { data: assets } = trpc.renkStudyo.assets.useQuery();
 
   const saved = useMemo(() => {
     const out: Record<string, TemplateLayout> = {};
@@ -990,6 +1108,7 @@ function SablonlarSekmesi() {
     <SablonEditor
       paint={paint}
       saved={saved}
+      assets={(assets ?? []).map(a => ({ id: a.id, label: a.label }))}
       saving={save.isPending || reset.isPending}
       onSave={(templateId, layout) =>
         save.mutateAsync({ templateId, layout: layout as unknown as Record<string, unknown> }).then(() => undefined)
@@ -1018,8 +1137,9 @@ export default function RenkStudyo() {
         <TabsContent value="uret" className="mt-4">
           <UrunGorseli />
         </TabsContent>
-        <TabsContent value="referans" className="mt-4">
+        <TabsContent value="referans" className="mt-4 space-y-4">
           <ReferansObjeler />
+          <SablonGorselleri />
         </TabsContent>
         <TabsContent value="sablon" className="mt-4">
           <SablonlarSekmesi />

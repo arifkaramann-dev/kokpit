@@ -11,7 +11,7 @@
 
 import { renderCoat } from "@shared/color/candy";
 import { hexToLab, type Lab } from "@shared/color/color";
-import type { ImageSource, TemplateLayout, TokenValues } from "@shared/color/layout";
+import { assetIdOf, type ImageSource, type TemplateLayout, type TokenValues } from "@shared/color/layout";
 import { defaultLayout } from "@shared/color/layoutDefaults";
 import type { Raster } from "@shared/color/recolor";
 import { extractSubjectMask, measureSubjectLab } from "@shared/color/subject";
@@ -100,6 +100,33 @@ function buildCoats(base: HTMLImageElement, targetLab: Lab | null): LayerImages 
   };
 }
 
+/**
+ * Yerleşimlerde geçen kullanıcı varlıklarını yükler.
+ *
+ * Tek tek değil topluca: aynı ambalaj birden çok şablonda kullanılıyorsa
+ * bir kez indirilsin. Yüklenemeyen varlık atlanıyor — kart o katman olmadan
+ * çizilir, hiç çizilmemesinden iyidir.
+ */
+async function loadAssets(layouts: TemplateLayout[]): Promise<LayerImages> {
+  const ids = new Set<number>();
+  for (const l of layouts) {
+    for (const layer of l.layers) {
+      if (layer.type !== "image") continue;
+      const id = assetIdOf(layer.source);
+      if (id) ids.add(id);
+    }
+  }
+  const out: LayerImages = {};
+  for (const id of Array.from(ids)) {
+    try {
+      out[`asset:${id}`] = await loadImageSrc(`/api/img/sample/${id}`);
+    } catch (err) {
+      console.warn("[renkCards] varlık yüklenemedi:", id, err);
+    }
+  }
+  return out;
+}
+
 /** Bir şablonun kullandığı görsel kaynakları. */
 function usedSources(layout: TemplateLayout): Set<ImageSource> {
   const out = new Set<ImageSource>();
@@ -144,11 +171,14 @@ export async function buildCards({
     }
   }
 
-  const images: LayerImages = { object: obj, packaging, logo, ...coats };
+  const resolved = TEMPLATES.map(t => layouts[t.id] ?? defaultLayout(t.id));
+  const assets = await loadAssets(resolved);
+  const images: LayerImages = { object: obj, packaging, logo, ...coats, ...assets };
 
   const out: CardOutput[] = [];
-  for (const tpl of TEMPLATES) {
-    const layout = layouts[tpl.id] ?? defaultLayout(tpl.id);
+  for (let i = 0; i < TEMPLATES.length; i += 1) {
+    const tpl = TEMPLATES[i];
+    const layout = resolved[i];
     // Kat kareleri yoksa o şablon yalnız başlık ve marka ile çıkardı; boş
     // kare basmak yerine atlanıyor ve sebebi çağıran tarafa bırakılıyor.
     const needsCoats = usedSources(layout).has("coat1");

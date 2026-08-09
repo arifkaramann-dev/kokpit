@@ -13,7 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { renderLayout } from "@/lib/renkLayoutRender";
 import { tokenValues } from "@/lib/renkCards";
 import { BRAND, TEMPLATES, forceWhiteBackground, getPackaging, defaultPackagingFor, loadImageSrc, type PaintInfo } from "@/lib/renkTemplates";
-import { clampBox, layerAt, newLayerId, TOKENS, type Layer, type TemplateLayout } from "@shared/color/layout";
+import { assetIdOf, clampBox, layerAt, newLayerId, TOKENS, type ImageSource, type Layer, type TemplateLayout } from "@shared/color/layout";
 import { defaultLayout } from "@shared/color/layoutDefaults";
 import { Eye, EyeOff, Loader2, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -43,6 +43,8 @@ type Props = {
   onSave: (templateId: string, layout: TemplateLayout) => Promise<void> | void;
   onReset: (templateId: string) => Promise<void> | void;
   saving?: boolean;
+  /** Kullanıcının yüklediği görseller — katman kaynağı olarak seçilebilir. */
+  assets?: Array<{ id: number; label: string }>;
 };
 
 /** Katmanın insan tarafındaki adı. */
@@ -78,6 +80,7 @@ export default function SablonEditor({
   onSave,
   onReset,
   saving,
+  assets = [],
 }: Props) {
   const [templateId, setTemplateId] = useState(TEMPLATES[0].id);
   const [layout, setLayout] = useState<TemplateLayout>(() => defaultLayout(TEMPLATES[0].id));
@@ -130,10 +133,24 @@ export default function SablonEditor({
 
       // Kat kareleri editörde örnek olarak objenin kendisi: editör
       // yerleşimi düzenlemek için, kat fiziğini denemek için değil.
+      // Yerleşimde geçen kullanıcı varlıkları — yoksa o katman çizilmez ve
+      // kullanıcı neden görünmediğini anlayamaz, o yüzden yükleniyor.
+      const assetImages: Record<string, HTMLImageElement> = {};
+      for (const layer of layout.layers) {
+        if (layer.type !== "image") continue;
+        const id = assetIdOf(layer.source);
+        if (!id || assetImages[`asset:${id}`]) continue;
+        try {
+          assetImages[`asset:${id}`] = await loadImageSrc(`/api/img/sample/${id}`);
+        } catch {
+          // varlık silinmiş olabilir; katman atlanır
+        }
+      }
+
       const rendered = await renderLayout({
         layout,
         values,
-        images: { object: obj, packaging, logo, coat1: obj, coat2: obj, coat3: obj },
+        images: { object: obj, packaging, logo, coat1: obj, coat2: obj, coat3: obj, ...assetImages },
         paintHex: paint.hex,
       });
 
@@ -472,7 +489,7 @@ export default function SablonEditor({
                   <Label className="text-xs">Kaynak</Label>
                   <Select
                     value={selected.source}
-                    onValueChange={v => patchLayer(selected.id, { source: v as "object" } as Partial<Layer>)}
+                    onValueChange={v => patchLayer(selected.id, { source: v as ImageSource } as Partial<Layer>)}
                   >
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -482,6 +499,11 @@ export default function SablonEditor({
                       <SelectItem value="coat1">1. kat</SelectItem>
                       <SelectItem value="coat2">2. kat</SelectItem>
                       <SelectItem value="coat3">3. kat</SelectItem>
+                      {assets.map(a => (
+                        <SelectItem key={a.id} value={`asset:${a.id}`}>
+                          {a.label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
