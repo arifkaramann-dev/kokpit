@@ -13,11 +13,25 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { downscaleToDataUrl, forceExactColor, readAsDataUrl, slug } from "@/lib/renkStudyo";
+import {
+  downscaleToDataUrl,
+  forceExactColor,
+  labToHexString,
+  measureColorFromImage,
+  readAsDataUrl,
+  slug,
+} from "@/lib/renkStudyo";
+import {
+  TEMPLATES,
+  defaultPackagingFor,
+  renderToDataUrl,
+  type PaintInfo,
+} from "@/lib/renkTemplates";
 import { trpc } from "@/lib/trpc";
 import {
   AlertTriangle,
   Check,
+  Download,
   Layers,
   Loader2,
   Search,
@@ -27,6 +41,7 @@ import {
   X,
 } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
+import type { Lab } from "@shared/color/color";
 import { toast } from "sonner";
 
 /**
@@ -62,6 +77,22 @@ type ColorRow = {
 };
 
 type NamedRow = { id: number; code?: string | null; name: string };
+
+/**
+ * Katalog bitiş türü → şablon seri kodu.
+ *
+ * İki ayrı sözlük: `colors.finish` satış etiketi, şablonun `seriesCode`'u
+ * marka hattı (VIVID/METEOR) + efekt. Kapak yazısı için yaklaşık eşleme
+ * yeterli; tam karşılığı olmayan değerler düz (VS) sayılıyor.
+ */
+const SERIES_CODE_BY_FINISH: Record<string, string> = {
+  duz: "VS",
+  metalik: "VM",
+  sedef: "VP",
+  candy: "VC",
+  neon: "VS",
+  seffaf: "VC",
+};
 
 /** Üretimde ne çizileceğine dair hazır başlangıçlar. */
 const SUBJECT_PRESETS = [
@@ -101,8 +132,14 @@ function UrunGorseli() {
   const refFileRef = useRef<HTMLInputElement>(null);
 
   const [extra, setExtra] = useState("");
+  // Referanstan ölçülen renk — kullanıcı neyin hedeflendiğini görsün.
+  const [measured, setMeasured] = useState<string | null>(null);
   const [usedPrompt, setUsedPrompt] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
+  // Şablon çıktıları — pazarlama görselleri. Obje görseli üretildikten sonra
+  // hepsi tek tıkla basılıyor; her biri ayrı kaydedilebiliyor.
+  const [cards, setCards] = useState<Array<{ id: string; label: string; data: string }>>([]);
+  const [rendering, setRendering] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -160,6 +197,8 @@ function UrunGorseli() {
     setBusy(true);
     setWarning(null);
     setUsedPrompt(null);
+    setMeasured(null);
+    setCards([]);
     try {
       const res = await generate.mutateAsync({
         hex: color?.hex || undefined,
@@ -176,13 +215,26 @@ function UrunGorseli() {
       // ilk bakılacak yer istemdir, tahmin etmek yerine okunabilsin.
       setUsedPrompt(res.prompt);
 
-      // Düzeltme bir HEDEF gerektiriyor; hex yoksa oturtulacak bir renk yok.
-      if (!exact || !color?.hex) {
+      // Düzeltme bir HEDEF gerektiriyor. Hedef önce hex'ten, hex yoksa
+      // referans fotoğraftan ÖLÇÜLEREK bulunuyor — böylece katalogda hex'i
+      // olmayan renklerde de renk oturtulabiliyor.
+      let target: string | Lab | null = color?.hex || null;
+      if (exact && !target && refImages.length) {
+        target = await measureColorFromImage(refImages[0]);
+        if (target) setMeasured(labToHexString(target));
+      }
+
+      if (!exact || !target) {
         setPreview(res.data);
+        if (exact && !target) {
+          setWarning(
+            "Renk düzeltmesi için hedef bulunamadı: ne hex tanımlı ne de referanstan ölçülebildi.",
+          );
+        }
         return;
       }
 
-      const fixed = await forceExactColor(res.data, color.hex);
+      const fixed = await forceExactColor(res.data, target);
       setPreview(fixed.data);
       if (fixed.noBackgroundFound) {
         setWarning(
@@ -193,6 +245,44 @@ function UrunGorseli() {
       toast.error(err instanceof Error ? err.message : "Üretim başarısız");
     } finally {
       setBusy(false);
+    }
+  };
+
+  /**
+   * Pazarlama görsellerini basar.
+   *
+   * Obje görseli AI'den bir kez gelir; altı şablon aynı görselden türetilir.
+   * Her şablon için yeniden üretmek hem pahalı hem tutarsız olurdu — kareler
+   * arasında obje değişirse seri dağılır.
+   */
+  const renderCards = async () => {
+    if (!preview || !color) return;
+    setRendering(true);
+    try {
+      const paint: PaintInfo = {
+        code: color.code,
+        nameTr: color.name,
+        nameEn: color.nameEn,
+        // Şablonun seri kodu (VP/VM/VC/VS/MT) katalogdaki bitiş türünden
+        // türetiliyor; ikisi farklı sözlükler ama kapak yazısı için yeterli.
+        seriesCode: SERIES_CODE_BY_FINISH[color.finish ?? "duz"] ?? "VS",
+        hex: color.hex || measured || undefined,
+      };
+      paint.packaging = defaultPackagingFor(paint.seriesCode);
+
+      const out: Array<{ id: string; label: string; data: string }> = [];
+      for (const tpl of TEMPLATES) {
+        out.push({
+          id: tpl.id,
+          label: tpl.label,
+          data: await renderToDataUrl({ templateId: tpl.id, objectImage: preview, paint }),
+        });
+      }
+      setCards(out);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Şablonlar üretilemedi");
+    } finally {
+      setRendering(false);
     }
   };
 
@@ -545,6 +635,30 @@ function UrunGorseli() {
                 {warning}
               </p>
             )}
+            <div className="flex w-full max-w-2xl flex-wrap gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={rendering}
+                onClick={() => void renderCards()}
+              >
+                {rendering ? (
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                ) : (
+                  <Layers className="mr-2 size-4" />
+                )}
+                Pazarlama görsellerini üret ({TEMPLATES.length} şablon)
+              </Button>
+              {measured && (
+                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <span
+                    className="inline-block size-3 rounded-full border"
+                    style={{ background: measured }}
+                  />
+                  Referanstan ölçülen renk: <code>{measured}</code>
+                </span>
+              )}
+            </div>
             {usedPrompt && (
               <details className="w-full max-w-2xl">
                 <summary className="cursor-pointer text-xs text-muted-foreground">

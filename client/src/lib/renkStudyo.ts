@@ -8,9 +8,9 @@
  * renklendirme) ve sunucuda canvas yok.
  */
 
-import { hexToLab } from "@shared/color/color";
+import { hexToLab, labToHex, type Lab } from "@shared/color/color";
 import { recolorRegion, type Raster } from "@shared/color/recolor";
-import { extractSubjectMask, whitenBackground } from "@shared/color/subject";
+import { extractSubjectMask, measureSubjectLab, whitenBackground } from "@shared/color/subject";
 
 /** Görseli yükler. Aynı kaynaktan gelmeli — yoksa canvas kirlenir. */
 export function loadImage(src: string): Promise<HTMLImageElement> {
@@ -55,7 +55,38 @@ export type ExactColorResult = {
  * renkte. İsteğe bağlıdır: modelin kendi yorumunu korumak istenirse
  * çalıştırılmaz.
  */
-export async function forceExactColor(src: string, hex: string): Promise<ExactColorResult> {
+/**
+ * Bir görseldeki boyanın rengini ölçer.
+ *
+ * Katalogdaki her rengin hex kodu yok. Boyanın fotoğrafı elimizdeyken
+ * "hedef renk yok" demek yerine ölçüyoruz — böylece renk düzeltmesi hex
+ * olmadan da çalışabiliyor.
+ *
+ * @returns obje bölgesi çok küçükse `null`
+ */
+export async function measureColorFromImage(src: string): Promise<Lab | null> {
+  const img = await loadImage(src);
+  const w = img.naturalWidth || img.width;
+  const h = img.naturalHeight || img.height;
+  const { canvas, ctx } = canvasOf(w, h);
+  ctx.drawImage(img, 0, 0, w, h);
+  void canvas;
+
+  const image = ctx.getImageData(0, 0, w, h);
+  const raster: Raster = { data: image.data, width: image.width, height: image.height };
+  const { mask } = extractSubjectMask(raster);
+  return measureSubjectLab(raster, mask);
+}
+
+/** Ölçülen rengi insan tarafına çevirir (önizlemede göstermek için). */
+export function labToHexString(lab: Lab): string {
+  return labToHex(lab);
+}
+
+export async function forceExactColor(
+  src: string,
+  target: string | Lab,
+): Promise<ExactColorResult> {
   const img = await loadImage(src);
   const w = img.naturalWidth || img.width;
   const h = img.naturalHeight || img.height;
@@ -68,7 +99,8 @@ export async function forceExactColor(src: string, hex: string): Promise<ExactCo
   const { mask, noBackgroundFound } = extractSubjectMask(raster);
   whitenBackground(raster, mask);
 
-  const out = recolorRegion(raster, mask, hexToLab(hex));
+  const targetLab = typeof target === "string" ? hexToLab(target) : target;
+  const out = recolorRegion(raster, mask, targetLab);
   // Yeni ImageData kurmak yerine mevcut tampona yazıyoruz: bir kopya eksiliyor.
   image.data.set(out.data);
   ctx.putImageData(image, 0, 0);
