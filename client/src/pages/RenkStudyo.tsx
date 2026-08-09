@@ -146,29 +146,34 @@ function UrunGorseli() {
   const generate = trpc.renkStudyo.generateForColor.useMutation();
 
   const onGenerate = async () => {
-    if (!color?.hex) {
-      toast.error("Bu ürünün renginde hex kodu tanımlı değil");
+    // Hex ARTIK ZORUNLU DEĞİL. Rengin kaynağı öncelikle referans fotoğraf;
+    // hex yalnız fotoğraf yokken gerekiyor. Katalogdaki birçok rengin hex'i
+    // boş ve bu, boyanın fotoğrafı elimizdeyken üretimi engellememeli.
+    if (!refImages.length && !color?.hex) {
+      toast.error(
+        "Renk kaynağı yok: boyanın fotoğrafını yükle ya da bu rengin hex kodunu tanımla.",
+      );
       return;
     }
     setBusy(true);
     setWarning(null);
     try {
       const res = await generate.mutateAsync({
-        hex: color.hex,
-        colorName: [color.name, color.nameEn].filter(Boolean).join(" / ") || undefined,
-        finish: color.finish ?? undefined,
+        hex: color?.hex || undefined,
+        colorName: color ? [color.name, color.nameEn].filter(Boolean).join(" / ") || undefined : undefined,
+        finish: color?.finish ?? undefined,
         referenceImages: refImages.length ? refImages : undefined,
         referenceId: referenceId ? Number(referenceId) : null,
         subject,
         model: activeModel || undefined,
       });
 
-      if (!exact) {
+      // Düzeltme bir HEDEF gerektiriyor; hex yoksa oturtulacak bir renk yok.
+      if (!exact || !color?.hex) {
         setPreview(res.data);
         return;
       }
 
-      // İsteğe bağlı düzeltme: modelin çıkardığı rengi hedefe tam oturt.
       const fixed = await forceExactColor(res.data, color.hex);
       setPreview(fixed.data);
       if (fixed.noBackgroundFound) {
@@ -278,9 +283,21 @@ function UrunGorseli() {
 
           {color && (
             <p className="text-xs text-muted-foreground">
-              Renk üründen geliyor: <strong>{color.code}</strong> · {color.name} ·{" "}
-              <code>{color.hex || "hex yok"}</code>
+              Renk üründen geliyor: <strong>{color.code}</strong> · {color.name}
               {color.finish ? ` · ${color.finish}` : ""}
+              {color.hex ? (
+                <>
+                  {" · "}
+                  <code>{color.hex}</code>
+                </>
+              ) : (
+                <>
+                  {" · "}
+                  <span className="text-amber-600">
+                    hex tanımsız — renk referans fotoğraflardan alınacak
+                  </span>
+                </>
+              )}
             </p>
           )}
         </div>
@@ -339,8 +356,9 @@ function UrunGorseli() {
           </Button>
           {refImages.length === 0 && (
             <p className="text-xs text-muted-foreground">
-              Yüklemezsen model rengi yalnız hex kodundan üretir — kaplamanın
-              dokusunu bilemez.
+              {color && !color.hex
+                ? "Bu rengin hex kodu tanımlı değil, yani üretim için fotoğraf şart."
+                : "Yüklemezsen model rengi yalnız hex kodundan üretir — kaplamanın dokusunu bilemez."}
             </p>
           )}
         </div>
@@ -425,11 +443,12 @@ function UrunGorseli() {
           <div className="min-w-0">
             <Label className="text-sm">Rengi tam tutur</Label>
             <p className="mt-1 text-xs text-muted-foreground">
-              AI kesin renk tutturmaz. Açıkken üretim sonrası renk ölçülüp hedefe
-              oturtulur; gölge ve parlama korunur.
+              {color?.hex
+                ? "AI kesin renk tutturmaz. Açıkken üretim sonrası renk ölçülüp hedefe oturtulur; gölge ve parlama korunur."
+                : "Bu rengin hex kodu tanımlı olmadığı için oturtulacak bir hedef yok. Renk referans fotoğraflardan gelir."}
             </p>
           </div>
-          <Switch checked={exact} onCheckedChange={setExact} />
+          <Switch checked={exact && !!color?.hex} onCheckedChange={setExact} disabled={!color?.hex} />
         </div>
 
         <Button className="w-full" disabled={!master || busy} onClick={() => void onGenerate()}>

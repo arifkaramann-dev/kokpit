@@ -128,7 +128,14 @@ export const renkStudyoRouter = router({
   generateForColor: protectedProcedure
     .input(
       z.object({
-        hex,
+        /**
+         * Katalogdaki renk kodu. ZORUNLU DEĞİL.
+         *
+         * Referans fotoğraf varsa rengin kaynağı odur; hex hiç gerekmez.
+         * Katalogdaki birçok rengin hex'i boş olabilir ve bu, boyanın
+         * fotoğrafı elimizdeyken üretimi engellememeli.
+         */
+        hex: hex.optional(),
         colorName: z.string().trim().max(128).optional(),
         finish: z.string().trim().max(32).optional(),
         /**
@@ -176,18 +183,34 @@ export const renkStudyoRouter = router({
       // ipucu olarak veriliyor; çelişirse referans kazanmalı.
       //
       // Referans YOKSA elimizdeki tek bilgi hex ve kaplama etiketi.
+      if (!refs.length && !input.hex) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "Renk kaynağı yok: ya boyanın referans fotoğrafını yükle ya da rengin hex kodunu tanımla.",
+        });
+      }
+
+      // İpucu satırı yalnız hex varsa kuruluyor — yoksa modele "undefined"
+      // diye bir renk söylemek, hiç söylememekten kötü.
+      const hint = [
+        input.colorName ? `The paint is named ${input.colorName}.` : null,
+        input.hex
+          ? `Its catalogue reference is ${input.hex}${finishHint ? `, ${finishHint}` : ""} — use this only as a hint; the reference images are the truth.`
+          : finishHint
+            ? `The finish is a ${finishHint}.`
+            : null,
+      ].filter(Boolean);
+
       const prompt = refs.length
         ? [
             "Look at the reference images and identify the exact paint colour and finish of the painted surface.",
             `Generate a photorealistic studio photograph of ${input.subject} painted in that exact colour and finish.`,
             "Match the hue, saturation, lightness, metallic flake and depth of the reference paint as closely as possible.",
-            input.colorName ? `The paint is named ${input.colorName}.` : null,
-            `Its catalogue reference is ${input.hex}${finishHint ? `, ${finishHint}` : ""} — use this only as a hint; the reference images are the truth.`,
+            ...hint,
             "White seamless studio background, professional automotive catalogue lighting with large softboxes,",
             "sharp elongated highlights along the body, visible clearcoat depth. No text, no watermark, no people.",
-          ]
-            .filter(Boolean)
-            .join(" ")
+          ].join(" ")
         : [
             input.subject,
             `painted in the exact colour ${input.hex}`,
