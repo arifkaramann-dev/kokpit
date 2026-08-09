@@ -68,6 +68,7 @@ import {
   listingImages,
   masterImages,
   sampleMasters,
+  templateLayouts,
   channelAttributes,
   channelAttributeValues,
   channelAttributeOptions,
@@ -3391,4 +3392,45 @@ export async function saveSampleMaster(input: {
 export async function deleteSampleMaster(id: number) {
   const db = await requireDb();
   await db.delete(sampleMasters).where(eq(sampleMasters.id, id));
+}
+
+
+// ---------------------------------------------------------------------------
+// Şablon yerleşimleri (renk stüdyosu editörü)
+// ---------------------------------------------------------------------------
+
+export async function listTemplateLayouts() {
+  const db = await requireDb();
+  return db.select().from(templateLayouts);
+}
+
+/**
+ * Kaydeder ya da üzerine yazar.
+ *
+ * Şablon kimliği şirket başına tekil: aynı şablon iki farklı yerleşimle
+ * duramaz, yoksa hangisinin çizildiği belirsizleşir.
+ */
+export async function saveTemplateLayout(templateId: string, layout: unknown) {
+  const db = await requireDb();
+  const [existing] = await db
+    .select({ id: templateLayouts.id })
+    .from(templateLayouts)
+    .where(eq(templateLayouts.templateId, templateId))
+    .limit(1);
+
+  if (existing) {
+    await db
+      .update(templateLayouts)
+      .set({ layout })
+      .where(eq(templateLayouts.id, existing.id));
+    return existing.id;
+  }
+  const [res] = await db.insert(templateLayouts).values({ templateId, layout });
+  return Number(res.insertId);
+}
+
+/** Fabrika ayarına dön — kayıt silinince varsayılan yerleşim devreye girer. */
+export async function deleteTemplateLayout(templateId: string) {
+  const db = await requireDb();
+  await db.delete(templateLayouts).where(eq(templateLayouts.templateId, templateId));
 }

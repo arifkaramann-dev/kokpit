@@ -351,6 +351,13 @@
       "when": 1786281270712,
       "tag": "0049_supreme_nightmare",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "5",
+      "when": 1786316676704,
+      "tag": "0050_normal_diamondback",
+      "breakpoints": true
     }
   ]
 }
