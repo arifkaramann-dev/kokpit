@@ -677,6 +677,54 @@ function UrunGorseli() {
         )}
       </Card>
       </div>
+
+      {cards.length > 0 && (
+        <Card className="space-y-3 p-4">
+          <div>
+            <h2 className="text-sm font-medium">Pazarlama görselleri</h2>
+            <p className="text-xs text-muted-foreground">
+              Hepsi aynı obje görselinden türetildi — kareler arasında obje
+              değişmiyor, seri dağılmıyor. Pazaryeri ana görseli metin taşımaz
+              (Amazon/Trendyol şartı).
+            </p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {cards.map(c => (
+              <div key={c.id} className="overflow-hidden rounded border">
+                <img src={c.data} alt={c.label} className="w-full bg-white object-contain" />
+                <div className="flex items-center justify-between gap-2 border-t p-2">
+                  <span className="truncate text-xs font-medium">{c.label}</span>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        const a = document.createElement("a");
+                        a.href = c.data;
+                        a.download = `${color?.code ?? "renk"}-${c.id}.png`;
+                        a.click();
+                      }}
+                    >
+                      <Download className="size-4" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!master || saving}
+                      onClick={() =>
+                        master &&
+                        saveMaster.mutate({ masterId: master.id, data: c.data, role: c.id })
+                      }
+                    >
+                      Kaydet
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
     </div>
   );
 }

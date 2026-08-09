@@ -68,7 +68,7 @@ export const PACK_SIZES = ['30 ML', '100 ML', '250 ML', '500 ML', '400 ML SPREY'
  * yanında Meteor kutusu duramaz.
  */
 export const PACKAGING: PackagingOption[] = [
-  { id: 'vivid-spray400', line: 'VIVID', label: 'VIVID 400 ML Sprey', src: '/renk/packaging/sprey-400-vivid.png', alpha: false },
+  { id: 'vivid-spray400', line: 'VIVID', label: 'VIVID 400 ML Sprey', src: '/renk/packaging/sprey-400-vivid.jpg', alpha: false },
   { id: 'meteor-spray400', line: 'METEOR', label: 'METEOR 400 ML Sprey', src: '/renk/packaging/sprey-400-meteor.png', alpha: true },
   { id: 'meteor-bottle500', line: 'METEOR', label: 'METEOR 500 ML Şişe', src: '/renk/packaging/sise-500.jpg', alpha: false },
   { id: 'meteor-bottle250', line: 'METEOR', label: 'METEOR 250 ML Şişe', src: '/renk/packaging/sise-250.jpg', alpha: false },
@@ -543,8 +543,11 @@ async function drawProduct(
     const ratio = cw / ch;
     const packW = targetH * ratio;
     ctx.drawImage(cleaned, W - pad - packW * 0.92, stage.y + stage.h * 0.06, packW, targetH);
-  } catch {
-    // Ambalaj yüklenemezse sahne numuneyle devam etsin
+  } catch (err) {
+    // Ambalaj yüklenemezse sahne numuneyle devam etsin — boş kart üretmekten
+    // iyidir. Ama sessiz kalmasın: yolu yanlış bir ambalaj, kartların
+    // aylarca ambalajsız çıkmasına ve kimsenin fark etmemesine yol açıyordu.
+    console.warn('[renkTemplates] ambalaj çizilemedi:', pack.id, pack.src, err);
   }
 
   // Numune — sol altta, ambalajın önünde
