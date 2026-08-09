@@ -26,7 +26,7 @@ bütün renkler aynı formda, aynı ışıkta, yalnız renk ekseninde ayrışan 
 | `series.js` — boya serileri | `shared/color/series.ts` | ✅ taşındı |
 | `normalize.js` — kayıt tamamlama | `shared/color/paint.ts` | ✅ taşındı |
 | `match.js` — en yakın renk | `shared/color/match.ts` | ✅ taşındı |
-| `recolor.js` — görsel yeniden renklendirme | `client/` | ⏳ sırada |
+| `recolor.js` — görsel yeniden renklendirme | `shared/color/recolor.ts` | ✅ taşındı |
 | `colorLibrary`, `masterStore`, `assetStore`, `packagingStore` | tRPC + `colors` / `masterImages` | ⏳ sırada |
 | `AiStudio`, `Templates`, `Packaging`, `Library`, `PaintDetail` sayfaları | `client/src/pages/` | ⏳ sırada |
 
@@ -112,10 +112,12 @@ davranışıdır. Birbirine çevrilmeye çalışılırsa ikisi de bozulur.
 ## Uygulama planı
 
 1. ✅ **Renk motoru** → `shared/color/` (TypeScript, 75 test)
-2. ⏳ **Şema** → `colors` tablosuna Lab sütunları + fingerprint JSON alanı
-3. ⏳ **tRPC** → renk kütüphanesi ve master görsel router'ları; localStorage /
+2. ✅ **`recolor`** → ölü koddan çıktı, `shared/color/recolor.ts` (9 test).
+   Bağımlılığı olmadığı için şemadan önce alındı; hattın belirleyici parçası
+   ve tek başına doğrulanabiliyor.
+3. ⏳ **Şema** → `colors` tablosuna Lab sütunları
+4. ⏳ **tRPC** → renk kütüphanesi ve master görsel router'ları; localStorage /
    IndexedDB depolarının yerine
-4. ⏳ **`recolor`** → ölü koddan çıkar, üretim hattına bağlan
 5. ⏳ **Sayfalar** → AiStudio, Templates, Packaging, Library, PaintDetail
 6. ⏳ **Bağlantı** → üretilen görsel `masterImages` / `listingImages` üzerinden
    pazaryeri kartına
