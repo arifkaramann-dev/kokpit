@@ -47,10 +47,24 @@ type Props = {
   assets?: Array<{ id: number; label: string }>;
 };
 
+/** Görsel kaynağının insan tarafındaki adı — liste "pack2" değil "2. boy" desin. */
+const SOURCE_LABEL: Record<string, string> = {
+  object: "obje",
+  packaging: "ambalaj",
+  logo: "logo",
+  coat1: "1. kat",
+  coat2: "2. kat",
+  coat3: "3. kat",
+  pack1: "gam 1. boy",
+  pack2: "gam 2. boy",
+  pack3: "gam 3. boy",
+  pack4: "gam 4. boy",
+};
+
 /** Katmanın insan tarafındaki adı. */
 function layerName(l: Layer): string {
   if (l.type === "text") return `Metin: ${l.text.slice(0, 24) || "(boş)"}`;
-  if (l.type === "image") return `Görsel: ${l.source}`;
+  if (l.type === "image") return `Görsel: ${SOURCE_LABEL[l.source] ?? l.source}`;
   return `Kutu: ${l.fill === "paint" ? "renk" : l.fill}`;
 }
 
@@ -116,13 +130,29 @@ export default function SablonEditor({
     setBusy(true);
     try {
       const obj = await loadImageSrc(sample);
+      // Ambalaj kaynağı: Tanımlar'daki çekim → yerleşik yedek görsel.
       let packaging: HTMLImageElement | null = null;
       try {
         packaging = await loadImageSrc(
-          getPackaging(defaultPackagingFor(paint.seriesCode, paint.packaging)).src,
+          paint.packagingSrc ||
+            getPackaging(defaultPackagingFor(paint.seriesCode, paint.packaging)).src,
         );
       } catch {
         // ambalajsız önizleme, kart yine çizilsin
+      }
+
+      // Ambalaj gamı (pack1..pack4). Çekimi olmayan boy çizilmez; kutusu boş
+      // kalan katman editörde de boş görünmeli, yoksa kullanıcı yerleşimi
+      // olmayan bir görsele göre ayarlar.
+      const packRange: Record<string, HTMLImageElement> = {};
+      for (let i = 0; i < 4; i += 1) {
+        const src = paint.packRange?.[i]?.src;
+        if (!src) continue;
+        try {
+          packRange[`pack${i + 1}`] = await loadImageSrc(src);
+        } catch {
+          // silinmiş çekim; katman atlanır
+        }
       }
       let logo: HTMLImageElement | null = null;
       try {
@@ -150,7 +180,16 @@ export default function SablonEditor({
       const rendered = await renderLayout({
         layout,
         values,
-        images: { object: obj, packaging, logo, coat1: obj, coat2: obj, coat3: obj, ...assetImages },
+        images: {
+          object: obj,
+          packaging,
+          logo,
+          coat1: obj,
+          coat2: obj,
+          coat3: obj,
+          ...packRange,
+          ...assetImages,
+        },
         paintHex: paint.hex,
       });
 
@@ -165,7 +204,16 @@ export default function SablonEditor({
     } finally {
       setBusy(false);
     }
-  }, [layout, values, sample, paint.hex, paint.seriesCode, paint.packaging]);
+  }, [
+    layout,
+    values,
+    sample,
+    paint.hex,
+    paint.seriesCode,
+    paint.packaging,
+    paint.packagingSrc,
+    paint.packRange,
+  ]);
 
   useEffect(() => {
     void draw();
@@ -407,6 +455,24 @@ export default function SablonEditor({
               ))}
             </div>
 
+            {/* Saydamlık her katman türünde var: renk yıkaması, soluk filigran
+                ve ikinci plandaki kutu bununla kuruluyor. */}
+            <div className="space-y-1">
+              <Label className="text-xs">Saydamlık</Label>
+              <Input
+                type="number"
+                min="0"
+                max="1"
+                step="0.05"
+                value={selected.opacity ?? 1}
+                onChange={e =>
+                  patchLayer(selected.id, {
+                    opacity: Math.max(0, Math.min(1, Number(e.target.value))),
+                  } as Partial<Layer>)
+                }
+              />
+            </div>
+
             {selected.type === "text" && (
               <>
                 <div className="space-y-1">
@@ -480,71 +546,153 @@ export default function SablonEditor({
                     </div>
                   </div>
                 </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Satır sar</Label>
+                    <div className="pt-2">
+                      <Switch
+                        checked={!!selected.wrap}
+                        onCheckedChange={v => patchLayer(selected.id, { wrap: v } as Partial<Layer>)}
+                      />
+                    </div>
+                  </div>
+                  {selected.wrap && (
+                    <div className="space-y-1">
+                      <Label className="text-xs">Satır arası</Label>
+                      <Input
+                        type="number"
+                        step="0.05"
+                        min="0.8"
+                        value={selected.lineHeight ?? 1.2}
+                        onChange={e =>
+                          patchLayer(selected.id, {
+                            lineHeight: Number(e.target.value) || 1.2,
+                          } as Partial<Layer>)
+                        }
+                      />
+                    </div>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {selected.wrap
+                    ? "Metin kutuya sarılır; sığmayan satırlar çizilmez. Paragraf ve açıklama için."
+                    : "Tek satır: sığmazsa yazı küçültülür. Kod ve isim için doğrusu bu."}
+                </p>
               </>
             )}
 
             {selected.type === "image" && (
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <Label className="text-xs">Kaynak</Label>
-                  <Select
-                    value={selected.source}
-                    onValueChange={v => patchLayer(selected.id, { source: v as ImageSource } as Partial<Layer>)}
-                  >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="object">Obje</SelectItem>
-                      <SelectItem value="packaging">Ambalaj</SelectItem>
-                      <SelectItem value="logo">Logo</SelectItem>
-                      <SelectItem value="coat1">1. kat</SelectItem>
-                      <SelectItem value="coat2">2. kat</SelectItem>
-                      <SelectItem value="coat3">3. kat</SelectItem>
-                      {assets.map(a => (
-                        <SelectItem key={a.id} value={`asset:${a.id}`}>
-                          {a.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Kaynak</Label>
+                    <Select
+                      value={selected.source}
+                      onValueChange={v => patchLayer(selected.id, { source: v as ImageSource } as Partial<Layer>)}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="object">Obje</SelectItem>
+                        <SelectItem value="packaging">Ambalaj (ürünün kendi)</SelectItem>
+                        <SelectItem value="pack1">Gam: 1. boy</SelectItem>
+                        <SelectItem value="pack2">Gam: 2. boy</SelectItem>
+                        <SelectItem value="pack3">Gam: 3. boy</SelectItem>
+                        <SelectItem value="pack4">Gam: 4. boy</SelectItem>
+                        <SelectItem value="logo">Logo</SelectItem>
+                        <SelectItem value="coat1">1. kat</SelectItem>
+                        <SelectItem value="coat2">2. kat</SelectItem>
+                        <SelectItem value="coat3">3. kat</SelectItem>
+                        {assets.map(a => (
+                          <SelectItem key={a.id} value={`asset:${a.id}`}>
+                            {a.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Sığdırma</Label>
+                    <Select
+                      value={selected.fit}
+                      onValueChange={v => patchLayer(selected.id, { fit: v as "contain" } as Partial<Layer>)}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="contain">Sığdır</SelectItem>
+                        <SelectItem value="cover">Doldur (kırp)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Sığdırma</Label>
-                  <Select
-                    value={selected.fit}
-                    onValueChange={v => patchLayer(selected.id, { fit: v as "contain" } as Partial<Layer>)}
-                  >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="contain">Sığdır</SelectItem>
-                      <SelectItem value="cover">Doldur (kırp)</SelectItem>
-                    </SelectContent>
-                  </Select>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={!!selected.shadow}
+                    onCheckedChange={v => patchLayer(selected.id, { shadow: v } as Partial<Layer>)}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Zemin gölgesi. Yalnız fonu SAYDAM görselde uygulanır; beyaz fonlu karede
+                    gölge objenin değil karenin çevresine düşerdi. Pazaryeri ana görselinde
+                    kapalı olmalı (fon saf beyaz kalmalı).
+                  </span>
                 </div>
-              </div>
+                <p className="text-xs text-muted-foreground">
+                  Ambalaj ve gam kutuları Tanımlar → Ambalajlar'daki çekimlerden gelir. Gam
+                  hacme göre sıralıdır: "2. boy" seri değiştiğinde de doğru kutuyu çizer.
+                </p>
+              </>
             )}
 
             {selected.type === "rect" && (
-              <div className="space-y-1">
-                <Label className="text-xs">Dolgu</Label>
-                <div className="flex items-center gap-2">
-                  <Switch
-                    checked={selected.fill === "paint"}
-                    onCheckedChange={v =>
-                      patchLayer(selected.id, { fill: v ? "paint" : "#e5e7eb" } as Partial<Layer>)
-                    }
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    {selected.fill === "paint" ? "Ürünün rengi" : "Sabit renk"}
-                  </span>
-                  {selected.fill !== "paint" && (
-                    <Input
-                      type="color"
-                      value={selected.fill}
-                      onChange={e => patchLayer(selected.id, { fill: e.target.value } as Partial<Layer>)}
+              <>
+                <div className="space-y-1">
+                  <Label className="text-xs">Dolgu</Label>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={selected.fill === "paint"}
+                      onCheckedChange={v =>
+                        patchLayer(selected.id, { fill: v ? "paint" : "#e5e7eb" } as Partial<Layer>)
+                      }
                     />
-                  )}
+                    <span className="text-xs text-muted-foreground">
+                      {selected.fill === "paint" ? "Ürünün rengi" : "Sabit renk"}
+                    </span>
+                    {selected.fill !== "paint" && (
+                      <Input
+                        type="color"
+                        value={selected.fill}
+                        onChange={e => patchLayer(selected.id, { fill: e.target.value } as Partial<Layer>)}
+                      />
+                    )}
+                  </div>
                 </div>
-              </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Köşe yarıçapı</Label>
+                    <Input
+                      type="number"
+                      step="0.005"
+                      min="0"
+                      value={selected.radius ?? 0}
+                      onChange={e =>
+                        patchLayer(selected.id, {
+                          radius: Math.max(0, Number(e.target.value)),
+                        } as Partial<Layer>)
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Aşağı soluklaş</Label>
+                    <div className="pt-2">
+                      <Switch
+                        checked={!!selected.gradient}
+                        onCheckedChange={v =>
+                          patchLayer(selected.id, { gradient: v } as Partial<Layer>)
+                        }
+                      />
+                    </div>
+                  </div>
+                </div>
+              </>
             )}
           </div>
         ) : (

@@ -54,6 +54,7 @@ import {
   productFamilies,
   packagings,
   packagingInputs,
+  packagingImages,
   useCases,
   useCaseChannelCategories,
   seriesPackagings,
@@ -82,6 +83,7 @@ import {
   InsertUseCase,
   InsertFormula,
   InsertPackagingInput,
+  InsertPackagingImage,
   InsertFormulaInput,
   InsertMasterProduct,
   InsertListing,
@@ -2484,6 +2486,82 @@ export async function listPackagingInputs() {
   return db.select().from(packagingInputs);
 }
 
+/* ---- Ambalaj çekimleri (pazarlama görselleri) ---------------------------- */
+
+/**
+ * Ambalaj çekimlerinin REFERANSLARI — base64 `data` alanı okunmaz.
+ *
+ * Şablon çizimi görselin kendisini değil adresini istiyor (`/api/img/packaging/{id}`)
+ * ve bu liste Tanımlar sayfası ile Renk Stüdyosu'nun her açılışında çekiliyor.
+ * `select()` ile bütün satırı almak her açılışa megabaytlarca base64 bindirirdi.
+ */
+export async function listPackagingImageRefs() {
+  const db = await requireDb();
+  return db
+    .select({
+      id: packagingImages.id,
+      packagingId: packagingImages.packagingId,
+      seriesId: packagingImages.seriesId,
+      updatedAt: packagingImages.updatedAt,
+    })
+    .from(packagingImages)
+    .orderBy(packagingImages.packagingId, packagingImages.seriesId);
+}
+
+export async function getPackagingImage(id: number) {
+  const db = await requireDb();
+  const [row] = await db.select().from(packagingImages).where(eq(packagingImages.id, id)).limit(1);
+  return row ?? null;
+}
+
+/**
+ * Ambalaj çekimini kaydeder ya da üzerine yazar.
+ *
+ * (ambalaj × seri) çifti TEKİL: aynı ambalajın aynı serisi için ikinci kez
+ * yükleme yapıldığında yeni satır açılmaz. Aksi halde hangi çekimin
+ * kullanıldığı belirsizleşirdi. Tekillik veritabanı kısıtıyla değil burada
+ * korunuyor: MySQL'de UNIQUE, NULL'ları tekrar sayar ve "tüm seriler" satırı
+ * (seriesId NULL) çoğalabilirdi.
+ */
+export async function savePackagingImage(input: {
+  packagingId: number;
+  seriesId: number | null;
+  data: string;
+}) {
+  const db = await requireDb();
+  const [existing] = await db
+    .select({ id: packagingImages.id })
+    .from(packagingImages)
+    .where(
+      and(
+        eq(packagingImages.packagingId, input.packagingId),
+        input.seriesId == null
+          ? isNull(packagingImages.seriesId)
+          : eq(packagingImages.seriesId, input.seriesId),
+      ),
+    )
+    .limit(1);
+
+  if (existing) {
+    await db
+      .update(packagingImages)
+      .set({ data: input.data })
+      .where(eq(packagingImages.id, existing.id));
+    return existing.id;
+  }
+  const [r] = await db.insert(packagingImages).values({
+    packagingId: input.packagingId,
+    seriesId: input.seriesId,
+    data: input.data,
+  } as InsertPackagingImage);
+  return Number(r.insertId);
+}
+
+export async function deletePackagingImage(id: number) {
+  const db = await requireDb();
+  await db.delete(packagingImages).where(eq(packagingImages.id, id));
+}
+
 export async function createFormula(data: InsertFormula) {
   const db = await requireDb();
   const [r] = await db.insert(formulas).values(data);
@@ -2777,6 +2855,11 @@ export async function countDimensionUsage(kind: DimensionTable, id: number): Pro
 export async function deleteDimension(kind: DimensionTable, id: number) {
   const db = await requireDb();
   const table = dimensionTables[kind];
+  // Ambalajın çekimleri onunla gider: kullanımda olmayan bir ambalaj silinince
+  // görselleri sahipsiz kalır ve hiçbir ekrandan görünmediği için temizlenemez.
+  if (kind === "packagings") {
+    await db.delete(packagingImages).where(eq(packagingImages.packagingId, id));
+  }
   await db.delete(table as never).where(eq((table as never as { id: never }).id, id));
 }
 

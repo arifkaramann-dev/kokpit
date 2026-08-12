@@ -32,7 +32,13 @@ export const TOKENS = [
   "{series}",
   "{line}",
   "{effect}",
+  "{packaging}",
+  "{volume}",
   "{packSizes}",
+  "{pack1}",
+  "{pack2}",
+  "{pack3}",
+  "{pack4}",
   "{brand}",
   "{site}",
 ] as const;
@@ -44,7 +50,17 @@ export type TokenValues = {
   series?: string | null;
   line?: string | null;
   effect?: string | null;
+  /** Ürünün kendi ambalajının adı — "250 ml". */
+  packaging?: string | null;
+  /** Ürünün kendi hacmi — "250 ML". */
+  volume?: string | null;
+  /** Serinin bütün boyları, ayraçla: "30 ML · 100 ML · 250 ML". */
   packSizes?: string | null;
+  /** Gamdaki boyların adları — `pack1..pack4` görsel katmanlarının etiketi. */
+  pack1?: string | null;
+  pack2?: string | null;
+  pack3?: string | null;
+  pack4?: string | null;
   brand?: string | null;
   site?: string | null;
 };
@@ -72,17 +88,44 @@ export type TextLayer = {
   align: "left" | "center" | "right";
   transform: TextTransform;
   visible: boolean;
+  /**
+   * Katman saydamlığı (0..1). Tanımsız = 1.
+   *
+   * Yeni alanlar İSTEĞE BAĞLI: kullanıcının kaydettiği yerleşimler
+   * veritabanında JSON olarak duruyor ve zorunlu bir alan eklemek onları
+   * geçersiz kılardı.
+   */
+  opacity?: number;
+  /**
+   * Satır arası — yazı boyutunun katı. Tanımsız = 1.2.
+   * Yalnız `wrap` açıkken anlamlı.
+   */
+  lineHeight?: number;
+  /**
+   * Uzun metni kutuya SARAR (birden çok satır).
+   *
+   * Kapalıyken (varsayılan) metin tek satırda kalır ve sığmıyorsa küçültülür —
+   * kod ve isim gibi kısa alanlarda doğru davranış. Açıkken paragraf yazılabilir;
+   * açıklama, kullanım notu, malzeme listesi tek satıra sıkışmasın.
+   */
+  wrap?: boolean;
 };
 
 /**
  * Görsel katmanının kaynağı.
  *
  * Sabit kaynaklar üretimden gelir: `object` AI çıktısı, `coat1..3` kat
- * progresyonu, `packaging` ve `logo` yerleşik varlıklar.
+ * progresyonu, `logo` marka varlığı.
  *
- * `asset:<id>` ise KULLANICININ yüklediği görsel — kendi ambalaj çekimi,
- * kendi logosu, arka plan dokusu. Kimlik dizeye gömülü çünkü yerleşim JSON
- * olarak saklanıyor ve ayrı bir alan açmak her katman türüne bulaşırdı.
+ * `packaging` ÜRÜNÜN KENDİ ambalajının çekimi; `pack1..pack4` ise serinin
+ * ambalaj gamı, küçükten büyüğe. İkisi de artık Tanımlar'daki ambalaj
+ * çekimlerinden geliyor (bkz. `packagingImage.ts`) — koda gömülü dosya adları
+ * değil. Gam sıralı olduğu için `pack2` "ikinci boy" demek, "100 ml" demek
+ * değil: seri değişince aynı şablon doğru boyları çizer.
+ *
+ * `asset:<id>` ise KULLANICININ yüklediği serbest görsel — kendi logosu, arka
+ * plan dokusu. Kimlik dizeye gömülü çünkü yerleşim JSON olarak saklanıyor ve
+ * ayrı bir alan açmak her katman türüne bulaşırdı.
  */
 export type ImageSource =
   | "object"
@@ -92,6 +135,11 @@ export type ImageSource =
   | "coat1"
   | "coat2"
   | "coat3"
+  /** Serinin ambalaj gamı — hacme göre artan, 1 tabanlı. */
+  | "pack1"
+  | "pack2"
+  | "pack3"
+  | "pack4"
   | `asset:${number}`;
 
 /** `asset:12` → 12; sabit kaynaklarda null. */
@@ -108,6 +156,15 @@ export type ImageLayer = {
   source: ImageSource;
   fit: "contain" | "cover";
   visible: boolean;
+  opacity?: number;
+  /**
+   * Yumuşak zemin gölgesi.
+   *
+   * Beyaz fonda beyaz bir şişe fotoğrafı zemine yapışıyor ve kare amatör
+   * görünüyordu. Gölge objeyi fondan ayırıyor; pazaryeri ana görselinde
+   * KULLANILMAZ (fon saf beyaz kalmalı), o yüzden şablon başına açılıyor.
+   */
+  shadow?: boolean;
 };
 
 export type RectLayer = {
@@ -117,6 +174,16 @@ export type RectLayer = {
   /** "paint" = rengin kendisi; aksi halde CSS rengi. */
   fill: string;
   visible: boolean;
+  opacity?: number;
+  /** Köşe yarıçapı — kare genişliğinin oranı. Tanımsız = keskin köşe. */
+  radius?: number;
+  /**
+   * Dolgu aşağı doğru saydamlaşır.
+   *
+   * Renk şeridini düz basmak kartı iki parçaya bölüyordu; geçişli şerit hem
+   * rengi gösteriyor hem metin bloğuna bağlanıyor.
+   */
+  gradient?: boolean;
 };
 
 export type Layer = TextLayer | ImageLayer | RectLayer;

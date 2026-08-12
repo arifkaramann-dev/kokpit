@@ -21,6 +21,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { IMAGE_MODELS, activeImageProvider, generateProductImage } from "../imageProviders";
 import { protectedProcedure, router } from "../_core/trpc";
+import { imageUrlOf } from "../masterFields";
 import * as db from "../db";
 
 /** Data URL biçimi — istemciden gelen her görsel bunu karşılamalı. */
@@ -79,6 +80,42 @@ export const renkStudyoRouter = router({
 
   /** Referans obje listesi — görsel verisi olmadan (liste hafif kalsın). */
   references: protectedProcedure.query(() => db.listSampleMasters({ kind: "referans" })),
+
+  /**
+   * Bir ürünün kayıtlı görselleri — pazarlama karesinin OBJE kaynağı.
+   *
+   * Şablon üretimi artık üretim adımından ayrı: kullanıcı daha önce
+   * kaydettiği bir kareyi seçip şablonları yeniden basabiliyor. Aksi halde
+   * yerleşimi değiştirdikten sonra kartları yenilemek için AI'ı tekrar
+   * çalıştırmak (ve para harcamak) gerekiyordu.
+   *
+   * `masterCard` da bu görselleri döner ama yanında lojistik, fiyat ve
+   * kimlik hesaplar; stüdyonun ihtiyacı yalnız adres listesi.
+   */
+  masterImages: protectedProcedure
+    .input(z.object({ masterId: z.number().int().positive() }))
+    .query(async ({ input }) => {
+      const rows = await db.listMasterImageRefs(input.masterId);
+      return rows
+        .map(r => ({
+          id: r.id,
+          role: r.role ?? null,
+          sortOrder: Number(r.sortOrder ?? 0),
+          /**
+           * Görseli biz mi barındırıyoruz.
+           *
+           * ŞART: şablon çizimi canvas'tan piksel okuyor (fon beyazlatma, renk
+           * ölçümü). Çapraz kaynak bir görsel canvas'ı kirletir ve
+           * `getImageData` güvenlik hatası verir — yani pazaryerinden gelen dış
+           * adresli bir görsel obje kaynağı olarak KULLANILAMAZ. İstemci bunu
+           * bilmeli, hatayı üretim anında görmemeli.
+           */
+          hosted: r.url == null,
+          url: imageUrlOf({ id: r.id, url: r.url ?? null, sortOrder: Number(r.sortOrder ?? 0) }),
+        }))
+        .filter((r): r is typeof r & { url: string } => !!r.url)
+        .sort((a, b) => a.sortOrder - b.sortOrder);
+    }),
 
   /**
    * Şablon varlıkları — kullanıcının yüklediği ambalaj, logo, doku.

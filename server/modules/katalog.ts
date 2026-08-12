@@ -451,6 +451,18 @@ async function unitLaborOverheadValue(): Promise<number> {
   return deriveUnitLaborOverhead(await db.getSettings()).value;
 }
 
+/**
+ * Ambalaj çekimi verisi.
+ *
+ * Üst sınır kasıtlı: sütun `mediumtext` (16 MB) ve base64 veriyi ~%33
+ * şişiriyor. İstemci yüklemeden önce küçültüyor; buradaki sınır o adım
+ * atlandığında satırın sığmayıp sessizce kesilmesini önlüyor.
+ */
+const packagingImageData = z
+  .string()
+  .regex(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/, "Geçersiz görsel verisi")
+  .max(6_000_000, "Görsel çok büyük — daha küçük bir kare yükleyin");
+
 export const katalogRouter = router({
   /* ---- Boyutlar --------------------------------------------------------- */
 
@@ -555,6 +567,43 @@ export const katalogRouter = router({
         });
       }
       await db.deleteDimension(input.kind, input.id);
+      return { ok: true };
+    }),
+
+  /* ---- Ambalaj çekimleri ------------------------------------------------- */
+
+  /**
+   * Ambalaj çekimlerinin listesi — görsel VERİSİ olmadan.
+   *
+   * İstemci hangi ambalajın hangi seride çekimi olduğunu bilmek istiyor,
+   * görselin kendisini değil: karta çizilirken `/api/img/packaging/{id}`
+   * adresinden geliyor. Böylece bu sorgu ambalaj sayısıyla değil, base64
+   * yığınıyla büyümüyor.
+   */
+  packagingImages: protectedProcedure.query(() => db.listPackagingImageRefs()),
+
+  savePackagingImage: protectedProcedure
+    .input(
+      z.object({
+        packagingId: z.number().int().positive(),
+        /** NULL = tüm seriler için varsayılan çekim. */
+        seriesId: z.number().int().positive().nullable().optional(),
+        data: packagingImageData,
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const id = await db.savePackagingImage({
+        packagingId: input.packagingId,
+        seriesId: input.seriesId ?? null,
+        data: input.data,
+      });
+      return { id };
+    }),
+
+  deletePackagingImage: protectedProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ input }) => {
+      await db.deletePackagingImage(input.id);
       return { ok: true };
     }),
 

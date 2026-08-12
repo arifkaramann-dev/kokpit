@@ -106,6 +106,22 @@ function productLayout(): TemplateLayout {
     height: 1400,
     background: "#ffffff",
     layers: [
+      // Rengin kendisinden yumuşak bir zemin: beyaz üstünde beyaz ambalaj
+      // fotoğrafı havada duruyordu, kare de rengi ancak numunede gösteriyordu.
+      //
+      // Sol kenarı obje kutusunun BİTTİĞİ yerde başlıyor (0.05 + 0.52 = 0.57):
+      // AI çıktısı beyaz FONLU geliyor, yani objenin kutusu opak bir beyaz
+      // dikdörtgen. Üst üste binerlerse o beyaz, yıkamanın üstünü kesiyor.
+      {
+        id: newLayerId("wash"),
+        type: "rect",
+        box: { x: 0.585, y: 0.05, w: 0.375, h: 0.74 },
+        fill: "paint",
+        opacity: 0.1,
+        radius: 0.03,
+        gradient: true,
+        visible: true,
+      },
       ...heading(0.06, 0.055),
       {
         id: newLayerId("pack"),
@@ -113,6 +129,7 @@ function productLayout(): TemplateLayout {
         box: { x: 0.55, y: 0.06, w: 0.4, h: 0.7 },
         source: "packaging",
         fit: "contain",
+        shadow: true,
         visible: true,
       },
       {
@@ -121,6 +138,101 @@ function productLayout(): TemplateLayout {
         box: { x: 0.05, y: 0.42, w: 0.52, h: 0.42 },
         source: "object",
         fit: "contain",
+        shadow: true,
+        visible: true,
+      },
+      {
+        id: newLayerId("sizes"),
+        type: "text",
+        box: { x: 0.06, y: 0.855, w: 0.88, h: 0.03 },
+        text: "{packSizes}",
+        size: 0.019,
+        weight: 400,
+        color: INK_FAINT,
+        align: "left",
+        transform: "upper",
+        visible: true,
+      },
+      ...footer(0.9, 0.017),
+    ],
+  };
+}
+
+/**
+ * Ambalaj gamı — "bu renk hangi boylarda var?"
+ *
+ * En sık sorulan soru ve bugüne kadar hiçbir karede cevabı yoktu; müşteri
+ * ilanın açıklamasını okumak zorundaydı. Kutular Tanımlar'daki çekimlerden,
+ * etiketler ambalaj adlarından geliyor — yani yeni bir boy eklenince kare
+ * kendiliğinden doğru çıkar.
+ *
+ * Dört kutuluk yer var: gamın tamamı değil, ilk dört boy. Beşinci boy
+ * `{packSizes}` satırında yine yazılı.
+ */
+function rangeLayout(): TemplateLayout {
+  const slots: Layer[] = [];
+  for (let i = 0; i < 4; i += 1) {
+    const x = 0.055 + i * 0.2375;
+    slots.push({
+      id: newLayerId(`pack${i + 1}`),
+      type: "image",
+      box: { x, y: 0.3, w: 0.2, h: 0.36 },
+      source: (`pack${i + 1}` as "pack1" | "pack2" | "pack3" | "pack4"),
+      fit: "contain",
+      shadow: true,
+      visible: true,
+    });
+    slots.push({
+      id: newLayerId(`packlbl${i + 1}`),
+      type: "text",
+      box: { x, y: 0.68, w: 0.2, h: 0.035 },
+      text: `{pack${i + 1}}`,
+      size: 0.022,
+      weight: 700,
+      color: INK_SOFT,
+      align: "center",
+      transform: "upper",
+      visible: true,
+    });
+  }
+  return {
+    width: 1400,
+    height: 1400,
+    background: "#ffffff",
+    layers: [
+      ...heading(0.06, 0.055),
+      {
+        id: newLayerId("strip"),
+        type: "rect",
+        box: { x: 0.06, y: 0.265, w: 0.88, h: 0.012 },
+        fill: "paint",
+        radius: 0.006,
+        visible: true,
+      },
+      ...slots,
+      // Renk numunesi kutuların altında: kutular rengi göstermiyor (etiket her
+      // renkte aynı), rengi gösteren tek şey numune.
+      {
+        id: newLayerId("obj"),
+        type: "image",
+        box: { x: 0.055, y: 0.73, w: 0.3, h: 0.15 },
+        source: "object",
+        fit: "contain",
+        visible: true,
+      },
+      {
+        id: newLayerId("note"),
+        type: "text",
+        box: { x: 0.42, y: 0.79, w: 0.52, h: 0.06 },
+        // `{series}` değil `{line} {effect}`: seri etiketi ("Vivid Candy")
+        // küçük harf taşıyor ve Türkçe büyütmede "VİVİD" oluyor. Hat ve efekt
+        // zaten büyük harfle tanımlı.
+        text: "{brand} · {line} {effect}",
+        size: 0.022,
+        weight: 700,
+        color: INK_SOFT,
+        align: "right",
+        transform: "upper",
         visible: true,
       },
       ...footer(0.9, 0.017),
@@ -171,6 +283,7 @@ function coatsLayout(): TemplateLayout {
         box: { x: 0.18, y: 0.28, w: 0.64, h: 0.34 },
         source: "coat3",
         fit: "contain",
+        shadow: true,
         visible: true,
       },
       ...cells,
@@ -219,6 +332,7 @@ function cardLayout(width: number, height: number): TemplateLayout {
         box: { x: 0.06, y: 0.05, w: 0.88, h: objH },
         source: "object",
         fit: "contain",
+        shadow: true,
         visible: true,
       },
       {
@@ -226,6 +340,17 @@ function cardLayout(width: number, height: number): TemplateLayout {
         type: "rect",
         box: { x: 0, y: stripY, w: 1, h: 0.028 },
         fill: "paint",
+        visible: true,
+      },
+      // Şeridin altına aynı renkten sönen bir geçiş: düz şerit kartı iki
+      // parçaya bölüyor, geçiş metin bloğuna bağlıyor.
+      {
+        id: newLayerId("fade"),
+        type: "rect",
+        box: { x: 0, y: stripY + 0.028, w: 1, h: 0.05 },
+        fill: "paint",
+        opacity: 0.22,
+        gradient: true,
         visible: true,
       },
       {
@@ -316,6 +441,15 @@ function storyLayout(): TemplateLayout {
         visible: true,
       },
       {
+        id: newLayerId("fade"),
+        type: "rect",
+        box: { x: 0, y: 0.655, w: 1, h: 0.04 },
+        fill: "paint",
+        opacity: 0.22,
+        gradient: true,
+        visible: true,
+      },
+      {
         id: newLayerId("code"),
         type: "text",
         box: { x: 0.08, y: 0.69, w: 0.6, h: 0.06 },
@@ -373,6 +507,8 @@ export function defaultLayout(templateId: string): TemplateLayout {
   switch (templateId) {
     case "product":
       return productLayout();
+    case "range":
+      return rangeLayout();
     case "coats":
       return coatsLayout();
     case "marketplace":

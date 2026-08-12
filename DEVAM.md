@@ -354,6 +354,50 @@ bildirilen sorunlar baştan sona kapatıldı. Dal:
   (12 tur, 2 saat TTL, LRU) — artık "peki ondan 500 tahsil ettim" çalışıyor;
   "yeni konu/unut" ile sıfırlanır.
 
+## Ambalaj çekimleri + şablon motoru (12.08.2026)
+Renk Stüdyosu şablonları ambalaj görselini artık **Tanımlar'dan** çekiyor; koda gömülü
+altı dosya (`renkTemplates.PACKAGING`) yalnızca hiç çekim yüklenmemişken devreye giren
+yedek. Yeni tablo `packagingImages` (migration 0052): `(packagingId, seriesId)` çifti
+tekil, `seriesId` NULL = tüm seriler için varsayılan. Servis `/api/img/packaging/{id}`.
+Çözümleme saf modülde: `shared/color/packagingImage.ts` (11 test) — tam eşleşme →
+varsayılan → yok; "herhangi bir seri"ye asla düşülmez (Vivid rengin yanında Meteor
+kutusu durmasın).
+
+- **Tanımlar → Ambalajlar:** satırda çekim küçük resmi (+N seri), tıklayınca çekim
+  diyaloğu: varsayılan + bu ambalajın bağlı olduğu her seri için ayrı yükleme.
+  PNG yüklenirse saydamlık korunur (fonu silinmiş şişe renkli zeminde doğru durur).
+- **Renk Stüdyosu:** ürün seçilince "Ambalaj: … · çekim tanımlı/yok" şeridi görünür
+  (eksiklik kart üretmeden ÖNCE anlaşılır). Şablon kutuyu ürünün ambalaj × seri
+  çekiminden alır; `{packSizes}` de artık gerçek tanımlardan (sabit `PACK_SIZES` yedek).
+- **Şablon motoru:** katman modeline `opacity` (hepsi), `shadow` (görsel — yalnız
+  saydam fonlu karede uygulanır), `radius`/`gradient` (kutu), `wrap`/`lineHeight`
+  (metin) eklendi; hepsi isteğe bağlı, kayıtlı yerleşimler bozulmadı. Yeni görsel
+  kaynakları `pack1..pack4` = serinin ambalaj gamı, hacme göre artan. Yeni yer
+  tutucular: `{packaging} {volume} {pack1..4}`.
+- **Yeni şablon "Ambalaj gamı"** (`range`): "bu renk hangi boylarda var" sorusunu
+  cevaplayan kare — dört kutu + adları + renk numunesi. Gam çekimi yoksa üretilmez.
+- Doğrulama: `pnpm check` 0 hata, 1051 test, `vite build` ✓, altı şablon headless
+  Chromium'da çizdirilip gözle kontrol edildi.
+
+**Stüdyo iki adıma bölündü (aynı gün, patron geri bildirimi "renk ürettiğimiz sayfa
+ayrı, şablon ürettiğimiz sayfa ayrı olmalı"):** sekmeler artık `1 · Obje Üretimi` ·
+`2 · Pazarlama Görselleri` · Referans Objeler · Şablon Editörü.
+
+- **Obje Üretimi** yalnız AI girdileri; ince ayarlar (ek yönerge, referans obje,
+  model, renk düzeltmesi) kapalı bir `Collapsible` içinde ve başlıkta özeti yazıyor.
+  Üretim sonrası üç yol: bu ürüne kaydet · rengin tüm ürünlerine kaydet ·
+  "Pazarlama görsellerine geç" (kare ikinci sekmeye devredilir).
+- **Pazarlama Görselleri** obje karesini ÜÇ kaynaktan alıyor: devredilen kare,
+  ürünün kayıtlı görselleri (`renkStudyo.masterImages`, dış adresli görseller canvas'ı
+  kirlettiği için listelenmez) ya da elle yükleme. Yani şablonu değiştirip aynı kareyi
+  yeniden basmak AI çağrısı gerektirmiyor. Hangi şablonların basılacağı seçilebiliyor
+  (`buildCards({ only })`); gümüş baz yalnız Kat Progresyonu seçiliyken görünüyor;
+  hex tanımsızsa renk obje karesinden ölçülüyor.
+- `buildCards` artık yalnız yerleşimlerin KULLANDIĞI görselleri indiriyor.
+- Ortak `UrunSecici` bileşeni (arama+liste iki sekmede kopyalanmıştı).
+- Doğrulama: sahte tRPC verisiyle Vite'da açılıp headless Chromium'da gezildi
+  (sekmeler, obje seçimi, collapsible, şablon seçimi) — sayfa hatası yok.
+
 ## Açık işler / sırada ne var (takım denetimi: 15.07.2026, kanıtlı liste todo.md sonunda)
 Sağlık: `pnpm check` 0 hata, 74/74 test geçiyor, kod içi TODO/FIXME borcu yok.
 

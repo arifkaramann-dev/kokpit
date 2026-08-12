@@ -117,7 +117,19 @@ export async function forceExactColor(
  *
  * JPEG çünkü referansta saydamlık gerekmiyor ve boyut farkı büyük.
  */
-export function downscaleToDataUrl(file: File, max = 1024, quality = 0.9): Promise<string> {
+export function downscaleToDataUrl(
+  file: File,
+  max = 1024,
+  quality = 0.9,
+  /**
+   * Saydamlığı KORU (PNG çıktı).
+   *
+   * Ambalaj çekimleri için gerekiyor: fonu silinmiş bir şişe PNG'si JPEG'e
+   * çevrilince kutunun arkası beyaz bir dikdörtgene dönüşüyor ve renkli
+   * zeminli şablonlarda o dikdörtgen görünüyor.
+   */
+  opts: { alpha?: boolean } = {},
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
@@ -134,11 +146,13 @@ export function downscaleToDataUrl(file: File, max = 1024, quality = 0.9): Promi
         reject(new Error("Canvas bağlamı alınamadı"));
         return;
       }
-      // Fon beyaz: saydam PNG yüklenirse JPEG'e çevrilirken siyahlaşmasın.
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, w, h);
+      if (!opts.alpha) {
+        // Fon beyaz: saydam PNG yüklenirse JPEG'e çevrilirken siyahlaşmasın.
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, w, h);
+      }
       ctx.drawImage(img, 0, 0, w, h);
-      resolve(canvas.toDataURL("image/jpeg", quality));
+      resolve(opts.alpha ? canvas.toDataURL("image/png") : canvas.toDataURL("image/jpeg", quality));
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);

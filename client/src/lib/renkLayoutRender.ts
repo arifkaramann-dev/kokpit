@@ -68,6 +68,87 @@ function fitFont(
   }
 }
 
+/**
+ * Metni satırlara böler — `wrap` açık katmanlar için.
+ *
+ * Kelime kelime ölçülüyor; tek bir kelime kutudan geniş olsa da bölünmüyor.
+ * Sözcük ortasından kesmek okunurluğu, taşmadan daha çok bozar.
+ */
+function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxW: number): string[] {
+  const out: string[] = [];
+  for (const paragraph of text.split("\n")) {
+    let line = "";
+    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
+      const candidate = line ? `${line} ${word}` : word;
+      if (line && ctx.measureText(candidate).width > maxW) {
+        out.push(line);
+        line = word;
+      } else {
+        line = candidate;
+      }
+    }
+    out.push(line);
+  }
+  return out;
+}
+
+/** Köşeleri yuvarlatılmış dikdörtgen yolu — `roundRect` desteklenmeyebilir. */
+function roundedPath(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+) {
+  const radius = Math.max(0, Math.min(r, w / 2, h / 2));
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + w - radius, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+  ctx.lineTo(x + w, y + h - radius);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+  ctx.lineTo(x + radius, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
+}
+
+/**
+ * Görselin gölgesi olabilir mi — yani fonu saydam mı?
+ *
+ * Beyaz fonlu bir kareye gölge basılınca gölge OBJENİN değil, dikdörtgen
+ * karenin çevresine düşüyor ve kart, beyaz zemine yapıştırılmış bir polaroid
+ * gibi görünüyordu. AI çıktıları beyaz fonlu geliyor; kullanıcının yüklediği
+ * ambalaj çekimi ise genelde fonu silinmiş PNG.
+ *
+ * Karar çizim anında ölçülüyor, kullanıcıya sorulmuyor: "bu görselin fonu
+ * saydam mı" bilgisi kullanıcının kafasında değil, dosyanın içinde.
+ */
+function canCastShadow(img: HTMLCanvasElement | HTMLImageElement): boolean {
+  if (!("getContext" in img)) return true; // logo: saydam PNG olduğu biliniyor
+  const ctx = img.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return false;
+  const w = img.width;
+  const h = img.height;
+  const corners: Array<[number, number]> = [
+    [0, 0],
+    [w - 1, 0],
+    [0, h - 1],
+    [w - 1, h - 1],
+  ];
+  return corners.some(([x, y]) => ctx.getImageData(x, y, 1, 1).data[3] < 250);
+}
+
+/** "#c2185b" → "rgba(194,24,91,0)" — geçişli şeridin bitiş durağı. */
+function fadeOut(color: string): string {
+  const m = /^#([0-9a-f]{6})$/i.exec(color.trim());
+  if (!m) return "rgba(255,255,255,0)";
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},0)`;
+}
+
 export async function renderLayout({
   layout,
   values,
@@ -89,44 +170,91 @@ export async function renderLayout({
     if (!layer.visible) continue;
     const box = boxToPixels(layer.box, layout.width, layout.height);
 
+    // Saydamlık her katman türünde aynı işi yapıyor; tek yerde kurulup tek
+    // yerde geri alınıyor ki bir tür eklenince unutulmasın.
+    ctx.save();
+    if (layer.opacity != null) ctx.globalAlpha = Math.max(0, Math.min(1, layer.opacity));
+
     if (layer.type === "rect") {
-      ctx.fillStyle = layer.fill === "paint" ? paintHex || "#cccccc" : layer.fill;
-      ctx.fillRect(box.x, box.y, box.w, box.h);
+      const base = layer.fill === "paint" ? paintHex || "#cccccc" : layer.fill;
+      if (layer.gradient) {
+        const g = ctx.createLinearGradient(box.x, box.y, box.x, box.y + box.h);
+        g.addColorStop(0, base);
+        g.addColorStop(1, fadeOut(base));
+        ctx.fillStyle = g;
+      } else {
+        ctx.fillStyle = base;
+      }
+      if (layer.radius) {
+        roundedPath(ctx, box.x, box.y, box.w, box.h, layer.radius * layout.width);
+        ctx.fill();
+      } else {
+        ctx.fillRect(box.x, box.y, box.w, box.h);
+      }
+      ctx.restore();
       continue;
     }
 
     if (layer.type === "image") {
       const img = images[layer.source];
-      if (!img) continue;
+      if (!img) {
+        ctx.restore();
+        continue;
+      }
       // Logo saydam PNG; fonunu ayıklamaya çalışmak onu bozar.
       const drawable =
         layer.source === "logo" ? img : forceWhiteBackground(img).canvas;
       const { w: sw, h: sh } = sizeOf(drawable);
       const fitted =
         layer.fit === "cover" ? cover(sw, sh, box.w, box.h) : contain(sw, sh, box.w, box.h);
+      if (layer.shadow && canCastShadow(drawable)) {
+        // Gölge kare ölçüsüne göre: 1080'lik gönderi ile 1600'lük pazaryeri
+        // karesinde aynı piksel değeri biri kalın biri görünmez olurdu.
+        ctx.shadowColor = "rgba(15,15,20,0.28)";
+        ctx.shadowBlur = layout.width * 0.022;
+        ctx.shadowOffsetY = layout.width * 0.008;
+      }
       if (layer.fit === "cover") {
         // Kutunun dışına taşan kısım kırpılmalı, yoksa komşu katmanı ezer.
-        ctx.save();
         ctx.beginPath();
         ctx.rect(box.x, box.y, box.w, box.h);
         ctx.clip();
-        ctx.drawImage(drawable, box.x + fitted.x, box.y + fitted.y, fitted.w, fitted.h);
-        ctx.restore();
-      } else {
-        ctx.drawImage(drawable, box.x + fitted.x, box.y + fitted.y, fitted.w, fitted.h);
       }
+      ctx.drawImage(drawable, box.x + fitted.x, box.y + fitted.y, fitted.w, fitted.h);
+      ctx.restore();
       continue;
     }
 
     const text = resolveText(layer, values);
-    if (!text) continue;
+    if (!text) {
+      ctx.restore();
+      continue;
+    }
 
-    const px = fitFont(ctx, text, box.w, layer.weight, layer.size * layout.width);
     ctx.fillStyle = layer.color;
     ctx.textBaseline = "top";
     ctx.textAlign = layer.align;
-    const tx = layer.align === "right" ? box.x + box.w : layer.align === "center" ? box.x + box.w / 2 : box.x;
-    ctx.fillText(text, tx, box.y);
+    const tx =
+      layer.align === "right" ? box.x + box.w : layer.align === "center" ? box.x + box.w / 2 : box.x;
+
+    if (layer.wrap) {
+      // Sarılan metinde yazı boyutu KÜÇÜLTÜLMEZ: satır sayısı arttıkça
+      // küçültmek paragrafı okunamaz hale getirirdi. Kutuya sığmayan satırlar
+      // çizilmez — komşu katmanın üstüne binmesindense kesilsin.
+      const px = layer.size * layout.width;
+      ctx.font = `${layer.weight} ${Math.round(px)}px Goldman, system-ui, sans-serif`;
+      const step = px * (layer.lineHeight ?? 1.2);
+      const lines = wrapLines(ctx, text, box.w);
+      for (let i = 0; i < lines.length; i += 1) {
+        const y = box.y + i * step;
+        if (y + px > box.y + box.h && i > 0) break;
+        ctx.fillText(lines[i], tx, y);
+      }
+    } else {
+      const px = fitFont(ctx, text, box.w, layer.weight, layer.size * layout.width);
+      ctx.fillText(text, tx, box.y);
+    }
+    ctx.restore();
   }
 
   return canvas;
