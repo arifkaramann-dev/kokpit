@@ -20,8 +20,10 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useConfirm } from "@/components/ConfirmDialog";
 import PackagingCost from "@/components/PackagingCost";
+import PackagingImages from "@/components/PackagingImages";
 import { trpc } from "@/lib/trpc";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { packagingImageUrl } from "@shared/color/packagingImage";
+import { ImagePlus, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
@@ -42,7 +44,7 @@ const KIND_META: Record<Kind, { title: string; desc: string }> = {
   },
   packagings: {
     title: "Ambalajlar",
-    desc: "Hacim, reçete ölçeklemesinin paydasıdır — boş bırakılırsa o ambalajda reçete ölçeklenemez. Stok kalemi şişeyi kapasiteye bağlar.",
+    desc: "Hacim, reçete ölçeklemesinin paydasıdır — boş bırakılırsa o ambalajda reçete ölçeklenemez. Stok kalemi şişeyi kapasiteye bağlar. Görsel, Renk Stüdyosu şablonlarının bastığı gerçek kutudur; seri bazında ayrı çekim yüklenebilir.",
   },
   useCases: {
     title: "Kullanım Alanları",
@@ -65,6 +67,7 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
   const { data: dims } = trpc.katalog.dimensions.useQuery();
   const { data: series } = trpc.series.list.useQuery();
   const { data: materials } = trpc.materials.list.useQuery();
+  const { data: packImages } = trpc.katalog.packagingImages.useQuery();
 
   // Sekme değeri tablo sekmelerinden biri ya da ambalaj maliyeti olabilir;
   // `kind` yalnız tablo sekmelerinde anlamlıdır.
@@ -72,6 +75,9 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
   const kind = (tab === PACKAGING_COST_TAB ? "packagings" : tab) as Kind;
   const setKind = (k: Kind) => setTab(k);
   const [open, setOpen] = useState(false);
+  // Ambalaj çekimleri ayrı bir diyalogda: kayıt formuyla aynı yere sığmıyor ve
+  // yeni ambalaj kaydedilmeden görsel yüklenemez (satır kimliği gerekiyor).
+  const [imagesFor, setImagesFor] = useState<{ id: number; name: string } | null>(null);
   const [editId, setEditId] = useState<number | null>(null);
   const [form, setForm] = useState({
     code: "",
@@ -198,6 +204,7 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-muted/80 text-xs text-muted-foreground backdrop-blur">
                     <tr>
+                      {k === "packagings" && <th className="p-2 text-left">Görsel</th>}
                       <th className="p-2 text-left">Ad</th>
                       <th className="p-2 text-left">Kod</th>
                       {k === "colors" && <th className="p-2 text-left">Seri</th>}
@@ -212,6 +219,17 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
                   <tbody>
                     {rows(k).map(row => (
                       <tr key={row.id as number} className="border-t">
+                        {k === "packagings" && (
+                          <td className="p-2">
+                            <PackagingThumb
+                              images={packImages ?? []}
+                              packagingId={row.id as number}
+                              onClick={() =>
+                                setImagesFor({ id: row.id as number, name: String(row.name) })
+                              }
+                            />
+                          </td>
+                        )}
                         <td className="p-2 font-medium">
                           <span className="flex items-center gap-2">
                             {k === "colors" && (
@@ -290,7 +308,7 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
                     ))}
                     {rows(k).length === 0 && (
                       <tr>
-                        <td colSpan={6} className="p-6 text-center text-sm text-muted-foreground">
+                        <td colSpan={7} className="p-6 text-center text-sm text-muted-foreground">
                           Henüz tanım yok — Ürünler sayfasındaki "Boyutları Tohumla" ile mevcut
                           sözlüğünüzden otomatik kurabilirsiniz.
                         </td>
@@ -315,6 +333,22 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
           </Button>
         </Card>
       )}
+
+      <Dialog open={!!imagesFor} onOpenChange={v => !v && setImagesFor(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Ambalaj çekimleri</DialogTitle>
+          </DialogHeader>
+          {imagesFor && (
+            <PackagingImages packagingId={imagesFor.id} packagingName={imagesFor.name} />
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setImagesFor(null)}>
+              Kapat
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-md">
@@ -484,5 +518,52 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+/**
+ * Ambalajın çekim özeti — varsayılan kare + kaç seriye özel çekim var.
+ *
+ * Listede küçük bir kare göstermek, "hangi ambalajın görseli eksik" sorusunu
+ * ayrı bir denetim ekranı açmadan cevaplıyor: Renk Stüdyosu görselsiz ambalajı
+ * çizemiyor ve eksiği ancak kart üretilirken fark ediliyordu.
+ */
+function PackagingThumb({
+  images,
+  packagingId,
+  onClick,
+}: {
+  images: Array<{ id: number; packagingId: number; seriesId: number | null; updatedAt: Date | string }>;
+  packagingId: number;
+  onClick: () => void;
+}) {
+  const mine = images.filter(i => i.packagingId === packagingId);
+  const cover = mine.find(i => i.seriesId == null) ?? mine[0];
+  const perSeries = mine.filter(i => i.seriesId != null).length;
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={cover ? "Çekimleri düzenle" : "Ambalaj görseli yükle"}
+      className="flex items-center gap-2 rounded border p-1 hover:bg-accent"
+    >
+      <span className="flex size-10 items-center justify-center overflow-hidden rounded bg-white">
+        {cover ? (
+          <img
+            src={`${packagingImageUrl(cover.id)}?v=${new Date(cover.updatedAt).getTime()}`}
+            alt=""
+            className="size-full object-contain"
+          />
+        ) : (
+          <ImagePlus className="size-4 text-muted-foreground" />
+        )}
+      </span>
+      {perSeries > 0 && (
+        <Badge variant="secondary" className="text-[10px]">
+          +{perSeries} seri
+        </Badge>
+      )}
+    </button>
   );
 }

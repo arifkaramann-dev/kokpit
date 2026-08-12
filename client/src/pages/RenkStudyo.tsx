@@ -25,6 +25,11 @@ import SablonEditor from "@/components/SablonEditor";
 import { buildCards } from "@/lib/renkCards";
 import { defaultPackagingFor, type PaintInfo } from "@/lib/renkTemplates";
 import type { TemplateLayout } from "@shared/color/layout";
+import {
+  packagingImageUrl,
+  resolvePackagingImageSrc,
+  seriesPackRange,
+} from "@shared/color/packagingImage";
 import { trpc } from "@/lib/trpc";
 import {
   AlertTriangle,
@@ -41,6 +46,7 @@ import {
 import { useMemo, useRef, useState } from "react";
 import type { Lab } from "@shared/color/color";
 import { toast } from "sonner";
+import { useLocation } from "wouter";
 
 /**
  * Renk Stüdyosu — ürünün renginde görsel üret, ürüne kaydet.
@@ -74,7 +80,7 @@ type ColorRow = {
   finish?: string | null;
 };
 
-type NamedRow = { id: number; code?: string | null; name: string };
+type NamedRow = { id: number; code?: string | null; name: string; volumeMl?: string | null };
 
 /**
  * Katalog bitiş türü → şablon seri kodu.
@@ -106,10 +112,13 @@ const SUBJECT_PRESETS = [
 
 function UrunGorseli() {
   const utils = trpc.useUtils();
+  const [, setLocation] = useLocation();
   const { data: masters, isLoading: mastersLoading } = trpc.katalog.masters.useQuery();
   const { data: dims } = trpc.katalog.dimensions.useQuery();
   const { data: references } = trpc.renkStudyo.references.useQuery();
   const { data: status } = trpc.renkStudyo.status.useQuery();
+  // Ambalaj çekimleri: şablonun bastığı kutu artık Tanımlar'dan geliyor.
+  const { data: packImages } = trpc.katalog.packagingImages.useQuery();
 
   const [query, setQuery] = useState("");
   const [masterId, setMasterId] = useState<number | null>(null);
@@ -164,6 +173,31 @@ function UrunGorseli() {
 
   const master = rows.find(m => m.id === masterId) ?? null;
   const color = master ? (colorById.get(master.colorId) ?? null) : null;
+
+  /**
+   * Şablonun ambalaj bilgisi — ÜRÜNDEN türetiliyor.
+   *
+   * Eskiden kutu, rengin bitiş türünden tahmin edilen bir "hat" üzerinden koda
+   * gömülü altı dosyadan seçiliyordu. Oysa ürünün ambalajı ve serisi zaten
+   * belli: doğru kutu tam olarak o çiftin çekimi.
+   */
+  const packInfo = useMemo(() => {
+    if (!master) return null;
+    const own = packById.get(master.packagingId) ?? null;
+    const volume = own?.volumeMl != null ? parseFloat(String(own.volumeMl)) : 0;
+    return {
+      src: resolvePackagingImageSrc(packImages ?? [], master.packagingId, master.seriesId),
+      name: own?.name ?? null,
+      volumeLabel: volume > 0 ? `${volume} ML` : null,
+      range: seriesPackRange({
+        packagings: packagings,
+        seriesPackagings: dims?.seriesPackagings ?? [],
+        images: packImages ?? [],
+        seriesId: master.seriesId,
+        limit: 4,
+      }),
+    };
+  }, [master, packById, packImages, packagings, dims?.seriesPackagings]);
 
   const models = status?.models ?? [];
   // Kayıtlı seçim bu sağlayıcıda yoksa (sağlayıcı değişmiş olabilir) ilkine düş.
@@ -280,7 +314,13 @@ function UrunGorseli() {
         nameEn: color.nameEn,
         seriesCode: SERIES_CODE_BY_FINISH[color.finish ?? "duz"] ?? "VS",
         hex: color.hex || measured || undefined,
+        packagingSrc: packInfo?.src ?? null,
+        packagingName: packInfo?.name ?? null,
+        volumeLabel: packInfo?.volumeLabel ?? null,
+        packRange: packInfo?.range.map(p => ({ label: p.label, src: p.src })),
       };
+      // Yerleşik yedek: hiçbir ambalaja çekim yüklenmemişse kart kutusuz
+      // kalmasın. Çekim varsa `packagingSrc` bunun önüne geçiyor.
       paint.packaging = defaultPackagingFor(paint.seriesCode);
 
       const out = await buildCards({
@@ -433,6 +473,39 @@ function UrunGorseli() {
                 </>
               )}
             </p>
+          )}
+
+          {/* Ambalaj çekimi durumu.
+              Eksikliği kart üretilirken değil ÜRETMEDEN ÖNCE görünmeli:
+              altı kare basıp kutuyu yanlış görmek, iki tıklamayı boşa
+              harcamak demekti. */}
+          {master && (
+            <div className="flex items-center gap-2 rounded border p-2">
+              <span className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded border bg-white">
+                {packInfo?.src ? (
+                  <img src={packInfo.src} alt="" className="size-full object-contain" />
+                ) : (
+                  <AlertTriangle className="size-4 text-amber-600" />
+                )}
+              </span>
+              <div className="min-w-0 flex-1 text-xs">
+                <div className="truncate font-medium">Ambalaj: {packInfo?.name ?? "—"}</div>
+                <div className="text-muted-foreground">
+                  {packInfo?.src
+                    ? "çekim tanımlı — şablonlar bu kutuyu basacak"
+                    : "çekim yok — yerleşik örnek kutu çizilir"}
+                </div>
+              </div>
+              {!packInfo?.src && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setLocation("/katalog?sekme=tanimlar")}
+                >
+                  Görsel yükle
+                </Button>
+              )}
+            </div>
           )}
         </div>
 
@@ -1069,6 +1142,7 @@ function SablonlarSekmesi() {
   const { data: dims } = trpc.katalog.dimensions.useQuery();
   const { data: layoutRows } = trpc.renkStudyo.layouts.useQuery();
   const { data: assets } = trpc.renkStudyo.assets.useQuery();
+  const { data: packImages } = trpc.katalog.packagingImages.useQuery();
 
   const saved = useMemo(() => {
     const out: Record<string, TemplateLayout> = {};
@@ -1096,12 +1170,42 @@ function SablonlarSekmesi() {
   // boş yer tutucularla düzenlemek yanıltıcı olur.
   const colors = (dims?.colors ?? []) as ColorRow[];
   const örnek = colors[0];
+
+  /**
+   * Önizlemenin ambalajı — GERÇEK çekimlerden.
+   *
+   * Editörde yerleşik örnek kutuyu göstermek, kullanıcı kendi kutusunu
+   * yükledikten sonra kareyi yeniden düzenlemesi demek olurdu: kendi
+   * fotoğrafının oranı farklı, kutu kutunun yerine oturmuyor. Çekim varsa
+   * doğrudan o çiziliyor.
+   */
+  const packSample = useMemo(() => {
+    const rows = (packImages ?? []).slice();
+    // Serisiz (varsayılan) çekim tercih edilir: bir seriye özel kare, o
+    // seride olmayan bir yerleşimi temsil etmez.
+    const cover = rows.find(r => r.seriesId == null) ?? rows[0];
+    const seriesId = cover?.seriesId ?? null;
+    return {
+      src: cover ? packagingImageUrl(cover.id) : null,
+      range: seriesPackRange({
+        packagings: (dims?.packagings ?? []) as NamedRow[],
+        seriesPackagings: dims?.seriesPackagings ?? [],
+        images: rows,
+        seriesId,
+        limit: 4,
+      }).map(p => ({ label: p.label, src: p.src })),
+    };
+  }, [packImages, dims?.packagings, dims?.seriesPackagings]);
+
   const paint: PaintInfo = {
     code: örnek?.code ?? "VC1282",
     nameTr: örnek?.name ?? "FUŞYA",
     nameEn: örnek?.nameEn ?? "FUCHSIA",
     seriesCode: SERIES_CODE_BY_FINISH[örnek?.finish ?? "candy"] ?? "VC",
     hex: örnek?.hex || "#c2185b",
+    packagingSrc: packSample.src,
+    packagingName: packSample.range[0]?.label ?? null,
+    packRange: packSample.range,
   };
 
   return (

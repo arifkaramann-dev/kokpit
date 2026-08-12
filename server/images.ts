@@ -94,4 +94,33 @@ export function registerImageRoutes(app: Express) {
       res.status(500).send("Sunucu hatası");
     }
   });
+
+  /**
+   * Ambalaj çekimi: /api/img/packaging/{id}
+   *
+   * Şablon çizimi bu adresi kullanıyor. Numune masterlarla aynı gerekçe: tRPC
+   * ile base64 taşımak yerine normal bir görsel adresi verilir, tarayıcı
+   * önbelleğe alır ve aynı kutu onlarca renk için tekrar tekrar indirilmez.
+   *
+   * DİKKAT: canvas'tan piksel okunuyor (fon beyazlatma), o yüzden aynı
+   * kaynaktan servis edilmesi şart.
+   */
+  app.get("/api/img/packaging/:id", async (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      res.status(400).send("Geçersiz istek");
+      return;
+    }
+    try {
+      const row = await db.getPackagingImage(id);
+      if (!row?.data) {
+        res.status(404).send("Görsel yok");
+        return;
+      }
+      sendImage(res, row.data);
+    } catch (error) {
+      console.error("[images] ambalaj görseli hatası:", error);
+      res.status(500).send("Sunucu hatası");
+    }
+  });
 }

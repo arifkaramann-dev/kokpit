@@ -33,7 +33,7 @@ export type TemplateDef = {
   width: number;
   height: number;
   bare: boolean;
-  kind?: "product" | "coats";
+  kind?: "product" | "coats" | "range";
 };
 
 /** Şablonun bastığı renk bilgisi. */
@@ -44,8 +44,28 @@ export type PaintInfo = {
   /** `SERIES` içindeki kod — VP/VM/VC/VS/MT. */
   seriesCode?: string | null;
   hex?: string | null;
-  /** Seçili ambalaj id'si; yanlış hattaysa otomatik düzeltilir. */
+  /**
+   * Yerleşik ambalaj görselinin id'si — YALNIZ GERİYE DÖNÜK.
+   *
+   * Ambalaj çekimi artık Tanımlar'dan geliyor (`packagingSrc`). Bu alan,
+   * henüz hiçbir ambalaja görsel yüklenmemiş kurulumlarda kartın kutusuz
+   * kalmaması için duruyor.
+   */
   packaging?: string | null;
+  /**
+   * Ürünün kendi ambalajının çekimi — Tanımlar → Ambalajlar'dan çözümlenmiş
+   * adres. Doluysa yerleşik görselin önüne geçer.
+   */
+  packagingSrc?: string | null;
+  /** Ürünün kendi ambalajının adı — "{packaging}" yer tutucusu. */
+  packagingName?: string | null;
+  /** Ürünün hacmi — "{volume}" yer tutucusu. */
+  volumeLabel?: string | null;
+  /**
+   * Serinin ambalaj gamı, küçükten büyüğe. `pack1..pack4` görsel katmanları ve
+   * `{packSizes}` / `{pack1..4}` yer tutucuları bundan besleniyor.
+   */
+  packRange?: Array<{ label: string; src: string | null }>;
 };
 
 export const BRAND = {
@@ -56,15 +76,26 @@ export const BRAND = {
   logoLight: '/renk/brand/logo-beyaz.png',
 };
 
-/** Ürün gamı — etikette ve kartta gösterilir. */
+/**
+ * Ürün gamı — YALNIZ GERİYE DÖNÜK yedek.
+ *
+ * Gam artık Tanımlar'daki ambalajlardan geliyor (`PaintInfo.packRange`, bkz.
+ * `shared/color/packagingImage.ts`). Bu sabit liste yeni bir boy eklendiğinde
+ * kendiliğinden yanlışa dönüşüyordu; ambalaj tanımı hiç yoksa kart boş
+ * kalmasın diye duruyor.
+ */
 export const PACK_SIZES = ['30 ML', '100 ML', '250 ML', '500 ML', '400 ML SPREY'];
 
 /**
- * Gerçek ambalaj görselleri.
+ * Yerleşik ambalaj görselleri — YALNIZ GERİYE DÖNÜK yedek.
  *
  * Kutu her RENKTE aynı kalır — ürün kimliği, renk göstergesi değil; renk
  * numune damlasında gösteriliyor. Ama HATTA göre değişir: Vivid rengin
  * yanında Meteor kutusu duramaz.
+ *
+ * Bu liste koda gömülü olduğu için yeni ambalajı ve yeni seriyi bilmiyor;
+ * gerçek kaynak Tanımlar → Ambalajlar → çekim. Henüz görsel yüklenmemiş
+ * kurulumlarda kartın kutusuz kalmaması için burada bırakıldı.
  */
 export const PACKAGING: PackagingOption[] = [
   { id: 'vivid-spray400', line: 'VIVID', label: 'VIVID 400 ML Sprey', src: '/renk/packaging/sprey-400-vivid.jpg', alpha: false },
@@ -152,6 +183,15 @@ export const TEMPLATES: TemplateDef[] = [
     height: 1400,
     bare: false,
     kind: 'coats',
+  },
+  {
+    id: 'range',
+    label: 'Ambalaj gamı',
+    hint: 'Bu renk hangi boylarda var — serinin ambalajları tek karede.',
+    width: 1400,
+    height: 1400,
+    bare: false,
+    kind: 'range',
   },
   {
     id: 'marketplace',

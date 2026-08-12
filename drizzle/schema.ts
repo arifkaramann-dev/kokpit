@@ -983,6 +983,44 @@ export type PackagingInput = typeof packagingInputs.$inferSelect;
 export type InsertPackagingInput = typeof packagingInputs.$inferInsert;
 
 /**
+ * Ambalajın ÜRÜN ÇEKİMİ — pazarlama görsellerinde basılan gerçek kutu.
+ *
+ * ── Neden ayrı tablo, `packagings.image` değil ─────────────────────────────
+ * Aynı ambalaj her seride aynı görünmüyor: 400 ml sprey kutusu VIVID'de bir,
+ * METEOR'da başka etiketle basılıyor. Tek sütun olsaydı ya yanlış hattın
+ * kutusu çizilirdi ya da her etiket için ayrı bir ambalaj tanımı açmak
+ * gerekirdi — ikisi de sözlüğü bozar.
+ *
+ * `seriesId` NULL = TÜM SERİLER için varsayılan çekim. Çözümleme sırası:
+ * önce (ambalaj × seri) tam eşleşme, yoksa varsayılan. "Herhangi bir seri"ye
+ * düşülmez; Vivid bir rengin yanında Meteor kutusu durmasın.
+ *
+ * Görsel neden veritabanında: `masterImages` ile aynı gerekçe — Render'da
+ * kalıcı disk yok. Satır sayısı ambalaj × seri kadar, yani onlarla ölçülür.
+ */
+export const packagingImages = mysqlTable(
+  "packagingImages",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    packagingId: int("packagingId").notNull(),
+    /** NULL = tüm seriler (varsayılan çekim). */
+    seriesId: int("seriesId"),
+    /** Görselin kendisi (data URL / base64). `/api/img/packaging/{id}` servis eder. */
+    data: mediumtext("data").notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  t => [
+    index("packagingImages_pack_idx").on(t.packagingId),
+    index("packagingImages_series_idx").on(t.seriesId),
+  ],
+);
+
+export type PackagingImage = typeof packagingImages.$inferSelect;
+export type InsertPackagingImage = typeof packagingImages.$inferInsert;
+
+/**
  * Kullanım alanı — LISTING ekseni, master ekseni DEĞİL.
  * 3D baskı · Rapala · Otomotiv · Bisiklet · Maket · Jant…
  * Aynı fiziksel şişe, farklı alıcı niyetine göre farklı ilanla satılır.

@@ -43,6 +43,9 @@ export type BuildCardsInput = {
 /** Katman metinlerinin dolduracağı değerler. */
 export function tokenValues(paint: PaintInfo): TokenValues {
   const series = getSeries(paint.seriesCode);
+  // Gam Tanımlar'dan gelir; hiç ambalaj tanımı yoksa koda gömülü yedek listeye
+  // düşülür — kartta boş bir gam satırı, eskimiş bir listeden daha kötüdür.
+  const range = paint.packRange?.length ? paint.packRange.map(p => p.label) : PACK_SIZES;
   return {
     code: paint.code ?? "",
     nameTr: paint.nameTr ?? "",
@@ -50,7 +53,13 @@ export function tokenValues(paint: PaintInfo): TokenValues {
     series: series.label,
     line: series.line,
     effect: series.effect,
-    packSizes: PACK_SIZES.join("  ·  "),
+    packaging: paint.packagingName ?? "",
+    volume: paint.volumeLabel ?? "",
+    packSizes: range.join("  ·  "),
+    pack1: range[0] ?? "",
+    pack2: range[1] ?? "",
+    pack3: range[2] ?? "",
+    pack4: range[3] ?? "",
     brand: BRAND.name,
     site: BRAND.site,
   };
@@ -147,12 +156,32 @@ export async function buildCards({
 
   // Ambalaj ve logo isteğe bağlı: yüklenemezse kart o katman olmadan çizilir,
   // hiç üretilmemesinden iyidir. Sessiz kalmasın diye uyarı basılıyor.
+  //
+  // Kaynak sırası: ürünün ambalajına yüklenmiş ÇEKİM → yerleşik yedek görsel.
+  // Tanımlar'daki çekim her zaman kazanır; kullanıcının kendi kutusu, bizim
+  // örnek kutumuzun önüne geçmeli.
   let packaging: HTMLImageElement | null = null;
   try {
-    const pack = getPackaging(defaultPackagingFor(paint.seriesCode, paint.packaging));
-    packaging = await loadImageSrc(pack.src);
+    const src =
+      paint.packagingSrc ||
+      getPackaging(defaultPackagingFor(paint.seriesCode, paint.packaging)).src;
+    packaging = await loadImageSrc(src);
   } catch (err) {
     console.warn("[renkCards] ambalaj yüklenemedi:", err);
+  }
+
+  // Ambalaj gamı — `pack1..pack4`. Çekimi olmayan boy atlanıyor; etiketi
+  // (`{pack2}`) yine yazılabilir, yalnız görsel katmanı boş kalır.
+  const packRange: LayerImages = {};
+  const rangeSlots = ["pack1", "pack2", "pack3", "pack4"] as const;
+  for (let i = 0; i < rangeSlots.length; i += 1) {
+    const src = paint.packRange?.[i]?.src;
+    if (!src) continue;
+    try {
+      packRange[rangeSlots[i]] = await loadImageSrc(src);
+    } catch (err) {
+      console.warn("[renkCards] gam ambalajı yüklenemedi:", src, err);
+    }
   }
 
   let logo: HTMLImageElement | null = null;
@@ -173,7 +202,7 @@ export async function buildCards({
 
   const resolved = TEMPLATES.map(t => layouts[t.id] ?? defaultLayout(t.id));
   const assets = await loadAssets(resolved);
-  const images: LayerImages = { object: obj, packaging, logo, ...coats, ...assets };
+  const images: LayerImages = { object: obj, packaging, logo, ...packRange, ...coats, ...assets };
 
   const out: CardOutput[] = [];
   for (let i = 0; i < TEMPLATES.length; i += 1) {
@@ -181,8 +210,11 @@ export async function buildCards({
     const layout = resolved[i];
     // Kat kareleri yoksa o şablon yalnız başlık ve marka ile çıkardı; boş
     // kare basmak yerine atlanıyor ve sebebi çağıran tarafa bırakılıyor.
-    const needsCoats = usedSources(layout).has("coat1");
-    if (needsCoats && !coats.coat1) continue;
+    const sources = usedSources(layout);
+    if (sources.has("coat1") && !coats.coat1) continue;
+    // Ambalaj gamı şablonu, gam çekimleri yüklenmeden yalnız etiketlerden
+    // oluşan boş bir tablo olurdu. Aynı gerekçe: boş kare basılmaz.
+    if (sources.has("pack1") && !packRange.pack1) continue;
 
     out.push({
       id: tpl.id,
