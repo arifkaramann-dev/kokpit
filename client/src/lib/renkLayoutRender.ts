@@ -10,6 +10,8 @@ import {
   boxToPixels,
   resolveText,
   type ImageSource,
+  type PaletteEntry,
+  type PaletteLayer,
   type TemplateLayout,
   type TokenValues,
 } from "@shared/color/layout";
@@ -23,6 +25,8 @@ export type RenderLayoutInput = {
   images: LayerImages;
   /** `fill: "paint"` katmanlarının rengi. */
   paintHex?: string | null;
+  /** Palet katmanının çizeceği renkler — serinin gamı. */
+  palette?: PaletteEntry[];
 };
 
 function contain(sw: number, sh: number, bw: number, bh: number) {
@@ -149,11 +153,79 @@ function fadeOut(color: string): string {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},0)`;
 }
 
+/**
+ * Renk paletini ızgaraya çizer.
+ *
+ * Satır sayısı renk sayısından çıkıyor, hücre boyu kutuya bölünerek: aynı
+ * yerleşim 12 renkli bir seride de 40 renkli bir seride de taşmadan çalışsın.
+ * Renk sayısı arttıkça kutular küçülür — kırpmak, "diğer renkler" karesinin
+ * amacını (gamın TAMAMINI göstermek) bozardı.
+ */
+function drawPalette(
+  ctx: CanvasRenderingContext2D,
+  layer: PaletteLayer,
+  box: { x: number; y: number; w: number; h: number },
+  entries: PaletteEntry[],
+  width: number,
+) {
+  const columns = Math.max(1, Math.round(layer.columns));
+  const rows = Math.ceil(entries.length / columns);
+  if (!rows) return;
+
+  const gap = Math.max(0, layer.gap) * width;
+  const cellW = (box.w - gap * (columns - 1)) / columns;
+  const cellH = (box.h - gap * (rows - 1)) / rows;
+  const labelPx = layer.showCode ? layer.labelSize * width : 0;
+  // Etiket için hücrenin altından yer ayrılıyor; kalanı kutu.
+  const swatchH = Math.max(cellW * 0.25, cellH - labelPx * 1.5);
+  const radius = (layer.radius ?? 0) * width;
+
+  for (let i = 0; i < entries.length; i += 1) {
+    const e = entries[i];
+    const col = i % columns;
+    const row = Math.floor(i / columns);
+    const x = box.x + col * (cellW + gap);
+    const y = box.y + row * (cellH + gap);
+
+    ctx.fillStyle = e.hex || "#e5e7eb";
+    roundedPath(ctx, x, y, cellW, swatchH, radius);
+    ctx.fill();
+
+    // Kartın kendi rengi: dışına çerçeve. İçine çizmek kutunun rengini
+    // değiştirirdi ve palet karesinin tek işi rengi doğru göstermek.
+    if (layer.highlight && e.active) {
+      ctx.strokeStyle = "#0a0a0a";
+      ctx.lineWidth = Math.max(2, width * 0.0035);
+      roundedPath(
+        ctx,
+        x - ctx.lineWidth,
+        y - ctx.lineWidth,
+        cellW + ctx.lineWidth * 2,
+        swatchH + ctx.lineWidth * 2,
+        radius,
+      );
+      ctx.stroke();
+    }
+
+    if (!layer.showCode) continue;
+    const code = (e.code ?? "").toLocaleUpperCase("tr");
+    if (!code) continue;
+    ctx.fillStyle = layer.labelColor;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    const weight = e.active ? 700 : 400;
+    const px = fitFont(ctx, code, cellW, weight, labelPx);
+    ctx.font = `${weight} ${Math.round(px)}px Goldman, system-ui, sans-serif`;
+    ctx.fillText(code, x + cellW / 2, y + swatchH + labelPx * 0.28);
+  }
+}
+
 export async function renderLayout({
   layout,
   values,
   images,
   paintHex,
+  palette = [],
 }: RenderLayoutInput): Promise<HTMLCanvasElement> {
   await ensureBrandFont();
 
@@ -191,6 +263,14 @@ export async function renderLayout({
       } else {
         ctx.fillRect(box.x, box.y, box.w, box.h);
       }
+      ctx.restore();
+      continue;
+    }
+
+    if (layer.type === "palette") {
+      // Renk listesi verilmemişse katman atlanıyor: boş bir ızgara çizmek
+      // "bu serinin rengi yok" izlenimi verirdi.
+      if (palette.length) drawPalette(ctx, layer, box, palette, layout.width);
       ctx.restore();
       continue;
     }

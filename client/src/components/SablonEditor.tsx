@@ -12,7 +12,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { renderLayout } from "@/lib/renkLayoutRender";
 import { tokenValues } from "@/lib/renkCards";
-import { BRAND, TEMPLATES, forceWhiteBackground, getPackaging, defaultPackagingFor, loadImageSrc, type PaintInfo } from "@/lib/renkTemplates";
+import { BRAND, TEMPLATES, fallbackPackaging, forceWhiteBackground, getSeries, loadImageSrc, type PaintInfo } from "@/lib/renkTemplates";
 import { assetIdOf, clampBox, layerAt, newLayerId, TOKENS, type ImageSource, type Layer, type TemplateLayout } from "@shared/color/layout";
 import { defaultLayout } from "@shared/color/layoutDefaults";
 import { Eye, EyeOff, Loader2, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
@@ -65,6 +65,7 @@ const SOURCE_LABEL: Record<string, string> = {
 function layerName(l: Layer): string {
   if (l.type === "text") return `Metin: ${l.text.slice(0, 24) || "(boş)"}`;
   if (l.type === "image") return `Görsel: ${SOURCE_LABEL[l.source] ?? l.source}`;
+  if (l.type === "palette") return `Palet: ${l.columns} kolon`;
   return `Kutu: ${l.fill === "paint" ? "renk" : l.fill}`;
 }
 
@@ -130,15 +131,17 @@ export default function SablonEditor({
     setBusy(true);
     try {
       const obj = await loadImageSrc(sample);
-      // Ambalaj kaynağı: Tanımlar'daki çekim → yerleşik yedek görsel.
+      // Ambalaj kaynağı: Tanımlar'daki çekim → aynı hacimdeki yerleşik yedek.
       let packaging: HTMLImageElement | null = null;
-      try {
-        packaging = await loadImageSrc(
-          paint.packagingSrc ||
-            getPackaging(defaultPackagingFor(paint.seriesCode, paint.packaging)).src,
-        );
-      } catch {
-        // ambalajsız önizleme, kart yine çizilsin
+      const packSrc =
+        paint.packagingSrc ||
+        fallbackPackaging(paint.volumeMl, getSeries(paint.seriesCode).line)?.src;
+      if (packSrc) {
+        try {
+          packaging = await loadImageSrc(packSrc);
+        } catch {
+          // ambalajsız önizleme, kart yine çizilsin
+        }
       }
 
       // Ambalaj gamı (pack1..pack4). Çekimi olmayan boy çizilmez; kutusu boş
@@ -191,6 +194,7 @@ export default function SablonEditor({
           ...assetImages,
         },
         paintHex: paint.hex,
+        palette: paint.palette,
       });
 
       const target = canvasRef.current;
@@ -210,9 +214,10 @@ export default function SablonEditor({
     sample,
     paint.hex,
     paint.seriesCode,
-    paint.packaging,
+    paint.volumeMl,
     paint.packagingSrc,
     paint.packRange,
+    paint.palette,
   ]);
 
   useEffect(() => {
@@ -278,7 +283,22 @@ export default function SablonEditor({
         ? { ...base, type: "text", text: "{code}", size: 0.04, weight: 700, color: "#0a0a0a", align: "left", transform: "upper" }
         : type === "image"
           ? { ...base, type: "image", source: "object", fit: "contain" }
-          : { ...base, type: "rect", fill: "paint" };
+          : type === "palette"
+            ? {
+                ...base,
+                // Palet ızgarası küçük bir kutuda anlamsız; doğduğu anda
+                // kullanılabilir bir ölçüde doğsun.
+                box: { x: 0.06, y: 0.3, w: 0.88, h: 0.5 },
+                type: "palette",
+                columns: 6,
+                gap: 0.018,
+                showCode: true,
+                labelSize: 0.017,
+                labelColor: "#3f3f46",
+                radius: 0.008,
+                highlight: true,
+              }
+            : { ...base, type: "rect", fill: "paint" };
     setLayout(prev => ({ ...prev, layers: [...prev.layers, layer] }));
     setSelectedId(layer.id);
   };
@@ -325,6 +345,9 @@ export default function SablonEditor({
           </Button>
           <Button size="sm" variant="outline" onClick={() => addLayer("rect")}>
             <Plus className="mr-1 size-4" /> Kutu
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => addLayer("palette")}>
+            <Plus className="mr-1 size-4" /> Palet
           </Button>
 
           <div className="ml-auto flex gap-2">
@@ -638,6 +661,92 @@ export default function SablonEditor({
                 <p className="text-xs text-muted-foreground">
                   Ambalaj ve gam kutuları Tanımlar → Ambalajlar'daki çekimlerden gelir. Gam
                   hacme göre sıralıdır: "2. boy" seri değiştiğinde de doğru kutuyu çizer.
+                </p>
+              </>
+            )}
+
+            {selected.type === "palette" && (
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Kolon</Label>
+                    <Input
+                      type="number"
+                      min="1"
+                      max="16"
+                      value={selected.columns}
+                      onChange={e =>
+                        patchLayer(selected.id, {
+                          columns: Math.max(1, Math.min(16, Number(e.target.value) || 1)),
+                        } as Partial<Layer>)
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Boşluk</Label>
+                    <Input
+                      type="number"
+                      step="0.002"
+                      min="0"
+                      value={selected.gap}
+                      onChange={e =>
+                        patchLayer(selected.id, {
+                          gap: Math.max(0, Number(e.target.value)),
+                        } as Partial<Layer>)
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Köşe yarıçapı</Label>
+                    <Input
+                      type="number"
+                      step="0.002"
+                      min="0"
+                      value={selected.radius ?? 0}
+                      onChange={e =>
+                        patchLayer(selected.id, {
+                          radius: Math.max(0, Number(e.target.value)),
+                        } as Partial<Layer>)
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Kod yazısı</Label>
+                    <Input
+                      type="number"
+                      step="0.002"
+                      min="0"
+                      value={selected.labelSize}
+                      onChange={e =>
+                        patchLayer(selected.id, {
+                          labelSize: Math.max(0, Number(e.target.value)),
+                        } as Partial<Layer>)
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={selected.showCode}
+                    onCheckedChange={v => patchLayer(selected.id, { showCode: v } as Partial<Layer>)}
+                  />
+                  <span className="text-xs text-muted-foreground">Renk kodlarını yaz</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={!!selected.highlight}
+                    onCheckedChange={v => patchLayer(selected.id, { highlight: v } as Partial<Layer>)}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Kartın kendi rengini çerçevele
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Renkler o serinin katalogda master'ı olan renkleridir; satır sayısı
+                  renk sayısından hesaplanır. Yeni renk eklendiğinde kare kendiliğinden
+                  günceldir.
                 </p>
               </>
             )}

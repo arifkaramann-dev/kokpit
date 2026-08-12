@@ -24,7 +24,7 @@ import {
 } from "@/lib/renkStudyo";
 import SablonEditor from "@/components/SablonEditor";
 import { buildCards } from "@/lib/renkCards";
-import { TEMPLATES, defaultPackagingFor, type PaintInfo } from "@/lib/renkTemplates";
+import { TEMPLATES, fallbackPackaging, getSeries, type PaintInfo } from "@/lib/renkTemplates";
 import type { TemplateLayout } from "@shared/color/layout";
 import {
   packagingImageUrl,
@@ -35,6 +35,7 @@ import { trpc } from "@/lib/trpc";
 import {
   AlertTriangle,
   ArrowRight,
+  Boxes,
   Check,
   ChevronDown,
   Download,
@@ -778,6 +779,8 @@ function PazarlamaGorselleri({
   const [picked, setPicked] = useState<string[]>(() => TEMPLATES.map(t => t.id));
   const [cards, setCards] = useState<Array<{ id: string; label: string; data: string }>>([]);
   const [rendering, setRendering] = useState(false);
+  /** Toplu üretim ilerlemesi — kaç varyant bitti. */
+  const [batch, setBatch] = useState<{ done: number; total: number } | null>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
 
   // Üretim sekmesi yeni bir kare devrettiğinde bu sekme onunla açılır.
@@ -817,6 +820,7 @@ function PazarlamaGorselleri({
     return {
       src: resolvePackagingImageSrc(packImages ?? [], master.packagingId, master.seriesId),
       name: own?.name ?? null,
+      volumeMl: volume > 0 ? volume : null,
       volumeLabel: volume > 0 ? `${volume} ML` : null,
       range: seriesPackRange({
         packagings,
@@ -828,23 +832,68 @@ function PazarlamaGorselleri({
     };
   }, [master, packById, packImages, packagings, dims?.seriesPackagings]);
 
+  /**
+   * Serinin renk paleti — palet karesinin çizdiği liste.
+   *
+   * Kaynak, uyumluluk tablosu değil KATALOĞUN KENDİSİ: o seride master'ı olan
+   * renkler. Uyumluluk "üretilebilir"i söyler, palet karesi ise müşteriye
+   * "satılıyor" demek — ikisi aynı şey değil ve müşteriye gösterilen liste
+   * gerçekten satılan renkler olmalı.
+   */
+  const palette = useMemo(() => {
+    if (!master) return [];
+    const seen = new Set<number>();
+    const out: Array<{ code: string; name: string; hex: string | null; active: boolean }> = [];
+    for (const m of rows) {
+      if (m.seriesId !== master.seriesId || seen.has(m.colorId)) continue;
+      seen.add(m.colorId);
+      const c = colorById.get(m.colorId);
+      if (!c) continue;
+      out.push({
+        code: c.code,
+        name: c.name,
+        hex: c.hex ?? null,
+        active: c.id === master.colorId,
+      });
+    }
+    // Kod sırası: katalogda renkler koda göre aranıyor, kart da aynı sırayı
+    // gösterirse müşteri ilandaki kodu palette gözle bulabiliyor.
+    return out.sort((a, b) => a.code.localeCompare(b.code, "tr")).slice(0, 48);
+  }, [master, rows, colorById]);
+
+  /** Çekim yoksa devreye girecek yerleşik kutu — kullanıcı NE basılacağını görsün. */
+  const packFallback = useMemo(
+    () =>
+      packInfo?.src
+        ? null
+        : fallbackPackaging(
+            packInfo?.volumeMl,
+            getSeries(SERIES_CODE_BY_FINISH[color?.finish ?? "duz"] ?? "VS").line,
+          ),
+    [packInfo?.src, packInfo?.volumeMl, color?.finish],
+  );
+
+  /**
+   * Pazarlama karesi kaydetme — rol başına TEK güncel kare.
+   *
+   * Şablonu düzeltip aynı kareyi yeniden basmak sık yapılan iş; her denemede
+   * ürün kartına bir kopya daha eklemek kartı çöple doldurup hangisinin
+   * güncel olduğunu belirsizleştiriyordu. Obje karesi kaydetme (Obje Üretimi
+   * sekmesi) bu kuralın DIŞINDA: orada birkaç farklı kare tutmak istenebilir.
+   */
   const saveMany = trpc.renkStudyo.saveManyToMaster.useMutation({
     onSuccess: r => {
-      toast.success(`${r.added} görsel ürüne kaydedildi`);
+      toast.success(
+        r.replaced
+          ? `${r.added} görsel kaydedildi (${r.replaced} eski kare değiştirildi)`
+          : `${r.added} görsel ürüne kaydedildi`,
+      );
       void utils.katalog.invalidate();
       void utils.renkStudyo.masterImages.invalidate();
     },
     onError: e => toast.error(e.message),
   });
 
-  const saveOne = trpc.renkStudyo.saveToMaster.useMutation({
-    onSuccess: () => {
-      toast.success("Ürüne kaydedildi");
-      void utils.katalog.invalidate();
-      void utils.renkStudyo.masterImages.invalidate();
-    },
-    onError: e => toast.error(e.message),
-  });
 
   const onUpload = async (file: File) => {
     try {
@@ -886,10 +935,11 @@ function PazarlamaGorselleri({
         packagingSrc: packInfo?.src ?? null,
         packagingName: packInfo?.name ?? null,
         volumeLabel: packInfo?.volumeLabel ?? null,
+        // Çekim yoksa yerleşik yedek BU HACİMDEN seçilir; ölçü tutmazsa kutu
+        // hiç çizilmez. Ürünün hacmiyle ilgisiz bir kutu basmıyoruz.
+        volumeMl: packInfo?.volumeMl ?? null,
         packRange: packInfo?.range.map(p => ({ label: p.label, src: p.src })),
-        // Yerleşik yedek: hiçbir ambalaja çekim yüklenmemişse kart kutusuz
-        // kalmasın. Çekim varsa `packagingSrc` bunun önüne geçiyor.
-        packaging: defaultPackagingFor(SERIES_CODE_BY_FINISH[color?.finish ?? "duz"] ?? "VS"),
+        palette,
       };
 
       const out = await buildCards({
@@ -908,7 +958,92 @@ function PazarlamaGorselleri({
     }
   };
 
-  const saving = saveMany.isPending || saveOne.isPending;
+  /**
+   * Aynı rengin diğer boyları — 30/100/250/500 ml, sprey…
+   *
+   * Aynı renk ve aynı seri, farklı ambalaj. Obje karesi hepsinde AYNI (renk
+   * aynı), ama kutu farklı: bu yüzden kareler kopyalanamaz, her varyant için
+   * o varyantın kutusuyla YENİDEN çizilmesi gerekir.
+   */
+  const variants = useMemo(() => {
+    if (!master) return [];
+    return rows.filter(m => m.colorId === master.colorId && m.seriesId === master.seriesId);
+  }, [master, rows]);
+
+  /**
+   * Bütün boylara üretir ve kaydeder.
+   *
+   * Bir rengi bitirmek "her boy için ürün seç → üret → kaydet" demekti; dört
+   * boyda aynı işi dört kez yapmak. Obje karesi zaten elimizde, tek değişen
+   * kutu — o da Tanımlar'dan geliyor. Kalan iş döngü.
+   */
+  const renderAllVariants = async () => {
+    if (!objectImage || !master || !variants.length) return;
+    setBatch({ done: 0, total: variants.length });
+    let cards = 0;
+    const noPack: string[] = [];
+    try {
+      for (const m of variants) {
+        const own = packById.get(m.packagingId) ?? null;
+        const volume = own?.volumeMl != null ? parseFloat(String(own.volumeMl)) : 0;
+        const src = resolvePackagingImageSrc(packImages ?? [], m.packagingId, m.seriesId);
+        if (!src) noPack.push(own?.name ?? String(m.packagingId));
+
+        let hex = color?.hex || null;
+        if (!hex) {
+          const lab = await measureColorFromImage(objectImage);
+          if (lab) hex = labToHexString(lab);
+        }
+
+        const out = await buildCards({
+          objectImage,
+          baseImage: silverBaseId ? `/api/img/sample/${silverBaseId}` : null,
+          layouts,
+          only: picked,
+          paint: {
+            code: color?.code,
+            nameTr: color?.name,
+            nameEn: color?.nameEn,
+            seriesCode: SERIES_CODE_BY_FINISH[color?.finish ?? "duz"] ?? "VS",
+            hex,
+            packagingSrc: src,
+            packagingName: own?.name ?? null,
+            volumeMl: volume > 0 ? volume : null,
+            volumeLabel: volume > 0 ? `${volume} ML` : null,
+            packRange: packInfo?.range.map(p => ({ label: p.label, src: p.src })),
+            palette,
+          },
+        });
+
+        if (out.length) {
+          await saveMany.mutateAsync({
+            masterId: m.id,
+            images: out.map(c => ({ data: c.data, role: c.id })),
+            // Aynı rolü değiştir: aynı işi ikinci kez çalıştırmak ürün kartını
+            // ikiye katlamasın.
+            replaceSameRole: true,
+          });
+          cards += out.length;
+          // Seçili ürünün kareleri ekranda da görünsün.
+          if (m.id === master.id) setCards(out);
+        }
+        setBatch(b => (b ? { ...b, done: b.done + 1 } : b));
+      }
+
+      toast.success(`${variants.length} boy · ${cards} görsel kaydedildi`, {
+        description: noPack.length
+          ? `Ambalaj çekimi olmayanlar: ${noPack.join(", ")} — o kartlarda kutu eksik ya da yerleşik yedek.`
+          : undefined,
+        duration: noPack.length ? 10000 : 5000,
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Toplu üretim başarısız");
+    } finally {
+      setBatch(null);
+    }
+  };
+
+  const saving = saveMany.isPending || !!batch;
 
   return (
     <div className="space-y-4">
@@ -1022,8 +1157,12 @@ function PazarlamaGorselleri({
           {master && (
             <div className="flex items-center gap-2 rounded border p-2">
               <span className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded border bg-white">
-                {packInfo?.src ? (
-                  <img src={packInfo.src} alt="" className="size-full object-contain" />
+                {packInfo?.src || packFallback ? (
+                  <img
+                    src={packInfo?.src || packFallback!.src}
+                    alt=""
+                    className={`size-full object-contain ${packInfo?.src ? "" : "opacity-50"}`}
+                  />
                 ) : (
                   <AlertTriangle className="size-4 text-amber-600" />
                 )}
@@ -1033,7 +1172,9 @@ function PazarlamaGorselleri({
                 <div className="text-muted-foreground">
                   {packInfo?.src
                     ? "çekim tanımlı — şablonlar bu kutuyu basacak"
-                    : "çekim yok — yerleşik örnek kutu çizilir"}
+                    : packFallback
+                      ? `çekim yok — yerleşik ${packFallback.label} kullanılacak`
+                      : "çekim yok — kartlarda kutu çizilmeyecek"}
                 </div>
               </div>
               {!packInfo?.src && (
@@ -1139,18 +1280,49 @@ function PazarlamaGorselleri({
             </div>
           )}
 
-          <Button
-            className="w-full"
-            disabled={!objectImage || !master || !picked.length || rendering}
-            onClick={() => void render()}
-          >
-            {rendering ? (
-              <Loader2 className="mr-2 size-4 animate-spin" />
-            ) : (
-              <Layers className="mr-2 size-4" />
+          <div className="space-y-2 border-t pt-4">
+            <Button
+              className="w-full"
+              disabled={!objectImage || !master || !picked.length || rendering || !!batch}
+              onClick={() => void render()}
+            >
+              {rendering ? (
+                <Loader2 className="mr-2 size-4 animate-spin" />
+              ) : (
+                <Layers className="mr-2 size-4" />
+              )}
+              Görselleri üret ({picked.length})
+            </Button>
+
+            {/* Toplu üretim: bir rengi TEK seferde bitirmek.
+                Aynı renk dört boyda satılıyor ve kareler boy başına yeniden
+                çizilmek zorunda (kutu değişiyor). Elle yapılınca dört kez
+                aynı iş. */}
+            <Button
+              variant="secondary"
+              className="w-full"
+              disabled={!objectImage || !master || !picked.length || rendering || !!batch || variants.length < 2}
+              onClick={() => void renderAllVariants()}
+            >
+              {batch ? (
+                <Loader2 className="mr-2 size-4 animate-spin" />
+              ) : (
+                <Boxes className="mr-2 size-4" />
+              )}
+              {batch
+                ? `Üretiliyor… ${batch.done}/${batch.total}`
+                : `Bu rengin tüm boylarına üret (${variants.length})`}
+            </Button>
+            {variants.length > 1 && (
+              <p className="text-xs text-muted-foreground">
+                {variants
+                  .map(v => packById.get(v.packagingId)?.name ?? "?")
+                  .join(" · ")}{" "}
+                — her boy kendi ambalaj çekimiyle yeniden çizilir ve o ürüne kaydedilir.
+                Aynı rolde eski kare varsa değiştirilir.
+              </p>
             )}
-            Görselleri üret ({picked.length})
-          </Button>
+          </div>
         </Card>
 
         <Card className="space-y-3 p-4">
@@ -1181,6 +1353,7 @@ function PazarlamaGorselleri({
                     saveMany.mutate({
                       masterId: master.id,
                       images: cards.map(c => ({ data: c.data, role: c.id })),
+                      replaceSameRole: true,
                     })
                   }
                 >
@@ -1217,7 +1390,11 @@ function PazarlamaGorselleri({
                           disabled={!master || saving}
                           onClick={() =>
                             master &&
-                            saveOne.mutate({ masterId: master.id, data: c.data, role: c.id })
+                            saveMany.mutate({
+                              masterId: master.id,
+                              images: [{ data: c.data, role: c.id }],
+                              replaceSameRole: true,
+                            })
                           }
                         >
                           Kaydet
@@ -1588,6 +1765,14 @@ function SablonlarSekmesi() {
     packagingSrc: packSample.src,
     packagingName: packSample.range[0]?.label ?? null,
     packRange: packSample.range,
+    // Editörde palet katmanı boş görünmesin: gerçek renkler yerleştirmeyi
+    // ayarlarken kaç kutu sığdığını gösteriyor.
+    palette: colors.slice(0, 24).map((c, i) => ({
+      code: c.code,
+      name: c.name,
+      hex: c.hex ?? null,
+      active: i === 0,
+    })),
   };
 
   return (

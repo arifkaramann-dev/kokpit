@@ -186,7 +186,54 @@ export type RectLayer = {
   gradient?: boolean;
 };
 
-export type Layer = TextLayer | ImageLayer | RectLayer;
+/**
+ * Renk paleti katmanı — serinin bütün renkleri, kodlarıyla.
+ *
+ * ── Neden ayrı bir katman türü ────────────────────────────────────────────
+ * Katalog/palet karesi otuz renk gösteriyor. Otuz kutuyu tek tek katman
+ * olarak yerleştirmek hem elle yapılamaz hem seri büyüdüğünde eskir: yeni
+ * renk eklendiğinde kimse şablonu güncellemeye gitmez. Bu katman ızgarayı
+ * KENDİ hesaplıyor; kaç renk gelirse ona göre.
+ *
+ * Renkler yerleşimde saklanmıyor, çizim anında veriliyor (`RenderLayoutInput.
+ * palette`) — tarif hangi renklerin var olduğunu bilmemeli.
+ */
+export type PaletteLayer = {
+  id: string;
+  type: "palette";
+  box: LayerBox;
+  /** Kaç kolon — satır sayısı renk sayısından hesaplanır. */
+  columns: number;
+  /** Kutular arası boşluk; kare GENİŞLİĞİNİN oranı (iki eksende de aynı). */
+  gap: number;
+  /** Kutunun altına renk kodu yazılsın mı. */
+  showCode: boolean;
+  /** Kod yazı boyu — kare genişliğinin oranı. */
+  labelSize: number;
+  labelColor: string;
+  /** Kutu köşe yarıçapı — kare genişliğinin oranı. */
+  radius?: number;
+  /** Kartın kendi rengini çerçeveleyip öne çıkar. */
+  highlight?: boolean;
+  visible: boolean;
+  opacity?: number;
+};
+
+/** Palet katmanına çizim anında verilen renkler. */
+export type PaletteEntry = {
+  code?: string | null;
+  name?: string | null;
+  hex?: string | null;
+  /** Kartın konusu olan renk — `highlight` açıkken çerçevelenir. */
+  active?: boolean;
+};
+
+export type Layer = TextLayer | ImageLayer | RectLayer | PaletteLayer;
+
+/** Yerleşim palet çiziyor mu — renk listesi olmadan o kare boş çıkar. */
+export function usesPalette(layout: TemplateLayout): boolean {
+  return layout.layers.some(l => l.type === "palette" && l.visible);
+}
 
 export type TemplateLayout = {
   /** Kare ölçüsü — piksel. */

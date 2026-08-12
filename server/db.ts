@@ -2984,6 +2984,33 @@ export async function deleteMasterImage(id: number) {
   await db.delete(masterImages).where(eq(masterImages.id, id));
 }
 
+/**
+ * Bir ürünün belirli ROLLERDEKİ görsellerini siler.
+ *
+ * Pazarlama kareleri rol adıyla kaydediliyor (`product`, `card`, `story`…).
+ * Şablon düzeltilip kareler yeniden basıldığında eskisinin yanına eklemek,
+ * ürün kartını her denemede iki katına çıkarıyordu ve hangisinin güncel
+ * olduğu belli olmuyordu. Rol başına TEK güncel kare tutulur.
+ *
+ * Yalnız KENDİ barındırdığımız satırlar silinir (`url` boş): dış adresli
+ * görsel pazaryerinden gelmiş olabilir, onu üretim çıktısı sanıp silmek veri
+ * kaybı olurdu.
+ */
+export async function deleteMasterImagesByRole(masterId: number, roles: string[]) {
+  if (!roles.length) return 0;
+  const db = await requireDb();
+  const [res] = await db
+    .delete(masterImages)
+    .where(
+      and(
+        eq(masterImages.masterId, masterId),
+        inArray(masterImages.role, roles),
+        isNull(masterImages.url),
+      ),
+    );
+  return Number((res as { affectedRows?: number }).affectedRows ?? 0);
+}
+
 /** Görseli olmayan aktif/taslak master'lar — "eksik görsel" iş listesi. */
 export async function listMastersMissingImages() {
   const db = await requireDb();

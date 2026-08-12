@@ -413,9 +413,24 @@ export const renkStudyoRouter = router({
           .array(z.object({ data: dataUrl, role: z.string().trim().max(32).optional() }))
           .min(1)
           .max(20),
+        /**
+         * Aynı roldeki eski kareleri SİL.
+         *
+         * Şablon düzeltilip kareler yeniden basıldığında eskisinin yanına
+         * eklemek ürün kartını her denemede şişiriyor ve hangisinin güncel
+         * olduğunu belirsizleştiriyordu. Rol başına tek güncel kare.
+         */
+        replaceSameRole: z.boolean().optional(),
       }),
     )
     .mutation(async ({ input }) => {
+      let replaced = 0;
+      if (input.replaceSameRole) {
+        const roles = Array.from(
+          new Set(input.images.map(i => i.role).filter((r): r is string => !!r)),
+        );
+        replaced = await db.deleteMasterImagesByRole(input.masterId, roles);
+      }
       for (const img of input.images) {
         await db.addMasterImage({
           masterId: input.masterId,
@@ -423,7 +438,7 @@ export const renkStudyoRouter = router({
           role: img.role ?? "studyo",
         });
       }
-      return { added: input.images.length };
+      return { added: input.images.length, replaced };
     }),
 
   /** Görseli TEK bir ürüne kaydeder. */

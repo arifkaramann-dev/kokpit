@@ -16,12 +16,16 @@
 
 
 
+import type { PaletteEntry } from "@shared/color/layout";
+
 export type PackagingOption = {
   id: string;
   line: string;
   label: string;
   src: string;
   alpha: boolean;
+  /** Kutunun hacmi — yedek seçimi HACİMLE yapılır, hatla değil. */
+  volumeMl: number;
 };
 
 export type SeriesInfo = { code: string; line: string; effect: string; label: string };
@@ -33,7 +37,7 @@ export type TemplateDef = {
   width: number;
   height: number;
   bare: boolean;
-  kind?: "product" | "coats" | "range";
+  kind?: "product" | "coats" | "range" | "palette";
 };
 
 /** Şablonun bastığı renk bilgisi. */
@@ -45,18 +49,15 @@ export type PaintInfo = {
   seriesCode?: string | null;
   hex?: string | null;
   /**
-   * Yerleşik ambalaj görselinin id'si — YALNIZ GERİYE DÖNÜK.
-   *
-   * Ambalaj çekimi artık Tanımlar'dan geliyor (`packagingSrc`). Bu alan,
-   * henüz hiçbir ambalaja görsel yüklenmemiş kurulumlarda kartın kutusuz
-   * kalmaması için duruyor.
-   */
-  packaging?: string | null;
-  /**
    * Ürünün kendi ambalajının çekimi — Tanımlar → Ambalajlar'dan çözümlenmiş
-   * adres. Doluysa yerleşik görselin önüne geçer.
+   * adres. Doluysa yerleşik yedeğin önüne geçer.
    */
   packagingSrc?: string | null;
+  /**
+   * Ürünün hacmi (ml) — çekim yoksa yerleşik yedek BUNUNLA seçilir.
+   * Ölçü tutmuyorsa kutu hiç çizilmez.
+   */
+  volumeMl?: number | null;
   /** Ürünün kendi ambalajının adı — "{packaging}" yer tutucusu. */
   packagingName?: string | null;
   /** Ürünün hacmi — "{volume}" yer tutucusu. */
@@ -66,6 +67,11 @@ export type PaintInfo = {
    * `{packSizes}` / `{pack1..4}` yer tutucuları bundan besleniyor.
    */
   packRange?: Array<{ label: string; src: string | null }>;
+  /**
+   * Serinin renkleri — palet katmanının çizdiği liste. Kartın kendi rengi
+   * `active` ile işaretli gelir.
+   */
+  palette?: PaletteEntry[];
 };
 
 export const BRAND = {
@@ -98,55 +104,41 @@ export const PACK_SIZES = ['30 ML', '100 ML', '250 ML', '500 ML', '400 ML SPREY'
  * kurulumlarda kartın kutusuz kalmaması için burada bırakıldı.
  */
 export const PACKAGING: PackagingOption[] = [
-  { id: 'vivid-spray400', line: 'VIVID', label: 'VIVID 400 ML Sprey', src: '/renk/packaging/sprey-400-vivid.jpg', alpha: false },
-  { id: 'meteor-spray400', line: 'METEOR', label: 'METEOR 400 ML Sprey', src: '/renk/packaging/sprey-400-meteor.png', alpha: true },
-  { id: 'meteor-bottle500', line: 'METEOR', label: 'METEOR 500 ML Şişe', src: '/renk/packaging/sise-500.jpg', alpha: false },
-  { id: 'meteor-bottle250', line: 'METEOR', label: 'METEOR 250 ML Şişe', src: '/renk/packaging/sise-250.jpg', alpha: false },
-  { id: 'meteor-bottle100', line: 'METEOR', label: 'METEOR 100 ML Şişe', src: '/renk/packaging/sise-100.jpg', alpha: false },
-  { id: 'meteor-bottle30', line: 'METEOR', label: 'METEOR 30 ML Şişe', src: '/renk/packaging/sise-30.jpg', alpha: false },
+  { id: 'vivid-spray400', line: 'VIVID', label: 'VIVID 400 ML Sprey', src: '/renk/packaging/sprey-400-vivid.jpg', alpha: false, volumeMl: 400 },
+  { id: 'meteor-spray400', line: 'METEOR', label: 'METEOR 400 ML Sprey', src: '/renk/packaging/sprey-400-meteor.png', alpha: true, volumeMl: 400 },
+  { id: 'meteor-bottle500', line: 'METEOR', label: 'METEOR 500 ML Şişe', src: '/renk/packaging/sise-500.jpg', alpha: false, volumeMl: 500 },
+  { id: 'meteor-bottle250', line: 'METEOR', label: 'METEOR 250 ML Şişe', src: '/renk/packaging/sise-250.jpg', alpha: false, volumeMl: 250 },
+  { id: 'meteor-bottle100', line: 'METEOR', label: 'METEOR 100 ML Şişe', src: '/renk/packaging/sise-100.jpg', alpha: false, volumeMl: 100 },
+  { id: 'meteor-bottle30', line: 'METEOR', label: 'METEOR 30 ML Şişe', src: '/renk/packaging/sise-30.jpg', alpha: false, volumeMl: 30 },
 ];
 
-export function getPackaging(id: string): PackagingOption {
-  return (
-    PACKAGING.find((p) => p.id === id) ||
-    PACKAGING[0]
-  );
-}
-
 /**
- * Bir hattın ambalajları — yerleşikler + kullanıcının yüklediği.
- * Arayüzde yalnızca doğru hattakiler listelensin.
- */
-export function packagingForLine(line: string): PackagingOption[] {
-  return PACKAGING.filter(p => p.line === line);
-}
-
-/**
- * Ambalajın çizilebilir kaynağını çözer.
- * Yerleşiklerde bu bir URL, kullanıcı ambalajlarında IndexedDB'den gelen
- * bir data URI. Çağıran taraf farkı bilmek zorunda kalmasın diye burada.
- */
-/**
- * Ambalajın çizilebilir kaynağı.
+ * Yerleşik yedek kutu — HACME göre.
  *
- * Kaynak uygulamada burada kullanıcının yüklediği ambalajlar da çözülüyordu
- * (IndexedDB'den data URI). O yol kokpit'e henüz taşınmadı; yerleşik
- * ambalajlar doğrudan adresten geliyor.
+ * ── Neden hacim, neden hat değil ──────────────────────────────────────────
+ * Önceki hâli hattan seçiyordu (`defaultPackagingFor`): VIVID bir rengin
+ * yedeği listedeki ilk VIVID kayıt, yani **400 ml sprey**. 100 ml'lik bir
+ * ürünün kartına sprey kutusu basılıyordu — müşteriye yanlış ürünü göstermek,
+ * hiç kutu göstermemekten kötü.
+ *
+ * Artık ölçü tutmuyorsa yedek YOK: kutu katmanı çizilmez ve arayüz kullanıcıya
+ * "bu ambalajın çekimini yükle" der. Uydurma bir kutu basmıyoruz.
+ *
+ * Hat yalnız EŞİTLİK BOZUCU: aynı hacimde iki kayıt varsa (400 ml sprey iki
+ * hatta da var) ürünün hattındaki seçilir.
  */
-function resolvePackagingSrc(pack: PackagingOption): string {
-  return pack.src;
+export function fallbackPackaging(
+  volumeMl: number | null | undefined,
+  line?: string | null,
+): PackagingOption | null {
+  if (!volumeMl || volumeMl <= 0) return null;
+  const sameVolume = PACKAGING.filter(p => p.volumeMl === volumeMl);
+  if (!sameVolume.length) return null;
+  return sameVolume.find(p => p.line === line) ?? sameVolume[0];
 }
 
-/**
- * Seriye uygun varsayılan ambalaj.
- * Seçili ambalaj yanlış hattaysa otomatik düzeltilir — Vivid bir rengin
- * yanında Meteor kutusu görünmesin.
- */
-export function defaultPackagingFor(seriesCode: string | null | undefined, current?: string | null): string {
-  const line = getSeries(seriesCode).line;
-  const chosen = current ? getPackaging(current) : null;
-  if (chosen && chosen.line === line) return chosen.id;
-  return packagingForLine(line)[0]?.id || PACKAGING[0].id;
+export function getPackaging(id: string): PackagingOption | null {
+  return PACKAGING.find(p => p.id === id) ?? null;
 }
 
 /**
@@ -192,6 +184,15 @@ export const TEMPLATES: TemplateDef[] = [
     height: 1400,
     bare: false,
     kind: 'range',
+  },
+  {
+    id: 'palette',
+    label: 'Seri paleti',
+    hint: 'Serinin diğer renkleri, kodlarıyla. Katalog ve pazarlama karesi.',
+    width: 1400,
+    height: 1400,
+    bare: false,
+    kind: 'palette',
   },
   {
     id: 'marketplace',

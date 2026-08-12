@@ -11,7 +11,13 @@
 
 import { renderCoat } from "@shared/color/candy";
 import { hexToLab, type Lab } from "@shared/color/color";
-import { assetIdOf, type ImageSource, type TemplateLayout, type TokenValues } from "@shared/color/layout";
+import {
+  assetIdOf,
+  usesPalette,
+  type ImageSource,
+  type TemplateLayout,
+  type TokenValues,
+} from "@shared/color/layout";
 import { defaultLayout } from "@shared/color/layoutDefaults";
 import type { Raster } from "@shared/color/recolor";
 import { extractSubjectMask, measureSubjectLab } from "@shared/color/subject";
@@ -20,9 +26,8 @@ import {
   BRAND,
   PACK_SIZES,
   TEMPLATES,
-  defaultPackagingFor,
+  fallbackPackaging,
   forceWhiteBackground,
-  getPackaging,
   getSeries,
   loadImageSrc,
   type PaintInfo,
@@ -176,15 +181,21 @@ export async function buildCards({
   // Kaynak sırası: ürünün ambalajına yüklenmiş ÇEKİM → yerleşik yedek görsel.
   // Tanımlar'daki çekim her zaman kazanır; kullanıcının kendi kutusu, bizim
   // örnek kutumuzun önüne geçmeli.
+  // Kaynak sırası: ürünün ambalajına yüklenmiş ÇEKİM → aynı HACİMDEKİ yerleşik
+  // yedek → hiçbiri. Yedek hacimle seçiliyor: 100 ml'lik ürüne 400 ml sprey
+  // basmak müşteriye yanlış ürünü göstermekti.
   let packaging: HTMLImageElement | null = null;
   if (needed.has("packaging")) {
-    try {
-      const src =
-        paint.packagingSrc ||
-        getPackaging(defaultPackagingFor(paint.seriesCode, paint.packaging)).src;
-      packaging = await loadImageSrc(src);
-    } catch (err) {
-      console.warn("[renkCards] ambalaj yüklenemedi:", err);
+    const src =
+      paint.packagingSrc ||
+      fallbackPackaging(paint.volumeMl, getSeries(paint.seriesCode).line)?.src ||
+      null;
+    if (src) {
+      try {
+        packaging = await loadImageSrc(src);
+      } catch (err) {
+        console.warn("[renkCards] ambalaj yüklenemedi:", err);
+      }
     }
   }
 
@@ -235,11 +246,19 @@ export async function buildCards({
     // Ambalaj gamı şablonu, gam çekimleri yüklenmeden yalnız etiketlerden
     // oluşan boş bir tablo olurdu. Aynı gerekçe: boş kare basılmaz.
     if (sources.has("pack1") && !packRange.pack1) continue;
+    // Palet karesi renk listesi olmadan boş bir ızgara olurdu.
+    if (usesPalette(layout) && !paint.palette?.length) continue;
 
     out.push({
       id: tpl.id,
       label: tpl.label,
-      data: await renderLayoutToDataUrl({ layout, values, images, paintHex: paint.hex }),
+      data: await renderLayoutToDataUrl({
+        layout,
+        values,
+        images,
+        paintHex: paint.hex,
+        palette: paint.palette,
+      }),
     });
   }
   return out;
