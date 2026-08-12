@@ -398,6 +398,29 @@ ayrı, şablon ürettiğimiz sayfa ayrı olmalı"):** sekmeler artık `1 · Obje
 - Doğrulama: sahte tRPC verisiyle Vite'da açılıp headless Chromium'da gezildi
   (sekmeler, obje seçimi, collapsible, şablon seçimi) — sayfa hatası yok.
 
+**Yanlış kutu hatası + toplu üretim + seri paleti (aynı gün, canlı geri bildirim):**
+
+- **HATA (canlıda görüldü):** 100 ml'lik ürünün kartına 400 ml VIVID sprey kutusu
+  basılıyordu. Sebep: çekim yoksa devreye giren yerleşik yedek HATTAN seçiliyordu
+  (`defaultPackagingFor` → listedeki ilk VIVID kayıt = sprey). Yedek artık HACİMLE
+  seçiliyor (`fallbackPackaging`, 6 test): ölçü tutmuyorsa yedek YOK, kutu katmanı
+  hiç çizilmez ve arayüz "kartlarda kutu çizilmeyecek" der. Hat yalnız eşitlik
+  bozucu (400 ml sprey iki hatta da var). Ambalaj şeridi hangi kutunun basılacağını
+  soluk küçük resimle gösteriyor.
+- **Toplu üretim:** "Bu rengin tüm boylarına üret (N)" — aynı renk+seri master'ları
+  için kareler o boyun KENDİ ambalaj çekimiyle yeniden çizilip her ürüne kaydediliyor
+  (kopyalanmıyor: kutu değişiyor). İlerleme göstergesi + çekimi eksik boyların
+  raporu. `saveManyToMaster({ replaceSameRole })` ile rol başına tek güncel kare —
+  şablon denemeleri ürün kartını şişirmiyor (`db.deleteMasterImagesByRole`, yalnız
+  kendi barındırdığımız satırlar).
+- **Yeni katman türü `palette` + "Seri paleti" şablonu:** serinin renkleri kodlarıyla
+  ızgarada, kartın kendi rengi çerçeveli. Izgara renk sayısından hesaplanıyor (yeni
+  renk eklenince kare kendiliğinden güncel). Renk kaynağı uyumluluk tablosu değil,
+  o seride MASTER'I OLAN renkler — müşteriye gösterilen liste gerçekten satılanlar.
+  Editörde kolon/boşluk/yarıçap/kod-yaz/çerçevele ayarları var.
+- **vitest artık `client/**` testlerini de koşuyor:** `barcode.test.ts` kapsam dışı
+  kaldığı için uzun süre HİÇ ÇALIŞMAMIŞ. 1060 test.
+
 ## Açık işler / sırada ne var (takım denetimi: 15.07.2026, kanıtlı liste todo.md sonunda)
 Sağlık: `pnpm check` 0 hata, 74/74 test geçiyor, kod içi TODO/FIXME borcu yok.
 

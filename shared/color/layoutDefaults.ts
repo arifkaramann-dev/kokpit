@@ -293,6 +293,61 @@ function coatsLayout(): TemplateLayout {
 }
 
 /**
+ * Seri paleti — "bu serinin diğer renkleri", kodlarıyla.
+ *
+ * Katalog ve pazarlama karesi: müşteri bir rengi beğendiğinde ikinci sorusu
+ * "başka hangi renkler var" oluyor ve cevabı ilan açıklamasında yazıyordu.
+ * Izgara kendini renk sayısına göre kuruyor, yani yeni renk eklendiğinde kare
+ * kendiliğinden doğru çıkar — şablona dönüp elle kutu eklemek gerekmez.
+ */
+function paletteLayout(): TemplateLayout {
+  return {
+    width: 1400,
+    height: 1400,
+    background: "#ffffff",
+    layers: [
+      ...heading(0.06, 0.055),
+      {
+        id: newLayerId("obj"),
+        type: "image",
+        box: { x: 0.63, y: 0.05, w: 0.31, h: 0.16 },
+        source: "object",
+        fit: "contain",
+        visible: true,
+      },
+      {
+        id: newLayerId("title"),
+        type: "text",
+        box: { x: 0.06, y: 0.255, w: 0.88, h: 0.035 },
+        // Hattı ve efekti üstteki kimlik bloğu zaten yazıyor; burada tekrarı
+        // kareyi kalabalıklaştırıyordu.
+        text: "SERİNİN DİĞER RENKLERİ",
+        size: 0.023,
+        weight: 700,
+        color: INK_SOFT,
+        align: "left",
+        transform: "upper",
+        visible: true,
+      },
+      {
+        id: newLayerId("palette"),
+        type: "palette",
+        box: { x: 0.06, y: 0.3, w: 0.88, h: 0.56 },
+        columns: 6,
+        gap: 0.018,
+        showCode: true,
+        labelSize: 0.017,
+        labelColor: INK_SOFT,
+        radius: 0.008,
+        highlight: true,
+        visible: true,
+      },
+      ...footer(0.9, 0.017),
+    ],
+  };
+}
+
+/**
  * Pazaryeri ana görseli — ÇIPLAK.
  *
  * Amazon ve Trendyol ana görselde yazı, logo, filigran, çerçeve kabul
@@ -509,6 +564,8 @@ export function defaultLayout(templateId: string): TemplateLayout {
       return productLayout();
     case "range":
       return rangeLayout();
+    case "palette":
+      return paletteLayout();
     case "coats":
       return coatsLayout();
     case "marketplace":
