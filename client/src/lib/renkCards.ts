@@ -232,6 +232,20 @@ export async function buildCards({
     }
   }
 
+  // Palet kareleri: renk başına bir görsel, kod anahtarıyla. Yalnız palet
+  // çizen bir şablon seçiliyse indiriliyor — otuz kare, otuz istek demek.
+  const paletteImages: Record<string, HTMLImageElement> = {};
+  if (resolved.some(usesPalette)) {
+    for (const entry of paint.palette ?? []) {
+      if (!entry.src || !entry.code) continue;
+      try {
+        paletteImages[entry.code] = await loadImageSrc(entry.src);
+      } catch (err) {
+        console.warn("[renkCards] palet karesi yüklenemedi:", entry.code, err);
+      }
+    }
+  }
+
   const assets = await loadAssets(resolved);
   const images: LayerImages = { object: obj, packaging, logo, ...packRange, ...coats, ...assets };
 
@@ -258,6 +272,7 @@ export async function buildCards({
         images,
         paintHex: paint.hex,
         palette: paint.palette,
+        paletteImages,
       }),
     });
   }

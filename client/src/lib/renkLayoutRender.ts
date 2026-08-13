@@ -10,6 +10,7 @@ import {
   boxToPixels,
   resolveText,
   type ImageSource,
+  paletteColumns,
   type PaletteEntry,
   type PaletteLayer,
   type TemplateLayout,
@@ -27,6 +28,8 @@ export type RenderLayoutInput = {
   paintHex?: string | null;
   /** Palet katmanının çizeceği renkler — serinin gamı. */
   palette?: PaletteEntry[];
+  /** Palet karelerinin yüklenmiş görselleri, renk KODUNA göre. */
+  paletteImages?: Record<string, HTMLImageElement | HTMLCanvasElement>;
 };
 
 function contain(sw: number, sh: number, bw: number, bh: number) {
@@ -167,8 +170,12 @@ function drawPalette(
   box: { x: number; y: number; w: number; h: number },
   entries: PaletteEntry[],
   width: number,
+  images: Record<string, HTMLImageElement | HTMLCanvasElement>,
 ) {
-  const columns = Math.max(1, Math.round(layer.columns));
+  const columns =
+    layer.columns > 0
+      ? Math.max(1, Math.round(layer.columns))
+      : paletteColumns(entries.length, box.w, box.h);
   const rows = Math.ceil(entries.length / columns);
   if (!rows) return;
 
@@ -187,9 +194,23 @@ function drawPalette(
     const x = box.x + col * (cellW + gap);
     const y = box.y + row * (cellH + gap);
 
-    ctx.fillStyle = e.hex || "#e5e7eb";
-    roundedPath(ctx, x, y, cellW, swatchH, radius);
-    ctx.fill();
+    // Rengin stüdyo karesi varsa O çizilir; hex yalnız görsel yoksa devreye
+    // giren yedek. Kutuya sığdırılıyor (kırpmadan): kareler farklı oranlarda
+    // olabilir ve obje kırpılırsa palet bozuk görünür.
+    const img = e.code ? images[e.code] : undefined;
+    if (img) {
+      const { w: sw, h: sh } = sizeOf(img);
+      const fitted = contain(sw, sh, cellW, swatchH);
+      ctx.save();
+      roundedPath(ctx, x, y, cellW, swatchH, radius);
+      ctx.clip();
+      ctx.drawImage(img, x + fitted.x, y + fitted.y, fitted.w, fitted.h);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = e.hex || "#e5e7eb";
+      roundedPath(ctx, x, y, cellW, swatchH, radius);
+      ctx.fill();
+    }
 
     // Kartın kendi rengi: dışına çerçeve. İçine çizmek kutunun rengini
     // değiştirirdi ve palet karesinin tek işi rengi doğru göstermek.
@@ -226,6 +247,7 @@ export async function renderLayout({
   images,
   paintHex,
   palette = [],
+  paletteImages = {},
 }: RenderLayoutInput): Promise<HTMLCanvasElement> {
   await ensureBrandFont();
 
@@ -270,7 +292,7 @@ export async function renderLayout({
     if (layer.type === "palette") {
       // Renk listesi verilmemişse katman atlanıyor: boş bir ızgara çizmek
       // "bu serinin rengi yok" izlenimi verirdi.
-      if (palette.length) drawPalette(ctx, layer, box, palette, layout.width);
+      if (palette.length) drawPalette(ctx, layer, box, palette, layout.width, paletteImages);
       ctx.restore();
       continue;
     }

@@ -202,7 +202,11 @@ export type PaletteLayer = {
   id: string;
   type: "palette";
   box: LayerBox;
-  /** Kaç kolon — satır sayısı renk sayısından hesaplanır. */
+  /**
+   * Kaç kolon. **0 = otomatik**: kutuya sığacak ve hücreler kareye yakın
+   * kalacak şekilde hesaplanır. Seri 12 renkten 40 renge çıktığında şablonu
+   * elle güncellemek gerekmesin.
+   */
   columns: number;
   /** Kutular arası boşluk; kare GENİŞLİĞİNİN oranı (iki eksende de aynı). */
   gap: number;
@@ -223,10 +227,32 @@ export type PaletteLayer = {
 export type PaletteEntry = {
   code?: string | null;
   name?: string | null;
+  /**
+   * Rengin stüdyo karesi — palette ASIL çizilen budur.
+   *
+   * Düz hex kutusu boyayı anlatmıyor: katalogdaki birçok rengin hex'i boş
+   * (renk kaynağı fotoğraf) ve dolu olanlarda bile metalik pulun çakması,
+   * candy'nin derinliği düz bir karede kaybolur.
+   */
+  src?: string | null;
+  /** Görsel yoksa çizilen düz dolgu. */
   hex?: string | null;
   /** Kartın konusu olan renk — `highlight` açıkken çerçevelenir. */
   active?: boolean;
 };
+
+/**
+ * Otomatik kolon sayısı — hücreler kareye yakın kalsın.
+ *
+ * Kutunun en-boy oranını ve renk sayısını birlikte kullanır: geniş bir şeritte
+ * çok kolon, kare bir alanda kök civarı. Sonuç 1..n arasına sıkıştırılır.
+ */
+export function paletteColumns(count: number, boxW: number, boxH: number): number {
+  if (count <= 1) return Math.max(1, count);
+  const ratio = boxH > 0 ? boxW / boxH : 1;
+  const cols = Math.round(Math.sqrt(count * ratio));
+  return Math.max(1, Math.min(count, cols || 1));
+}
 
 export type Layer = TextLayer | ImageLayer | RectLayer | PaletteLayer;
 

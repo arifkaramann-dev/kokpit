@@ -25,7 +25,7 @@ import {
 import SablonEditor from "@/components/SablonEditor";
 import { buildCards } from "@/lib/renkCards";
 import { TEMPLATES, fallbackPackaging, getSeries, type PaintInfo } from "@/lib/renkTemplates";
-import type { TemplateLayout } from "@shared/color/layout";
+import type { PaletteEntry, TemplateLayout } from "@shared/color/layout";
 import {
   packagingImageUrl,
   resolvePackagingImageSrc,
@@ -211,6 +211,51 @@ function UrunSecici({
       </div>
     </div>
   );
+}
+
+/**
+ * Serinin renk paleti — palet karesinin çizdiği liste.
+ *
+ * Kaynak, uyumluluk tablosu değil KATALOĞUN KENDİSİ: o seride master'ı olan
+ * renkler. Uyumluluk "üretilebilir"i söyler, palet karesi ise müşteriye
+ * "satılıyor" demek.
+ *
+ * Kutularda rengin STÜDYO KARESİ çizilir. Düz hex kutusu boyayı anlatmıyor:
+ * katalogdaki çoğu rengin hex'i boş (renk kaynağı fotoğraf) ve dolu olanlarda
+ * bile metalik pulun çakması, candy'nin derinliği düz karede kayboluyor.
+ * Görseli olan renk varsa palet YALNIZ onlardan kurulur; hiçbirinin görseli
+ * yoksa hex'e düşülür ki kare hiç üretilememektense bir şey gösterebilsin.
+ */
+function buildPalette(opts: {
+  masters: MasterRow[];
+  colorById: Map<number, ColorRow>;
+  seriesId: number | null | undefined;
+  activeColorId?: number | null;
+  images?: Array<{ colorId: number; url: string }>;
+}): PaletteEntry[] {
+  const { masters, colorById, seriesId, activeColorId, images = [] } = opts;
+  if (seriesId == null) return [];
+  const bySrc = new Map(images.map(i => [i.colorId, i.url]));
+  const seen = new Set<number>();
+  const out: Array<PaletteEntry & { code: string }> = [];
+  for (const m of masters) {
+    if (m.seriesId !== seriesId || seen.has(m.colorId)) continue;
+    seen.add(m.colorId);
+    const c = colorById.get(m.colorId);
+    if (!c) continue;
+    out.push({
+      code: c.code,
+      name: c.name,
+      hex: c.hex ?? null,
+      src: bySrc.get(c.id) ?? null,
+      active: c.id === activeColorId,
+    });
+  }
+  const withImage = out.filter(e => e.src);
+  const list = withImage.length ? withImage : out;
+  // Kod sırası: katalogda renkler koda göre aranıyor, kart da aynı sırayı
+  // gösterirse müşteri ilandaki kodu palette gözle bulabiliyor.
+  return list.sort((a, b) => a.code.localeCompare(b.code, "tr")).slice(0, 48);
 }
 
 /** Katalog boyutlarını iki sekmenin de ihtiyaç duyduğu biçimde toparlar. */
@@ -800,6 +845,12 @@ function PazarlamaGorselleri({
     { enabled: !!masterId },
   );
 
+  // Serideki renklerin stüdyo kareleri — palet şablonu bunları diziyor.
+  const { data: colorImages } = trpc.renkStudyo.colorImages.useQuery(
+    { seriesId: master?.seriesId ?? 0 },
+    { enabled: !!master },
+  );
+
   const layouts = useMemo(() => {
     const out: Record<string, TemplateLayout> = {};
     for (const r of layoutRows ?? []) out[r.templateId] = r.layout as TemplateLayout;
@@ -840,26 +891,17 @@ function PazarlamaGorselleri({
    * "satılıyor" demek — ikisi aynı şey değil ve müşteriye gösterilen liste
    * gerçekten satılan renkler olmalı.
    */
-  const palette = useMemo(() => {
-    if (!master) return [];
-    const seen = new Set<number>();
-    const out: Array<{ code: string; name: string; hex: string | null; active: boolean }> = [];
-    for (const m of rows) {
-      if (m.seriesId !== master.seriesId || seen.has(m.colorId)) continue;
-      seen.add(m.colorId);
-      const c = colorById.get(m.colorId);
-      if (!c) continue;
-      out.push({
-        code: c.code,
-        name: c.name,
-        hex: c.hex ?? null,
-        active: c.id === master.colorId,
-      });
-    }
-    // Kod sırası: katalogda renkler koda göre aranıyor, kart da aynı sırayı
-    // gösterirse müşteri ilandaki kodu palette gözle bulabiliyor.
-    return out.sort((a, b) => a.code.localeCompare(b.code, "tr")).slice(0, 48);
-  }, [master, rows, colorById]);
+  const palette = useMemo(
+    () =>
+      buildPalette({
+        masters: rows,
+        colorById,
+        seriesId: master?.seriesId,
+        activeColorId: master?.colorId,
+        images: colorImages,
+      }),
+    [master, rows, colorById, colorImages],
+  );
 
   /** Çekim yoksa devreye girecek yerleşik kutu — kullanıcı NE basılacağını görsün. */
   const packFallback = useMemo(
@@ -1698,6 +1740,7 @@ function ReferansObjeler() {
 /** Editör sekmesi — kayıtlı yerleşimleri okur, düzenlemeyi geri yazar. */
 function SablonlarSekmesi() {
   const utils = trpc.useUtils();
+  const { rows: masters, colorById } = useKatalogBoyutlari();
   const { data: dims } = trpc.katalog.dimensions.useQuery();
   const { data: layoutRows } = trpc.renkStudyo.layouts.useQuery();
   const { data: assets } = trpc.renkStudyo.assets.useQuery();
@@ -1725,10 +1768,17 @@ function SablonlarSekmesi() {
     onError: e => toast.error(e.message),
   });
 
-  // Örnek olarak katalogdaki ilk renk: editörde gerçek bir kare görünsün,
-  // boş yer tutucularla düzenlemek yanıltıcı olur.
+  // Örnek olarak katalogdaki ilk ÜRÜNÜN rengi: editörde gerçek bir kare
+  // görünsün, boş yer tutucularla düzenlemek yanıltıcı olur. Ürün üzerinden
+  // gidiliyor çünkü palet önizlemesi seriyi bilmek zorunda.
   const colors = (dims?.colors ?? []) as ColorRow[];
-  const örnek = colors[0];
+  const örnekMaster = masters[0] ?? null;
+  const örnek = örnekMaster ? (colorById.get(örnekMaster.colorId) ?? colors[0]) : colors[0];
+
+  const { data: örnekColorImages } = trpc.renkStudyo.colorImages.useQuery(
+    { seriesId: örnekMaster?.seriesId ?? 0 },
+    { enabled: !!örnekMaster },
+  );
 
   /**
    * Önizlemenin ambalajı — GERÇEK çekimlerden.
@@ -1738,23 +1788,53 @@ function SablonlarSekmesi() {
    * fotoğrafının oranı farklı, kutu kutunun yerine oturmuyor. Çekim varsa
    * doğrudan o çiziliyor.
    */
+  const packagings = (dims?.packagings ?? []) as NamedRow[];
+
+  /**
+   * Önizlemenin ambalajı — KULLANICI SEÇER.
+   *
+   * Önceki hâli listedeki ilk çekimi alıyordu; hangi ambalaja ait olduğuna
+   * bakmadan. Bir sprey çekimi yüklüyse "Ürün + Numune" şablonunun
+   * önizlemesinde sprey görünüyordu ve kullanıcı 100 ml'lik yerleşimi sprey
+   * kutusuna göre ayarlıyordu. Hangi kutuya göre tasarladığın, tahmin
+   * edilecek bir şey değil.
+   */
+  const [previewPackagingId, setPreviewPackagingId] = useState<string>("");
+  const previewPackaging =
+    packagings.find(p => String(p.id) === previewPackagingId) ??
+    // Varsayılan: çekimi OLAN en küçük ambalaj. Çekimi olmayan bir ambalajı
+    // varsayılan yapmak, önizlemeyi boş kutuyla açmak olurdu.
+    packagings
+      .filter(p => (packImages ?? []).some(i => i.packagingId === p.id))
+      .sort(
+        (a, b) => parseFloat(String(a.volumeMl ?? 0)) - parseFloat(String(b.volumeMl ?? 0)),
+      )[0] ??
+    packagings[0] ??
+    null;
+
   const packSample = useMemo(() => {
     const rows = (packImages ?? []).slice();
-    // Serisiz (varsayılan) çekim tercih edilir: bir seriye özel kare, o
-    // seride olmayan bir yerleşimi temsil etmez.
-    const cover = rows.find(r => r.seriesId == null) ?? rows[0];
-    const seriesId = cover?.seriesId ?? null;
+    const own = previewPackaging
+      ? (rows.find(r => r.packagingId === previewPackaging.id && r.seriesId == null) ??
+        rows.find(r => r.packagingId === previewPackaging.id))
+      : null;
+    const seriesId = own?.seriesId ?? null;
+    const volume = previewPackaging?.volumeMl != null
+      ? parseFloat(String(previewPackaging.volumeMl))
+      : 0;
     return {
-      src: cover ? packagingImageUrl(cover.id) : null,
+      src: own ? packagingImageUrl(own.id) : null,
+      name: previewPackaging?.name ?? null,
+      volumeMl: volume > 0 ? volume : null,
       range: seriesPackRange({
-        packagings: (dims?.packagings ?? []) as NamedRow[],
+        packagings,
         seriesPackagings: dims?.seriesPackagings ?? [],
         images: rows,
         seriesId,
         limit: 4,
       }).map(p => ({ label: p.label, src: p.src })),
     };
-  }, [packImages, dims?.packagings, dims?.seriesPackagings]);
+  }, [packImages, packagings, dims?.seriesPackagings, previewPackaging]);
 
   const paint: PaintInfo = {
     code: örnek?.code ?? "VC1282",
@@ -1763,16 +1843,19 @@ function SablonlarSekmesi() {
     seriesCode: SERIES_CODE_BY_FINISH[örnek?.finish ?? "candy"] ?? "VC",
     hex: örnek?.hex || "#c2185b",
     packagingSrc: packSample.src,
-    packagingName: packSample.range[0]?.label ?? null,
+    packagingName: packSample.name,
+    volumeLabel: packSample.volumeMl ? `${packSample.volumeMl} ML` : null,
+    volumeMl: packSample.volumeMl,
     packRange: packSample.range,
-    // Editörde palet katmanı boş görünmesin: gerçek renkler yerleştirmeyi
-    // ayarlarken kaç kutu sığdığını gösteriyor.
-    palette: colors.slice(0, 24).map((c, i) => ({
-      code: c.code,
-      name: c.name,
-      hex: c.hex ?? null,
-      active: i === 0,
-    })),
+    // Editörde palet katmanı boş görünmesin: gerçek renkler ve gerçek
+    // kareler, yerleşimi ayarlarken kaç kutu sığdığını gösteriyor.
+    palette: buildPalette({
+      masters,
+      colorById,
+      seriesId: örnekMaster?.seriesId,
+      activeColorId: örnekMaster?.colorId,
+      images: örnekColorImages,
+    }),
   };
 
   return (
@@ -1780,6 +1863,13 @@ function SablonlarSekmesi() {
       paint={paint}
       saved={saved}
       assets={(assets ?? []).map(a => ({ id: a.id, label: a.label }))}
+      packagingOptions={packagings.map(p => ({
+        id: p.id,
+        label: p.name,
+        hasImage: (packImages ?? []).some(i => i.packagingId === p.id),
+      }))}
+      packagingValue={previewPackaging ? String(previewPackaging.id) : ""}
+      onPackagingChange={setPreviewPackagingId}
       saving={save.isPending || reset.isPending}
       onSave={(templateId, layout) =>
         save.mutateAsync({ templateId, layout: layout as unknown as Record<string, unknown> }).then(() => undefined)
