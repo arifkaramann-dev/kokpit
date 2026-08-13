@@ -2985,6 +2985,43 @@ export async function deleteMasterImage(id: number) {
 }
 
 /**
+ * Bir serideki her RENGİN temsilci görseli — palet karesi için.
+ *
+ * Palet eskiden düz hex kutuları çiziyordu. Katalogdaki renklerin çoğunun
+ * hex'i boş (renk kaynağı fotoğraf) ve o kareler gri çıkıyordu; dolu olanlar
+ * da boyanın gerçek görüntüsünü vermiyor — metalik pul, candy derinliği düz
+ * bir karede yok. Rengin stüdyo karesi ise tam olarak boyanın nasıl
+ * göründüğü.
+ *
+ * Renk başına TEK kare: `studyo` rolü (AI'ın çizdiği çıplak obje) tercih
+ * edilir, yoksa en düşük sıradaki kare. Yalnız kendi barındırdıklarımız —
+ * dış adresli görsel canvas'ı kirletir ve palet çizilemez.
+ */
+export async function listColorObjectImages(seriesId: number) {
+  const db = await requireDb();
+  const rows = await db
+    .select({
+      imageId: masterImages.id,
+      colorId: masterProducts.colorId,
+      role: masterImages.role,
+      sortOrder: masterImages.sortOrder,
+    })
+    .from(masterImages)
+    .innerJoin(masterProducts, eq(masterImages.masterId, masterProducts.id))
+    .where(and(eq(masterProducts.seriesId, seriesId), isNull(masterImages.url)));
+
+  const best = new Map<number, { imageId: number; role: string | null; sortOrder: number }>();
+  for (const r of rows) {
+    const current = best.get(r.colorId);
+    const score = (x: { role: string | null; sortOrder: number }) =>
+      (x.role === "studyo" ? 0 : 1) * 1e6 + Number(x.sortOrder ?? 0);
+    const next = { imageId: r.imageId, role: r.role ?? null, sortOrder: Number(r.sortOrder ?? 0) };
+    if (!current || score(next) < score(current)) best.set(r.colorId, next);
+  }
+  return Array.from(best.entries()).map(([colorId, v]) => ({ colorId, imageId: v.imageId }));
+}
+
+/**
  * Bir ürünün belirli ROLLERDEKİ görsellerini siler.
  *
  * Pazarlama kareleri rol adıyla kaydediliyor (`product`, `card`, `story`…).

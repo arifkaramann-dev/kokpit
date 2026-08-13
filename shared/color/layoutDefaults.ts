@@ -333,8 +333,10 @@ function paletteLayout(): TemplateLayout {
         id: newLayerId("palette"),
         type: "palette",
         box: { x: 0.06, y: 0.3, w: 0.88, h: 0.56 },
-        columns: 6,
-        gap: 0.018,
+        // 0 = otomatik: kolon sayısı renk sayısına göre hesaplanır, hepsi tek
+        // kareye sığar. Seri büyüdüğünde şablona dönmek gerekmesin.
+        columns: 0,
+        gap: 0.012,
         showCode: true,
         labelSize: 0.017,
         labelColor: INK_SOFT,

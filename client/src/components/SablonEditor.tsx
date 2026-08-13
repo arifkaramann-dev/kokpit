@@ -45,6 +45,13 @@ type Props = {
   saving?: boolean;
   /** Kullanıcının yüklediği görseller — katman kaynağı olarak seçilebilir. */
   assets?: Array<{ id: number; label: string }>;
+  /**
+   * Önizlemenin hangi ambalajla çizileceği — hangi kutuya göre tasarladığın
+   * tahmin edilecek bir şey değil, seçilir.
+   */
+  packagingOptions?: Array<{ id: number; label: string; hasImage: boolean }>;
+  packagingValue?: string;
+  onPackagingChange?: (id: string) => void;
 };
 
 /** Görsel kaynağının insan tarafındaki adı — liste "pack2" değil "2. boy" desin. */
@@ -96,6 +103,9 @@ export default function SablonEditor({
   onReset,
   saving,
   assets = [],
+  packagingOptions = [],
+  packagingValue,
+  onPackagingChange,
 }: Props) {
   const [templateId, setTemplateId] = useState(TEMPLATES[0].id);
   const [layout, setLayout] = useState<TemplateLayout>(() => defaultLayout(TEMPLATES[0].id));
@@ -368,11 +378,31 @@ export default function SablonEditor({
           </div>
         </div>
 
-        <p className="text-xs text-muted-foreground">
-          Katmana tıkla ve sürükle. Sağ-alt köşeye yakın tutup sürüklersen
-          boyutlandırır. Önizleme gerçek karenin kendisi — kaydettiğinde aynısı
-          çıkar.
-        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="flex-1 text-xs text-muted-foreground">
+            Katmana tıkla ve sürükle. Sağ-alt köşeye yakın tutup sürüklersen
+            boyutlandırır. Önizleme gerçek karenin kendisi — kaydettiğinde aynısı
+            çıkar.
+          </p>
+          {packagingOptions.length > 0 && onPackagingChange && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-muted-foreground">Önizleme ambalajı</span>
+              <Select value={packagingValue ?? ""} onValueChange={onPackagingChange}>
+                <SelectTrigger className="h-8 w-44">
+                  <SelectValue placeholder="Seç" />
+                </SelectTrigger>
+                <SelectContent>
+                  {packagingOptions.map(p => (
+                    <SelectItem key={p.id} value={String(p.id)}>
+                      {p.label}
+                      {p.hasImage ? "" : " · çekim yok"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+        </div>
 
         <div
           ref={wrapRef}
@@ -669,15 +699,15 @@ export default function SablonEditor({
               <>
                 <div className="grid grid-cols-2 gap-2">
                   <div className="space-y-1">
-                    <Label className="text-xs">Kolon</Label>
+                    <Label className="text-xs">Kolon (0 = oto)</Label>
                     <Input
                       type="number"
-                      min="1"
+                      min="0"
                       max="16"
                       value={selected.columns}
                       onChange={e =>
                         patchLayer(selected.id, {
-                          columns: Math.max(1, Math.min(16, Number(e.target.value) || 1)),
+                          columns: Math.max(0, Math.min(16, Number(e.target.value) || 0)),
                         } as Partial<Layer>)
                       }
                     />
@@ -744,9 +774,10 @@ export default function SablonEditor({
                   </span>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Renkler o serinin katalogda master'ı olan renkleridir; satır sayısı
-                  renk sayısından hesaplanır. Yeni renk eklendiğinde kare kendiliğinden
-                  günceldir.
+                  Kutularda rengin STÜDYO KARESİ çizilir (kayıtlı görseli olan renkler);
+                  görsel yoksa düz renk. Kolon 0 ise ızgara renk sayısına göre kendini
+                  kurar ve hepsi tek kareye sığar — yeni renk eklendiğinde şablona
+                  dönmek gerekmez.
                 </p>
               </>
             )}

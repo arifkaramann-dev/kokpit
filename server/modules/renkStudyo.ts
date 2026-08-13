@@ -21,7 +21,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { IMAGE_MODELS, activeImageProvider, generateProductImage } from "../imageProviders";
 import { protectedProcedure, router } from "../_core/trpc";
-import { imageUrlOf } from "../masterFields";
+import { imageUrlOf, masterImagePath } from "../masterFields";
 import * as db from "../db";
 
 /** Data URL biçimi — istemciden gelen her görsel bunu karşılamalı. */
@@ -171,6 +171,20 @@ export const renkStudyoRouter = router({
     .mutation(async ({ input }) => {
       await db.deleteSampleMaster(input.id);
       return { ok: true };
+    }),
+
+  /**
+   * Bir serideki renklerin stüdyo kareleri — palet şablonunun çizdiği görseller.
+   *
+   * Renk başına tek adres; kimliği değil ADRESİ dönüyoruz ki istemci
+   * `/api/img/master/{id}` kurmak zorunda kalmasın ve barındırma yolu
+   * değişirse tek yerden değişsin.
+   */
+  colorImages: protectedProcedure
+    .input(z.object({ seriesId: z.number().int().positive() }))
+    .query(async ({ input }) => {
+      const rows = await db.listColorObjectImages(input.seriesId);
+      return rows.map(r => ({ colorId: r.colorId, url: masterImagePath(r.imageId) }));
     }),
 
   // -------------------------------------------------------------------------

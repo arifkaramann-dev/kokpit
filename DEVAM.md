@@ -421,6 +421,23 @@ ayrı, şablon ürettiğimiz sayfa ayrı olmalı"):** sekmeler artık `1 · Obje
 - **vitest artık `client/**` testlerini de koşuyor:** `barcode.test.ts` kapsam dışı
   kaldığı için uzun süre HİÇ ÇALIŞMAMIŞ. 1060 test.
 
+**Editör önizleme ambalajı + palet stüdyo kareleriyle (canlı geri bildirim 2):**
+
+- **Şablon Editörü'nde sprey görünüyordu:** önizleme, hangi ambalaja ait olduğuna
+  bakmadan YÜKLENEN İLK çekimi alıyordu (sprey çekimi varsa "Ürün + Numune"
+  önizlemesi sprey). Artık üstte **"Önizleme ambalajı"** seçici var; varsayılan,
+  çekimi olan en küçük ambalaj. Örnek renk de katalogdaki ilk ÜRÜNDEN geliyor
+  (palet önizlemesi seriyi bilmek zorunda).
+- **Palet artık hex değil STÜDYO KARELERİ diziyor:** `PaletteEntry.src` +
+  `renderLayout({ paletteImages })`; kaynak `renkStudyo.colorImages({seriesId})` →
+  `db.listColorObjectImages` (renk başına tek kare, `studyo` rolü tercihli, yalnız
+  kendi barındırdıklarımız — dış adresli görsel canvas'ı kirletir). Görseli olan
+  renk varsa palet yalnız onlardan kurulur; hiçbirinde yoksa hex'e düşer.
+- **Kolon sayısı otomatik** (`columns: 0` → `paletteColumns(n, w, h)`, 5 test):
+  hücreler kareye yakın kalır, hepsi tek kareye sığar. Palet kurma mantığı
+  `buildPalette` yardımcısında — pazarlama sekmesi ve editör aynı listeyi kuruyor.
+- 1065 test.
+
 ## Açık işler / sırada ne var (takım denetimi: 15.07.2026, kanıtlı liste todo.md sonunda)
 Sağlık: `pnpm check` 0 hata, 74/74 test geçiyor, kod içi TODO/FIXME borcu yok.
 
