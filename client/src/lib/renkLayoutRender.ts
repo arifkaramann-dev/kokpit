@@ -11,6 +11,7 @@ import {
   resolveText,
   type ImageSource,
   paletteColumns,
+  upperText,
   type PaletteEntry,
   type PaletteLayer,
   type TemplateLayout,
@@ -229,7 +230,7 @@ function drawPalette(
     }
 
     if (!layer.showCode) continue;
-    const code = (e.code ?? "").toLocaleUpperCase("tr");
+    const code = upperText(e.code ?? "");
     if (!code) continue;
     ctx.fillStyle = layer.labelColor;
     ctx.textAlign = "center";

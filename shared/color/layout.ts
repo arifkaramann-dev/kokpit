@@ -287,10 +287,35 @@ export function tidy(text: string): string {
   return text.replace(/\s{2,}/g, " ").trim();
 }
 
+/** Türkçeye özgü harfler — metnin gerçekten Türkçe yazıldığının işareti. */
+const TURKISH_LETTERS = /[çğıöşüÇĞİÖŞÜ]/;
+
+/**
+ * Büyük harfe çevirir — Türkçe kuralı YALNIZ gerçekten Türkçe yazılmış metinde.
+ *
+ * ── Sorun ─────────────────────────────────────────────────────────────────
+ * Katalogdaki renk adlarının bir kısmı Türkçe harf kullanmadan yazılmış:
+ * "Kirmizi", "Denizmavisi", "Acikmavi". Türkçe büyütme kuralı `i` harfini
+ * `İ` yapar, dolayısıyla kartlarda **KİRMİZİ**, **DENİZMAVİSİ** yazıyordu.
+ * Müşteriye giden görselde yanlış yazılmış ürün adı.
+ *
+ * ── Kural ─────────────────────────────────────────────────────────────────
+ * Metinde Türkçeye özgü bir harf varsa (ç ğ ı ö ş ü İ) düzgün yazılmış
+ * demektir; Türkçe kuralı uygulanır ("Fuşya" → FUŞYA, "Kırmızı" → KIRMIZI).
+ * Yoksa değişmez kural: "Kirmizi" → KIRMIZI.
+ *
+ * Doğru düzeltme elbette katalogdaki adı "Kırmızı" diye yazmak; ama yanlış
+ * yazılmış veriyi görselde daha da bozmak yerine, elimizdeki en makul hâlini
+ * basıyoruz. Düzgün yazılmış ad hiçbir şey kaybetmiyor.
+ */
+export function upperText(text: string): string {
+  return TURKISH_LETTERS.test(text) ? text.toLocaleUpperCase("tr") : text.toUpperCase();
+}
+
 /** Metni son hâline getirir: yer tutucular + dönüşüm + boşluk temizliği. */
 export function resolveText(layer: TextLayer, values: TokenValues): string {
   const filled = tidy(fillTokens(layer.text, values));
-  return layer.transform === "upper" ? filled.toLocaleUpperCase("tr") : filled;
+  return layer.transform === "upper" ? upperText(filled) : filled;
 }
 
 /** Katman kutusunu piksele çevirir. */
