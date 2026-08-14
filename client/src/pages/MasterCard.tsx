@@ -101,7 +101,7 @@ export default function MasterCard() {
             {identity.color?.name ?? "—"} · {identity.family ?? "—"} · {identity.packaging?.name ?? "—"}
           </h1>
           <p className="font-mono text-xs text-muted-foreground">
-            {identity.color?.displayCode ? `${identity.color.displayCode} · ` : ""}
+            {identity.colorCode ? `${identity.colorCode} · ` : ""}
             {master.internalSku}
           </p>
         </div>
@@ -172,14 +172,16 @@ export default function MasterCard() {
               }
             />
             <Field label="Hazırlık" value={master.readiness === "r2u" ? "Kullanıma hazır" : "Konsantre"} />
+            {/* Kod bu ÜRÜNÜN serisiyle birleşiyor: aynı renk CANDY'de CND1008,
+                METEOR'da MTR1008. Renk kaydında yalnız numara duruyor. */}
             <Field
               label="Renk kodu"
-              value={identity.color?.displayCode ?? null}
+              value={identity.colorCode}
               mono
               hint={
-                identity.color?.displayCode
-                  ? undefined
-                  : "Tanımlar → Renkler'den ver ya da toplu üret"
+                identity.colorCode
+                  ? `renk no ${identity.color?.colorNo} + seri ön eki`
+                  : "renk numarası yok — Tanımlar → Renkler'den ver ya da toplu üret"
               }
             />
             <Field label="Temel kod" value={master.baseCode} mono />

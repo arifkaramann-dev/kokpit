@@ -23,6 +23,7 @@ import PackagingCost from "@/components/PackagingCost";
 import PackagingImages from "@/components/PackagingImages";
 import { trpc } from "@/lib/trpc";
 import { packagingImageUrl } from "@shared/color/packagingImage";
+import { formatColorCode, parseColorNo } from "@shared/colorCode";
 import { ImagePlus, Loader2, Pencil, Plus, Trash2, Wand2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -82,7 +83,7 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
   const [form, setForm] = useState({
     code: "",
     name: "",
-    displayCode: "",
+    colorNo: "",
     nameEn: "",
     hex: "#888888",
     seriesId: NONE,
@@ -109,16 +110,13 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
    * verdiğinde çakışırdı.
    */
   const [suggesting, setSuggesting] = useState(false);
-  const suggestColorCode = async () => {
+  const suggestColorNo = async () => {
     setSuggesting(true);
     try {
-      const r = await utils.katalog.nextColorCode.fetch({
-        colorId: editId,
-        seriesId: form.seriesId === NONE ? null : Number(form.seriesId),
-      });
-      setForm(f => ({ ...f, displayCode: r.code }));
+      const r = await utils.katalog.nextColorNo.fetch();
+      setForm(f => ({ ...f, colorNo: String(r.colorNo) }));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Kod üretilemedi");
+      toast.error(e instanceof Error ? e.message : "Numara üretilemedi");
     } finally {
       setSuggesting(false);
     }
@@ -130,11 +128,11 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
    * Katalogdaki onlarca rengi tek tek açıp kod yazmak saatlik bir iş; dolu
    * kodlara dokunulmadığı için tekrar çalıştırmak da güvenli.
    */
-  const assignCodes = trpc.katalog.assignColorCodes.useMutation({
+  const assignCodes = trpc.katalog.assignColorNumbers.useMutation({
     onSuccess: r => {
       if (!r.dryRun) {
         utils.katalog.dimensions.invalidate();
-        toast.success(`${r.assigned} renge katalog kodu verildi`);
+        toast.success(`${r.assigned} renge numara verildi`);
       }
     },
     onError: e => toast.error(e.message, { duration: 9000 }),
@@ -143,17 +141,17 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
   const runAssignCodes = async () => {
     const preview = await assignCodes.mutateAsync({ dryRun: true });
     if (!preview.plan.length) {
-      toast.message("Kodu olmayan renk yok");
+      toast.message("Numarası olmayan renk yok");
       return;
     }
     const ornek = preview.plan
       .slice(0, 5)
-      .map(p => `${p.code} — ${p.name}`)
+      .map(p => `${p.colorNo} — ${p.name}`)
       .join("\n");
     if (
       await confirm({
-        title: "Katalog kodu üret",
-        description: `${preview.plan.length} renge kod verilecek. Dolu kodlara dokunulmaz.\n\n${ornek}${
+        title: "Renk numarası üret",
+        description: `${preview.plan.length} renge numara verilecek. Dolu numaralara dokunulmaz.\n\n${ornek}${
           preview.plan.length > 5 ? `\n… ve ${preview.plan.length - 5} tane daha` : ""
         }`,
         confirmText: "Üret",
@@ -173,6 +171,8 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
 
   const rows = (k: Kind) => (dims?.[k] ?? []) as Record<string, unknown>[];
   const seriesName = new Map((series ?? []).map(s => [s.id, s.name]));
+  /** Örnek kodu göstermek için serilerin ön ekleri. */
+  const seriesPrefixes = (series ?? []).map(s => s.prefix).filter(Boolean) as string[];
   const materialName = new Map((materials ?? []).map(m => [m.id, m.name]));
 
   function openNew(k: Kind) {
@@ -181,7 +181,7 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
     setForm({
       code: "",
       name: "",
-      displayCode: "",
+      colorNo: "",
       nameEn: "",
       hex: "#888888",
       seriesId: NONE,
@@ -199,7 +199,7 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
     setForm({
       code: String(row.code ?? ""),
       name: String(row.name ?? ""),
-      displayCode: (row.displayCode as string) ?? "",
+      colorNo: row.colorNo != null ? String(row.colorNo) : "",
       nameEn: (row.nameEn as string) ?? "",
       hex: (row.hex as string) ?? "#888888",
       seriesId: row.seriesId != null ? String(row.seriesId) : NONE,
@@ -219,7 +219,7 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
       code: form.code.trim(),
       name: form.name.trim(),
       nameEn: kind === "colors" ? form.nameEn.trim() || null : undefined,
-      displayCode: kind === "colors" ? form.displayCode.trim() || null : undefined,
+      colorNo: kind === "colors" ? parseColorNo(form.colorNo) : undefined,
       hex: kind === "colors" ? form.hex : null,
       seriesId: form.seriesId === NONE ? null : Number(form.seriesId),
       volumeMl: kind === "packagings" ? parseFloat(form.volumeMl) || 0 : undefined,
@@ -287,7 +287,7 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
                     <tr>
                       {k === "packagings" && <th className="p-2 text-left">Görsel</th>}
                       <th className="p-2 text-left">Ad</th>
-                      {k === "colors" && <th className="p-2 text-left">Katalog kodu</th>}
+                      {k === "colors" && <th className="p-2 text-left">Renk no</th>}
                       <th className="p-2 text-left">Kod</th>
                       {k === "colors" && <th className="p-2 text-left">Seri</th>}
                       {k === "packagings" && <th className="p-2 text-right">Hacim (ml)</th>}
@@ -325,12 +325,24 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
                         </td>
                         {k === "colors" && (
                           <td className="p-2 font-mono text-xs">
-                            {row.displayCode ? (
-                              String(row.displayCode)
+                            {row.colorNo != null ? (
+                              <>
+                                {String(row.colorNo)}
+                                {/* Kodun tamamı üründe oluşuyor; kullanıcı
+                                    numaranın karta nasıl basılacağını burada
+                                    görmeli. */}
+                                <span className="ml-1.5 text-muted-foreground">
+                                  {seriesPrefixes
+                                    .map(p => formatColorCode(p, row.colorNo as number))
+                                    .filter(Boolean)
+                                    .slice(0, 2)
+                                    .join(" / ")}
+                                </span>
+                              </>
                             ) : (
                               <span
                                 className="text-amber-600"
-                                title="Kodu olmayan rengin kartında rengin adı basılır"
+                                title="Numarası olmayan rengin kartında rengin adı basılır"
                               >
                                 —
                               </span>
@@ -483,26 +495,29 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
                     "Kod") karıştırılmasın diye hemen altında ve ayrı
                     açıklamayla duruyor. */}
                 <div className="space-y-1.5">
-                  <Label>Katalog kodu</Label>
+                  <Label>Renk numarası</Label>
                   <div className="flex gap-2">
                     <Input
-                      value={form.displayCode}
-                      onChange={e => setForm(f => ({ ...f, displayCode: e.target.value }))}
-                      className="font-mono uppercase"
-                      placeholder="CND1324"
+                      value={form.colorNo}
+                      onChange={e => setForm(f => ({ ...f, colorNo: e.target.value }))}
+                      className="font-mono"
+                      placeholder="1324"
+                      inputMode="numeric"
                     />
                     <Button
                       type="button"
                       variant="outline"
                       disabled={suggesting}
-                      onClick={suggestColorCode}
+                      onClick={suggestColorNo}
                     >
                       {suggesting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Üret"}
                     </Button>
                   </div>
                   <p className="text-[11px] text-muted-foreground">
-                    İlanda, etikette ve pazarlama karesinde basılan numara. "Üret" serinin ön
-                    ekinden sıradaki kodu önerir; beğenmezsen elle yazabilirsin.
+                    Katalog kodunun sayı kısmı. Ön ek ÜRÜNÜN serisinden gelir — aynı renk
+                    CANDY'de {formatColorCode("cnd", parseColorNo(form.colorNo) ?? 1324)},
+                    METEOR'da {formatColorCode("mtr", parseColorNo(form.colorNo) ?? 1324)} olarak
+                    basılır. "Üret" sıradaki boş numarayı verir; istediğini elle de yazabilirsin.
                   </p>
                 </div>
 
