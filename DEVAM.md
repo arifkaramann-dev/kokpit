@@ -438,6 +438,25 @@ ayrı, şablon ürettiğimiz sayfa ayrı olmalı"):** sekmeler artık `1 · Obje
   `buildPalette` yardımcısında — pazarlama sekmesi ve editör aynı listeyi kuruyor.
 - 1065 test.
 
+**KİRMİZİ hatası + kayıtlı kare yönetimi + görsel büyütme (canlı geri bildirim 3):**
+
+- **Kartlarda "KİRMİZİ" yazıyordu.** Katalogdaki adların bir kısmı Türkçe harf
+  kullanmadan yazılmış ("Kirmizi", "Denizmavisi") ve `toLocaleUpperCase("tr")`
+  `i`→`İ` yapıyor. Yeni `upperText` (shared/color/layout.ts, 5 test): metinde
+  Türkçeye özgü harf (ç ğ ı ö ş ü İ) varsa Türkçe kural, yoksa değişmez kural.
+  "Kirmizi"→KIRMIZI, "Kırmızı"→KIRMIZI, "Fuşya"→FUŞYA, "iğne"→İĞNE. Hem metin
+  katmanları hem palet kod etiketleri bunu kullanıyor.
+- **Kayıtlı kareler ayrıldı ve yönetilebilir oldu:** "Obje karesi" listesinde artık
+  yalnız obje kareleri var (rolü şablon kimliği olanlar ayıklandı — kartın içine
+  kart basmak istenen bir şey değil). Basılmış şablon kareleri sağda "Bu üründe
+  kayıtlı kareler" bölümünde: büyütülebiliyor ve **silinebiliyor**. Eski üretimden
+  kalan yanlış kutulu kare böyle görülüp temizleniyor (patronun "hâlâ sprey
+  geliyor" dediği kareler eski kayıtlardı; şerit yeni üretimde 100 ml şişeyi
+  kullanacağını yazıyor).
+- **Görsel büyütme:** üretilen kareler, kayıtlı kareler, obje kareleri ve ambalaj
+  şeridi tıklanınca tam boy açılıyor (indir düğmesiyle).
+- 1070 test.
+
 ## Açık işler / sırada ne var (takım denetimi: 15.07.2026, kanıtlı liste todo.md sonunda)
 Sağlık: `pnpm check` 0 hata, 74/74 test geçiyor, kod içi TODO/FIXME borcu yok.
 

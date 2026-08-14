@@ -2,6 +2,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -42,6 +48,7 @@ import {
   Image as ImageIcon,
   Layers,
   Loader2,
+  Maximize2,
   Search,
   Settings2,
   Sparkles,
@@ -826,6 +833,8 @@ function PazarlamaGorselleri({
   const [rendering, setRendering] = useState(false);
   /** Toplu üretim ilerlemesi — kaç varyant bitti. */
   const [batch, setBatch] = useState<{ done: number; total: number } | null>(null);
+  /** Büyütülen görsel — küçük resimde kutunun/yazının doğruluğu anlaşılmıyor. */
+  const [zoom, setZoom] = useState<{ src: string; label: string } | null>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
 
   // Üretim sekmesi yeni bir kare devrettiğinde bu sekme onunla açılır.
@@ -850,6 +859,27 @@ function PazarlamaGorselleri({
     { seriesId: master?.seriesId ?? 0 },
     { enabled: !!master },
   );
+
+  /**
+   * Kayıtlı görseller ikiye ayrılıyor: OBJE kareleri ve basılmış ŞABLON
+   * kareleri (rolü bir şablon kimliği olanlar).
+   *
+   * Hepsi tek listede duruyordu ve kullanıcı bir pazarlama karesini "obje
+   * karesi" olarak seçebiliyordu — kartın içine kart basmak. Ayrıca eski,
+   * yanlış üretilmiş kareler orada duruyor ama silmenin yolu yoktu.
+   */
+  const templateIds = useMemo(() => new Set(TEMPLATES.map(t => t.id)), []);
+  const objectSources = (saved ?? []).filter(i => i.hosted && !templateIds.has(i.role ?? ""));
+  const savedCards = (saved ?? []).filter(i => i.hosted && templateIds.has(i.role ?? ""));
+
+  const removeImage = trpc.katalog.deleteMasterImage.useMutation({
+    onSuccess: () => {
+      toast.success("Görsel silindi");
+      void utils.renkStudyo.masterImages.invalidate();
+      void utils.katalog.invalidate();
+    },
+    onError: e => toast.error(e.message),
+  });
 
   const layouts = useMemo(() => {
     const out: Record<string, TemplateLayout> = {};
@@ -1148,27 +1178,29 @@ function PazarlamaGorselleri({
               {/* Dış adresli görsel (pazaryerinden gelen) obje kaynağı olamaz:
                   canvas'tan piksel okuyoruz ve çapraz kaynak görsel canvas'ı
                   kirletiyor. Listelemek, tıklandığında anlaşılmaz bir güvenlik
-                  hatası vermek olurdu. */}
-              {(saved ?? [])
-                .filter(img => img.hosted)
-                .map(img => (
-                  <ObjeSecenegi
-                    key={img.id}
-                    src={img.url}
-                    label={img.role ?? "kayıtlı"}
-                    active={objectImage === img.url}
-                    onClick={() => {
-                      setObjectImage(img.url);
-                      setCards([]);
-                    }}
-                  />
-                ))}
+                  hatası vermek olurdu.
+
+                  Basılmış şablon kareleri de burada YOK: kartın içine kart
+                  basmak istenen bir şey değil. Onlar aşağıda ayrı listede. */}
+              {objectSources.map(img => (
+                <ObjeSecenegi
+                  key={img.id}
+                  src={img.url}
+                  label={img.role ?? "kayıtlı"}
+                  active={objectImage === img.url}
+                  onClick={() => {
+                    setObjectImage(img.url);
+                    setCards([]);
+                  }}
+                  onZoom={() => setZoom({ src: img.url, label: img.role ?? "kayıtlı" })}
+                />
+              ))}
             </div>
 
-            {masterId && !fresh && !(saved ?? []).filter(i => i.hosted).length && (
+            {masterId && !fresh && !objectSources.length && (
               <p className="text-xs text-muted-foreground">
-                Bu ürünün kullanılabilir kayıtlı görseli yok. Obje Üretimi sekmesinden
-                bir kare üret ya da elindeki fotoğrafı yükle.
+                Bu ürünün kullanılabilir obje karesi yok. Obje Üretimi sekmesinden bir
+                kare üret ya da elindeki fotoğrafı yükle.
               </p>
             )}
 
@@ -1198,7 +1230,22 @@ function PazarlamaGorselleri({
               kutuyla altı kare üretmek iki tıklamayı boşa harcamak demekti. */}
           {master && (
             <div className="flex items-center gap-2 rounded border p-2">
-              <span className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded border bg-white">
+              {/* Kutuya tıklayınca büyür: "şablon hangi kutuyu basacak"
+                  sorusunun cevabı 40 piksellik bir karede görünmüyor. */}
+              <button
+                type="button"
+                title="Büyüt"
+                disabled={!packInfo?.src && !packFallback}
+                onClick={() =>
+                  setZoom({
+                    src: packInfo?.src || packFallback!.src,
+                    label: `Ambalaj çekimi — ${packInfo?.name ?? ""}${
+                      packInfo?.src ? "" : " (yerleşik yedek)"
+                    }`,
+                  })
+                }
+                className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded border bg-white"
+              >
                 {packInfo?.src || packFallback ? (
                   <img
                     src={packInfo?.src || packFallback!.src}
@@ -1208,7 +1255,7 @@ function PazarlamaGorselleri({
                 ) : (
                   <AlertTriangle className="size-4 text-amber-600" />
                 )}
-              </span>
+              </button>
               <div className="min-w-0 flex-1 text-xs">
                 <div className="truncate font-medium">Ambalaj: {packInfo?.name ?? "—"}</div>
                 <div className="text-muted-foreground">
@@ -1369,13 +1416,65 @@ function PazarlamaGorselleri({
 
         <Card className="space-y-3 p-4">
           {!cards.length ? (
-            <div className="flex min-h-[420px] flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground">
-              <ImageIcon className="size-8" />
-              {!master
-                ? "Soldan bir ürün seç."
-                : !objectImage
-                  ? "Bir obje karesi seç ya da yükle."
-                  : "Şablonları seç ve “Görselleri üret”e bas."}
+            <div className="space-y-4">
+              <div className="flex min-h-[200px] flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground">
+                <ImageIcon className="size-8" />
+                {!master
+                  ? "Soldan bir ürün seç."
+                  : !objectImage
+                    ? "Bir obje karesi seç ya da yükle."
+                    : "Şablonları seç ve “Görselleri üret”e bas."}
+              </div>
+
+              {/* Bu ürüne DAHA ÖNCE kaydedilmiş kareler.
+                  Görünür olmaları şart: eski bir üretimden kalan yanlış kare
+                  (mesela yanlış kutulu ürün karesi) ürün kartında duruyor ve
+                  yenisini basana kadar kimse fark etmiyordu. Buradan büyütüp
+                  bakılabiliyor ve silinebiliyor. */}
+              {savedCards.length > 0 && (
+                <div className="space-y-2 border-t pt-3">
+                  <h2 className="text-sm font-medium">Bu üründe kayıtlı kareler</h2>
+                  <p className="text-xs text-muted-foreground">
+                    Daha önce kaydedilmiş şablon çıktıları. Yeniden ürettiğinde aynı
+                    şablonun karesi değişir; eskiyen ya da yanlış olanı buradan
+                    silebilirsin.
+                  </p>
+                  <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-4">
+                    {savedCards.map(img => (
+                      <div key={img.id} className="overflow-hidden rounded border">
+                        <button
+                          type="button"
+                          title="Büyüt"
+                          className="block w-full"
+                          onClick={() =>
+                            setZoom({ src: img.url, label: img.role ?? "kayıtlı kare" })
+                          }
+                        >
+                          <img
+                            src={img.url}
+                            alt={img.role ?? ""}
+                            className="aspect-square w-full bg-white object-contain"
+                          />
+                        </button>
+                        <div className="flex items-center justify-between gap-1 border-t p-1.5">
+                          <span className="truncate text-xs">
+                            {TEMPLATES.find(t => t.id === img.role)?.label ?? img.role}
+                          </span>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="size-6 text-destructive"
+                            disabled={removeImage.isPending}
+                            onClick={() => removeImage.mutate({ id: img.id })}
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <>
@@ -1410,7 +1509,14 @@ function PazarlamaGorselleri({
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {cards.map(c => (
                   <div key={c.id} className="overflow-hidden rounded border">
-                    <img src={c.data} alt={c.label} className="w-full bg-white object-contain" />
+                    <button
+                      type="button"
+                      className="block w-full"
+                      title="Büyüt"
+                      onClick={() => setZoom({ src: c.data, label: c.label })}
+                    >
+                      <img src={c.data} alt={c.label} className="w-full bg-white object-contain" />
+                    </button>
                     <div className="flex items-center justify-between gap-2 border-t p-2">
                       <span className="truncate text-xs font-medium">{c.label}</span>
                       <div className="flex items-center gap-1">
@@ -1450,7 +1556,56 @@ function PazarlamaGorselleri({
           )}
         </Card>
       </div>
+
+      <GorselPenceresi view={zoom} onClose={() => setZoom(null)} />
     </div>
+  );
+}
+
+/**
+ * Görsel büyütme penceresi.
+ *
+ * Küçük resme bakarak "kutu doğru mu, yazı doğru mu" anlaşılmıyordu; kareyi
+ * indirip açmak gerekiyordu. Karta tıklayınca tam boy açılıyor.
+ */
+function GorselPenceresi({
+  view,
+  onClose,
+}: {
+  view: { src: string; label: string } | null;
+  onClose: () => void;
+}) {
+  return (
+    <Dialog open={!!view} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="max-w-4xl">
+        <DialogHeader>
+          <DialogTitle className="text-sm">{view?.label}</DialogTitle>
+        </DialogHeader>
+        {view && (
+          <div className="space-y-3">
+            <img
+              src={view.src}
+              alt={view.label}
+              className="max-h-[70vh] w-full rounded border bg-white object-contain"
+            />
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  const a = document.createElement("a");
+                  a.href = view.src;
+                  a.download = `${slug(view.label) || "gorsel"}.png`;
+                  a.click();
+                }}
+              >
+                <Download className="mr-2 size-4" /> İndir
+              </Button>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1460,26 +1615,37 @@ function ObjeSecenegi({
   label,
   active,
   onClick,
+  onZoom,
 }: {
   src: string;
   label: string;
   active: boolean;
   onClick: () => void;
+  onZoom?: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={label}
-      className={`overflow-hidden rounded border bg-white p-0.5 ${
+    <div
+      className={`relative overflow-hidden rounded border bg-white p-0.5 ${
         active ? "ring-2 ring-primary" : "hover:bg-accent"
       }`}
     >
-      <img src={src} alt={label} className="size-16 object-contain" />
-      <span className="block max-w-16 truncate px-0.5 pb-0.5 text-[10px] text-muted-foreground">
-        {label}
-      </span>
-    </button>
+      <button type="button" onClick={onClick} title={`${label} — seç`}>
+        <img src={src} alt={label} className="size-16 object-contain" />
+        <span className="block max-w-16 truncate px-0.5 pb-0.5 text-[10px] text-muted-foreground">
+          {label}
+        </span>
+      </button>
+      {onZoom && (
+        <button
+          type="button"
+          title="Büyüt"
+          onClick={onZoom}
+          className="absolute right-0.5 top-0.5 rounded bg-background/80 p-0.5 opacity-60 shadow transition-opacity hover:opacity-100"
+        >
+          <Maximize2 className="size-3" />
+        </button>
+      )}
+    </div>
   );
 }
 
