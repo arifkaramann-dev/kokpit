@@ -882,6 +882,23 @@ export const colors = mysqlTable(
     code: varchar("code", { length: 64 }).notNull(),
     name: varchar("name", { length: 128 }).notNull(),
     /**
+     * KATALOG KODU — müşteriye gösterilen renk kodu. "CND1324", "MTR0107".
+     *
+     * ── Neden `code` yetmiyor ────────────────────────────────────────────
+     * `code` bir SLUG'dır ("fusya", "kirmizi") ve internal SKU'nun içine
+     * gömülüdür (`aoccndfusyaab301`). Değiştirilirse üretilmiş bütün ürün
+     * kodları anlamını yitirir — yani `code` teknik bir kimlik, satış kodu
+     * değil. Kartta `{code}` basılınca "KIRMIZI" çıkıyordu: rengin adının
+     * tekrarı, kod değil.
+     *
+     * Katalog kodu ise insanın verdiği, seri ön ekiyle üretilen kısa kod:
+     * ilanda, etikette, pazarlama karesinde ve müşteri yazışmasında geçen
+     * numara budur. NULL olabilir (henüz kod verilmemiş renk); tekillik
+     * şirket bazında korunur — MySQL NULL'ları birbirinden farklı saydığı
+     * için kodsuz renkler bu indekse takılmaz.
+     */
+    displayCode: varchar("displayCode", { length: 32 }),
+    /**
      * Rengin İngilizce/uluslararası adı — satış adında kullanılır.
      * "MAGENTA (FUŞYA)" gibi. Boşsa yalnız Türkçe ad yazılır.
      */
@@ -897,7 +914,13 @@ export const colors = mysqlTable(
     isActive: tinyint("isActive").notNull().default(1),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
-  t => [unique("colors_company_code_uq").on(t.companyId, t.code), index("colors_series_idx").on(t.seriesId)],
+  t => [
+    unique("colors_company_code_uq").on(t.companyId, t.code),
+    // Katalog kodu mükerrer olamaz: iki renge aynı kodu vermek ilanda ve
+    // depoda yanlış ürünün gönderilmesi demek.
+    unique("colors_company_displayCode_uq").on(t.companyId, t.displayCode),
+    index("colors_series_idx").on(t.seriesId),
+  ],
 );
 
 export type Color = typeof colors.$inferSelect;

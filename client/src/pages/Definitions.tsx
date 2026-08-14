@@ -23,7 +23,7 @@ import PackagingCost from "@/components/PackagingCost";
 import PackagingImages from "@/components/PackagingImages";
 import { trpc } from "@/lib/trpc";
 import { packagingImageUrl } from "@shared/color/packagingImage";
-import { ImagePlus, Pencil, Plus, Trash2 } from "lucide-react";
+import { ImagePlus, Loader2, Pencil, Plus, Trash2, Wand2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
@@ -82,6 +82,7 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
   const [form, setForm] = useState({
     code: "",
     name: "",
+    displayCode: "",
     nameEn: "",
     hex: "#888888",
     seriesId: NONE,
@@ -99,6 +100,68 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
     },
     onError: e => toast.error(e.message, { duration: 8000 }),
   });
+
+  /**
+   * Katalog kodu önerisi — form açıkken tek tuşla.
+   *
+   * Sunucudan isteniyor çünkü "sıradaki numara" bütün renklerin koduna bakmayı
+   * gerektiriyor; istemcideki listeden hesaplamak, başka biri aynı anda kod
+   * verdiğinde çakışırdı.
+   */
+  const [suggesting, setSuggesting] = useState(false);
+  const suggestColorCode = async () => {
+    setSuggesting(true);
+    try {
+      const r = await utils.katalog.nextColorCode.fetch({
+        colorId: editId,
+        seriesId: form.seriesId === NONE ? null : Number(form.seriesId),
+      });
+      setForm(f => ({ ...f, displayCode: r.code }));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Kod üretilemedi");
+    } finally {
+      setSuggesting(false);
+    }
+  };
+
+  /**
+   * Kodu olmayan tüm renklere toplu kod verir — önce ne olacağını gösterir.
+   *
+   * Katalogdaki onlarca rengi tek tek açıp kod yazmak saatlik bir iş; dolu
+   * kodlara dokunulmadığı için tekrar çalıştırmak da güvenli.
+   */
+  const assignCodes = trpc.katalog.assignColorCodes.useMutation({
+    onSuccess: r => {
+      if (!r.dryRun) {
+        utils.katalog.dimensions.invalidate();
+        toast.success(`${r.assigned} renge katalog kodu verildi`);
+      }
+    },
+    onError: e => toast.error(e.message, { duration: 9000 }),
+  });
+
+  const runAssignCodes = async () => {
+    const preview = await assignCodes.mutateAsync({ dryRun: true });
+    if (!preview.plan.length) {
+      toast.message("Kodu olmayan renk yok");
+      return;
+    }
+    const ornek = preview.plan
+      .slice(0, 5)
+      .map(p => `${p.code} — ${p.name}`)
+      .join("\n");
+    if (
+      await confirm({
+        title: "Katalog kodu üret",
+        description: `${preview.plan.length} renge kod verilecek. Dolu kodlara dokunulmaz.\n\n${ornek}${
+          preview.plan.length > 5 ? `\n… ve ${preview.plan.length - 5} tane daha` : ""
+        }`,
+        confirmText: "Üret",
+      })
+    ) {
+      await assignCodes.mutateAsync({ dryRun: false });
+    }
+  };
 
   const remove = trpc.katalog.deleteDimension.useMutation({
     onSuccess: () => {
@@ -118,6 +181,7 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
     setForm({
       code: "",
       name: "",
+      displayCode: "",
       nameEn: "",
       hex: "#888888",
       seriesId: NONE,
@@ -135,6 +199,7 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
     setForm({
       code: String(row.code ?? ""),
       name: String(row.name ?? ""),
+      displayCode: (row.displayCode as string) ?? "",
       nameEn: (row.nameEn as string) ?? "",
       hex: (row.hex as string) ?? "#888888",
       seriesId: row.seriesId != null ? String(row.seriesId) : NONE,
@@ -154,6 +219,7 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
       code: form.code.trim(),
       name: form.name.trim(),
       nameEn: kind === "colors" ? form.nameEn.trim() || null : undefined,
+      displayCode: kind === "colors" ? form.displayCode.trim() || null : undefined,
       hex: kind === "colors" ? form.hex : null,
       seriesId: form.seriesId === NONE ? null : Number(form.seriesId),
       volumeMl: kind === "packagings" ? parseFloat(form.volumeMl) || 0 : undefined,
@@ -194,6 +260,21 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
           <TabsContent key={k} value={k} className="space-y-3 pt-3">
             <Card className="flex flex-wrap items-center gap-3 p-4">
               <p className="flex-1 text-sm text-muted-foreground">{KIND_META[k].desc}</p>
+              {k === "colors" && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={assignCodes.isPending}
+                  onClick={() => void runAssignCodes()}
+                >
+                  {assignCodes.isPending ? (
+                    <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Wand2 className="mr-1 h-4 w-4" />
+                  )}
+                  Katalog kodu üret
+                </Button>
+              )}
               <Button size="sm" onClick={() => openNew(k)}>
                 <Plus className="mr-1 h-4 w-4" /> Yeni
               </Button>
@@ -206,6 +287,7 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
                     <tr>
                       {k === "packagings" && <th className="p-2 text-left">Görsel</th>}
                       <th className="p-2 text-left">Ad</th>
+                      {k === "colors" && <th className="p-2 text-left">Katalog kodu</th>}
                       <th className="p-2 text-left">Kod</th>
                       {k === "colors" && <th className="p-2 text-left">Seri</th>}
                       {k === "packagings" && <th className="p-2 text-right">Hacim (ml)</th>}
@@ -241,6 +323,20 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
                             {String(row.name)}
                           </span>
                         </td>
+                        {k === "colors" && (
+                          <td className="p-2 font-mono text-xs">
+                            {row.displayCode ? (
+                              String(row.displayCode)
+                            ) : (
+                              <span
+                                className="text-amber-600"
+                                title="Kodu olmayan rengin kartında rengin adı basılır"
+                              >
+                                —
+                              </span>
+                            )}
+                          </td>
+                        )}
                         <td className="p-2 font-mono text-xs text-muted-foreground">
                           {String(row.code)}
                         </td>
@@ -308,7 +404,7 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
                     ))}
                     {rows(k).length === 0 && (
                       <tr>
-                        <td colSpan={7} className="p-6 text-center text-sm text-muted-foreground">
+                        <td colSpan={9} className="p-6 text-center text-sm text-muted-foreground">
                           Henüz tanım yok — Ürünler sayfasındaki "Boyutları Tohumla" ile mevcut
                           sözlüğünüzden otomatik kurabilirsiniz.
                         </td>
@@ -383,6 +479,33 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
 
             {kind === "colors" && (
               <>
+                {/* Katalog kodu — müşteriye giden numara. Slug'la (yukarıdaki
+                    "Kod") karıştırılmasın diye hemen altında ve ayrı
+                    açıklamayla duruyor. */}
+                <div className="space-y-1.5">
+                  <Label>Katalog kodu</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      value={form.displayCode}
+                      onChange={e => setForm(f => ({ ...f, displayCode: e.target.value }))}
+                      className="font-mono uppercase"
+                      placeholder="CND1324"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={suggesting}
+                      onClick={suggestColorCode}
+                    >
+                      {suggesting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Üret"}
+                    </Button>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    İlanda, etikette ve pazarlama karesinde basılan numara. "Üret" serinin ön
+                    ekinden sıradaki kodu önerir; beğenmezsen elle yazabilirsin.
+                  </p>
+                </div>
+
                 <div className="space-y-1.5">
                   <Label>Uluslararası ad</Label>
                   <Input

@@ -100,7 +100,10 @@ export default function MasterCard() {
           <h1 className="truncate text-xl font-bold tracking-tight">
             {identity.color?.name ?? "—"} · {identity.family ?? "—"} · {identity.packaging?.name ?? "—"}
           </h1>
-          <p className="font-mono text-xs text-muted-foreground">{master.internalSku}</p>
+          <p className="font-mono text-xs text-muted-foreground">
+            {identity.color?.displayCode ? `${identity.color.displayCode} · ` : ""}
+            {master.internalSku}
+          </p>
         </div>
         {master.readiness === "r2u" && <Badge variant="secondary">Kullanıma hazır</Badge>}
         <Badge variant={master.status === "aktif" ? "default" : "outline"}>{master.status}</Badge>
@@ -142,20 +145,17 @@ export default function MasterCard() {
         <TabsContent value="kunye" className="pt-3">
           <Card className="grid grid-cols-2 gap-4 p-5 md:grid-cols-3">
             <Field label="Seri" value={identity.series} />
-            {/* Rengin kimliği tek satırda: ad + kod + uluslararası ad + renk
-                kodu. Eskiden yalnız ad yazıyordu; ilanda ve müşteri
-                yazışmasında sorulan asıl bilgi (kod ve renk kodu) kartın
-                üstünde yoktu, Tanımlar'a gitmek gerekiyordu. */}
+            {/* Rengin kimliği: ad + uluslararası ad + hex. Katalog kodu
+                (CND1324) kendi alanında — ilanda ve müşteri yazışmasında
+                sorulan asıl numara o, dipnotta kaybolmamalı. */}
             <Field
               label="Renk"
               value={identity.color?.name ?? null}
               hex={identity.color?.hex ?? null}
               hint={
                 [
-                  identity.color?.code ? `kod: ${identity.color.code}` : null,
                   identity.color?.nameEn ?? null,
-                  identity.color?.hex ??
-                    "renk kodu yok — Renk Stüdyosu'nda obje karesinden ölçülüp yazılır",
+                  identity.color?.hex ?? "hex yok — Renk Stüdyosu ölçüp yazar",
                 ]
                   .filter(Boolean)
                   .join(" · ")
@@ -172,6 +172,16 @@ export default function MasterCard() {
               }
             />
             <Field label="Hazırlık" value={master.readiness === "r2u" ? "Kullanıma hazır" : "Konsantre"} />
+            <Field
+              label="Renk kodu"
+              value={identity.color?.displayCode ?? null}
+              mono
+              hint={
+                identity.color?.displayCode
+                  ? undefined
+                  : "Tanımlar → Renkler'den ver ya da toplu üret"
+              }
+            />
             <Field label="Temel kod" value={master.baseCode} mono />
             <Field label="Ürün kodu" value={master.internalSku} mono />
             <Field label="GTIN" value={master.gtin} mono />

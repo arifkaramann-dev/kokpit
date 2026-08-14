@@ -92,6 +92,8 @@ type MasterRow = {
 type ColorRow = {
   id: number;
   code: string;
+  /** Katalog kodu — "CND1324". Kartlarda ve künyede basılan numara. */
+  displayCode?: string | null;
   name: string;
   nameEn?: string | null;
   hex?: string | null;
@@ -159,7 +161,12 @@ function UrunSecici({
     return masters
       .filter(m => {
         const c = colorById.get(m.colorId);
-        const hay = [m.name, m.internalSku, c?.code, c?.name].filter(Boolean).join(" ").toLocaleLowerCase("tr");
+        // Katalog kodu da aranabilir olmalı: müşteri "CND1324 var mı" diye
+        // soruyor, ürünün adını değil kodu yazıyor.
+        const hay = [m.name, m.internalSku, c?.displayCode, c?.code, c?.name]
+          .filter(Boolean)
+          .join(" ")
+          .toLocaleLowerCase("tr");
         return hay.includes(q);
       })
       .slice(0, 200);
@@ -207,7 +214,7 @@ function UrunSecici({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm">{m.name || m.internalSku}</span>
                   <span className="block truncate text-xs text-muted-foreground">
-                    {[c?.code, c?.name, p?.name].filter(Boolean).join(" · ")}
+                    {[c?.displayCode || c?.code, c?.name, p?.name].filter(Boolean).join(" · ")}
                   </span>
                 </span>
                 {active && <Check className="size-4 shrink-0" />}
@@ -251,7 +258,9 @@ function buildPalette(opts: {
     const c = colorById.get(m.colorId);
     if (!c) continue;
     out.push({
-      code: c.code,
+      // Palet etiketi müşterinin ilanda göreceği kod olmalı; slug
+      // ("fusya") kimseye bir şey söylemiyor.
+      code: c.displayCode || c.code,
       name: c.name,
       hex: c.hex ?? null,
       src: bySrc.get(c.id) ?? null,
@@ -477,7 +486,8 @@ function ObjeUretimi({ onDevret }: { onDevret: (h: Handoff) => void }) {
 
             {color && (
               <p className="text-xs text-muted-foreground">
-                Renk üründen geliyor: <strong>{color.code}</strong> · {color.name}
+                Renk üründen geliyor:{" "}
+                <strong>{color.displayCode || color.code}</strong> · {color.name}
                 {color.nameEn ? ` · ${color.nameEn}` : ""}
                 {color.finish ? ` · ${color.finish}` : ""}
                 {color.hex ? (
@@ -1062,7 +1072,7 @@ function PazarlamaGorselleri({
       const hex = await ensureColorHex();
 
       const paint: PaintInfo = {
-        code: color?.code,
+        code: color?.displayCode || color?.code,
         nameTr: color?.name,
         nameEn: color?.nameEn,
         seriesCode: SERIES_CODE_BY_FINISH[color?.finish ?? "duz"] ?? "VS",
@@ -1135,7 +1145,7 @@ function PazarlamaGorselleri({
           layouts,
           only: picked,
           paint: {
-            code: color?.code,
+            code: color?.displayCode || color?.code,
             nameTr: color?.name,
             nameEn: color?.nameEn,
             seriesCode: SERIES_CODE_BY_FINISH[color?.finish ?? "duz"] ?? "VS",
@@ -1205,8 +1215,16 @@ function PazarlamaGorselleri({
             {color && (
               <div className="space-y-1 text-xs text-muted-foreground">
                 <p>
-                  Renk: <strong>{color.code}</strong> · {color.name}
+                  {/* Kartlara basılan kod: katalog kodu (CND1324). Yoksa slug
+                      basılıyor ve kartta rengin adı iki kez yazılmış gibi
+                      görünüyor — kullanıcı bunu ÜRETMEDEN önce görmeli. */}
+                  Renk: <strong>{color.displayCode || color.code}</strong> · {color.name}
                   {color.nameEn ? ` · ${color.nameEn}` : ""}
+                  {!color.displayCode && (
+                    <span className="text-amber-600">
+                      {" · "}katalog kodu yok — kartta rengin adı basılıyor (Tanımlar → Renkler)
+                    </span>
+                  )}
                   {color.hex ? (
                     <>
                       {" · "}
@@ -2089,7 +2107,7 @@ function SablonlarSekmesi() {
   }, [packImages, packagings, dims?.seriesPackagings, previewPackaging]);
 
   const paint: PaintInfo = {
-    code: örnek?.code ?? "VC1282",
+    code: örnek?.displayCode || örnek?.code || "CND1324",
     nameTr: örnek?.name ?? "FUŞYA",
     nameEn: örnek?.nameEn ?? "FUCHSIA",
     seriesCode: SERIES_CODE_BY_FINISH[örnek?.finish ?? "candy"] ?? "VC",
