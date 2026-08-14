@@ -372,6 +372,13 @@
       "when": 1786572517103,
       "tag": "0052_ancient_squadron_sinister",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "5",
+      "when": 1786681729640,
+      "tag": "0053_fancy_daimon_hellstrom",
+      "breakpoints": true
     }
   ]
 }
