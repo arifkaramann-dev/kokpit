@@ -261,13 +261,84 @@ export function usesPalette(layout: TemplateLayout): boolean {
   return layout.layers.some(l => l.type === "palette" && l.visible);
 }
 
+/**
+ * Filigran — markanın kareye giydirilmesi.
+ *
+ * ── Neden katman değil ────────────────────────────────────────────────────
+ * Filigran bir katman olsaydı kullanıcı onu silebilir, altta bırakabilir ya
+ * da yerleşimi düzenlerken kazara kapatabilirdi; asıl işi (kareyi başkasının
+ * kullanamaması) tam da "her zaman ve en üstte" olmasına bağlı. Bu yüzden
+ * yerleşimin bir ÖZELLİĞİ: katman listesinden bağımsız, çizimin son adımı.
+ *
+ * `tint: "paint"` markayı ÜRÜNÜN RENGİNE boyar — kare rengin kendisiyle
+ * imzalanmış olur; koyu bir logo, koyu bir karede zaten görünmezdi.
+ */
+export type WatermarkMode = "tile" | "center";
+export type WatermarkTint = "ink" | "light" | "paint";
+
+export type Watermark = {
+  enabled: boolean;
+  /** "tile" = çapraz döşeme (kırpılamaz), "center" = tek büyük damga. */
+  mode: WatermarkMode;
+  /** Damganın genişliği — kare genişliğinin oranı. */
+  scale: number;
+  opacity: number;
+  tint: WatermarkTint;
+  /** Döşemenin eğimi (derece). Düz döşeme kolayca kırpılıp temizlenebiliyor. */
+  angle: number;
+};
+
+/**
+ * Fabrika filigranı.
+ *
+ * Soluk (%8) ve döşeli: görseli satmaya devam edecek kadar görünmez, kopyalayıp
+ * kendi ilanında kullanmaya kalkanı engelleyecek kadar her yerde. Tek köşedeki
+ * bir damga kırpılıp atılabilir; çapraz döşeme atılamaz.
+ */
+export const DEFAULT_WATERMARK: Watermark = {
+  enabled: true,
+  mode: "tile",
+  scale: 0.24,
+  opacity: 0.08,
+  tint: "ink",
+  angle: -30,
+};
+
 export type TemplateLayout = {
   /** Kare ölçüsü — piksel. */
   width: number;
   height: number;
   background: string;
   layers: Layer[];
+  /**
+   * Marka filigranı. TANIMSIZ = "fabrika ayarı", kapalı DEĞİL.
+   *
+   * Kayıtlı yerleşimler bu alan doğmadan önce veritabanına yazıldı; tanımsızı
+   * "kapalı" saymak, düzenlenmiş şablonları sessizce korumasız bırakırdı.
+   */
+  watermark?: Watermark;
 };
+
+/**
+ * Karede çizilecek filigran — yoksa null.
+ *
+ * ÇIPLAK şablonda (pazaryeri ana görseli) her zaman null: Amazon ve Trendyol
+ * ana görselde filigran kabul etmiyor, kullanıcı açmış olsa bile ilan
+ * reddedilirdi. Kural burada, tek yerde: her çağıran ayrı ayrı hatırlamasın.
+ */
+export function resolveWatermark(
+  layout: TemplateLayout,
+  opts: { bare?: boolean } = {},
+): Watermark | null {
+  if (opts.bare) return null;
+  const w = layout.watermark ?? DEFAULT_WATERMARK;
+  if (!w.enabled) return null;
+  return {
+    ...w,
+    scale: Math.max(0.05, Math.min(1, w.scale)),
+    opacity: Math.max(0, Math.min(1, w.opacity)),
+  };
+}
 
 /**
  * Yer tutucuları doldurur.

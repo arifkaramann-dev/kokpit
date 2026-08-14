@@ -13,10 +13,12 @@ import { renderCoat } from "@shared/color/candy";
 import { hexToLab, type Lab } from "@shared/color/color";
 import {
   assetIdOf,
+  resolveWatermark,
   usesPalette,
   type ImageSource,
   type TemplateLayout,
   type TokenValues,
+  type Watermark,
 } from "@shared/color/layout";
 import { defaultLayout } from "@shared/color/layoutDefaults";
 import type { Raster } from "@shared/color/recolor";
@@ -173,6 +175,13 @@ export async function buildCards({
   const needed = new Set<ImageSource>();
   for (const layout of resolved) usedSources(layout).forEach(s => needed.add(s));
 
+  // Filigran da logoyu kullanıyor ama bir KATMAN değil; `usedSources` onu
+  // göremez. Logosuz kalırsa kare sessizce korumasız çıkardı.
+  const watermarks: Array<Watermark | null> = wanted.map((t, i) =>
+    resolveWatermark(resolved[i], { bare: t.bare }),
+  );
+  if (watermarks.some(Boolean)) needed.add("logo");
+
   const obj = await loadImageSrc(objectImage);
 
   // Ambalaj ve logo isteğe bağlı: yüklenemezse kart o katman olmadan çizilir,
@@ -273,6 +282,7 @@ export async function buildCards({
         paintHex: paint.hex,
         palette: paint.palette,
         paletteImages,
+        watermark: watermarks[i],
       }),
     });
   }

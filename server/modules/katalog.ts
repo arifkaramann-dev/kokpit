@@ -3021,7 +3021,21 @@ export const katalogRouter = router({
       );
       const usedUseCases = new Set((listings as { useCaseId: number }[]).map(l => l.useCaseId));
 
-      const colorById = new Map((colors as { id: number; name: string; hex: string | null }[]).map(c => [c.id, c]));
+      // Künye rengin KİMLİĞİNİ yazıyor: kod, Türkçe ad, uluslararası ad ve renk
+      // kodu. Eskiden yalnız ad dönüyordu; kart "Fuşya" deyip renk kodunu
+      // saklıyordu, oysa ilanda ve müşteri yazışmasında sorulan tam olarak o.
+      const colorById = new Map(
+        (
+          colors as {
+            id: number;
+            code: string;
+            name: string;
+            nameEn: string | null;
+            hex: string | null;
+            finish: string | null;
+          }[]
+        ).map(c => [c.id, c]),
+      );
       const packagingRow = (packagings as Record<string, unknown>[]).find(
         p => p.id === master.packagingId,
       );

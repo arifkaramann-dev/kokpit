@@ -76,7 +76,7 @@ export type PaintInfo = {
 
 export const BRAND = {
   name: 'ART OF COLOUR',
-  site: 'artofcolour.com',
+  site: 'artofcolour.com.tr',
   font: 'Goldman',
   logoDark: '/renk/brand/logo-siyah.png',
   logoLight: '/renk/brand/logo-beyaz.png',
