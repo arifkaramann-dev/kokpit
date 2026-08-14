@@ -16,6 +16,7 @@ import {
   type PaletteLayer,
   type TemplateLayout,
   type TokenValues,
+  type Watermark,
 } from "@shared/color/layout";
 import { ensureBrandFont, forceWhiteBackground } from "./renkTemplates";
 
@@ -31,6 +32,12 @@ export type RenderLayoutInput = {
   palette?: PaletteEntry[];
   /** Palet karelerinin yüklenmiş görselleri, renk KODUNA göre. */
   paletteImages?: Record<string, HTMLImageElement | HTMLCanvasElement>;
+  /**
+   * Marka filigranı — `resolveWatermark` ile çözülmüş hâli. null/undefined =
+   * çizilmez. Çözümü çağıran yapıyor çünkü "çıplak şablon" bilgisi (pazaryeri
+   * ana görseli) şablon tanımında, yerleşimde değil.
+   */
+  watermark?: Watermark | null;
 };
 
 function contain(sw: number, sh: number, bw: number, bh: number) {
@@ -242,6 +249,83 @@ function drawPalette(
   }
 }
 
+/**
+ * Logoyu tek renge boyar — alfa kanalını koruyarak.
+ *
+ * Marka logosu koyu bir PNG; koyu bir karenin ya da rengin üstünde filigran
+ * olarak görünmezdi. `source-in` bileşimi logonun ŞEKLİNİ maske olarak
+ * kullanıp içini istenen renkle dolduruyor: aynı dosya hem açık hem koyu
+ * zeminde, hem de ürünün kendi renginde kullanılabiliyor.
+ */
+function tintImage(
+  img: HTMLCanvasElement | HTMLImageElement,
+  color: string,
+  targetW: number,
+): HTMLCanvasElement {
+  const { w: sw, h: sh } = sizeOf(img);
+  const scale = sw > 0 ? targetW / sw : 1;
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(targetW));
+  c.height = Math.max(1, Math.round(sh * scale));
+  const ctx = c.getContext("2d");
+  if (!ctx) return c;
+  ctx.drawImage(img, 0, 0, c.width, c.height);
+  ctx.globalCompositeOperation = "source-in";
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, c.width, c.height);
+  return c;
+}
+
+/**
+ * Filigranı karenin ÜSTÜNE basar.
+ *
+ * En üstte olması şart: objenin altına çizilen filigran, objeyi kesip alan
+ * biri için hiç yok demektir. Döşeme kare merkezinden döndürülerek kuruluyor
+ * ve köşegen kadar geniş bir alanı tarıyor — eğik döşemede kenarlar boş
+ * kalmasın.
+ */
+function drawWatermark(
+  ctx: CanvasRenderingContext2D,
+  wm: Watermark,
+  logo: HTMLCanvasElement | HTMLImageElement,
+  width: number,
+  height: number,
+  paintHex?: string | null,
+) {
+  const color =
+    wm.tint === "paint" ? paintHex || "#0a0a0a" : wm.tint === "light" ? "#ffffff" : "#0a0a0a";
+  const stampW = Math.max(24, wm.scale * width);
+  const stamp = tintImage(logo, color, stampW);
+  if (!stamp.width || !stamp.height) return;
+
+  ctx.save();
+  ctx.globalAlpha = wm.opacity;
+
+  if (wm.mode === "center") {
+    ctx.drawImage(stamp, (width - stamp.width) / 2, (height - stamp.height) / 2);
+    ctx.restore();
+    return;
+  }
+
+  ctx.translate(width / 2, height / 2);
+  ctx.rotate((wm.angle * Math.PI) / 180);
+  // Döndürülmüş düzlemde kareyi kesin örtmek için köşegen yetiyor.
+  const reach = Math.hypot(width, height) / 2 + stamp.width;
+  const stepX = stamp.width * 1.7;
+  const stepY = stamp.height * 3.4;
+  let row = 0;
+  for (let y = -reach; y <= reach; y += stepY) {
+    // Şaşırtmalı diziliş: hizalı ızgara, kırpınca tekrar eden bir desen
+    // bırakıyor ve temizlemesi kolaylaşıyor.
+    const offset = row % 2 === 0 ? 0 : stepX / 2;
+    for (let x = -reach + offset; x <= reach; x += stepX) {
+      ctx.drawImage(stamp, x, y);
+    }
+    row += 1;
+  }
+  ctx.restore();
+}
+
 export async function renderLayout({
   layout,
   values,
@@ -249,6 +333,7 @@ export async function renderLayout({
   paintHex,
   palette = [],
   paletteImages = {},
+  watermark,
 }: RenderLayoutInput): Promise<HTMLCanvasElement> {
   await ensureBrandFont();
 
@@ -358,6 +443,12 @@ export async function renderLayout({
       ctx.fillText(text, tx, box.y);
     }
     ctx.restore();
+  }
+
+  // Filigran EN SON: katmanların üstünde kalmalı, yoksa objeyi kesip alan biri
+  // için hiç basılmamış gibi olur.
+  if (watermark && images.logo) {
+    drawWatermark(ctx, watermark, images.logo, layout.width, layout.height, paintHex);
   }
 
   return canvas;

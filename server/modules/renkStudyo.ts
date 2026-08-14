@@ -187,6 +187,44 @@ export const renkStudyoRouter = router({
       return rows.map(r => ({ colorId: r.colorId, url: masterImagePath(r.imageId) }));
     }),
 
+  /**
+   * Ölçülen renk kodunu katalog rengine yazar.
+   *
+   * ── Neden ─────────────────────────────────────────────────────────────────
+   * Katalogdaki renklerin çoğunun hex'i boştu ("renk kaynağı fotoğraf") ve
+   * stüdyo her üretimde rengi obje karesinden ÖLÇÜP atıyordu. Yani renk kodu
+   * zaten hesaplanıyor, sadece hiçbir yere yazılmıyordu: künyede "—", palette
+   * gri kutu, vitrinde renksiz filtre. Ölçülen değeri bir kez yazmak bütün bu
+   * ekranları dolduruyor.
+   *
+   * Varsayılan olarak yalnız BOŞ hex doldurulur: elle girilmiş bir renk kodu,
+   * fotoğraftan ölçülmüş tahminden daha güvenilirdir. Üzerine yazmak açık bir
+   * karar (`overwrite`) gerektirir.
+   */
+  setColorHex: protectedProcedure
+    .input(
+      z.object({
+        colorId: z.number().int().positive(),
+        hex,
+        /** true: tanımlı hex'in üstüne yaz. */
+        overwrite: z.boolean().default(false),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const colors = (await db.listColors()) as Array<{ id: number; hex: string | null }>;
+      const color = colors.find(c => c.id === input.colorId);
+      if (!color) throw new TRPCError({ code: "NOT_FOUND", message: "Renk bulunamadı" });
+
+      const current = color.hex?.trim() || null;
+      if (current && !input.overwrite) return { saved: false, hex: current };
+
+      const next = input.hex.toLowerCase();
+      if (current === next) return { saved: false, hex: current };
+
+      await db.updateDimension("colors", input.colorId, { hex: next });
+      return { saved: true, hex: next };
+    }),
+
   // -------------------------------------------------------------------------
   // Üretim
   // -------------------------------------------------------------------------

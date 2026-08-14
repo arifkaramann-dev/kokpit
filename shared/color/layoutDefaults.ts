@@ -13,19 +13,35 @@
  * göre; böylece kare gönderi ile 9:16 story aynı tarifle doğru çalışır.
  */
 
-import { newLayerId, type Layer, type TemplateLayout } from "./layout";
+import { DEFAULT_WATERMARK, newLayerId, type Layer, type TemplateLayout } from "./layout";
 
 const INK = "#0a0a0a";
 const INK_SOFT = "#3f3f46";
 const INK_FAINT = "#a1a1aa";
 
-/** Marka alt şeridi — logo solda, site sağda. Altı şablonun beşinde ortak. */
-function footer(y: number, size: number): Layer[] {
+/**
+ * Marka alt şeridi — logo solda, site sağda. Altı şablonun beşinde ortak.
+ *
+ * ── Logo neden `aspect` istiyor ───────────────────────────────────────────
+ * Kutunun eni GENİŞLİĞİN, boyu YÜKSEKLİĞİN oranı. Marka logosu kare (1:1) ve
+ * `contain` küçük olan kenara sığdırıyor: eski kutu (0.14 × 0.045) 1400'lük
+ * karede 63 pikselle sınırlanıyordu — kare markasız görünüyordu, çünkü asıl
+ * sınır boydu, en değil. Kutunun boyu artık `logoW * (genişlik/yükseklik)`
+ * ile veriliyor; logo hangi orandaki karede olursa olsun gerçekten KARE ve
+ * istenen büyüklükte çıkıyor.
+ *
+ * `y` şeridin ORTA çizgisi (üstü değil): logo büyüdükçe alt kenardan taşmasın
+ * ve site yazısı logoyla aynı hizada kalsın.
+ */
+function footer(y: number, size: number, aspect: number): Layer[] {
+  const logoW = 0.085;
+  const logoH = logoW * aspect;
+  const siteSize = size * 1.15;
   return [
     {
       id: newLayerId("logo"),
       type: "image",
-      box: { x: 0.06, y, w: 0.14, h: 0.045 },
+      box: { x: 0.06, y: y - logoH / 2, w: logoW, h: logoH },
       source: "logo",
       fit: "contain",
       visible: true,
@@ -33,9 +49,11 @@ function footer(y: number, size: number): Layer[] {
     {
       id: newLayerId("site"),
       type: "text",
-      box: { x: 0.6, y: y + 0.012, w: 0.34, h: 0.03 },
+      // Metin üstten hizalanıyor; yarım satır yukarı kaydırmak onu logonun
+      // orta çizgisine oturtuyor.
+      box: { x: 0.5, y: y - (siteSize * aspect) / 2, w: 0.44, h: siteSize * aspect * 1.6 },
       text: "{site}",
-      size,
+      size: siteSize,
       weight: 400,
       color: INK_FAINT,
       align: "right",
@@ -153,7 +171,7 @@ function productLayout(): TemplateLayout {
         transform: "upper",
         visible: true,
       },
-      ...footer(0.9, 0.017),
+      ...footer(0.925, 0.017, 1),
     ],
   };
 }
@@ -235,7 +253,7 @@ function rangeLayout(): TemplateLayout {
         transform: "upper",
         visible: true,
       },
-      ...footer(0.9, 0.017),
+      ...footer(0.925, 0.017, 1),
     ],
   };
 }
@@ -287,7 +305,7 @@ function coatsLayout(): TemplateLayout {
         visible: true,
       },
       ...cells,
-      ...footer(0.9, 0.017),
+      ...footer(0.925, 0.017, 1),
     ],
   };
 }
@@ -344,7 +362,7 @@ function paletteLayout(): TemplateLayout {
         highlight: true,
         visible: true,
       },
-      ...footer(0.9, 0.017),
+      ...footer(0.925, 0.017, 1),
     ],
   };
 }
@@ -360,6 +378,10 @@ function marketplaceLayout(): TemplateLayout {
     width: 1600,
     height: 1600,
     background: "#ffffff",
+    // Filigran BURADA yasak. `resolveWatermark` çıplak şablonda zaten çizdirmez;
+    // burada da açıkça kapalı duruyor ki editörde açık görünüp kullanıcıya
+    // "koruma var" yalanını söylemesin.
+    watermark: { ...DEFAULT_WATERMARK, enabled: false },
     layers: [
       {
         id: newLayerId("obj"),
@@ -470,7 +492,7 @@ function cardLayout(width: number, height: number): TemplateLayout {
         transform: "upper",
         visible: true,
       },
-      ...footer(0.92, 0.019),
+      ...footer(0.94, 0.019, width / height),
     ],
   };
 }
@@ -554,7 +576,7 @@ function storyLayout(): TemplateLayout {
         transform: "upper",
         visible: true,
       },
-      ...footer(0.93, 0.022),
+      ...footer(0.95, 0.022, 1080 / 1920),
     ],
   };
 }

@@ -13,7 +13,19 @@ import { Switch } from "@/components/ui/switch";
 import { renderLayout } from "@/lib/renkLayoutRender";
 import { tokenValues } from "@/lib/renkCards";
 import { BRAND, TEMPLATES, fallbackPackaging, forceWhiteBackground, getSeries, loadImageSrc, type PaintInfo } from "@/lib/renkTemplates";
-import { assetIdOf, clampBox, layerAt, newLayerId, TOKENS, type ImageSource, type Layer, type TemplateLayout } from "@shared/color/layout";
+import {
+  assetIdOf,
+  clampBox,
+  DEFAULT_WATERMARK,
+  layerAt,
+  newLayerId,
+  resolveWatermark,
+  TOKENS,
+  type ImageSource,
+  type Layer,
+  type TemplateLayout,
+  type Watermark,
+} from "@shared/color/layout";
 import { defaultLayout } from "@shared/color/layoutDefaults";
 import { Eye, EyeOff, Loader2, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -128,6 +140,12 @@ export default function SablonEditor({
     setSelectedId(null);
   }, [templateId, saved]);
 
+  const template = useMemo(() => TEMPLATES.find(t => t.id === templateId) ?? null, [templateId]);
+  /** Filigran katman değil, yerleşimin özelliği — tanımsızsa fabrika ayarı. */
+  const watermark: Watermark = layout.watermark ?? DEFAULT_WATERMARK;
+  const patchWatermark = (patch: Partial<Watermark>) =>
+    setLayout(prev => ({ ...prev, watermark: { ...(prev.watermark ?? DEFAULT_WATERMARK), ...patch } }));
+
   const values = useMemo(() => tokenValues(paint), [paint]);
   const sample = useMemo(
     () => objectImage || placeholderObject(paint.hex || "#c2185b"),
@@ -205,6 +223,9 @@ export default function SablonEditor({
         },
         paintHex: paint.hex,
         palette: paint.palette,
+        // Önizleme gerçek kareyi göstermeli: filigran üretimde basılıp
+        // editörde görünmezse kullanıcı yerleşimi eksik bilgiyle ayarlar.
+        watermark: resolveWatermark(layout, { bare: template?.bare }),
       });
 
       const target = canvasRef.current;
@@ -222,6 +243,7 @@ export default function SablonEditor({
     layout,
     values,
     sample,
+    template?.bare,
     paint.hex,
     paint.seriesCode,
     paint.volumeMl,
@@ -484,6 +506,104 @@ export default function SablonEditor({
               </Button>
             </div>
           ))}
+        </div>
+
+        {/* Filigran — katman listesinin dışında, çünkü katman değil: kareyi
+            başkasının kullanamaması "her zaman ve en üstte" olmasına bağlı. */}
+        <div className="space-y-3 border-t pt-3">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-medium">Filigran</h3>
+            <Switch
+              checked={watermark.enabled && !template?.bare}
+              disabled={template?.bare}
+              onCheckedChange={v => patchWatermark({ enabled: v })}
+            />
+          </div>
+
+          {template?.bare ? (
+            <p className="text-xs text-muted-foreground">
+              Pazaryeri ana görselinde filigran YASAK — Amazon ve Trendyol yazı, logo
+              ya da filigran taşıyan ana görseli reddediyor. Bu kare korumasız kalır;
+              koruma diğer karelerde.
+            </p>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">Diziliş</Label>
+                  <Select
+                    value={watermark.mode}
+                    onValueChange={v => patchWatermark({ mode: v as Watermark["mode"] })}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="tile">Çapraz döşeme</SelectItem>
+                      <SelectItem value="center">Tek damga (orta)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Renk</Label>
+                  <Select
+                    value={watermark.tint}
+                    onValueChange={v => patchWatermark({ tint: v as Watermark["tint"] })}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ink">Koyu</SelectItem>
+                      <SelectItem value="light">Açık</SelectItem>
+                      <SelectItem value="paint">Ürünün rengi</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">Damga boyu</Label>
+                  <Input
+                    type="number"
+                    step="0.02"
+                    min="0.05"
+                    max="1"
+                    value={watermark.scale}
+                    onChange={e => patchWatermark({ scale: Number(e.target.value) || 0.24 })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Saydamlık</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="1"
+                    value={watermark.opacity}
+                    onChange={e =>
+                      patchWatermark({ opacity: Math.max(0, Math.min(1, Number(e.target.value))) })
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Eğim°</Label>
+                  <Input
+                    type="number"
+                    step="5"
+                    min="-90"
+                    max="90"
+                    value={watermark.angle}
+                    onChange={e => patchWatermark({ angle: Number(e.target.value) || 0 })}
+                  />
+                </div>
+              </div>
+
+              <p className="text-xs text-muted-foreground">
+                Marka logosu karenin ÜSTÜNE basılır — objeyi kesip alan biri filigranı
+                da almış olur. Çapraz döşeme kırpılarak temizlenemez; "ürünün rengi"
+                seçilirse damga rengin kendisiyle boyanır ve koyu karelerde de görünür.
+                Saydamlık %8 civarı: satışı bozmadan sahiplenmeye yeter.
+              </p>
+            </>
+          )}
         </div>
 
         {selected ? (

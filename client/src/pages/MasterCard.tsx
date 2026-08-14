@@ -142,7 +142,25 @@ export default function MasterCard() {
         <TabsContent value="kunye" className="pt-3">
           <Card className="grid grid-cols-2 gap-4 p-5 md:grid-cols-3">
             <Field label="Seri" value={identity.series} />
-            <Field label="Renk" value={identity.color?.name ?? null} hex={identity.color?.hex ?? null} />
+            {/* Rengin kimliği tek satırda: ad + kod + uluslararası ad + renk
+                kodu. Eskiden yalnız ad yazıyordu; ilanda ve müşteri
+                yazışmasında sorulan asıl bilgi (kod ve renk kodu) kartın
+                üstünde yoktu, Tanımlar'a gitmek gerekiyordu. */}
+            <Field
+              label="Renk"
+              value={identity.color?.name ?? null}
+              hex={identity.color?.hex ?? null}
+              hint={
+                [
+                  identity.color?.code ? `kod: ${identity.color.code}` : null,
+                  identity.color?.nameEn ?? null,
+                  identity.color?.hex ??
+                    "renk kodu yok — Renk Stüdyosu'nda obje karesinden ölçülüp yazılır",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
+              }
+            />
             <Field label="Form" value={identity.family} />
             <Field label="Ambalaj" value={identity.packaging?.name ?? null} />
             <Field

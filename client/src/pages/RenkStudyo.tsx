@@ -428,6 +428,22 @@ function ObjeUretimi({ onDevret }: { onDevret: (h: Handoff) => void }) {
     onError: e => toast.error(e.message),
   });
 
+  /**
+   * Ölçülen rengi katalog rengine yazar.
+   *
+   * Ölçüm zaten yapılıyordu ama hiçbir yere kaydedilmiyordu: künyede renk
+   * kodu "—", palette gri kutu kalıyordu. Bir kez yazılınca bütün ekranlar
+   * (künye, palet, vitrin, şablon şeridi) aynı koddan besleniyor.
+   */
+  const setColorHex = trpc.renkStudyo.setColorHex.useMutation({
+    onSuccess: r => {
+      if (r.saved) toast.success(`Renk kodu kataloğa yazıldı: ${r.hex}`);
+      else toast.message(`Bu rengin kodu zaten tanımlı: ${r.hex}`);
+      void utils.katalog.invalidate();
+    },
+    onError: e => toast.error(e.message),
+  });
+
   const saving = saveMaster.isPending || saveColor.isPending;
 
   return (
@@ -462,6 +478,7 @@ function ObjeUretimi({ onDevret }: { onDevret: (h: Handoff) => void }) {
             {color && (
               <p className="text-xs text-muted-foreground">
                 Renk üründen geliyor: <strong>{color.code}</strong> · {color.name}
+                {color.nameEn ? ` · ${color.nameEn}` : ""}
                 {color.finish ? ` · ${color.finish}` : ""}
                 {color.hex ? (
                   <>
@@ -472,7 +489,7 @@ function ObjeUretimi({ onDevret }: { onDevret: (h: Handoff) => void }) {
                   <>
                     {" · "}
                     <span className="text-amber-600">
-                      hex tanımsız — renk referans fotoğraflardan alınacak
+                      renk kodu tanımsız — renk referans fotoğraflardan alınacak
                     </span>
                   </>
                 )}
@@ -711,12 +728,27 @@ function ObjeUretimi({ onDevret }: { onDevret: (h: Handoff) => void }) {
                 </p>
               )}
               {measured && (
-                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <span className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                   <span
                     className="inline-block size-3 rounded-full border"
                     style={{ background: measured }}
                   />
                   Referanstan ölçülen renk: <code>{measured}</code>
+                  {/* Ölçülen değer kataloğa yazılmazsa her üretimde yeniden
+                      ölçülür ve künye "renk kodu yok" demeye devam eder. */}
+                  {color && !color.hex && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-6 px-2 text-xs"
+                      disabled={setColorHex.isPending}
+                      onClick={() =>
+                        setColorHex.mutate({ colorId: color.id, hex: measured })
+                      }
+                    >
+                      Renk kodu olarak kaydet
+                    </Button>
+                  )}
                 </span>
               )}
 
@@ -945,6 +977,15 @@ function PazarlamaGorselleri({
     [packInfo?.src, packInfo?.volumeMl, color?.finish],
   );
 
+  /** Ölçülen renk kodunu katalog rengine yazar — bkz. `ensureColorHex`. */
+  const setColorHex = trpc.renkStudyo.setColorHex.useMutation({
+    onSuccess: r => {
+      if (r.saved) toast.success(`Renk kodu kataloğa yazıldı: ${r.hex}`);
+      void utils.katalog.invalidate();
+    },
+    onError: e => toast.error(e.message),
+  });
+
   /**
    * Pazarlama karesi kaydetme — rol başına TEK güncel kare.
    *
@@ -979,6 +1020,32 @@ function PazarlamaGorselleri({
   };
 
   /**
+   * Kartın basacağı renk kodu — katalogdakini kullanır, yoksa ÖLÇER VE YAZAR.
+   *
+   * Ölçüm zaten yapılıyordu; yeni olan kaydetmesi. Kod bir kez yazılınca
+   * künye, palet ve vitrin aynı değerden besleniyor ve kartlar arasında
+   * "ölçümden ölçüme değişen renk" sorunu da bitiyor: ikinci basımda artık
+   * ölçülmüyor, tanımlı kod okunuyor.
+   */
+  const ensureColorHex = async (): Promise<string | null> => {
+    if (color?.hex) return color.hex;
+    if (!objectImage) return null;
+    const lab = await measureColorFromImage(objectImage);
+    if (!lab) return null;
+    const hex = labToHexString(lab);
+    if (color) {
+      // Sessiz başarısızlık kabul: kart üretimi renk kodunu kaydedemedik diye
+      // durmamalı. Kullanıcı kodu Tanımlar'dan elle de girebilir.
+      try {
+        await setColorHex.mutateAsync({ colorId: color.id, hex });
+      } catch {
+        // toast'ı mutation'ın kendi onError'ı basıyor
+      }
+    }
+    return hex;
+  };
+
+  /**
    * Pazarlama görsellerini basar.
    *
    * Obje görseli BİR KEZ seçilir, şablonlar aynı görselden türetilir. Her
@@ -992,11 +1059,7 @@ function PazarlamaGorselleri({
       // Renk hedefi: katalogdaki hex, yoksa OBJE KARESİNDEN ölçülen renk.
       // Renk şeridi ve kat progresyonu bir hedef istiyor; hex'i tanımlanmamış
       // renklerde ölçüm, kartı renksiz basmaktan iyidir.
-      let hex = color?.hex || null;
-      if (!hex) {
-        const lab = await measureColorFromImage(objectImage);
-        if (lab) hex = labToHexString(lab);
-      }
+      const hex = await ensureColorHex();
 
       const paint: PaintInfo = {
         code: color?.code,
@@ -1055,17 +1118,16 @@ function PazarlamaGorselleri({
     let cards = 0;
     const noPack: string[] = [];
     try {
+      // Renk kodu bir kez: obje karesi bütün boylarda AYNI, dolayısıyla her
+      // varyantta yeniden ölçmek hem boşa iş hem de boydan boya birkaç
+      // birimlik renk oynaması demekti.
+      const hex = await ensureColorHex();
+
       for (const m of variants) {
         const own = packById.get(m.packagingId) ?? null;
         const volume = own?.volumeMl != null ? parseFloat(String(own.volumeMl)) : 0;
         const src = resolvePackagingImageSrc(packImages ?? [], m.packagingId, m.seriesId);
         if (!src) noPack.push(own?.name ?? String(m.packagingId));
-
-        let hex = color?.hex || null;
-        if (!hex) {
-          const lab = await measureColorFromImage(objectImage);
-          if (lab) hex = labToHexString(lab);
-        }
 
         const out = await buildCards({
           objectImage,
@@ -1141,17 +1203,41 @@ function PazarlamaGorselleri({
               }}
             />
             {color && (
-              <p className="text-xs text-muted-foreground">
-                Renk: <strong>{color.code}</strong> · {color.name}
-                {color.hex ? (
-                  <>
-                    {" · "}
-                    <code>{color.hex}</code>
-                  </>
-                ) : (
-                  " · hex tanımsız — renk obje karesinden ölçülecek"
+              <div className="space-y-1 text-xs text-muted-foreground">
+                <p>
+                  Renk: <strong>{color.code}</strong> · {color.name}
+                  {color.nameEn ? ` · ${color.nameEn}` : ""}
+                  {color.hex ? (
+                    <>
+                      {" · "}
+                      <span
+                        className="mr-1 inline-block size-2.5 rounded-full border align-middle"
+                        style={{ background: color.hex }}
+                      />
+                      <code>{color.hex}</code>
+                    </>
+                  ) : (
+                    " · renk kodu tanımsız — obje karesinden ölçülüp kataloğa yazılacak"
+                  )}
+                </p>
+                {/* Kartların bastığı kod ile katalogdaki kod aynı olmalı; ölçüm
+                    kart üretiminde kendiliğinden yazılıyor ama kullanıcı üretimi
+                    beklemeden de yazdırabilmeli. */}
+                {!color.hex && objectImage && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2 text-xs"
+                    disabled={setColorHex.isPending}
+                    onClick={() => void ensureColorHex()}
+                  >
+                    {setColorHex.isPending ? (
+                      <Loader2 className="mr-1 size-3 animate-spin" />
+                    ) : null}
+                    Renk kodunu obje karesinden ölç ve kaydet
+                  </Button>
                 )}
-              </p>
+              </div>
             )}
           </div>
 
