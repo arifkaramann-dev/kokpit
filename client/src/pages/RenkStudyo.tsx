@@ -32,6 +32,7 @@ import SablonEditor from "@/components/SablonEditor";
 import { buildCards } from "@/lib/renkCards";
 import { TEMPLATES, fallbackPackaging, getSeries, type PaintInfo } from "@/lib/renkTemplates";
 import type { PaletteEntry, TemplateLayout } from "@shared/color/layout";
+import { formatColorCode } from "@shared/colorCode";
 import {
   packagingImageUrl,
   resolvePackagingImageSrc,
@@ -92,8 +93,8 @@ type MasterRow = {
 type ColorRow = {
   id: number;
   code: string;
-  /** Katalog kodu — "CND1324". Kartlarda ve künyede basılan numara. */
-  displayCode?: string | null;
+  /** Renk numarası — katalog kodunun sayı kısmı (CND1008 → 1008). */
+  colorNo?: number | null;
   name: string;
   nameEn?: string | null;
   hex?: string | null;
@@ -143,6 +144,7 @@ function UrunSecici({
   masters,
   colorById,
   packById,
+  prefixBySeries,
   loading,
   value,
   onChange,
@@ -150,6 +152,8 @@ function UrunSecici({
   masters: MasterRow[];
   colorById: Map<number, ColorRow>;
   packById: Map<number, NamedRow>;
+  /** Seri ön ekleri — katalog kodu ürünün serisiyle birleşiyor. */
+  prefixBySeries: Map<number, string | null>;
   loading?: boolean;
   value: number | null;
   onChange: (id: number) => void;
@@ -163,14 +167,20 @@ function UrunSecici({
         const c = colorById.get(m.colorId);
         // Katalog kodu da aranabilir olmalı: müşteri "CND1324 var mı" diye
         // soruyor, ürünün adını değil kodu yazıyor.
-        const hay = [m.name, m.internalSku, c?.displayCode, c?.code, c?.name]
+        const hay = [
+          m.name,
+          m.internalSku,
+          formatColorCode(prefixBySeries.get(m.seriesId), c?.colorNo),
+          c?.code,
+          c?.name,
+        ]
           .filter(Boolean)
           .join(" ")
           .toLocaleLowerCase("tr");
         return hay.includes(q);
       })
       .slice(0, 200);
-  }, [masters, query, colorById]);
+  }, [masters, query, colorById, prefixBySeries]);
 
   return (
     <div className="space-y-2">
@@ -214,7 +224,13 @@ function UrunSecici({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm">{m.name || m.internalSku}</span>
                   <span className="block truncate text-xs text-muted-foreground">
-                    {[c?.displayCode || c?.code, c?.name, p?.name].filter(Boolean).join(" · ")}
+                    {[
+                      formatColorCode(prefixBySeries.get(m.seriesId), c?.colorNo) || c?.code,
+                      c?.name,
+                      p?.name,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
                   </span>
                 </span>
                 {active && <Check className="size-4 shrink-0" />}
@@ -246,8 +262,10 @@ function buildPalette(opts: {
   seriesId: number | null | undefined;
   activeColorId?: number | null;
   images?: Array<{ colorId: number; url: string }>;
+  /** Paletin serisinin ön eki — etiketler bu seriye göre kodlanır. */
+  seriesPrefix?: string | null;
 }): PaletteEntry[] {
-  const { masters, colorById, seriesId, activeColorId, images = [] } = opts;
+  const { masters, colorById, seriesId, activeColorId, images = [], seriesPrefix } = opts;
   if (seriesId == null) return [];
   const bySrc = new Map(images.map(i => [i.colorId, i.url]));
   const seen = new Set<number>();
@@ -259,8 +277,9 @@ function buildPalette(opts: {
     if (!c) continue;
     out.push({
       // Palet etiketi müşterinin ilanda göreceği kod olmalı; slug
-      // ("fusya") kimseye bir şey söylemiyor.
-      code: c.displayCode || c.code,
+      // ("fusya") kimseye bir şey söylemiyor. Palet tek bir serinin
+      // renkleri olduğu için ön ek hepsinde aynı.
+      code: formatColorCode(seriesPrefix, c.colorNo) || c.code,
       name: c.name,
       hex: c.hex ?? null,
       src: bySrc.get(c.id) ?? null,
@@ -278,11 +297,19 @@ function buildPalette(opts: {
 function useKatalogBoyutlari() {
   const { data: masters, isLoading: mastersLoading } = trpc.katalog.masters.useQuery();
   const { data: dims } = trpc.katalog.dimensions.useQuery();
+  // Katalog kodunun ön eki ürünün SERİSİNDEN geliyor; renk kaydında yalnız
+  // numara var (aynı yeşil CANDY'de CND1008, METEOR'da MTR1008).
+  const { data: seriesRows } = trpc.series.list.useQuery();
 
   const colors = (dims?.colors ?? []) as ColorRow[];
   const packagings = (dims?.packagings ?? []) as NamedRow[];
   const colorById = useMemo(() => new Map(colors.map(c => [c.id, c])), [colors]);
   const packById = useMemo(() => new Map(packagings.map(p => [p.id, p])), [packagings]);
+
+  const prefixBySeries = useMemo(
+    () => new Map((seriesRows ?? []).map(s => [s.id, s.prefix ?? null])),
+    [seriesRows],
+  );
 
   return {
     rows: (masters ?? []) as MasterRow[],
@@ -292,6 +319,7 @@ function useKatalogBoyutlari() {
     packagings,
     colorById,
     packById,
+    prefixBySeries,
   };
 }
 
@@ -300,7 +328,7 @@ function useKatalogBoyutlari() {
 /** 1. adım: AI ile obje üretimi. Şablon işi burada YOK. */
 function ObjeUretimi({ onDevret }: { onDevret: (h: Handoff) => void }) {
   const utils = trpc.useUtils();
-  const { rows, mastersLoading, colorById, packById } = useKatalogBoyutlari();
+  const { rows, mastersLoading, colorById, packById, prefixBySeries } = useKatalogBoyutlari();
   const { data: references } = trpc.renkStudyo.references.useQuery();
   const { data: status } = trpc.renkStudyo.status.useQuery();
 
@@ -479,6 +507,7 @@ function ObjeUretimi({ onDevret }: { onDevret: (h: Handoff) => void }) {
               masters={rows}
               colorById={colorById}
               packById={packById}
+              prefixBySeries={prefixBySeries}
               loading={mastersLoading}
               value={masterId}
               onChange={setMasterId}
@@ -487,7 +516,11 @@ function ObjeUretimi({ onDevret }: { onDevret: (h: Handoff) => void }) {
             {color && (
               <p className="text-xs text-muted-foreground">
                 Renk üründen geliyor:{" "}
-                <strong>{color.displayCode || color.code}</strong> · {color.name}
+                <strong>
+                  {(master && formatColorCode(prefixBySeries.get(master.seriesId), color.colorNo)) ||
+                    color.code}
+                </strong>{" "}
+                · {color.name}
                 {color.nameEn ? ` · ${color.nameEn}` : ""}
                 {color.finish ? ` · ${color.finish}` : ""}
                 {color.hex ? (
@@ -859,7 +892,8 @@ function PazarlamaGorselleri({
 }) {
   const utils = trpc.useUtils();
   const [, setLocation] = useLocation();
-  const { rows, mastersLoading, dims, packagings, colorById, packById } = useKatalogBoyutlari();
+  const { rows, mastersLoading, dims, packagings, colorById, packById, prefixBySeries } =
+    useKatalogBoyutlari();
   const { data: references } = trpc.renkStudyo.references.useQuery();
   const { data: packImages } = trpc.katalog.packagingImages.useQuery();
   const { data: layoutRows } = trpc.renkStudyo.layouts.useQuery();
@@ -971,8 +1005,9 @@ function PazarlamaGorselleri({
         seriesId: master?.seriesId,
         activeColorId: master?.colorId,
         images: colorImages,
+        seriesPrefix: master ? (prefixBySeries.get(master.seriesId) ?? null) : null,
       }),
-    [master, rows, colorById, colorImages],
+    [master, rows, colorById, colorImages, prefixBySeries],
   );
 
   /** Çekim yoksa devreye girecek yerleşik kutu — kullanıcı NE basılacağını görsün. */
@@ -1072,7 +1107,9 @@ function PazarlamaGorselleri({
       const hex = await ensureColorHex();
 
       const paint: PaintInfo = {
-        code: color?.displayCode || color?.code,
+        // Kod ürünün SERİSİYLE birleşiyor: aynı renk CANDY'de CND1008,
+        // METEOR'da MTR1008. Numarası olmayan renkte eski davranış (slug).
+        code: formatColorCode(prefixBySeries.get(master.seriesId), color?.colorNo) || color?.code,
         nameTr: color?.name,
         nameEn: color?.nameEn,
         seriesCode: SERIES_CODE_BY_FINISH[color?.finish ?? "duz"] ?? "VS",
@@ -1145,7 +1182,7 @@ function PazarlamaGorselleri({
           layouts,
           only: picked,
           paint: {
-            code: color?.displayCode || color?.code,
+            code: formatColorCode(prefixBySeries.get(m.seriesId), color?.colorNo) || color?.code,
             nameTr: color?.name,
             nameEn: color?.nameEn,
             seriesCode: SERIES_CODE_BY_FINISH[color?.finish ?? "duz"] ?? "VS",
@@ -1199,6 +1236,7 @@ function PazarlamaGorselleri({
               masters={rows}
               colorById={colorById}
               packById={packById}
+              prefixBySeries={prefixBySeries}
               loading={mastersLoading}
               value={masterId}
               onChange={id => {
@@ -1218,11 +1256,17 @@ function PazarlamaGorselleri({
                   {/* Kartlara basılan kod: katalog kodu (CND1324). Yoksa slug
                       basılıyor ve kartta rengin adı iki kez yazılmış gibi
                       görünüyor — kullanıcı bunu ÜRETMEDEN önce görmeli. */}
-                  Renk: <strong>{color.displayCode || color.code}</strong> · {color.name}
+                  Renk:{" "}
+                  <strong>
+                    {(master &&
+                      formatColorCode(prefixBySeries.get(master.seriesId), color.colorNo)) ||
+                      color.code}
+                  </strong>{" "}
+                  · {color.name}
                   {color.nameEn ? ` · ${color.nameEn}` : ""}
-                  {!color.displayCode && (
+                  {color.colorNo == null && (
                     <span className="text-amber-600">
-                      {" · "}katalog kodu yok — kartta rengin adı basılıyor (Tanımlar → Renkler)
+                      {" · "}renk numarası yok — kartta rengin adı basılıyor (Tanımlar → Renkler)
                     </span>
                   )}
                   {color.hex ? (
@@ -2010,7 +2054,7 @@ function ReferansObjeler() {
 /** Editör sekmesi — kayıtlı yerleşimleri okur, düzenlemeyi geri yazar. */
 function SablonlarSekmesi() {
   const utils = trpc.useUtils();
-  const { rows: masters, colorById } = useKatalogBoyutlari();
+  const { rows: masters, colorById, prefixBySeries } = useKatalogBoyutlari();
   const { data: dims } = trpc.katalog.dimensions.useQuery();
   const { data: layoutRows } = trpc.renkStudyo.layouts.useQuery();
   const { data: assets } = trpc.renkStudyo.assets.useQuery();
@@ -2107,7 +2151,13 @@ function SablonlarSekmesi() {
   }, [packImages, packagings, dims?.seriesPackagings, previewPackaging]);
 
   const paint: PaintInfo = {
-    code: örnek?.displayCode || örnek?.code || "CND1324",
+    code:
+      formatColorCode(
+        örnekMaster ? prefixBySeries.get(örnekMaster.seriesId) : null,
+        örnek?.colorNo,
+      ) ||
+      örnek?.code ||
+      "CND1324",
     nameTr: örnek?.name ?? "FUŞYA",
     nameEn: örnek?.nameEn ?? "FUCHSIA",
     seriesCode: SERIES_CODE_BY_FINISH[örnek?.finish ?? "candy"] ?? "VC",
@@ -2125,6 +2175,7 @@ function SablonlarSekmesi() {
       seriesId: örnekMaster?.seriesId,
       activeColorId: örnekMaster?.colorId,
       images: örnekColorImages,
+      seriesPrefix: örnekMaster ? (prefixBySeries.get(örnekMaster.seriesId) ?? null) : null,
     }),
   };
 

@@ -58,57 +58,6 @@ export function buildBaseCode(input: {
     .join("");
 }
 
-/* ---- Katalog kodu (renk) ------------------------------------------------ */
-
-/** Katalog kodunun ön eki: harf+rakam, büyük harf. Boşsa "AOC". */
-export function colorCodePrefix(prefix: string | null | undefined): string {
-  return (
-    String(prefix ?? "")
-      .replace(/[^A-Za-z0-9]/g, "")
-      .toUpperCase()
-      .slice(0, 6) || "AOC"
-  );
-}
-
-/**
- * İLK katalog kodu numarası.
- *
- * 1'den değil 1001'den başlıyor: dört haneli, başında sıfır olmayan kodlar
- * ("CND1324") hem sözlü hem yazılı iletişimde okunur; "CND0001" bir sıra
- * numarası gibi durur ve müşteriye "yeni ürün" bilgisini sızdırır.
- */
-export const FIRST_COLOR_CODE_SEQUENCE = 1001;
-
-/** Renk katalog kodu: ön ek + en az 4 haneli sıra. "CND" + 1324 → "CND1324" */
-export function buildColorCode(prefix: string | null | undefined, sequence: number): string {
-  const n = Math.max(1, Math.floor(sequence));
-  return `${colorCodePrefix(prefix)}${String(n).padStart(4, "0")}`;
-}
-
-/**
- * Aynı ön ekle üretilmiş kodlardan BİR SONRAKİ sıra numarası.
- *
- * Sayarak değil, en büyüğü bularak: silinmiş bir renk yüzünden sayı geri
- * giderse daha önce kullanılmış bir kod ikinci kez üretilir ve iki farklı
- * renk aynı kodu taşır. Ön eke uymayan ya da sayısal olmayan kodlar
- * yok sayılır — elle "CND-ÖZEL" yazılmış bir kod diziyi bozmamalı.
- */
-export function nextColorCodeSequence(
-  prefix: string | null | undefined,
-  existing: Array<string | null | undefined>,
-): number {
-  const p = colorCodePrefix(prefix);
-  let max = 0;
-  for (const raw of existing) {
-    const code = String(raw ?? "").trim().toUpperCase();
-    if (!code.startsWith(p)) continue;
-    const rest = code.slice(p.length);
-    if (!/^\d+$/.test(rest)) continue;
-    max = Math.max(max, Number(rest));
-  }
-  return max > 0 ? max + 1 : FIRST_COLOR_CODE_SEQUENCE;
-}
-
 /**
  * Boyut SKU eklerini TEKİL hale getirir.
  *

@@ -379,6 +379,13 @@
       "when": 1786681729640,
       "tag": "0053_fancy_daimon_hellstrom",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "5",
+      "when": 1786683340744,
+      "tag": "0054_slippery_wolfpack",
+      "breakpoints": true
     }
   ]
 }
