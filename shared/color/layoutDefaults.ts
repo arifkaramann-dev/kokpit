@@ -13,7 +13,14 @@
  * göre; böylece kare gönderi ile 9:16 story aynı tarifle doğru çalışır.
  */
 
-import { DEFAULT_WATERMARK, newLayerId, type Layer, type LayerBox, type TemplateLayout } from "./layout";
+import {
+  DEFAULT_WATERMARK,
+  newLayerId,
+  type ImageSource,
+  type Layer,
+  type LayerBox,
+  type TemplateLayout,
+} from "./layout";
 
 const INK = "#0a0a0a";
 const INK_SOFT = "#3f3f46";
@@ -801,22 +808,50 @@ export function usageBoxes(count: number): LayerBox[] {
 /**
  * SERİ BANNER'I — reklam karesi.
  *
- * Dört ölçüde de aynı tarif kullanılıyor; oran farkını dikey akış kendisi
- * soğuruyor (kutular yüksekliğin oranı). Ölçüye özel dört ayrı yerleşim
- * tutmak, bir metni değiştirince dördünü de elle güncellemek demekti.
+ * ── İlk hâli neden çiğ görünüyordu ────────────────────────────────────────
+ * Kare üç şeyden oluşuyordu: seri adı, ambalaj boyları ve ortada palet
+ * ızgarası. Palet kareleri beyaz fonlu ürün çekimleri olduğu için koyu zeminde
+ * PARLAK BEYAZ DİKDÖRTGENLER olarak duruyordu; slogan boş olduğunda da karenin
+ * yarısı bomboş kalıyordu. Sonuç, tasarlanmış değil "yerleştirilmiş" bir kare.
  *
- * Kare "renk" değil "seri" anlatıyor: konu tek bir renk olmadığı için palet
- * katmanı merkezde — müşteri serinin gamını bir bakışta görüyor.
+ * ── Şimdiki kurgu ─────────────────────────────────────────────────────────
+ * Banner'ın işi SERİYİ satmak, renk listesi göstermek değil:
+ *   · zemin      → rengin kendisinden geçişli yıkama (+ istenirse AI arka plan)
+ *   · kahraman   → ürünün obje karesi, büyük ve tek
+ *   · metin      → seri adı + slogan + üç madde
+ *   · palet      → altta İNCE bir şerit, fonu silinmiş (kod yazısı yok)
+ *
+ * Palet artık ana konu değil destek: "bu seride başka renkler de var" demek
+ * için üç-dört kare yeter. `knockout` ile fonu siliniyor, objeler zeminde
+ * yüzüyor.
+ *
+ * ── AI arka plan ──────────────────────────────────────────────────────────
+ * En alttaki `arkaplan` katmanı KULLANICI VARLIĞI bekliyor ve varsayılan
+ * olarak kapalı: bir kez AI ile düzgün bir zemin üretilip Şablon Varlıkları'na
+ * kaydedilir, Şablon Editörü'nden bu katmana bağlanır ve o günden sonra bütün
+ * banner'lar onun üstüne basılır. Bir üretim, sınırsız kare.
  */
 function bannerLayout(width: number, height: number): TemplateLayout {
-  const wide = width / height >= 1.6;
-  const tall = height / width >= 1.5;
   const aspect = width / height;
-  // Geniş banner'da metin solda, palet sağda; kare ve dikeyde alt alta.
-  const textW = wide ? 0.44 : 0.88;
+  const wide = aspect >= 1.6;
+  const tall = height / width >= 1.5;
+
+  // Geniş banner'da metin solda / obje sağda; kare ve dikeyde metin üstte,
+  // obje ortada. Aynı tarifin üç oranda da nefes alması için tek fark bu.
+  const textW = wide ? 0.42 : 0.86;
+  const heroBox = wide
+    ? { x: 0.5, y: 0.08, w: 0.46, h: 0.8 }
+    : tall
+      ? { x: 0.08, y: 0.34, w: 0.84, h: 0.3 }
+      : { x: 0.12, y: 0.38, w: 0.76, h: 0.34 };
   const paletteBox = wide
-    ? { x: 0.54, y: 0.18, w: 0.4, h: 0.62 }
-    : { x: 0.06, y: tall ? 0.42 : 0.46, w: 0.88, h: tall ? 0.3 : 0.34 };
+    ? { x: 0.06, y: 0.72, w: 0.36, h: 0.1 }
+    : tall
+      ? { x: 0.08, y: 0.68, w: 0.84, h: 0.08 }
+      : { x: 0.12, y: 0.75, w: 0.76, h: 0.09 };
+  // Yazı boyu geniş formatta küçülüyor: 1920×600'de kare oranındaki puntolar
+  // bandın yarısını yiyordu.
+  const k = wide ? 0.55 : tall ? 0.85 : 1;
 
   return {
     width,
@@ -824,20 +859,41 @@ function bannerLayout(width: number, height: number): TemplateLayout {
     background: "#0a0a0a",
     layers: [
       {
-        id: newLayerId("zemin"),
+        id: newLayerId("arkaplan"),
+        type: "image",
+        box: { x: 0, y: 0, w: 1, h: 1 },
+        // Geçerli bir varlığa bağlanana kadar çizilmez; kapalı geliyor ki
+        // kullanıcı bilinçli olarak açsın.
+        source: "asset:0" as ImageSource,
+        fit: "cover",
+        visible: false,
+      },
+      {
+        id: newLayerId("yikama"),
         type: "rect",
         box: { x: 0, y: 0, w: 1, h: 1 },
         fill: "paint",
-        opacity: 0.22,
+        opacity: 0.28,
         gradient: true,
+        visible: true,
+      },
+      {
+        id: newLayerId("hero"),
+        type: "image",
+        box: heroBox,
+        source: "object",
+        fit: "contain",
+        // Obje karesi beyaz fonlu; koyu zeminde fon silinmezse etrafında
+        // beyaz bir dikdörtgen kalır.
+        knockout: true,
         visible: true,
       },
       {
         id: newLayerId("seri"),
         type: "text",
-        box: { x: 0.06, y: 0.1, w: textW, h: 0.08 },
+        box: { x: 0.06, y: tall ? 0.08 : 0.09, w: textW, h: 0.09 },
         text: "{line}",
-        size: 0.055 / (wide ? 1.4 : 1),
+        size: 0.062 * k,
         weight: 700,
         color: "#ffffff",
         align: "left",
@@ -847,9 +903,9 @@ function bannerLayout(width: number, height: number): TemplateLayout {
       {
         id: newLayerId("slogan"),
         type: "text",
-        box: { x: 0.06, y: 0.19, w: textW, h: 0.14 },
+        box: { x: 0.06, y: tall ? 0.16 : 0.185, w: textW, h: 0.14 },
         text: "{slogan}",
-        size: 0.038 / (wide ? 1.3 : 1),
+        size: 0.038 * k,
         weight: 700,
         color: "#ffffff",
         align: "left",
@@ -861,9 +917,14 @@ function bannerLayout(width: number, height: number): TemplateLayout {
       ...[1, 2, 3].map((n, i) => ({
         id: newLayerId(`madde${n}`),
         type: "text" as const,
-        box: { x: 0.06, y: 0.34 + i * 0.045, w: textW, h: 0.04 },
+        box: {
+          x: 0.06,
+          y: (tall ? 0.25 : 0.28) + i * 0.042 * (wide ? 1.5 : 1),
+          w: textW,
+          h: 0.04,
+        },
         text: `{madde${n}}`,
-        size: 0.022 / (wide ? 1.25 : 1),
+        size: 0.021 * k,
         weight: 400 as const,
         color: "#d4d4d8",
         align: "left" as const,
@@ -877,18 +938,20 @@ function bannerLayout(width: number, height: number): TemplateLayout {
         columns: 0,
         gap: 0.012,
         showCode: false,
-        labelSize: 0.016,
+        labelSize: 0.014,
         labelColor: "#a1a1aa",
-        radius: 0.008,
+        radius: 0.01,
         highlight: false,
+        // Koyu zeminde beyaz fonlu kareler basmıyoruz.
+        knockout: true,
         visible: true,
       },
       {
         id: newLayerId("gam"),
         type: "text",
-        box: { x: 0.06, y: tall ? 0.78 : 0.84, w: 0.88, h: 0.04 },
+        box: { x: 0.06, y: wide ? 0.85 : tall ? 0.8 : 0.87, w: 0.88, h: 0.04 },
         text: "{packSizes}",
-        size: 0.018,
+        size: 0.017 * (wide ? 0.75 : 1),
         weight: 400,
         color: "#a1a1aa",
         align: "left",
