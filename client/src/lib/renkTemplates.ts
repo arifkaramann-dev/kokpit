@@ -46,8 +46,19 @@ export type PaintInfo = {
   code?: string | null;
   nameTr?: string | null;
   nameEn?: string | null;
-  /** `SERIES` içindeki kod — VP/VM/VC/VS/MT. */
+  /** `SERIES` içindeki kod — VP/VM/VC/VS/MT. Yalnız EFEKT adı için. */
   seriesCode?: string | null;
+  /**
+   * Ürünün GERÇEK seri adı — "CANDY", "METEOR".
+   *
+   * `{line}` eskiden `seriesCode`ten türetiliyordu; o kod ise rengin bitiş
+   * türünden (duz/metalik/candy) tahmin ediliyordu ve koda gömülü listede
+   * yalnız VIVID/METEOR vardı. Sonuç: CND1009 kodlu bir CANDY ürününün
+   * kartında ve banner'ında **VIVID SOLID** yazıyordu — müşteriye giden
+   * görselde yanlış marka hattı. Ad artık serinin kendisinden geliyor;
+   * tahmin yalnız efekt sıfatı için kaldı.
+   */
+  seriesLine?: string | null;
   hex?: string | null;
   /**
    * Ürünün kendi ambalajının çekimi — Tanımlar → Ambalajlar'dan çözümlenmiş

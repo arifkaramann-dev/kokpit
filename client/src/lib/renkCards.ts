@@ -66,8 +66,9 @@ export function tokenValues(paint: PaintInfo): TokenValues {
     code: paint.code ?? "",
     nameTr: paint.nameTr ?? "",
     nameEn: paint.nameEn ?? "",
-    series: series.label,
-    line: series.line,
+    series: paint.seriesLine?.trim() || series.label,
+    // Marka hattı ÜRÜNÜN serisinden; efekt sıfatı bitiş türünden.
+    line: paint.seriesLine?.trim() || series.line,
     effect: series.effect,
     packaging: paint.packagingName ?? "",
     volume: paint.volumeLabel ?? "",
@@ -344,6 +345,15 @@ export async function buildCards({
     if (sources.has("pack1") && !packRange.pack1) continue;
     // Palet karesi renk listesi olmadan boş bir ızgara olurdu.
     if (usesPalette(layout) && !paint.palette?.length) continue;
+    /*
+     * Banner sloganı yoksa kare basılmaz.
+     *
+     * Slogan ve maddeler karenin YARISI: onlarsız geriye seri adı ve boş bir
+     * zemin kalıyor, "tasarlanmış" değil "yarım kalmış" bir reklam görüntüsü
+     * çıkıyordu. Aynı kural kat/gam/palet şablonlarında da geçerli — eksik
+     * veriyle boş kare basmıyoruz, kullanıcı sebebini ekranda görüyor.
+     */
+    if (tpl.kind === "banner" && !paint.bannerSlogan?.trim()) continue;
 
     /*
      * Kolaj: kutular ELDEKİ kare sayısına göre yeniden hesaplanıyor.

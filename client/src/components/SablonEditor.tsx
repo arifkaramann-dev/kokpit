@@ -775,6 +775,10 @@ export default function SablonEditor({
                         <SelectItem value="coat1">1. kat</SelectItem>
                         <SelectItem value="coat2">2. kat</SelectItem>
                         <SelectItem value="coat3">3. kat</SelectItem>
+                        <SelectItem value="use1">Kullanım karesi 1</SelectItem>
+                        <SelectItem value="use2">Kullanım karesi 2</SelectItem>
+                        <SelectItem value="use3">Kullanım karesi 3</SelectItem>
+                        <SelectItem value="use4">Kullanım karesi 4</SelectItem>
                         {assets.map(a => (
                           <SelectItem key={a.id} value={`asset:${a.id}`}>
                             {a.label}
@@ -808,9 +812,22 @@ export default function SablonEditor({
                     kapalı olmalı (fon saf beyaz kalmalı).
                   </span>
                 </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={!!selected.knockout}
+                    onCheckedChange={v => patchLayer(selected.id, { knockout: v } as Partial<Layer>)}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Fonu sil. AI obje kareleri beyaz fonlu gelir; KOYU zeminli karelerde
+                    (banner) fon silinmezse objenin etrafında beyaz bir dikdörtgen kalır.
+                    Açık zeminli kartlarda kapalı bırakın.
+                  </span>
+                </div>
                 <p className="text-xs text-muted-foreground">
                   Ambalaj ve gam kutuları Tanımlar → Ambalajlar'daki çekimlerden gelir. Gam
                   hacme göre sıralıdır: "2. boy" seri değiştiğinde de doğru kutuyu çizer.
+                  Arka plan olarak kendi görselinizi kullanmak için: Şablon Varlıkları'na
+                  yükleyin, sonra bu listeden seçin.
                 </p>
               </>
             )}

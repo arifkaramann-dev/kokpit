@@ -225,6 +225,17 @@ export type ImageLayer = {
    * KULLANILMAZ (fon saf beyaz kalmalı), o yüzden şablon başına açılıyor.
    */
   shadow?: boolean;
+  /**
+   * Görselin BEYAZ FONUNU siler.
+   *
+   * AI obje kareleri beyaz fonlu geliyor. Açık zeminli kartta bu doğru
+   * davranış (fon karta karışıyor), koyu zeminli banner'da ise objenin
+   * etrafında parlak beyaz bir dikdörtgen bırakıyor — karenin en amatör
+   * görünen yeri. Aynı maske palet karelerinde de kullanılıyor.
+   *
+   * Varsayılan KAPALI: açık zeminli mevcut şablonların çıktısı değişmesin.
+   */
+  knockout?: boolean;
 };
 
 export type RectLayer = {
@@ -279,6 +290,17 @@ export type PaletteLayer = {
   radius?: number;
   /** Kartın kendi rengini çerçeveleyip öne çıkar. */
   highlight?: boolean;
+  /**
+   * Palet karelerinin BEYAZ FONUNU siler.
+   *
+   * Kareler beyaz fonlu ürün çekimleri; açık zeminli bir kartta sorun yok ama
+   * koyu zeminli banner'da her kare parlak beyaz bir dikdörtgen olarak
+   * duruyordu — tasarımın en amatör görünen yeri buydu. Fon silinince objeler
+   * zeminde yüzüyor.
+   *
+   * Varsayılan KAPALI: mevcut açık zeminli şablonların çıktısı değişmesin.
+   */
+  knockout?: boolean;
   visible: boolean;
   opacity?: number;
 };

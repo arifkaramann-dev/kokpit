@@ -18,6 +18,7 @@ import {
   type TokenValues,
   type Watermark,
 } from "@shared/color/layout";
+import { extractSubjectMask } from "@shared/color/subject";
 import { ensureBrandFont, forceWhiteBackground } from "./renkTemplates";
 
 export type LayerImages = Partial<Record<ImageSource, HTMLCanvasElement | HTMLImageElement | null>>;
@@ -172,6 +173,61 @@ function fadeOut(color: string): string {
  * Renk sayısı arttıkça kutular küçülür — kırpmak, "diğer renkler" karesinin
  * amacını (gamın TAMAMINI göstermek) bozardı.
  */
+/**
+ * Beyaz fonu siler — palet karesi koyu zeminde beyaz kutu olarak durmasın.
+ *
+ * Kareler beyaz fonlu ürün çekimleri. Açık zeminli kartta sorun yok, koyu
+ * zeminli banner'da her biri parlak beyaz bir dikdörtgen oluyordu; tasarımın
+ * en amatör görünen yeri buydu.
+ *
+ * Fon tespiti şablon üretiminin başka yerinde zaten var (`extractSubjectMask`,
+ * köşelerden komşuluk zinciriyle ilerleyen dolgu). Aynı maskeyi burada alfa
+ * kanalına yazıyoruz: obje kalıyor, fon saydamlaşıyor. Yeni bir eşik ya da
+ * ikinci bir "fon nedir" tanımı üretmiyoruz — iki farklı cevap veren iki kod
+ * yolu, bu projede daha önce tam olarak bu şekilde sorun çıkardı.
+ *
+ * Sonuç önbellekleniyor: aynı palet karesi birden çok banner ölçüsünde
+ * çiziliyor ve maske hesabı piksel piksel dolaşıyor.
+ */
+const knockoutCache = new WeakMap<HTMLImageElement | HTMLCanvasElement, HTMLCanvasElement>();
+
+function knockoutBackground(
+  img: HTMLImageElement | HTMLCanvasElement,
+): HTMLImageElement | HTMLCanvasElement {
+  const cached = knockoutCache.get(img);
+  if (cached) return cached;
+
+  const { w, h } = sizeOf(img);
+  if (!w || !h) return img;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return img;
+
+  ctx.drawImage(img, 0, 0, w, h);
+  let image: ImageData;
+  try {
+    image = ctx.getImageData(0, 0, w, h);
+  } catch {
+    // Çapraz kaynak görsel canvas'ı kirletir; fonu silemeyiz ama kareyi de
+    // kaybetmeyelim — olduğu gibi çizilir.
+    return img;
+  }
+
+  const raster = { data: image.data, width: w, height: h };
+  const { mask, noBackgroundFound } = extractSubjectMask(raster);
+  // Fon bulunamadıysa maske "her şey obje" olur; alfa yazmak anlamsız.
+  if (noBackgroundFound) return img;
+
+  for (let i = 0; i < mask.length; i += 1) {
+    if (!mask[i]) image.data[i * 4 + 3] = 0;
+  }
+  ctx.putImageData(image, 0, 0);
+  knockoutCache.set(img, canvas);
+  return canvas;
+}
+
 function drawPalette(
   ctx: CanvasRenderingContext2D,
   layer: PaletteLayer,
@@ -205,7 +261,8 @@ function drawPalette(
     // Rengin stüdyo karesi varsa O çizilir; hex yalnız görsel yoksa devreye
     // giren yedek. Kutuya sığdırılıyor (kırpmadan): kareler farklı oranlarda
     // olabilir ve obje kırpılırsa palet bozuk görünür.
-    const img = e.code ? images[e.code] : undefined;
+    const raw = e.code ? images[e.code] : undefined;
+    const img = raw && layer.knockout ? knockoutBackground(raw) : raw;
     if (img) {
       const { w: sw, h: sh } = sizeOf(img);
       const fitted = contain(sw, sh, cellW, swatchH);
@@ -390,8 +447,14 @@ export async function renderLayout({
         continue;
       }
       // Logo saydam PNG; fonunu ayıklamaya çalışmak onu bozar.
+      // `knockout` açıkken fon SİLİNİYOR (koyu zeminli banner); kapalıyken
+      // beyaza sabitleniyor (açık zeminli kartlarda fon karta karışsın).
       const drawable =
-        layer.source === "logo" ? img : forceWhiteBackground(img).canvas;
+        layer.source === "logo"
+          ? img
+          : layer.knockout
+            ? knockoutBackground(img)
+            : forceWhiteBackground(img).canvas;
       const { w: sw, h: sh } = sizeOf(drawable);
       const fitted =
         layer.fit === "cover" ? cover(sw, sh, box.w, box.h) : contain(sw, sh, box.w, box.h);

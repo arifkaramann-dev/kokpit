@@ -6,6 +6,7 @@ import {
   defaultCoatSystem,
   normalizeCoatSystem,
 } from "./coatSystem";
+import { defaultLayout } from "./layoutDefaults";
 import { suggestColorNameEn } from "../colorNames";
 import { colorLabelOf } from "../productName";
 
@@ -112,5 +113,45 @@ describe("çift dilli renk adı", () => {
   it("bilmediği adı UYDURMAZ", () => {
     expect(suggestColorNameEn("Meteor Işıltısı")).toBeNull();
     expect(suggestColorNameEn("")).toBeNull();
+  });
+});
+
+/**
+ * Banner'ın ilk hâli "çiğ" görünüyordu: koyu zeminde beyaz fonlu kareler,
+ * boş slogan alanı ve yanlış marka hattı. Bunlar tasarım tercihi değil,
+ * düzeltilmiş hatalar — regresyona karşı bağlanıyor.
+ */
+describe("banner yerleşimi", () => {
+  const banner = defaultLayout("banner");
+  const hero = banner.layers.find(l => l.id.startsWith("hero"));
+  const palette = banner.layers.find(l => l.type === "palette");
+  const backdrop = banner.layers.find(l => l.id.startsWith("arkaplan"));
+
+  it("koyu zeminde çizilen görsellerin fonu silinir", () => {
+    expect(hero?.type).toBe("image");
+    expect(hero && "knockout" in hero && hero.knockout).toBe(true);
+    expect(palette && "knockout" in palette && palette.knockout).toBe(true);
+  });
+
+  it("palet kod yazmaz — banner'ın konusu seri, renk listesi değil", () => {
+    expect(palette && "showCode" in palette && palette.showCode).toBe(false);
+  });
+
+  it("AI arka plan katmanı hazır ama kapalı gelir", () => {
+    // Varlığa bağlanmadan görünür olsaydı her banner boş bir katman taşırdı.
+    expect(backdrop?.visible).toBe(false);
+  });
+
+  it("dört ölçünün de kendi tarifi var ve oranları doğru", () => {
+    expect([defaultLayout("banner").width, defaultLayout("banner").height]).toEqual([1080, 1080]);
+    expect([defaultLayout("bannerWide").width, defaultLayout("bannerWide").height]).toEqual([1200, 628]);
+    expect([defaultLayout("bannerHero").width, defaultLayout("bannerHero").height]).toEqual([1920, 600]);
+    expect([defaultLayout("bannerStory").width, defaultLayout("bannerStory").height]).toEqual([1080, 1920]);
+  });
+
+  it("geniş formatta metin kutusu karenin yarısını geçmez", () => {
+    const wide = defaultLayout("bannerHero");
+    const slogan = wide.layers.find(l => l.id.startsWith("slogan"));
+    expect(slogan?.box.w).toBeLessThan(0.5);
   });
 });

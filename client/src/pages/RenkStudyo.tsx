@@ -342,6 +342,9 @@ function useKatalogBoyutlari() {
       const s = (seriesRows ?? []).find(x => x.id === seriesId);
       const bullets = (s as { bannerBullets?: unknown } | undefined)?.bannerBullets;
       return {
+        // Marka hattı ürünün GERÇEK serisinden: bitiş türünden tahmin edilen
+        // eski değer CANDY ürününe "VIVID SOLID" yazdırıyordu.
+        seriesLine: s?.name ?? null,
         coatSystem: coatSystemOf({
           name: s?.name ?? null,
           coatSystem: (s as { coatSystem?: unknown } | undefined)?.coatSystem,
@@ -1201,6 +1204,19 @@ function PazarlamaGorselleri({
       });
       setCards(out);
       if (!out.length) toast.error("Hiçbir şablon üretilemedi");
+      // Atlanan şablonun SEBEBİ söylenmezse kullanıcı "üretilmedi" diye
+      // düğmeye tekrar basıyor. En sık sebep banner metninin boş olması.
+      else if (
+        picked.some(id => id.startsWith("banner")) &&
+        !out.some(c => c.id.startsWith("banner")) &&
+        !paint.bannerSlogan?.trim()
+      ) {
+        toast.message("Banner atlandı — bu serinin sloganı boş", {
+          description:
+            "Seriler → ilgili seri → Kat Sistemi & Banner sekmesinden sloganı yaz ya da \"Seri metninden öner\" ile üret.",
+          duration: 9000,
+        });
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Şablonlar üretilemedi");
     } finally {
