@@ -1,19 +1,49 @@
 /**
  * Renk numarası ve katalog kodu.
  *
- * ── Neden numara renge, ön ek seriye ait ──────────────────────────────────
- * Bir renk tek bir seriye ait DEĞİL: aynı yeşil hem CANDY hem METEOR altında
- * satılabiliyor (`colors.seriesId` çoğu renkte boş, "tüm seriler"). Kodu
- * doğrudan renge "CND1008" diye yazmak, o yeşilin METEOR ürününde de CANDY
- * ön ekiyle görünmesi demekti — yanlış seri, yanlış ürün.
+ * ── Kodun sahibi ÜRÜNDÜR, renk değil ──────────────────────────────────────
+ * Katalog kodu tek bir alanda durmaz; iki parçadan ÜRÜN ANINDA kurulur:
  *
- * Bu yüzden renk yalnız bir NUMARA taşıyor (1008 = o yeşil, sonsuza kadar) ve
- * ön ek ürünün serisinden geliyor: CANDY'de CND1008, METEOR'da MTR1008. Aynı
- * ayrım internal SKU'da zaten var (`aoc` + `cnd` + renk) — kod da onu izliyor.
+ *     kod = ürünün serisinin ÖN EKİ + o seride rengin NUMARASI
  *
- * Saf modül: veritabanı yok, tarayıcı yok. Hem sunucu hem istemci aynı
- * fonksiyonu çağırıyor ki kartta basılan kod ile künyedeki kod ayrışmasın.
+ * Bir renk tek bir seriye ait değil: aynı yeşil hem CANDY hem METEOR altında
+ * satılabiliyor. Kodu doğrudan renge "CND1008" diye yazmak, o yeşilin METEOR
+ * ürününde de CANDY ön ekiyle görünmesi demekti — yanlış seri, yanlış ürün.
+ *
+ * ── Numara neden seri bazında olabiliyor ──────────────────────────────────
+ * Önce numara TEK ve global tutuldu (1008 = o yeşil, her seride 1008). Bu,
+ * kodu üreten tarafta doğru ama KATALOĞUN GERÇEĞİ değil: her serinin kendi
+ * numara düzeni var (CANDY 1001'den sayar, RAL COLOUR'da numara RAL kodudur,
+ * METEOR'un 1004'ü CANDY'nin 1004'ü ile aynı renk olmak zorunda değil).
+ * Global tek numarayla bu kataloglar sisteme GİRİLEMİYORDU: iki seri aynı
+ * numarayı kullanamıyor, RAL 3020 diye bir numara diziye hiç oturmuyordu.
+ *
+ * Bu yüzden numaranın iki katmanı var:
+ *   1) `colors.colorNo` — rengin VARSAYILAN numarası (seri kendi numarasını
+ *      söylemediğinde kullanılır),
+ *   2) `seriesColorNumbers` — "bu seride bu rengin numarası şudur" (üstün gelir).
+ *
+ * Karar sırası tek yerde: `makeColorCodeIndex`. Kartta basılan kod ile
+ * künyedeki, ilandaki ve aramadaki kod ayrışmasın diye hem sunucu hem istemci
+ * aynı indeksi kullanır.
+ *
+ * Saf modül: veritabanı yok, tarayıcı yok.
  */
+
+/**
+ * Renksiz kalemlerin (tiner, vernik) bağlandığı sabit rengin kodu.
+ *
+ * Bu satır bir RENK değil, `masterProducts.colorId` NOT NULL kalabilsin diye
+ * duran bir yer tutucudur; katalog kodu almaz. Toplu numara üretimi bunu
+ * atlamazsa "Renksiz / Nötr" bir katalog kodu kazanıyor ve tinerin etiketine
+ * renk kodu basılıyordu.
+ */
+export const NEUTRAL_COLOR_CODE = "notr";
+
+/** Bu renk gerçek bir renk mi, yoksa renksiz yer tutucu mu? */
+export function isNeutralColor(code: string | null | undefined): boolean {
+  return String(code ?? "").trim().toLowerCase() === NEUTRAL_COLOR_CODE;
+}
 
 /** Katalog kodunun ön eki: harf+rakam, büyük harf. Serisiz renkte "AOC". */
 export function colorCodePrefix(prefix: string | null | undefined): string {
@@ -55,9 +85,10 @@ export function formatColorCode(
  * kullanılmış bir numara ikinci kez üretilirdi: iki farklı boya aynı kodu
  * taşır, depoda yanlış şişe kutulanır.
  *
- * Numara SERİDEN BAĞIMSIZ tek bir dizidir. Seri başına ayrı dizi tutulsaydı
- * aynı numara iki renge düşerdi (CND1008 yeşil, MTR1008 mavi) ve "1008"
- * tek başına bir şey ifade etmezdi.
+ * Hangi kümeye bakılacağı çağırana ait: varsayılan numaralar için TÜM
+ * renklerin numaraları, bir serinin kendi dizisi için yalnız o serinin
+ * numaraları verilir. Aynı seri içinde numara tekildir; farklı serilerin aynı
+ * numarayı kullanması sorun değil — ön ek onları ayırır (CND1004 ≠ MTR1004).
  */
 export function nextColorNo(existing: Array<number | null | undefined>): number {
   let max = 0;
@@ -75,4 +106,83 @@ export function parseColorNo(value: string | number | null | undefined): number 
   if (!digits) return null;
   const n = Number(digits);
   return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/* ==========================================================================
+ * Seri × renk numarası — kodun ürüne ait olduğu yer
+ * ========================================================================== */
+
+/** "Bu seride bu rengin numarası şudur." `seriesColorNumbers` tablosunun satırı. */
+export type SeriesColorNo = { seriesId: number; colorId: number; colorNo: number };
+
+/** Seri×renk çiftinin harita anahtarı — iki uçta da aynı biçim. */
+export function seriesColorKey(seriesId: number, colorId: number): string {
+  return `${seriesId}:${colorId}`;
+}
+
+export type ColorCodeIndex = {
+  /** Serinin katalog ön eki ("cnd" → "CND"); seri bilinmiyorsa null. */
+  prefixOf(seriesId: number | null | undefined): string | null;
+  /** Yalnız serinin KENDİ numarası (varsayılana düşmez) — düzenleme ekranı için. */
+  overrideOf(seriesId: number | null | undefined, colorId: number | null | undefined): number | null;
+  /** Bu üründe geçerli numara: serinin kendi numarası, yoksa rengin varsayılanı. */
+  colorNoOf(
+    seriesId: number | null | undefined,
+    colorId: number | null | undefined,
+    defaultColorNo?: number | null,
+  ): number | null;
+  /** Bu üründe basılacak katalog kodu ("CND1008"); numara ya da seri yoksa null. */
+  codeOf(
+    seriesId: number | null | undefined,
+    colorId: number | null | undefined,
+    defaultColorNo?: number | null,
+  ): string | null;
+};
+
+/**
+ * Katalog kodu indeksi — kodu kimin belirlediğinin TEK cevabı.
+ *
+ * Ön ek ürünün serisinden, numara önce o serinin kendi kaydından, o yoksa
+ * rengin varsayılan numarasından gelir. Her ekran bu indeksi kullandığı için
+ * kartta, künyede, palette ve aramada aynı kod görünür; eskiden her çağrı yeri
+ * `formatColorCode(prefix, color.colorNo)` diye kendi kodunu kuruyordu ve
+ * serinin kendi numarasını hiçbiri bilmiyordu.
+ *
+ * Renk bazlı varsayılan numara `defaultColorNo` ile çağrı anında verilir:
+ * indeks renk tablosunu taşımaz, çağıran zaten elinde tutar.
+ */
+export function makeColorCodeIndex(input: {
+  series: Array<{ id: number; prefix?: string | null }>;
+  overrides?: Array<SeriesColorNo> | null;
+}): ColorCodeIndex {
+  const prefixes = new Map<number, string | null>(
+    input.series.map(s => [s.id, s.prefix ?? null]),
+  );
+  const overrides = new Map<string, number>();
+  for (const o of input.overrides ?? []) {
+    if (o?.colorNo == null || !Number.isFinite(o.colorNo)) continue;
+    overrides.set(seriesColorKey(o.seriesId, o.colorId), Math.floor(o.colorNo));
+  }
+
+  const overrideOf = (seriesId: number | null | undefined, colorId: number | null | undefined) =>
+    seriesId == null || colorId == null
+      ? null
+      : (overrides.get(seriesColorKey(seriesId, colorId)) ?? null);
+
+  const colorNoOf = (
+    seriesId: number | null | undefined,
+    colorId: number | null | undefined,
+    defaultColorNo?: number | null,
+  ) => overrideOf(seriesId, colorId) ?? (defaultColorNo ?? null);
+
+  return {
+    prefixOf: seriesId => (seriesId == null ? null : (prefixes.get(seriesId) ?? null)),
+    overrideOf,
+    colorNoOf,
+    codeOf: (seriesId, colorId, defaultColorNo) =>
+      formatColorCode(
+        seriesId == null ? null : (prefixes.get(seriesId) ?? null),
+        colorNoOf(seriesId, colorId, defaultColorNo),
+      ),
+  };
 }

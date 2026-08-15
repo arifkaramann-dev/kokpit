@@ -28,7 +28,12 @@ import {
   buildSlug,
   looksLikeReadyToUse,
 } from "../catalogCodes";
-import { formatColorCode, nextColorNo, parseColorNo } from "@shared/colorCode";
+import {
+  isNeutralColor,
+  makeColorCodeIndex,
+  nextColorNo,
+  parseColorNo,
+} from "@shared/colorCode";
 import { mapToTrendyolCards } from "../cardMapping";
 import { cubeKey, disambiguate, planListings, planMasters, type Readiness } from "../catalogPlan";
 import {
@@ -474,11 +479,14 @@ async function listColorNumbers() {
   }>;
 }
 
+/** `seriesColorNumbers` satırı — "bu seride bu rengin numarası". */
+type SeriesColorNoRow = { seriesId: number; colorId: number; colorNo: number };
+
 export const katalogRouter = router({
   /* ---- Boyutlar --------------------------------------------------------- */
 
   dimensions: protectedProcedure.query(async () => {
-    const [colors, families, packagings, useCases, channels, sp, sf] = await Promise.all([
+    const [colors, families, packagings, useCases, channels, sp, sf, sc, scn] = await Promise.all([
       db.listColors(),
       db.listProductFamilies(),
       db.listPackagings(),
@@ -486,8 +494,23 @@ export const katalogRouter = router({
       db.listSalesChannels(),
       db.listSeriesPackagings(),
       db.listSeriesFamilies(),
+      db.listSeriesColors(),
+      // Katalog kodunu kuran ikinci parça. Renklerle AYNI sorguda dönüyor:
+      // ayrı sorgu olsaydı ekranlar kodu önce varsayılan numarayla basıp
+      // numaralar gelince değiştirirdi — kod gözün önünde zıplardı.
+      db.listSeriesColorNumbers(),
     ]);
-    return { colors, families, packagings, useCases, channels, seriesPackagings: sp, seriesFamilies: sf };
+    return {
+      colors,
+      families,
+      packagings,
+      useCases,
+      channels,
+      seriesPackagings: sp,
+      seriesFamilies: sf,
+      seriesColors: sc,
+      seriesColorNumbers: scn,
+    };
   }),
 
   /**
@@ -586,33 +609,133 @@ export const katalogRouter = router({
   /**
    * Sıradaki renk numarasını ÖNERİR — yazmaz.
    *
+   * `seriesId` verilirse O SERİNİN dizisinden devam eder (CANDY'nin 1004'ü ile
+   * METEOR'un 1004'ü ayrı renkler olabilir; ön ek onları ayırır). Verilmezse
+   * rengin varsayılan numarası için tüm numaralara bakılır.
+   *
    * Numara insanın kararı: form açıkken önerilir, kullanıcı beğenmezse elle
-   * değiştirir. Seriden bağımsız TEK dizi; ön ek karta basılırken ürünün
-   * serisinden ekleniyor.
+   * değiştirir.
    */
-  nextColorNo: protectedProcedure.query(async () => {
-    const colors = await listColorNumbers();
-    return { colorNo: nextColorNo(colors.map(c => c.colorNo)) };
-  }),
+  nextColorNo: protectedProcedure
+    .input(z.object({ seriesId: z.number().int().positive().nullable() }).optional())
+    .query(async ({ input }) => {
+      const seriesId = input?.seriesId ?? null;
+      if (seriesId == null) {
+        const colors = await listColorNumbers();
+        return { colorNo: nextColorNo(colors.map(c => c.colorNo)) };
+      }
+      const rows = await db.listSeriesColorNumbers();
+      return {
+        colorNo: nextColorNo(
+          (rows as SeriesColorNoRow[]).filter(r => r.seriesId === seriesId).map(r => r.colorNo),
+        ),
+      };
+    }),
 
   /**
-   * Numarası olmayan TÜM renklere numara verir.
+   * Bir seride bir rengin numarasını yazar — katalog kodunun gerçek tanım yeri.
+   *
+   * `colorNo: null` kaydı siler: renk o seride varsayılan numarasına döner.
+   * Aynı seride iki rengin aynı numarayı taşıması engellenir; farklı serilerde
+   * aynı numara serbesttir (CND1004 ≠ MTR1004).
+   */
+  setSeriesColorNo: protectedProcedure
+    .input(
+      z.object({
+        seriesId: z.number().int().positive(),
+        colorId: z.number().int().positive(),
+        colorNo: z.number().int().positive().max(99999999).nullable(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      if (input.colorNo != null) {
+        const [rows, colors] = await Promise.all([db.listSeriesColorNumbers(), listColorNumbers()]);
+        const clash = (rows as SeriesColorNoRow[]).find(
+          r =>
+            r.seriesId === input.seriesId &&
+            r.colorId !== input.colorId &&
+            r.colorNo === input.colorNo,
+        );
+        if (clash) {
+          const name = colors.find(c => c.id === clash.colorId)?.name ?? "başka bir renk";
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Bu seride ${input.colorNo} numarası zaten "${name}" renginde kullanılıyor.`,
+          });
+        }
+      }
+      await db.setSeriesColorNumber(input.seriesId, input.colorId, input.colorNo);
+      return { ok: true };
+    }),
+
+  /**
+   * Numarası olmayan renklere toplu numara verir.
    *
    * ── Neden toplu ───────────────────────────────────────────────────────────
-   * Katalogda onlarca renk var ve hiçbirinin numarası yok; tek tek açıp yazmak
-   * saatlik bir iş ve yarısı unutuluyor. Dolu numaralara DOKUNMAZ: elle
-   * verilmiş numara her zaman kazanır. Önce `dryRun` ile ne olacağı görülür.
+   * Katalogda onlarca renk var; tek tek açıp yazmak saatlik bir iş ve yarısı
+   * unutuluyor. Dolu numaralara DOKUNMAZ: elle verilmiş numara her zaman
+   * kazanır. Önce `dryRun` ile ne olacağı görülür.
+   *
+   * ── İki kip ───────────────────────────────────────────────────────────────
+   * `seriesId` verilirse O SERİNİN kendi dizisi doldurulur (CANDY 1001, 1002…)
+   * ve yalnız o seride üretilen renkler işlenir — seride olmayan renge o
+   * serinin kodunu vermek anlamsız. Verilmezse rengin varsayılan numarası
+   * yazılır.
+   *
+   * ── Renksiz atlanır ───────────────────────────────────────────────────────
+   * "Renksiz / Nötr" bir renk değil, `masterProducts.colorId` NOT NULL kalsın
+   * diye duran yer tutucudur. Ona numara verilince tinerin etiketine renk kodu
+   * basılıyordu; artık listeye hiç girmiyor.
    */
   assignColorNumbers: protectedProcedure
-    .input(z.object({ dryRun: z.boolean().default(true) }).default({ dryRun: true }))
+    .input(
+      z
+        .object({
+          dryRun: z.boolean().default(true),
+          seriesId: z.number().int().positive().nullable().default(null),
+        })
+        .default({ dryRun: true, seriesId: null }),
+    )
     .mutation(async ({ input }) => {
-      const colors = await listColorNumbers();
-      // Aynı çalıştırmada üretilen numaralar da sayılmalı, yoksa iki renk
-      // aynı numarayı alır ve tekillik indeksi kaydı reddeder.
-      const used = colors.map(c => c.colorNo);
+      const colors = (await listColorNumbers()).filter(c => !isNeutralColor(c.code));
+      const seriesId = input.seriesId;
 
-      const plan = colors
-        .filter(c => c.colorNo == null)
+      if (seriesId == null) {
+        // Aynı çalıştırmada üretilen numaralar da sayılmalı, yoksa iki renk
+        // aynı numarayı alır ve tekillik indeksi kaydı reddeder.
+        const used = colors.map(c => c.colorNo);
+        const plan = colors
+          .filter(c => c.colorNo == null)
+          .sort((a, b) => a.name.localeCompare(b.name, "tr"))
+          .map(c => {
+            const no = nextColorNo(used);
+            used.push(no);
+            return { colorId: c.id, name: c.name, colorNo: no };
+          });
+
+        if (input.dryRun) return { dryRun: true, assigned: 0, plan };
+        for (const p of plan) await db.updateDimension("colors", p.colorId, { colorNo: p.colorNo });
+        return { dryRun: false, assigned: plan.length, plan };
+      }
+
+      const [numbers, links] = await Promise.all([
+        db.listSeriesColorNumbers(),
+        db.listSeriesColors(),
+      ]);
+      const rows = numbers as SeriesColorNoRow[];
+      // Seri kapsamı boşsa (hiç bağ yok) seri tüm renklere açıktır — kapsam
+      // ekranındaki kuralın aynısı, bkz. `catalogPlan`.
+      const scope = new Set(
+        (links as { seriesId: number; colorId: number }[])
+          .filter(l => l.seriesId === seriesId)
+          .map(l => l.colorId),
+      );
+      const inSeries = scope.size > 0 ? colors.filter(c => scope.has(c.id)) : colors;
+      const has = new Set(rows.filter(r => r.seriesId === seriesId).map(r => r.colorId));
+      const used = rows.filter(r => r.seriesId === seriesId).map(r => r.colorNo);
+
+      const plan = inSeries
+        .filter(c => !has.has(c.id))
         .sort((a, b) => a.name.localeCompare(b.name, "tr"))
         .map(c => {
           const no = nextColorNo(used);
@@ -621,8 +744,7 @@ export const katalogRouter = router({
         });
 
       if (input.dryRun) return { dryRun: true, assigned: 0, plan };
-
-      for (const p of plan) await db.updateDimension("colors", p.colorId, { colorNo: p.colorNo });
+      for (const p of plan) await db.setSeriesColorNumber(seriesId, p.colorId, p.colorNo);
       return { dryRun: false, assigned: plan.length, plan };
     }),
 
@@ -3049,7 +3171,7 @@ export const katalogRouter = router({
       const master = await db.getMasterProduct(input.masterId);
       if (!master) throw new TRPCError({ code: "NOT_FOUND", message: "Ürün bulunamadı" });
 
-      const [listings, channelListings, useCases, channels, colors, packagings, series, families, formulas, formulaInputs] =
+      const [listings, channelListings, useCases, channels, colors, packagings, series, families, formulas, formulaInputs, seriesColorNumbers] =
         await Promise.all([
           db.listListingsByMaster(input.masterId),
           db.listChannelListings(),
@@ -3061,6 +3183,7 @@ export const katalogRouter = router({
           db.listProductFamilies(),
           db.listFormulas(),
           db.listFormulaInputs(),
+          db.listSeriesColorNumbers(),
         ]);
       const data = await loadCapacityInputs();
       const report = computeCapacity(data);
@@ -3163,12 +3286,17 @@ export const katalogRouter = router({
           /**
            * Katalog kodu — BU ÜRÜNÜN serisiyle birleşmiş hâli.
            *
-           * Renk kaydında yalnız numara duruyor; ön ek üründen geliyor.
-           * Aynı yeşil CANDY kartında CND1008, METEOR kartında MTR1008.
+           * Ön ek üründen, numara önce serinin kendi kaydından
+           * (`seriesColorNumbers`), yoksa rengin varsayılanından geliyor:
+           * aynı yeşil CANDY kartında CND1008, METEOR kartında MTR1004
+           * olabilir.
            */
-          colorCode: formatColorCode(
-            (series as { id: number; prefix: string | null }[]).find(s => s.id === master.seriesId)
-              ?.prefix ?? null,
+          colorCode: makeColorCodeIndex({
+            series: series as { id: number; prefix: string | null }[],
+            overrides: seriesColorNumbers as { seriesId: number; colorId: number; colorNo: number }[],
+          }).codeOf(
+            master.seriesId as number,
+            master.colorId as number,
             colorById.get(master.colorId)?.colorNo ?? null,
           ),
         },

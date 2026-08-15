@@ -172,16 +172,17 @@ export default function MasterCard() {
               }
             />
             <Field label="Hazırlık" value={master.readiness === "r2u" ? "Kullanıma hazır" : "Konsantre"} />
-            {/* Kod bu ÜRÜNÜN serisiyle birleşiyor: aynı renk CANDY'de CND1008,
-                METEOR'da MTR1008. Renk kaydında yalnız numara duruyor. */}
+            {/* Kod bu ÜRÜNDE kuruluyor: ön ek serinin, numara o serinin kendi
+                kaydının — yoksa rengin varsayılan numarasının. Aynı renk
+                CANDY'de CND1008, METEOR'da MTR1004 olabilir. */}
             <Field
               label="Renk kodu"
               value={identity.colorCode}
               mono
               hint={
                 identity.colorCode
-                  ? `renk no ${identity.color?.colorNo} + seri ön eki`
-                  : "renk numarası yok — Tanımlar → Renkler'den ver ya da toplu üret"
+                  ? "seri ön eki + bu serideki renk numarası"
+                  : "bu seride renk numarası yok — Tanımlar → Renkler'den ver ya da toplu üret"
               }
             />
             <Field label="Temel kod" value={master.baseCode} mono />

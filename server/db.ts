@@ -60,6 +60,7 @@ import {
   seriesPackagings,
   seriesFamilies,
   seriesColors,
+  seriesColorNumbers,
   familyPackagings,
   formulas,
   formulaInputs,
@@ -2404,6 +2405,43 @@ export async function listSeriesColors() {
   return db.select().from(seriesColors);
 }
 
+/* ---- Seri × renk numarası (katalog kodunun sayı kısmı) ------------------- */
+
+export async function listSeriesColorNumbers() {
+  const db = await requireDb();
+  return db.select().from(seriesColorNumbers);
+}
+
+/**
+ * Bir seride bir rengin numarasını yazar; `colorNo` null ise kaydı SİLER
+ * (renk o seride varsayılan numarasına döner).
+ *
+ * Silme ile "0 yaz" ayrı şeyler: kayıt durduğu sürece serinin kendi numarası
+ * varsayılanı ezer. Kullanıcı alanı boşalttığında ezme kalkmalı, sıfır bir
+ * numara olarak kalmamalı.
+ */
+export async function setSeriesColorNumber(
+  seriesId: number,
+  colorId: number,
+  colorNo: number | null,
+) {
+  const db = await requireDb();
+  const where = and(
+    eq(seriesColorNumbers.seriesId, seriesId),
+    eq(seriesColorNumbers.colorId, colorId),
+  );
+  if (colorNo == null) {
+    await db.delete(seriesColorNumbers).where(where);
+    return;
+  }
+  const [existing] = await db.select().from(seriesColorNumbers).where(where).limit(1);
+  if (existing) {
+    await db.update(seriesColorNumbers).set({ colorNo }).where(where);
+    return;
+  }
+  await db.insert(seriesColorNumbers).values({ seriesId, colorId, colorNo });
+}
+
 /** Form × ambalaj uyumluluğu — "Airbrush · SPREY 400ML" gibi kombinasyonları eler. */
 export async function setFamilyPackagings(familyId: number, packagingIds: number[]) {
   const db = await requireDb();
@@ -2859,6 +2897,13 @@ export async function deleteDimension(kind: DimensionTable, id: number) {
   // görselleri sahipsiz kalır ve hiçbir ekrandan görünmediği için temizlenemez.
   if (kind === "packagings") {
     await db.delete(packagingImages).where(eq(packagingImages.packagingId, id));
+  }
+  // Aynı sebeple rengin seri numaraları: renk gidince "CANDY'de 1004" satırı
+  // hiçbir ekranda görünmez ama seri içindeki numara tekilliğini işgal eder ve
+  // o numara bir daha kullanılamaz.
+  if (kind === "colors") {
+    await db.delete(seriesColorNumbers).where(eq(seriesColorNumbers.colorId, id));
+    await db.delete(seriesColors).where(eq(seriesColors.colorId, id));
   }
   await db.delete(table as never).where(eq((table as never as { id: never }).id, id));
 }
