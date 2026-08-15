@@ -128,14 +128,24 @@ describe("banner yerleşimi", () => {
   const palette = banner.layers.find(l => l.type === "palette");
   const backdrop = banner.layers.find(l => l.id.startsWith("arkaplan"));
 
-  it("koyu zeminde çizilen görsellerin fonu silinir", () => {
+  it("koyu zeminde çizilen görselin fonu silinir", () => {
+    // Palet artık görsel taşımıyor (çip modu), o yüzden yalnız kahraman obje
+    // fon silme istiyor.
     expect(hero?.type).toBe("image");
     expect(hero && "knockout" in hero && hero.knockout).toBe(true);
-    expect(palette && "knockout" in palette && palette.knockout).toBe(true);
   });
 
-  it("palet kod yazmaz — banner'ın konusu seri, renk listesi değil", () => {
+  it("palet kod yazmaz ve obje kopyalamaz — banner'ın konusu seri", () => {
     expect(palette && "showCode" in palette && palette.showCode).toBe(false);
+    // Çip modu: kahraman zaten o obje, altına küçük kopyalarını dizmek kareyi
+    // "aynı şeyin tekrarı" hâline getiriyordu.
+    expect(palette && "swatches" in palette && palette.swatches).toBe(true);
+  });
+
+  it("obje kadrajdan taşar — ortada ölü alan kalmasın", () => {
+    const box = hero?.box;
+    // Taşma: kutu karenin dışına çıkıyor (x+w > 1 ya da y < 0).
+    expect(box && (box.x + box.w > 1 || box.y < 0)).toBe(true);
   });
 
   it("AI arka plan katmanı hazır ama kapalı gelir", () => {
