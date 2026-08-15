@@ -34,6 +34,7 @@ import {
   nextColorNo,
   parseColorNo,
 } from "@shared/colorCode";
+import { suggestColorNameEn } from "@shared/colorNames";
 import { mapToTrendyolCards } from "../cardMapping";
 import { cubeKey, disambiguate, planListings, planMasters, type Readiness } from "../catalogPlan";
 import {
@@ -486,7 +487,7 @@ export const katalogRouter = router({
   /* ---- Boyutlar --------------------------------------------------------- */
 
   dimensions: protectedProcedure.query(async () => {
-    const [colors, families, packagings, useCases, channels, sp, sf, sc, scn] = await Promise.all([
+    const [colors, families, packagings, useCases, channels, sp, sf, sc, suc, scn] = await Promise.all([
       db.listColors(),
       db.listProductFamilies(),
       db.listPackagings(),
@@ -495,6 +496,7 @@ export const katalogRouter = router({
       db.listSeriesPackagings(),
       db.listSeriesFamilies(),
       db.listSeriesColors(),
+      db.listSeriesUseCases(),
       // Katalog kodunu kuran ikinci parça. Renklerle AYNI sorguda dönüyor:
       // ayrı sorgu olsaydı ekranlar kodu önce varsayılan numarayla basıp
       // numaralar gelince değiştirirdi — kod gözün önünde zıplardı.
@@ -509,6 +511,7 @@ export const katalogRouter = router({
       seriesPackagings: sp,
       seriesFamilies: sf,
       seriesColors: sc,
+      seriesUseCases: suc,
       seriesColorNumbers: scn,
     };
   }),
@@ -602,6 +605,86 @@ export const katalogRouter = router({
         return { id };
       }
       return { id: await db.createDimension(kind, data) };
+    }),
+
+  /* ---- Renklerin İngilizce adı -------------------------------------------- */
+
+  /**
+   * İngilizce adı boş renkler için ÖNERİ listesi — yazmaz.
+   *
+   * ── Neden sözlük, neden AI değil ──────────────────────────────────────────
+   * "Fuşya → Magenta", "Bordo → Maroon" eşleşmeleri sabit ve tartışmasız;
+   * her biri için AI'a sormak hem para hem yavaşlık. Sözlük ücretsiz, anında
+   * ve tekrar çalıştırıldığında AYNI sonucu veriyor.
+   *
+   * Sözlükte olmayan renk listeye BOŞ öneriyle giriyor: kullanıcı onu elle
+   * yazsın. Uydurma bir karşılık üretmek, ad etikete ve pazaryeri başlığına
+   * gittiği için pahalı bir hata olurdu.
+   */
+  suggestColorNamesEn: protectedProcedure.query(async () => {
+    const colors = (await db.listColors()) as Array<{
+      id: number;
+      code: string;
+      name: string;
+      nameEn: string | null;
+    }>;
+    return colors
+      .filter(c => !c.nameEn?.trim() && !isNeutralColor(c.code))
+      .map(c => ({
+        colorId: c.id,
+        name: c.name,
+        suggestion: suggestColorNameEn(c.name) ?? "",
+      }));
+  }),
+
+  /**
+   * Onaylanan İngilizce adları yazar.
+   *
+   * Liste kullanıcının DÜZENLEDİĞİ hâliyle geliyor — öneri ekranında değişen
+   * satır neyse o yazılıyor. Boş bırakılan satır atlanır: "silmek" değil
+   * "şimdilik geç" demek.
+   */
+  applyColorNamesEn: protectedProcedure
+    .input(
+      z.object({
+        rows: z
+          .array(
+            z.object({
+              colorId: z.number().int().positive(),
+              nameEn: z.string().trim().max(128),
+            }),
+          )
+          .max(500),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      let written = 0;
+      for (const row of input.rows) {
+        if (!row.nameEn) continue;
+        await db.updateDimension("colors", row.colorId, { nameEn: row.nameEn });
+        written += 1;
+      }
+      return { written };
+    }),
+
+  /* ---- Seri × kullanım alanı (vitrin kolajı) ------------------------------ */
+
+  /**
+   * Serinin vitrinde gösterilecek kullanım alanları.
+   *
+   * Boş liste bağı KALDIRIR: seri yeniden tüm kullanım alanlarına açılır —
+   * ambalaj ve renk eksenlerindeki kuralın aynısı.
+   */
+  setSeriesUseCases: protectedProcedure
+    .input(
+      z.object({
+        seriesId: z.number().int().positive(),
+        useCaseIds: z.array(z.number().int().positive()).max(50),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      await db.setSeriesUseCases(input.seriesId, input.useCaseIds);
+      return { ok: true };
     }),
 
   /* ---- Renk numarası (CND1008'in "1008"i) --------------------------------- */

@@ -16,6 +16,7 @@
 
 
 
+import type { CoatSystem } from "@shared/color/coatSystem";
 import type { PaletteEntry } from "@shared/color/layout";
 
 export type PackagingOption = {
@@ -37,7 +38,7 @@ export type TemplateDef = {
   width: number;
   height: number;
   bare: boolean;
-  kind?: "product" | "coats" | "range" | "palette";
+  kind?: "product" | "coats" | "range" | "palette" | "system" | "usage" | "banner";
 };
 
 /** Şablonun bastığı renk bilgisi. */
@@ -72,6 +73,23 @@ export type PaintInfo = {
    * `active` ile işaretli gelir.
    */
   palette?: PaletteEntry[];
+  /**
+   * Serinin kat sistemi — "gümüş baz → candy → vernik".
+   *
+   * Kart bunu ŞEMA olarak basıyor; boşsa seri adından varsayılan türetiliyor
+   * (bkz. `shared/color/coatSystem.ts`), yani hiçbir seri kat şemasız kalmaz.
+   */
+  coatSystem?: CoatSystem;
+  /** Seri banner metni — AI serinin kendi tanıtımından kısaltır. */
+  bannerSlogan?: string | null;
+  bannerBullets?: string[];
+  /**
+   * Bu boyayla boyanmış nesneler — kullanım alanı kolajının kareleri.
+   *
+   * Dört yer var ama kaçı doluysa kolaj ona göre diziliyor: eksik kare
+   * yüzünden yarısı boş bir kare basmak amatör görünüyordu.
+   */
+  usage?: Array<{ label: string; src: string }>;
 };
 
 export const BRAND = {
@@ -177,6 +195,24 @@ export const TEMPLATES: TemplateDef[] = [
     kind: 'coats',
   },
   {
+    id: 'system',
+    label: 'Kat sistemi',
+    hint: 'Nasıl uygulanır: zemin → renk → vernik. Serinin kendi zinciri basılır.',
+    width: 1400,
+    height: 1400,
+    bare: false,
+    kind: 'system',
+  },
+  {
+    id: 'usage',
+    label: 'Kullanım alanları',
+    hint: 'Bu boyayla boyanmış nesneler. Kaç kare varsa ona göre dizilir.',
+    width: 1400,
+    height: 1400,
+    bare: false,
+    kind: 'usage',
+  },
+  {
     id: 'range',
     label: 'Ambalaj gamı',
     hint: 'Bu renk hangi boylarda var — serinin ambalajları tek karede.',
@@ -225,6 +261,49 @@ export const TEMPLATES: TemplateDef[] = [
     width: 1080,
     height: 1920,
     bare: false,
+  },
+  /*
+   * Seri banner'ları — konusu RENK değil SERİdir.
+   *
+   * Dört ölçü ayrı şablon: her mecranın kendi oranı var ve tek şablonu
+   * yeniden ölçeklendirmek metni ya eziyor ya kayboluyordu. Yerleşim tarifi
+   * ortak (bkz. `bannerLayout`), yalnız kare ölçüsü değişiyor.
+   */
+  {
+    id: 'banner',
+    label: 'Banner — Instagram kare',
+    hint: 'Seri reklamı 1080×1080. Slogan + maddeler serinin kendi metninden.',
+    width: 1080,
+    height: 1080,
+    bare: false,
+    kind: 'banner',
+  },
+  {
+    id: 'bannerWide',
+    label: 'Banner — pazaryeri vitrin',
+    hint: '1200×628. Mağaza vitrini ve site kartı.',
+    width: 1200,
+    height: 628,
+    bare: false,
+    kind: 'banner',
+  },
+  {
+    id: 'bannerHero',
+    label: 'Banner — site başlığı',
+    hint: '1920×600. Geniş ekran üst şeridi.',
+    width: 1920,
+    height: 600,
+    bare: false,
+    kind: 'banner',
+  },
+  {
+    id: 'bannerStory',
+    label: 'Banner — story',
+    hint: '1080×1920. Dikey seri tanıtımı.',
+    width: 1080,
+    height: 1920,
+    bare: false,
+    kind: 'banner',
   },
 ];
 

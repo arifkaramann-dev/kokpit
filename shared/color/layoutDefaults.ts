@@ -13,7 +13,7 @@
  * göre; böylece kare gönderi ile 9:16 story aynı tarifle doğru çalışır.
  */
 
-import { DEFAULT_WATERMARK, newLayerId, type Layer, type TemplateLayout } from "./layout";
+import { DEFAULT_WATERMARK, newLayerId, type Layer, type LayerBox, type TemplateLayout } from "./layout";
 
 const INK = "#0a0a0a";
 const INK_SOFT = "#3f3f46";
@@ -78,11 +78,19 @@ function heading(x: number, y: number, scale = 1): Layer[] {
       transform: "upper",
       visible: true,
     },
+    /*
+     * Türkçe ad ÜSTTE ve büyük, İngilizce altta.
+     *
+     * Önce tersiydi (İngilizce büyük, Türkçe soluk dipnot) ve markanın ana
+     * pazarı Türkiye olduğu için kartın en görünür ikinci satırı müşterinin
+     * aradığı kelime değildi. İki ad ayrı katman kalıyor: kartta alt alta,
+     * satış adında "FUŞYA / MAGENTA" olarak yan yana yazılıyor.
+     */
     {
-      id: newLayerId("nameEn"),
+      id: newLayerId("nameTr"),
       type: "text",
       box: { x, y: y + 0.075 * scale, w: 0.9 - x, h: 0.05 * scale },
-      text: "{nameEn}",
+      text: "{nameTr}",
       size: 0.034 * scale,
       weight: 400,
       color: INK_SOFT,
@@ -91,10 +99,10 @@ function heading(x: number, y: number, scale = 1): Layer[] {
       visible: true,
     },
     {
-      id: newLayerId("nameTr"),
+      id: newLayerId("nameEn"),
       type: "text",
       box: { x, y: y + 0.122 * scale, w: 0.9 - x, h: 0.04 * scale },
-      text: "{nameTr}",
+      text: "{nameEn}",
       size: 0.024 * scale,
       weight: 400,
       color: INK_FAINT,
@@ -445,10 +453,10 @@ function cardLayout(width: number, height: number): TemplateLayout {
         visible: true,
       },
       {
-        id: newLayerId("nameEn"),
+        id: newLayerId("nameTr"),
         type: "text",
         box: { x: 0.07, y: textY + 0.095, w: 0.6, h: 0.05 },
-        text: "{nameEn}",
+        text: "{nameTr}",
         size: 0.04,
         weight: 400,
         color: INK_SOFT,
@@ -457,10 +465,10 @@ function cardLayout(width: number, height: number): TemplateLayout {
         visible: true,
       },
       {
-        id: newLayerId("nameTr"),
+        id: newLayerId("nameEn"),
         type: "text",
         box: { x: 0.07, y: textY + 0.15, w: 0.6, h: 0.04 },
-        text: "{nameTr}",
+        text: "{nameEn}",
         size: 0.032,
         weight: 400,
         color: "#71717a",
@@ -541,10 +549,10 @@ function storyLayout(): TemplateLayout {
         visible: true,
       },
       {
-        id: newLayerId("nameEn"),
+        id: newLayerId("nameTr"),
         type: "text",
         box: { x: 0.08, y: 0.755, w: 0.84, h: 0.04 },
-        text: "{nameEn}",
+        text: "{nameTr}",
         size: 0.05,
         weight: 400,
         color: INK_SOFT,
@@ -553,10 +561,10 @@ function storyLayout(): TemplateLayout {
         visible: true,
       },
       {
-        id: newLayerId("nameTr"),
+        id: newLayerId("nameEn"),
         type: "text",
         box: { x: 0.08, y: 0.8, w: 0.84, h: 0.035 },
-        text: "{nameTr}",
+        text: "{nameEn}",
         size: 0.038,
         weight: 400,
         color: "#71717a",
@@ -581,9 +589,332 @@ function storyLayout(): TemplateLayout {
   };
 }
 
+/**
+ * KAT SİSTEMİ — "bu boya hangi katmanlarla uygulanır".
+ *
+ * ── Neden şema, neden fotoğraf değil ──────────────────────────────────────
+ * Aynı objenin siyah → efektli → vernikli üç aşamasını çekmek her renk için
+ * üç ayrı AI karesi demek. Şema hiçbir kare gerektirmiyor, her seride doğru
+ * ve anında üretiliyor. Objenin aşama kareleri VARSA alt şeride ekleniyor
+ * (`coat1..3` görünür kalıyor); yoksa şema tek başına da tam bir kare.
+ *
+ * Dört halka yeri var ama her seri o kadar kullanmıyor: boş halkanın metni
+ * boş dizeye iniyor ve kutu görünmez kalıyor. Kutu sayısını şablona gömmek,
+ * iki katlı seride ortada boş bir kare bırakırdı.
+ */
+function coatSystemLayout(): TemplateLayout {
+  const cells: Layer[] = [];
+  // Dört sütun: kutu + ok. Ok SON halkadan sonra yazılmıyor — metni boş kalan
+  // halkada zaten görünmez, dolu son halkada ise sarkan bir ok kalmasın diye
+  // okun metni bir SONRAKİ katmanın adına bağlı.
+  for (let i = 0; i < 4; i += 1) {
+    const x = 0.06 + i * 0.225;
+    cells.push({
+      id: newLayerId(`katkutu${i + 1}`),
+      type: "rect",
+      box: { x, y: 0.34, w: 0.195, h: 0.2 },
+      fill: i === 0 ? "#e4e4e7" : "paint",
+      opacity: i === 0 ? 1 : 0.18 + i * 0.27,
+      radius: 0.014,
+      visible: true,
+    });
+    cells.push({
+      id: newLayerId(`katno${i + 1}`),
+      type: "text",
+      box: { x: x + 0.015, y: 0.36, w: 0.16, h: 0.04 },
+      text: `${i + 1}`,
+      size: 0.03,
+      weight: 700,
+      color: INK_FAINT,
+      align: "left",
+      transform: "none",
+      visible: true,
+    });
+    cells.push({
+      id: newLayerId(`katad${i + 1}`),
+      type: "text",
+      box: { x: x + 0.015, y: 0.425, w: 0.165, h: 0.06 },
+      text: `{katman${i + 1}}`,
+      size: 0.024,
+      weight: 700,
+      color: INK,
+      align: "left",
+      transform: "upper",
+      wrap: true,
+      visible: true,
+    });
+    cells.push({
+      id: newLayerId(`katurun${i + 1}`),
+      type: "text",
+      box: { x: x + 0.015, y: 0.49, w: 0.165, h: 0.04 },
+      text: `{urun${i + 1}}`,
+      size: 0.016,
+      weight: 400,
+      color: INK_SOFT,
+      align: "left",
+      transform: "upper",
+      wrap: true,
+      visible: true,
+    });
+    if (i < 3) {
+      cells.push({
+        id: newLayerId(`katok${i + 1}`),
+        type: "text",
+        // Ok yalnız SONRAKİ halka doluysa yazılıyor. Kararı yer tutucu
+        // veriyor (`{ok1}` = sonraki halka varsa "→", yoksa boş): şablon
+        // kaç katlı seride kullanılacağını bilmiyor, veri biliyor.
+        box: { x: x + 0.196, y: 0.415, w: 0.03, h: 0.05 },
+        text: `{ok${i + 1}}`,
+        size: 0.028,
+        weight: 400,
+        color: INK_FAINT,
+        align: "center",
+        transform: "none",
+        visible: true,
+      });
+    }
+  }
+
+  // Aşama kareleri — objenin kat kat hâli. Üretilmişse çizilir.
+  for (let i = 0; i < 3; i += 1) {
+    cells.push({
+      id: newLayerId(`asama${i + 1}`),
+      type: "image",
+      box: { x: 0.09 + i * 0.29, y: 0.6, w: 0.24, h: 0.2 },
+      source: (`coat${i + 1}` as "coat1" | "coat2" | "coat3"),
+      fit: "contain",
+      visible: true,
+    });
+  }
+
+  return {
+    width: 1400,
+    height: 1400,
+    background: "#ffffff",
+    layers: [
+      ...heading(0.06, 0.055),
+      {
+        id: newLayerId("sistembaslik"),
+        type: "text",
+        box: { x: 0.06, y: 0.27, w: 0.88, h: 0.05 },
+        text: "{katSayisi}",
+        size: 0.03,
+        weight: 700,
+        color: INK,
+        align: "left",
+        transform: "upper",
+        visible: true,
+      },
+      ...cells,
+      {
+        id: newLayerId("sistemozet"),
+        type: "text",
+        box: { x: 0.06, y: 0.83, w: 0.88, h: 0.04 },
+        text: "{katSistemi}",
+        size: 0.019,
+        weight: 400,
+        color: INK_FAINT,
+        align: "left",
+        transform: "upper",
+        visible: true,
+      },
+      ...footer(0.925, 0.017, 1),
+    ],
+  };
+}
+
+/**
+ * KULLANIM ALANI KOLAJI — bu boyayla boyanmış nesneler.
+ *
+ * ── Neden esnek ızgara ────────────────────────────────────────────────────
+ * Her rengin dört kullanım karesi olmayacak: biri yeni eklenmiş, diğerinin
+ * yalnız iki karesi üretilmiş olabilir. Sabit 2×2 ızgara o durumda kareyi
+ * yarısı boş, amatör bir hâlde bırakıyordu.
+ *
+ * Dördü de yerleşimde duruyor ama kutular ELDEKİ KARE SAYISINA göre yeniden
+ * hesaplanıyor (bkz. `usageBoxes`): iki kare yan yana büyük, üç kare şerit,
+ * dört kare 2×2. Çizim tarafı yüklenemeyen kaynağı zaten atlıyor.
+ */
+function usageLayout(): TemplateLayout {
+  const cells: Layer[] = [];
+  for (let i = 0; i < 4; i += 1) {
+    const box = usageBoxes(4)[i];
+    cells.push({
+      id: newLayerId(`use${i + 1}`),
+      type: "image",
+      box,
+      source: (`use${i + 1}` as "use1" | "use2" | "use3" | "use4"),
+      fit: "cover",
+      visible: true,
+    });
+    cells.push({
+      id: newLayerId(`uselbl${i + 1}`),
+      type: "text",
+      box: { x: box.x, y: box.y + box.h + 0.008, w: box.w, h: 0.03 },
+      text: `{kullanim${i + 1}}`,
+      size: 0.019,
+      weight: 700,
+      color: INK_SOFT,
+      align: "center",
+      transform: "upper",
+      visible: true,
+    });
+  }
+  return {
+    width: 1400,
+    height: 1400,
+    background: "#ffffff",
+    layers: [...heading(0.06, 0.055), ...cells, ...footer(0.945, 0.017, 1)],
+  };
+}
+
+/**
+ * Kolaj kutuları — kaç kare varsa ona göre.
+ *
+ * Çizim anında çağrılır: yerleşim dört kutuyla kaydedilmiş olsa bile gerçek
+ * kare sayısı ancak üretim anında biliniyor.
+ */
+export function usageBoxes(count: number): LayerBox[] {
+  const top = 0.28;
+  if (count <= 1) return [{ x: 0.12, y: top, w: 0.76, h: 0.5 }];
+  if (count === 2) {
+    return [
+      { x: 0.06, y: top, w: 0.43, h: 0.44 },
+      { x: 0.51, y: top, w: 0.43, h: 0.44 },
+    ];
+  }
+  if (count === 3) {
+    return [
+      { x: 0.06, y: top, w: 0.283, h: 0.38 },
+      { x: 0.3585, y: top, w: 0.283, h: 0.38 },
+      { x: 0.657, y: top, w: 0.283, h: 0.38 },
+    ];
+  }
+  return [
+    { x: 0.08, y: top, w: 0.4, h: 0.28 },
+    { x: 0.52, y: top, w: 0.4, h: 0.28 },
+    { x: 0.08, y: top + 0.32, w: 0.4, h: 0.28 },
+    { x: 0.52, y: top + 0.32, w: 0.4, h: 0.28 },
+  ];
+}
+
+/**
+ * SERİ BANNER'I — reklam karesi.
+ *
+ * Dört ölçüde de aynı tarif kullanılıyor; oran farkını dikey akış kendisi
+ * soğuruyor (kutular yüksekliğin oranı). Ölçüye özel dört ayrı yerleşim
+ * tutmak, bir metni değiştirince dördünü de elle güncellemek demekti.
+ *
+ * Kare "renk" değil "seri" anlatıyor: konu tek bir renk olmadığı için palet
+ * katmanı merkezde — müşteri serinin gamını bir bakışta görüyor.
+ */
+function bannerLayout(width: number, height: number): TemplateLayout {
+  const wide = width / height >= 1.6;
+  const tall = height / width >= 1.5;
+  const aspect = width / height;
+  // Geniş banner'da metin solda, palet sağda; kare ve dikeyde alt alta.
+  const textW = wide ? 0.44 : 0.88;
+  const paletteBox = wide
+    ? { x: 0.54, y: 0.18, w: 0.4, h: 0.62 }
+    : { x: 0.06, y: tall ? 0.42 : 0.46, w: 0.88, h: tall ? 0.3 : 0.34 };
+
+  return {
+    width,
+    height,
+    background: "#0a0a0a",
+    layers: [
+      {
+        id: newLayerId("zemin"),
+        type: "rect",
+        box: { x: 0, y: 0, w: 1, h: 1 },
+        fill: "paint",
+        opacity: 0.22,
+        gradient: true,
+        visible: true,
+      },
+      {
+        id: newLayerId("seri"),
+        type: "text",
+        box: { x: 0.06, y: 0.1, w: textW, h: 0.08 },
+        text: "{line}",
+        size: 0.055 / (wide ? 1.4 : 1),
+        weight: 700,
+        color: "#ffffff",
+        align: "left",
+        transform: "upper",
+        visible: true,
+      },
+      {
+        id: newLayerId("slogan"),
+        type: "text",
+        box: { x: 0.06, y: 0.19, w: textW, h: 0.14 },
+        text: "{slogan}",
+        size: 0.038 / (wide ? 1.3 : 1),
+        weight: 700,
+        color: "#ffffff",
+        align: "left",
+        transform: "none",
+        wrap: true,
+        lineHeight: 1.25,
+        visible: true,
+      },
+      ...[1, 2, 3].map((n, i) => ({
+        id: newLayerId(`madde${n}`),
+        type: "text" as const,
+        box: { x: 0.06, y: 0.34 + i * 0.045, w: textW, h: 0.04 },
+        text: `{madde${n}}`,
+        size: 0.022 / (wide ? 1.25 : 1),
+        weight: 400 as const,
+        color: "#d4d4d8",
+        align: "left" as const,
+        transform: "none" as const,
+        visible: true,
+      })),
+      {
+        id: newLayerId("palet"),
+        type: "palette",
+        box: paletteBox,
+        columns: 0,
+        gap: 0.012,
+        showCode: false,
+        labelSize: 0.016,
+        labelColor: "#a1a1aa",
+        radius: 0.008,
+        highlight: false,
+        visible: true,
+      },
+      {
+        id: newLayerId("gam"),
+        type: "text",
+        box: { x: 0.06, y: tall ? 0.78 : 0.84, w: 0.88, h: 0.04 },
+        text: "{packSizes}",
+        size: 0.018,
+        weight: 400,
+        color: "#a1a1aa",
+        align: "left",
+        transform: "upper",
+        visible: true,
+      },
+      ...footer(tall ? 0.95 : 0.93, 0.016, aspect),
+    ],
+  };
+}
+
 /** Şablon kimliği → fabrika yerleşimi. */
 export function defaultLayout(templateId: string): TemplateLayout {
   switch (templateId) {
+    case "system":
+      return coatSystemLayout();
+    case "usage":
+      return usageLayout();
+    case "banner":
+      return bannerLayout(1080, 1080);
+    case "bannerWide":
+      return bannerLayout(1200, 628);
+    case "bannerHero":
+      return bannerLayout(1920, 600);
+    case "bannerStory":
+      return bannerLayout(1080, 1920);
     case "product":
       return productLayout();
     case "range":

@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
+import { MAX_COAT_LAYERS, coatSystemOf } from "@shared/color/coatSystem";
 import { LibraryBig, Loader2, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -42,7 +43,31 @@ const emptySeriesForm = {
   colorOptions: "", // her satır bir renk (örn. Mavi #1a2b5c)
   guideTemplate: "",
   labelTemplate: "",
+  /**
+   * Kat sistemi — her satır bir katman: "Gümüş baz | ARTOFCOLOUR SILVER".
+   *
+   * Metin olarak düzenleniyor çünkü zincir üç-dört satır: ayrı bir satır
+   * editörü kurmak, kullanıcının tek seferde yazıp geçtiği bir alan için
+   * fazla tören olurdu.
+   */
+  coatSystem: "",
+  bannerSlogan: "",
+  bannerBullets: "",
 };
+
+/** "Gümüş baz | ARTOFCOLOUR SILVER" → { label, product } */
+function parseCoatLines(text: string): Array<{ label: string; product: string | null }> {
+  return text
+    .split("\n")
+    .map(line => line.trim())
+    .filter(Boolean)
+    .slice(0, MAX_COAT_LAYERS)
+    .map(line => {
+      const [label, product] = line.split("|").map(p => p.trim());
+      return { label, product: product || null };
+    })
+    .filter(l => l.label);
+}
 
 /**
  * Ürün serileri yönetimi: seri bazlı kâr oranı, KDV ve hazır açıklamalar.
@@ -56,6 +81,20 @@ export default function SeriesManager() {
   const [form, setForm] = useState(emptySeriesForm);
 
   const invalidate = () => utils.series.list.invalidate();
+
+  /**
+   * Banner metni önerisi — forma yazar, kaydetmez.
+   *
+   * AI'ın yazdığı cümle onay görmeden reklam karesine basılmamalı: öneri
+   * forma düşüyor, kullanıcı düzeltip "Kaydet" diyor.
+   */
+  const suggestBanner = trpc.series.suggestBannerText.useMutation({
+    onSuccess: r => {
+      setForm(f => ({ ...f, bannerSlogan: r.slogan, bannerBullets: r.bullets.join("\n") }));
+      toast.success("Öneri forma yazıldı — düzeltip kaydedebilirsin");
+    },
+    onError: e => toast.error(e.message, { duration: 9000 }),
+  });
   const create = trpc.series.create.useMutation({
     onSuccess: () => {
       invalidate();
@@ -143,6 +182,9 @@ export default function SeriesManager() {
       colorOptions: colors.length ? colors : null,
       guideTemplate: form.guideTemplate || null,
       labelTemplate: form.labelTemplate || null,
+      coatSystem: parseCoatLines(form.coatSystem).length ? parseCoatLines(form.coatSystem) : null,
+      bannerSlogan: form.bannerSlogan.trim() || null,
+      bannerBullets: toLines(form.bannerBullets).slice(0, 3),
     };
     if (editingId) update.mutate({ id: editingId, data: payload });
     else create.mutate(payload);
@@ -260,6 +302,19 @@ export default function SeriesManager() {
                     colorOptions: colorLines,
                     guideTemplate: (s as { guideTemplate?: string | null }).guideTemplate ?? "",
                     labelTemplate: (s as { labelTemplate?: string | null }).labelTemplate ?? "",
+                    // Kayıt boşsa seri adından türetilen varsayılan yazılıyor:
+                    // kullanıcı boş bir kutu değil, düzeltebileceği bir taslak
+                    // görsün (kart da zaten o zinciri basıyor).
+                    coatSystem: coatSystemOf({
+                      name: s.name,
+                      coatSystem: (s as { coatSystem?: unknown }).coatSystem,
+                    })
+                      .map(l => (l.product ? `${l.label} | ${l.product}` : l.label))
+                      .join("\n"),
+                    bannerSlogan: (s as { bannerSlogan?: string | null }).bannerSlogan ?? "",
+                    bannerBullets: Array.isArray((s as { bannerBullets?: unknown }).bannerBullets)
+                      ? ((s as { bannerBullets?: string[] }).bannerBullets ?? []).join("\n")
+                      : "",
                   });
                   setOpen(true);
                 }}
@@ -307,6 +362,7 @@ export default function SeriesManager() {
               <TabsTrigger value="temel">Temel &amp; Fiyat</TabsTrigger>
               <TabsTrigger value="icerik">Pazarlama Metinleri</TabsTrigger>
               <TabsTrigger value="varyant">Varyant Şablonu</TabsTrigger>
+              <TabsTrigger value="vitrin">Kat Sistemi &amp; Banner</TabsTrigger>
             </TabsList>
 
             <div className="min-h-0 flex-1 overflow-y-auto pt-3">
@@ -487,6 +543,64 @@ export default function SeriesManager() {
                       placeholder="Sıkça sorulan sorular — web sitesinde kullanılır"
                     />
                   </div>
+                </div>
+              </TabsContent>
+
+              {/* ── Kat sistemi & banner ──────────────────────────────────── */}
+              <TabsContent value="vitrin" className="mt-0 space-y-4">
+                <div className="space-y-1.5">
+                  <Label>Kat sistemi</Label>
+                  <Textarea
+                    rows={4}
+                    className="font-mono text-xs"
+                    value={form.coatSystem}
+                    onChange={e => setForm(f => ({ ...f, coatSystem: e.target.value }))}
+                    placeholder={"Gümüş baz | ARTOFCOLOUR SILVER\nCandy renk\nVernik | ARTOFCOLOUR GLOSS"}
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Her satır bir katman, sırayla. İsterseniz{" "}
+                    <code>işlem | ÜRÜN ADI</code> yazın — kartta ürün adı da basılır (çapraz
+                    satış). En fazla {MAX_COAT_LAYERS} katman. Boş bırakılırsa seri adından
+                    varsayılan zincir türetilir.
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label>Banner sloganı</Label>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs"
+                      disabled={!editingId || suggestBanner.isPending}
+                      onClick={() => editingId && suggestBanner.mutate({ seriesId: editingId })}
+                    >
+                      {suggestBanner.isPending ? (
+                        <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Sparkles className="mr-1 h-3.5 w-3.5" />
+                      )}
+                      Seri metninden öner
+                    </Button>
+                  </div>
+                  <Input
+                    value={form.bannerSlogan}
+                    onChange={e => setForm(f => ({ ...f, bannerSlogan: e.target.value }))}
+                    placeholder="Şeffaf Renklerin Efsanesi"
+                    maxLength={160}
+                  />
+                  <Textarea
+                    rows={3}
+                    value={form.bannerBullets}
+                    onChange={e => setForm(f => ({ ...f, bannerBullets: e.target.value }))}
+                    placeholder={"Güçlü yapışma\nHızlı kuruma\nÜstün örtücülük"}
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Her satır bir madde (en fazla 3). "Öner" serinin KAYITLI tanıtım metnini
+                    kısaltır — yeni iddia uydurmaz. Metin boşsa önce Pazarlama Metinleri
+                    sekmesini doldurun.
+                  </p>
                 </div>
               </TabsContent>
 

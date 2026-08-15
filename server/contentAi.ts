@@ -112,6 +112,80 @@ belirt.
   return null;
 }
 
+/* ---- Seri banner metni --------------------------------------------------- */
+
+export type BannerText = { slogan: string; bullets: string[] };
+
+/**
+ * Banner sloganı ve üç maddesi — SERİNİN KENDİ METNİNDEN.
+ *
+ * ── Neden sıfırdan yazdırmıyoruz ──────────────────────────────────────────
+ * Seriler zaten markanın diliyle yazılmış tanıtımlara sahip: METEOR "Renk
+ * Değiştiren Sedefli Büyü", CANDY "Şeffaf Renklerin Efsanesi". AI'a sıfırdan
+ * slogan yazdırmak her çağrıda başka bir marka sesi üretiyor ve bir süre
+ * sonra hiçbir kare diğerine benzemiyor. İş "kısaltmak", "uydurmak" değil.
+ *
+ * Metin yoksa AI'a hiç gidilmiyor: uydurulacak bir şey yoksa boş dönüp
+ * kullanıcıdan seri metnini doldurması isteniyor — sahte bir slogan basmak,
+ * banner'ı hiç basmamaktan kötü.
+ */
+export async function generateSeriesBanner(ctx: {
+  seriesName: string;
+  shortDescription?: string | null;
+  longDescription?: string | null;
+  /** Serinin kat sistemi — "gümüş baz → candy → vernik". Maddelere girer. */
+  coatSystem?: string | null;
+  surfaces?: string[];
+}): Promise<BannerText | null> {
+  const source = [ctx.shortDescription, ctx.longDescription].filter(Boolean).join("\n\n").trim();
+  if (!source) return null;
+
+  const userPrompt = `Seri: ${ctx.seriesName}
+${ctx.coatSystem ? `Uygulama sistemi: ${ctx.coatSystem}` : ""}
+${ctx.surfaces?.length ? `Yüzeyler: ${surfaceSentence(ctx.surfaces, "")}` : ""}
+
+Serinin kendi tanıtım metni:
+"""
+${source.slice(0, 4000)}
+"""
+
+Bu metinden bir REKLAM BANNER'ı için slogan ve üç madde çıkar. Yeni iddia
+UYDURMA — yalnız yukarıdaki metinde geçenleri kısalt. Slogan en fazla 60
+karakter, her madde en fazla 32 karakter olmalı (banner'a sığacak).
+
+Şu JSON şemasına birebir uy:
+{
+  "slogan": "Kısa, vurucu slogan",
+  "bullets": ["Madde bir", "Madde iki", "Madde üç"]
+}`;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const response = await invokeLLM({
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: userPrompt },
+        ],
+      });
+      const raw = response.choices[0]?.message?.content;
+      const parsed = extractJson(typeof raw === "string" ? raw : "");
+      if (!parsed || typeof parsed !== "object") continue;
+      const row = parsed as Record<string, unknown>;
+      const slogan = typeof row.slogan === "string" ? row.slogan.trim().slice(0, 160) : "";
+      const bullets = Array.isArray(row.bullets)
+        ? row.bullets
+            .map(b => (typeof b === "string" ? b.trim().slice(0, 80) : ""))
+            .filter(Boolean)
+            .slice(0, 3)
+        : [];
+      if (slogan) return { slogan, bullets };
+    } catch {
+      // sıradaki denemeye geç
+    }
+  }
+  return null;
+}
+
 /**
  * Yüzey listesini okunur bir cümleye çevirir.
  *

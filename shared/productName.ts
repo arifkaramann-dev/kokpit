@@ -51,6 +51,34 @@ export function displayNameOf(p: NameableProduct): string {
 
 export const DEFAULT_BRAND = "ARTOFCOLOUR";
 
+/**
+ * Çift dilli renk adı: "FUŞYA / MAGENTA".
+ *
+ * ── Neden iki dil ─────────────────────────────────────────────────────────
+ * Aynı boya iki müşteriye satılıyor: Türkçe arayan yerli alıcı ("fuşya boya")
+ * ve İngilizce arayan/ihracat alıcısı ("magenta paint"). Tek dil yazmak
+ * diğerini aramada görünmez yapıyordu.
+ *
+ * ── Neden eğik çizgi ──────────────────────────────────────────────────────
+ * Parantezli biçim ("MAGENTA (FUŞYA)") ikinci adı DİPNOT gibi gösteriyor;
+ * eğik çizgi ikisini eşit ağırlıkta tutuyor. Türkçe önde: markanın ana pazarı
+ * Türkiye ve ilan başlığında ilk kelimeler aramada daha ağır basıyor.
+ *
+ * Tek ad varsa yalnız o yazılır — "FUŞYA / " gibi sarkan ayraç kalmaz. İki ad
+ * aynıysa (Türkçesi zaten İngilizce olan "Neon", "Amber") tek kez yazılır.
+ */
+export function colorLabelOf(
+  color: { name?: string | null; nameEn?: string | null } | null | undefined,
+  opts: { upper?: boolean } = {},
+): string {
+  const norm = (s: string) => (opts.upper ? s.trim().toLocaleUpperCase("tr-TR") : s.trim());
+  const tr = color?.name?.trim() ? norm(color.name) : "";
+  const en = color?.nameEn?.trim() ? norm(color.nameEn) : "";
+  if (!tr) return en;
+  if (!en) return tr;
+  return tr.toLocaleUpperCase("tr-TR") === en.toLocaleUpperCase("tr-TR") ? tr : `${tr} / ${en}`;
+}
+
 export type SalesNameInput = {
   brand?: string | null;
   /** Serinin satış karşılığı — "CANDY PAINT". Boşsa serinin kendi adı. */
@@ -67,8 +95,8 @@ export type SalesNameInput = {
 /**
  * Pazaryeri/etiket satış adını kurar.
  *
- *   ARTOFCOLOUR CANDY PAINT MAGENTA (FUŞYA) - AİRBRUSH 100 ML
- *   └ marka    └ seri        └ renk EN (TR)   └ form   └ ambalaj
+ *   ARTOFCOLOUR CANDY PAINT FUŞYA / MAGENTA - AİRBRUSH 100 ML
+ *   └ marka    └ seri        └ renk TR / EN   └ form   └ ambalaj
  *
  * Türkçe büyük harf kuralı uygulanır ("Airbrush" → "AİRBRUSH"), çünkü ad
  * etikete ve pazaryeri kartına gidiyor; "AIRBRUSH" yazmak Türkçe bir markada
@@ -84,11 +112,9 @@ export function salesNameOf(p: SalesNameInput): string {
   const up = (s: string) => s.trim().toLocaleUpperCase("tr-TR");
   const part = (v: string | null | undefined) => (v?.trim() ? up(v) : "");
 
-  const colorTr = p.colorName?.trim();
-  const colorEn = p.colorNameEn?.trim();
-  const color = colorEn && colorTr && up(colorEn) !== up(colorTr)
-    ? `${up(colorEn)} (${up(colorTr)})`
-    : part(colorEn || colorTr);
+  // Çift dilli ad kuralı tek yerde: kart, etiket ve palet de aynı biçimi
+  // basıyor (bkz. `colorLabelOf`).
+  const color = colorLabelOf({ name: p.colorName, nameEn: p.colorNameEn }, { upper: true });
 
   const head = [
     part(p.brand?.trim() || DEFAULT_BRAND),

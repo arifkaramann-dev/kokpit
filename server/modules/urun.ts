@@ -1,4 +1,5 @@
 // Ürün & Üretim: hammadde, ürün/türev, üretim, formül, seri — server/routers.ts bölünmesi (davranış birebir, Sprint 2).
+import { MAX_COAT_LAYERS, coatSystemOf } from "@shared/color/coatSystem";
 import { COOKIE_NAME } from "@shared/const";
 import { z } from "zod";
 import { getSessionCookieOptions } from "../_core/cookies";
@@ -7,6 +8,7 @@ import { generateImage } from "../_core/imageGeneration";
 import { systemRouter } from "../_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { TRPCError } from "@trpc/server";
+import { generateSeriesBanner } from "../contentAi";
 import * as db from "../db";
 import { itemsTotal, summarizeItems, toItemRows } from "../orderUtils";
 import { extractInvoice } from "../_core/claude";
@@ -163,6 +165,18 @@ const productSeriesInput = z.object({
     .optional(),
   guideTemplate: z.string().nullable().optional(),
   labelTemplate: z.string().nullable().optional(),
+  /**
+   * Kat sistemi — "bu seri hangi katmanlarla uygulanır".
+   * Boş bırakılırsa seri adından varsayılan türetilir (coatSystem.ts).
+   */
+  coatSystem: z
+    .array(z.object({ label: z.string().min(1).max(60), product: z.string().max(80).nullable().optional() }))
+    .max(MAX_COAT_LAYERS)
+    .nullable()
+    .optional(),
+  /** Banner sloganı ve maddeleri — AI serinin kendi metninden kısaltır. */
+  bannerSlogan: z.string().max(160).nullable().optional(),
+  bannerBullets: z.array(z.string().max(80)).max(3).nullable().optional(),
 });
 
 /** products tablosundaki decimal alanlar (mutation girişinde stringe çevrilir). */
@@ -354,6 +368,11 @@ export const seriesRouter = router({
       longDescription: s.longDescription ?? null,
       applicationText: s.applicationText ?? null,
       faqContent: (s as { faqContent?: string | null }).faqContent ?? null,
+      // Kat sistemi kayıtlı değilse seri adından türetilen varsayılan döner:
+      // ekran da kart da aynı zinciri görsün, "boş" diye farklı davranmasın.
+      coatSystem: coatSystemOf({ name: s.name, coatSystem: (s as { coatSystem?: unknown }).coatSystem }),
+      bannerSlogan: (s as { bannerSlogan?: string | null }).bannerSlogan ?? null,
+      bannerBullets: asArray((s as { bannerBullets?: unknown }).bannerBullets) as string[],
     }));
   }),
   // Otomatik ürün/renk kodu üretir: prefix + 4 haneli sıra no (örn. CND0042).
@@ -491,6 +510,37 @@ YALNIZCA şu anahtarlarla geçerli bir JSON nesnesi döndür, başka hiçbir şe
       };
       await db.updateProductSeries(input.id, patch as never);
       return patch;
+    }),
+  /**
+   * Banner metnini ÖNERİR — yazmaz.
+   *
+   * Kullanıcı öneriyi görüp düzeltebilsin diye kaydetme ayrı adım: AI'ın
+   * yazdığı bir cümle onay görmeden reklam karesine basılmamalı.
+   */
+  suggestBannerText: protectedProcedure
+    .input(z.object({ seriesId: z.number().int().positive() }))
+    .mutation(async ({ input }) => {
+      const all = await db.listProductSeries();
+      const s = all.find(x => x.id === input.seriesId);
+      if (!s) throw new TRPCError({ code: "NOT_FOUND", message: "Seri bulunamadı" });
+
+      const chain = coatSystemOf({ name: s.name, coatSystem: (s as { coatSystem?: unknown }).coatSystem })
+        .map(l => l.label)
+        .join(" → ");
+      const out = await generateSeriesBanner({
+        seriesName: s.name,
+        shortDescription: s.shortDescription,
+        longDescription: s.longDescription,
+        coatSystem: chain,
+      });
+      if (!out) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "Serinin tanıtım metni boş — AI kısaltacak bir şey bulamadı. Önce serinin kısa/uzun açıklamasını doldurun.",
+        });
+      }
+      return out;
     }),
   create: protectedProcedure.input(productSeriesInput).mutation(async ({ input }) => {
     const existing = await db.getProductSeriesByName(input.name);

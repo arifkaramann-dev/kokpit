@@ -32,7 +32,7 @@ import {
   type SeriesColorNo,
 } from "@shared/colorCode";
 import { seriesForColor } from "@shared/colorScope";
-import { ImagePlus, Loader2, Pencil, Plus, Trash2, Wand2 } from "lucide-react";
+import { ImagePlus, Languages, Loader2, Pencil, Plus, Trash2, Wand2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
@@ -223,6 +223,39 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
     }
   };
 
+  /**
+   * İngilizce ad önerileri — ÖNCE göster, sonra yaz.
+   *
+   * Sözlük eşleşmesi tartışmasız olsa da liste onaydan geçiyor: ad etikete ve
+   * pazaryeri başlığına gidiyor, sessizce yazılan yanlış bir karşılık ancak
+   * müşteri sorunca fark edilirdi. Sözlükte olmayan renk boş satırla geliyor —
+   * kullanıcı elle yazabilsin.
+   */
+  const [nameRows, setNameRows] = useState<Array<{ colorId: number; name: string; nameEn: string }> | null>(
+    null,
+  );
+  const applyNames = trpc.katalog.applyColorNamesEn.useMutation({
+    onSuccess: r => {
+      utils.katalog.dimensions.invalidate();
+      setNameRows(null);
+      toast.success(`${r.written} renge İngilizce ad yazıldı`);
+    },
+    onError: e => toast.error(e.message, { duration: 9000 }),
+  });
+
+  const openNameSuggestions = async () => {
+    try {
+      const rows = await utils.katalog.suggestColorNamesEn.fetch();
+      if (!rows.length) {
+        toast.message("İngilizce adı eksik renk yok");
+        return;
+      }
+      setNameRows(rows.map(r => ({ colorId: r.colorId, name: r.name, nameEn: r.suggestion })));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Öneri alınamadı");
+    }
+  };
+
   const remove = trpc.katalog.deleteDimension.useMutation({
     onSuccess: () => {
       utils.katalog.dimensions.invalidate();
@@ -391,6 +424,9 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
                     )}
                     Numara üret
                   </Button>
+                  <Button size="sm" variant="outline" onClick={() => void openNameSuggestions()}>
+                    <Languages className="mr-1 h-4 w-4" /> İngilizce ad öner
+                  </Button>
                 </div>
               )}
               <Button size="sm" onClick={() => openNew(k)}>
@@ -557,6 +593,53 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
           </Button>
         </Card>
       )}
+
+      {/* İngilizce ad önerileri — düzenlenebilir onay listesi. */}
+      <Dialog open={!!nameRows} onOpenChange={v => !v && setNameRows(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>İngilizce adlar</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted-foreground">
+            Kartta ve satış adında{" "}
+            <strong className="text-foreground">FUŞYA / MAGENTA</strong> olarak yazılır. Sözlükte
+            olmayan renkler boş geldi — elle yazabilir ya da boş bırakıp geçebilirsin.
+          </p>
+          <div className="max-h-[50vh] space-y-1.5 overflow-y-auto pr-1">
+            {(nameRows ?? []).map((row, i) => (
+              <div key={row.colorId} className="flex items-center gap-2">
+                <span className="w-32 shrink-0 truncate text-sm">{row.name}</span>
+                <span className="text-muted-foreground">/</span>
+                <Input
+                  value={row.nameEn}
+                  onChange={e =>
+                    setNameRows(prev =>
+                      (prev ?? []).map((r, j) => (j === i ? { ...r, nameEn: e.target.value } : r)),
+                    )
+                  }
+                  className="h-8"
+                  placeholder="İngilizce ad"
+                />
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNameRows(null)}>
+              İptal
+            </Button>
+            <Button
+              disabled={applyNames.isPending}
+              onClick={() =>
+                applyNames.mutate({
+                  rows: (nameRows ?? []).map(r => ({ colorId: r.colorId, nameEn: r.nameEn.trim() })),
+                })
+              }
+            >
+              {(nameRows ?? []).filter(r => r.nameEn.trim()).length} adı yaz
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!imagesFor} onOpenChange={v => !v && setImagesFor(null)}>
         <DialogContent className="sm:max-w-lg">

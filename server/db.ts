@@ -61,6 +61,8 @@ import {
   seriesFamilies,
   seriesColors,
   seriesColorNumbers,
+  seriesUseCases,
+  socialPosts,
   familyPackagings,
   formulas,
   formulaInputs,
@@ -2405,6 +2407,72 @@ export async function listSeriesColors() {
   return db.select().from(seriesColors);
 }
 
+/* ---- Seri × kullanım alanı (vitrin kolajının konuları) ------------------- */
+
+export async function listSeriesUseCases() {
+  const db = await requireDb();
+  return db.select().from(seriesUseCases);
+}
+
+/** Boş liste bağı KALDIRIR: seri yeniden tüm kullanım alanlarına açılır. */
+export async function setSeriesUseCases(seriesId: number, useCaseIds: number[]) {
+  const db = await requireDb();
+  await db.delete(seriesUseCases).where(eq(seriesUseCases.seriesId, seriesId));
+  for (let i = 0; i < useCaseIds.length; i += 1) {
+    await db.insert(seriesUseCases).values({ seriesId, useCaseId: useCaseIds[i], sortOrder: i });
+  }
+}
+
+/* ---- Sosyal gönderi kuyruğu --------------------------------------------- */
+
+export async function listSocialPosts(limit = 60) {
+  const db = await requireDb();
+  return db.select().from(socialPosts).orderBy(desc(socialPosts.plannedFor)).limit(limit);
+}
+
+export async function getSocialPost(id: number) {
+  const db = await requireDb();
+  const [row] = await db.select().from(socialPosts).where(eq(socialPosts.id, id)).limit(1);
+  return row ?? null;
+}
+
+/**
+ * Gün + tip için gönderi açar; zaten varsa DOKUNMAZ.
+ *
+ * Planlayıcı her sabah çalışıyor ve idempotent olmazsa aynı gün için her
+ * turda yeni kayıt üretirdi. Tekillik indeksi de aynı şeyi söylüyor; buradaki
+ * kontrol kullanıcıya anlamlı bir sonuç dönebilmek için.
+ */
+export async function createSocialPostIfAbsent(row: {
+  kind: "renk" | "katsistemi" | "kullanim" | "palet";
+  plannedFor: string;
+  seriesId: number | null;
+  colorId: number | null;
+  masterId: number | null;
+  caption: string | null;
+  hashtags: string | null;
+}): Promise<number | null> {
+  const db = await requireDb();
+  const [existing] = await db
+    .select()
+    .from(socialPosts)
+    .where(and(eq(socialPosts.plannedFor, row.plannedFor), eq(socialPosts.kind, row.kind)))
+    .limit(1);
+  if (existing) return null;
+  const [r] = await db.insert(socialPosts).values(row);
+  return Number(r.insertId);
+}
+
+export async function updateSocialPost(id: number, data: Record<string, unknown>) {
+  const db = await requireDb();
+  await db.update(socialPosts).set(data as never).where(eq(socialPosts.id, id));
+}
+
+export async function deleteSocialPost(id: number) {
+  const db = await requireDb();
+  await db.delete(socialPosts).where(eq(socialPosts.id, id));
+}
+
 /* ---- Seri × renk numarası (katalog kodunun sayı kısmı) ------------------- */
 
 export async function listSeriesColorNumbers() {
@@ -2941,6 +3009,23 @@ export async function listMasterImageRefs(masterId?: number) {
     })
     .from(masterImages);
   return masterId ? q.where(eq(masterImages.masterId, masterId)) : q;
+}
+
+/**
+ * Ürün başına BARINDIRILAN kare sayısı.
+ *
+ * Kullanım alanı kolajı en az bir kare istiyor; hangi ürünün karesi olduğunu
+ * bilmeden gönderi planlamak, çizilemeyen bir kare planlamak demek. Yalnız
+ * bizim barındırdığımız görseller sayılıyor: dış adresli görsel canvas'ı
+ * kirletiyor ve şablon çizimi onu kullanamıyor.
+ */
+export async function listMasterImageCounts() {
+  const db = await requireDb();
+  return db
+    .select({ masterId: masterImages.masterId, count: sql<number>`count(*)` })
+    .from(masterImages)
+    .where(isNull(masterImages.url))
+    .groupBy(masterImages.masterId);
 }
 
 export async function getMasterImage(id: number) {
