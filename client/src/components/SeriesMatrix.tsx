@@ -51,6 +51,7 @@ export default function SeriesMatrix({ seriesId: lockedSeriesId }: { seriesId?: 
   const colors = dims?.colors ?? [];
   const families = dims?.families ?? [];
   const packagings = dims?.packagings ?? [];
+  const useCases = dims?.useCases ?? [];
 
   const current = useMemo(() => {
     const pick = <T extends { seriesId: number }>(rows: T[] | undefined, key: keyof T) =>
@@ -59,8 +60,16 @@ export default function SeriesMatrix({ seriesId: lockedSeriesId }: { seriesId?: 
       colors: pick(links?.colors, "colorId" as never),
       families: pick(links?.families, "familyId" as never),
       packagings: pick(links?.packagings, "packagingId" as never),
+      // Kullanım alanları ÜRETİM eksenini değiştirmiyor; vitrin kolajının
+      // hangi işleri göstereceğini belirliyor. Aynı ekranda duruyor çünkü
+      // soru aynı: "bu seri neyle ilgili".
+      useCases: new Set(
+        ((dims?.seriesUseCases ?? []) as { seriesId: number; useCaseId: number }[])
+          .filter(r => r.seriesId === activeId)
+          .map(r => r.useCaseId),
+      ),
     };
-  }, [links, activeId]);
+  }, [links, activeId, dims?.seriesUseCases]);
 
   const [sel, setSel] = useState(current);
 
@@ -94,13 +103,25 @@ export default function SeriesMatrix({ seriesId: lockedSeriesId }: { seriesId?: 
     onError: e => toast.error(e.message),
   });
 
-  const toggle = (kind: "colors" | "families" | "packagings", id: number) =>
+  const saveUseCases = trpc.katalog.setSeriesUseCases.useMutation({
+    onSuccess: () => {
+      utils.katalog.invalidate();
+      toast.success("Kullanım alanları kaydedildi");
+    },
+    onError: e => toast.error(e.message),
+  });
+
+  const toggle = (kind: "colors" | "families" | "packagings" | "useCases", id: number) =>
     setSel(prev => {
       const next = new Set(prev[kind]);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return { ...prev, [kind]: next };
     });
+
+  const useCasesDirty =
+    sel.useCases.size !== current.useCases.size ||
+    Array.from(sel.useCases).some(id => !current.useCases.has(id));
 
   const dirty =
     sel.colors.size !== current.colors.size ||
@@ -252,6 +273,43 @@ export default function SeriesMatrix({ seriesId: lockedSeriesId }: { seriesId?: 
           </Chip>
         ))}
       </Axis>
+
+      <div className="space-y-2 border-t pt-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-semibold">Vitrin kullanım alanları</span>
+          <Badge variant={sel.useCases.size > 0 ? "secondary" : "outline"}>
+            {sel.useCases.size}/{useCases.length}
+          </Badge>
+          {useCasesDirty && (
+            <Button
+              size="sm"
+              className="ml-auto"
+              disabled={saveUseCases.isPending}
+              onClick={() =>
+                saveUseCases.mutate({ seriesId: activeId, useCaseIds: Array.from(sel.useCases) })
+              }
+            >
+              <Save className="mr-1 h-4 w-4" /> Kaydet
+            </Button>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Kullanım alanı kolajının etiketleri buradan gelir — CANDY'de motor deposu, METEOR'da
+          figürin öne çıksın diye. Seçim yapılmazsa serinin tüm kullanım alanları kullanılır.
+          Bu seçim ÜRETİMİ değiştirmez, yalnız vitrin karesini.
+        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {useCases.map(u => (
+            <Chip
+              key={u.id}
+              active={sel.useCases.has(u.id)}
+              onClick={() => toggle("useCases", u.id)}
+            >
+              {u.name}
+            </Chip>
+          ))}
+        </div>
+      </div>
 
       <FamilyPackagingMatrix families={families} packagings={packagings} links={links?.familyPackagings ?? []} />
     </Card>

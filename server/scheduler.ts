@@ -7,6 +7,8 @@ import { isTrendyolConfigured } from "./trendyol";
 import { syncAllMarketplaces } from "./marketplace";
 import { runQuestionSyncAndNotify } from "./marketplaceQuestions";
 import { notifyOwner } from "./notify";
+import { planSocialPosts } from "./socialQueue";
+import { POST_KIND_LABEL } from "@shared/socialPlan";
 import { pollMarketplaceBatches } from "./jobs/pollMarketplaceBatches";
 
 /**
@@ -38,6 +40,12 @@ const BRIEFING_HOUR_TR = 8; // İstanbul saatiyle
 const COLLECTION_HOUR_TR = 9; // İstanbul saatiyle
 const COLLECTION_MIN_DAYS = 30; // bu kadar gündür ödenmemişse hatırlat
 const CHEQUE_HOUR_TR = 9; // İstanbul saatiyle (çek/senet vade nöbeti)
+/*
+ * Sosyal kuyruk sabah dolar: kullanıcı kareyi gün içinde uygun bir anda
+ * paylaşıyor, saatini kendi seçiyor. Brifingden bir saat sonra çalışıyor ki
+ * iki bildirim aynı dakikaya düşmesin.
+ */
+const SOCIAL_HOUR_TR = 9;
 
 const KEY_LAST_TICK = "scheduler.lastTickAt";
 const TICK_TRACE_INTERVAL_MS = 5 * 60 * 1000; // iz her turda değil, 5 dk'da bir yazılır (DB yükü)
@@ -47,6 +55,7 @@ const KEY_LAST_STOCK = "scheduler.lastStockCheckAt";
 const KEY_LAST_BRIEFING = "scheduler.lastBriefingDate";
 const KEY_LAST_COLLECTION = "scheduler.lastCollectionDate";
 const KEY_LAST_CHEQUE = "scheduler.lastChequeCheckDate";
+const KEY_LAST_SOCIAL = "scheduler.lastSocialPlanDate";
 const KEY_LAST_CATALOG = "scheduler.lastCatalogJobAt";
 // Kapasite hammadde hareketine bağlı; 30 dk yeterince taze, sürekli hesap
 // gereksiz DB yükü. Reçete bağlama aynı turda koşar (ikisi de idempotent).
@@ -110,6 +119,11 @@ async function tick() {
     if (isDailyDue(cfg[KEY_LAST_CHEQUE], todayTR, istanbulHour(new Date()), CHEQUE_HOUR_TR)) {
       await db.setSettings({ [KEY_LAST_CHEQUE]: todayTR });
       await runChequeWatch();
+    }
+
+    if (isDailyDue(cfg[KEY_LAST_SOCIAL], todayTR, istanbulHour(new Date()), SOCIAL_HOUR_TR)) {
+      await db.setSettings({ [KEY_LAST_SOCIAL]: todayTR });
+      await runSocialPlanner();
     }
 
     // Katalog otomasyonu: reçete bağlama önce (yeni bağlanan master'ın
@@ -338,6 +352,40 @@ async function runChequeWatch() {
     title: `📄 ${count} çek/senet vadesi geçti`,
     body: lines.join("\n"),
     link: "/cek-senet",
+  });
+}
+
+/**
+ * Sosyal kuyruk nöbetçisi: önümüzdeki üç haftanın gönderilerini planlar.
+ *
+ * ── Neden her gün, neden üç hafta ─────────────────────────────────────────
+ * Yalnız o günü planlamak, sunucu uykudayken geçen bir günü telafi edemiyor
+ * (Render ücretsiz planda süreç uyuyabiliyor). İleriye planlamak kuyruğu
+ * görünür de yapıyor: kullanıcı iki hafta sonra ne paylaşacağını bugünden
+ * görüyor. İş idempotent — aynı gün ikinci kez planlanmaz.
+ *
+ * Bildirim YALNIZ yeni gönderi açıldığında: her sabah "0 gönderi planlandı"
+ * demek, bildirimi gürültüye çevirir ve okunmaz hale getirir.
+ */
+async function runSocialPlanner() {
+  const result = await planSocialPosts(21);
+  if (result.created === 0) return;
+  const list = result.planned
+    .slice(0, 5)
+    .map(p => `${p.plannedFor} · ${POST_KIND_LABEL[p.kind]}${p.colorLabel ? ` — ${p.colorLabel}` : ""}`)
+    .join("\n");
+  await notifyOwner({
+    kind: "sosyal-kuyruk",
+    title: `📸 ${result.created} Instagram gönderisi hazırlandı`,
+    body: [
+      list,
+      result.planned.length > 5 ? `… ve ${result.planned.length - 5} tane daha` : "",
+      "",
+      "Renk Stüdyosu → Instagram sekmesinden onaylayıp indirebilirsin.",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    link: "/renk-studyo",
   });
 }
 

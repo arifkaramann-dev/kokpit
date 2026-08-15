@@ -32,6 +32,7 @@ import SablonEditor from "@/components/SablonEditor";
 import { buildCards } from "@/lib/renkCards";
 import { TEMPLATES, fallbackPackaging, getSeries, type PaintInfo } from "@/lib/renkTemplates";
 import type { PaletteEntry, TemplateLayout } from "@shared/color/layout";
+import { coatSystemOf } from "@shared/color/coatSystem";
 import { makeColorCodeIndex, type SeriesColorNo } from "@shared/colorCode";
 import {
   packagingImageUrl,
@@ -43,6 +44,7 @@ import {
   AlertTriangle,
   ArrowRight,
   Boxes,
+  CalendarPlus,
   Check,
   ChevronDown,
   Download,
@@ -328,6 +330,29 @@ function useKatalogBoyutlari() {
     [codeIndex, colorById],
   );
 
+  /**
+   * Serinin vitrin verisi — kat sistemi ve banner metni.
+   *
+   * Kart tarafı bunları yer tutucu olarak basıyor (`{katman1}`, `{slogan}`).
+   * Kat sistemi kayıtlı değilse seri adından varsayılan türetiliyor, yani
+   * şema her seride dolu çıkıyor.
+   */
+  const seriVitrin = useMemo(
+    () => (seriesId: number | null | undefined) => {
+      const s = (seriesRows ?? []).find(x => x.id === seriesId);
+      const bullets = (s as { bannerBullets?: unknown } | undefined)?.bannerBullets;
+      return {
+        coatSystem: coatSystemOf({
+          name: s?.name ?? null,
+          coatSystem: (s as { coatSystem?: unknown } | undefined)?.coatSystem,
+        }),
+        bannerSlogan: (s as { bannerSlogan?: string | null } | undefined)?.bannerSlogan ?? null,
+        bannerBullets: Array.isArray(bullets) ? (bullets as string[]) : [],
+      };
+    },
+    [seriesRows],
+  );
+
   return {
     rows: (masters ?? []) as MasterRow[],
     mastersLoading,
@@ -337,6 +362,7 @@ function useKatalogBoyutlari() {
     colorById,
     packById,
     katalogKodu,
+    seriVitrin,
   };
 }
 
@@ -911,7 +937,7 @@ function PazarlamaGorselleri({
 }) {
   const utils = trpc.useUtils();
   const [, setLocation] = useLocation();
-  const { rows, mastersLoading, dims, packagings, colorById, packById, katalogKodu } =
+  const { rows, mastersLoading, dims, packagings, colorById, packById, katalogKodu, seriVitrin } =
     useKatalogBoyutlari();
   const { data: references } = trpc.renkStudyo.references.useQuery();
   const { data: packImages } = trpc.katalog.packagingImages.useQuery();
@@ -966,6 +992,25 @@ function PazarlamaGorselleri({
   const templateIds = useMemo(() => new Set(TEMPLATES.map(t => t.id)), []);
   const objectSources = (saved ?? []).filter(i => i.hosted && !templateIds.has(i.role ?? ""));
   const savedCards = (saved ?? []).filter(i => i.hosted && templateIds.has(i.role ?? ""));
+
+  /**
+   * Kullanım alanı kolajının kareleri ve etiketleri.
+   *
+   * Kareler ürünün KAYITLI obje karelerinden (yeni AI turu gerektirmez);
+   * etiketler serinin kullanım alanlarından. Seride seçim yoksa katalogdaki
+   * tüm kullanım alanları geçerlidir — kapsam kuralı renk ve ambalajdakiyle
+   * aynı.
+   */
+  const usageFrames = useMemo(() => {
+    const links = (dims?.seriesUseCases ?? []) as { seriesId: number; useCaseId: number }[];
+    const all = (dims?.useCases ?? []) as { id: number; name: string }[];
+    const mine = links.filter(l => l.seriesId === master?.seriesId).map(l => l.useCaseId);
+    const labels = (mine.length ? all.filter(u => mine.includes(u.id)) : all).map(u => u.name);
+    return objectSources.slice(0, 4).map((img, i) => ({
+      label: labels[i] ?? "",
+      src: img.url,
+    }));
+  }, [dims?.seriesUseCases, dims?.useCases, master?.seriesId, objectSources]);
 
   const removeImage = trpc.katalog.deleteMasterImage.useMutation({
     onSuccess: () => {
@@ -1141,6 +1186,10 @@ function PazarlamaGorselleri({
         volumeMl: packInfo?.volumeMl ?? null,
         packRange: packInfo?.range.map(p => ({ label: p.label, src: p.src })),
         palette,
+        // Kat sistemi ve banner metni SERİDEN geliyor; kullanım kareleri
+        // ürünün kendi kayıtlı karelerinden.
+        ...seriVitrin(master.seriesId),
+        usage: usageFrames,
       };
 
       const out = await buildCards({
@@ -1212,6 +1261,7 @@ function PazarlamaGorselleri({
             volumeLabel: volume > 0 ? `${volume} ML` : null,
             packRange: packInfo?.range.map(p => ({ label: p.label, src: p.src })),
             palette,
+            ...seriVitrin(m.seriesId),
           },
         });
 
@@ -2074,7 +2124,7 @@ function ReferansObjeler() {
 /** Editör sekmesi — kayıtlı yerleşimleri okur, düzenlemeyi geri yazar. */
 function SablonlarSekmesi() {
   const utils = trpc.useUtils();
-  const { rows: masters, colorById, katalogKodu } = useKatalogBoyutlari();
+  const { rows: masters, colorById, katalogKodu, seriVitrin } = useKatalogBoyutlari();
   const { data: dims } = trpc.katalog.dimensions.useQuery();
   const { data: layoutRows } = trpc.renkStudyo.layouts.useQuery();
   const { data: assets } = trpc.renkStudyo.assets.useQuery();
@@ -2194,6 +2244,9 @@ function SablonlarSekmesi() {
       images: örnekColorImages,
       katalogKodu,
     }),
+    // Editörde kat şeması ve banner metni de dolu görünsün: boş yer tutucuyla
+    // yerleşim ayarlamak, metnin gerçekte ne kadar yer kapladığını gizliyordu.
+    ...seriVitrin(örnekMaster?.seriesId),
   };
 
   return (
@@ -2214,6 +2267,177 @@ function SablonlarSekmesi() {
       }
       onReset={templateId => reset.mutateAsync({ templateId }).then(() => undefined)}
     />
+  );
+}
+
+/**
+ * Düzenli Instagram kuyruğu.
+ *
+ * ── Neden yayın değil, kuyruk ─────────────────────────────────────────────
+ * Instagram'a doğrudan basmak Meta Graph API'si, Business hesap ve App Review
+ * demek — WhatsApp köprüsünün sökülme sebebinin aynısı. Kuyruk o kararı
+ * ERTELİYOR: kare, başlık ve etiketler burada hazırlanıp onaylanıyor, sonra
+ * indirilip paylaşılıyor. Yayın köprüsü eklendiğinde değişen tek şey son
+ * adım olacak.
+ *
+ * Kuyruğu her sabah zamanlayıcı dolduruyor (haftada 3, Pzt/Çar/Cum);
+ * buradaki düğme aynı işi elle çağırıyor — sunucu uykudayken geçen günü
+ * telafi edebilmek için.
+ */
+function InstagramKuyrugu() {
+  const utils = trpc.useUtils();
+  const { data: queue, isLoading } = trpc.renkStudyo.socialQueue.useQuery();
+  const [editing, setEditing] = useState<number | null>(null);
+  const [draft, setDraft] = useState("");
+
+  const plan = trpc.renkStudyo.planSocialQueue.useMutation({
+    onSuccess: r => {
+      void utils.renkStudyo.socialQueue.invalidate();
+      if (r.created > 0) toast.success(`${r.created} gönderi planlandı`);
+      else if (r.exhausted) toast.message("İçerik bitti — yeni renk ya da ürün ekleyince kuyruk dolar");
+      else toast.message("Kuyruk zaten dolu");
+    },
+    onError: e => toast.error(e.message, { duration: 9000 }),
+  });
+
+  const update = trpc.renkStudyo.updateSocialPost.useMutation({
+    onSuccess: () => {
+      void utils.renkStudyo.socialQueue.invalidate();
+      setEditing(null);
+    },
+    onError: e => toast.error(e.message, { duration: 9000 }),
+  });
+
+  const STATUS_LABEL: Record<string, string> = {
+    taslak: "onay bekliyor",
+    onaylandi: "onaylandı",
+    paylasildi: "paylaşıldı",
+    atlandi: "atlandı",
+  };
+
+  return (
+    <Card className="space-y-4 p-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex-1">
+          <h2 className="text-sm font-semibold">Instagram kuyruğu</h2>
+          <p className="text-xs text-muted-foreground">
+            Haftada 3 gönderi (Pzt · Çar · Cum), her sabah otomatik planlanır. Onayla, kareyi
+            Pazarlama Görselleri sekmesinde üret, indir ve paylaş.
+          </p>
+        </div>
+        <Button size="sm" variant="outline" disabled={plan.isPending} onClick={() => plan.mutate({ days: 21 })}>
+          {plan.isPending ? <Loader2 className="mr-1 size-4 animate-spin" /> : <CalendarPlus className="mr-1 size-4" />}
+          Kuyruğu doldur
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" /> Yükleniyor…
+        </div>
+      ) : !queue?.length ? (
+        <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+          Kuyruk boş. "Kuyruğu doldur" ile önümüzdeki üç haftayı planla.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {queue.map(post => (
+            <div key={post.id} className="rounded-lg border p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="secondary" className="text-[10px]">
+                  {post.plannedFor}
+                </Badge>
+                <span className="text-sm font-medium">{post.kindLabel}</span>
+                {post.colorLabel && (
+                  <span className="text-xs text-muted-foreground">{post.colorLabel}</span>
+                )}
+                <Badge
+                  variant={post.status === "paylasildi" ? "default" : "outline"}
+                  className="ml-auto text-[10px]"
+                >
+                  {STATUS_LABEL[post.status] ?? post.status}
+                </Badge>
+              </div>
+
+              {editing === post.id ? (
+                <div className="mt-2 space-y-2">
+                  <Textarea
+                    rows={3}
+                    value={draft}
+                    onChange={e => setDraft(e.target.value)}
+                    className="text-sm"
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      disabled={update.isPending}
+                      onClick={() => update.mutate({ id: post.id, caption: draft })}
+                    >
+                      Kaydet
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>
+                      Vazgeç
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-1.5 whitespace-pre-wrap text-sm text-muted-foreground">
+                  {post.caption}
+                </p>
+              )}
+              {post.hashtags && (
+                <p className="mt-1 text-xs text-muted-foreground">{post.hashtags}</p>
+              )}
+
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {post.status === "taslak" && (
+                  <Button
+                    size="sm"
+                    className="h-7 text-xs"
+                    disabled={update.isPending}
+                    onClick={() => update.mutate({ id: post.id, status: "onaylandi" })}
+                  >
+                    <Check className="mr-1 size-3.5" /> Onayla
+                  </Button>
+                )}
+                {post.status === "onaylandi" && (
+                  <Button
+                    size="sm"
+                    className="h-7 text-xs"
+                    disabled={update.isPending}
+                    onClick={() => update.mutate({ id: post.id, status: "paylasildi" })}
+                  >
+                    <Check className="mr-1 size-3.5" /> Paylaştım
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  onClick={() => {
+                    setEditing(post.id);
+                    setDraft(post.caption ?? "");
+                  }}
+                >
+                  Metni düzenle
+                </Button>
+                {post.status !== "atlandi" && post.status !== "paylasildi" && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 text-xs text-muted-foreground"
+                    disabled={update.isPending}
+                    onClick={() => update.mutate({ id: post.id, status: "atlandi" })}
+                  >
+                    Atla
+                  </Button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -2243,6 +2467,7 @@ export default function RenkStudyo() {
         <TabsList className="flex-wrap">
           <TabsTrigger value="uret">1 · Obje Üretimi</TabsTrigger>
           <TabsTrigger value="pazarlama">2 · Pazarlama Görselleri</TabsTrigger>
+          <TabsTrigger value="instagram">3 · Instagram</TabsTrigger>
           <TabsTrigger value="referans">Referans Objeler</TabsTrigger>
           <TabsTrigger value="sablon">Şablon Editörü</TabsTrigger>
         </TabsList>
@@ -2257,6 +2482,10 @@ export default function RenkStudyo() {
         <TabsContent value="pazarlama" className="mt-4">
           <PazarlamaGorselleri handoff={handoff} onSablonDuzenle={() => setTab("sablon")} />
         </TabsContent>
+        <TabsContent value="instagram" className="mt-4">
+          <InstagramKuyrugu />
+        </TabsContent>
+
         <TabsContent value="referans" className="mt-4 space-y-4">
           <ReferansObjeler />
           <SablonGorselleri />

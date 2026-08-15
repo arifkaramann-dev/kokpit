@@ -10,17 +10,19 @@
  */
 
 import { renderCoat } from "@shared/color/candy";
+import { coatSystemTokens, defaultCoatSystem } from "@shared/color/coatSystem";
 import { hexToLab, type Lab } from "@shared/color/color";
 import {
   assetIdOf,
   resolveWatermark,
   usesPalette,
   type ImageSource,
+  type LayerBox,
   type TemplateLayout,
   type TokenValues,
   type Watermark,
 } from "@shared/color/layout";
-import { defaultLayout } from "@shared/color/layoutDefaults";
+import { defaultLayout, usageBoxes } from "@shared/color/layoutDefaults";
 import type { Raster } from "@shared/color/recolor";
 import { extractSubjectMask, measureSubjectLab } from "@shared/color/subject";
 import { renderLayoutToDataUrl, type LayerImages } from "./renkLayoutRender";
@@ -76,6 +78,17 @@ export function tokenValues(paint: PaintInfo): TokenValues {
     pack4: range[3] ?? "",
     brand: BRAND.name,
     site: BRAND.site,
+    // Kat sistemi: kayıtlı zincir yoksa seri adından varsayılan türetilir —
+    // hiçbir seri kat şemasız kalmasın.
+    ...coatSystemTokens(paint.coatSystem?.length ? paint.coatSystem : defaultCoatSystem(series.line)),
+    slogan: paint.bannerSlogan ?? "",
+    madde1: paint.bannerBullets?.[0] ?? "",
+    madde2: paint.bannerBullets?.[1] ?? "",
+    madde3: paint.bannerBullets?.[2] ?? "",
+    kullanim1: paint.usage?.[0]?.label ?? "",
+    kullanim2: paint.usage?.[1]?.label ?? "",
+    kullanim3: paint.usage?.[2]?.label ?? "",
+    kullanim4: paint.usage?.[3]?.label ?? "",
   };
 }
 
@@ -148,6 +161,43 @@ async function loadAssets(layouts: TemplateLayout[]): Promise<LayerImages> {
     }
   }
   return out;
+}
+
+/**
+ * Kolaj kutularını gerçek kare sayısına oturtur.
+ *
+ * Kullanıcı yerleşimi elle düzenlediyse ona DOKUNULMAZ: kutular yalnız
+ * fabrika ölçüsündeyken yeniden hesaplanıyor. Aksi halde birinin taşıdığı
+ * kutu her üretimde geri yerine kaçardı.
+ */
+function fitUsageBoxes(layout: TemplateLayout, count: number): TemplateLayout {
+  const target = usageBoxes(count);
+  const factory = usageBoxes(4);
+  const same = (a: LayerBox, b: LayerBox) =>
+    Math.abs(a.x - b.x) < 1e-6 &&
+    Math.abs(a.y - b.y) < 1e-6 &&
+    Math.abs(a.w - b.w) < 1e-6 &&
+    Math.abs(a.h - b.h) < 1e-6;
+
+  const slotOf = (id: string) => {
+    const m = id.match(/^(?:use|uselbl)(\d)/);
+    return m ? Number(m[1]) - 1 : -1;
+  };
+
+  const layers = layout.layers.map(layer => {
+    const slot = slotOf(layer.id);
+    if (slot < 0) return layer;
+    // Yeri değiştirilmiş kutuya dokunma.
+    if (layer.type === "image" && !same(layer.box, factory[slot])) return layer;
+    const box = target[slot];
+    // Kolaja sığmayan kareler gizleniyor: üç kare varken dördüncü etiket
+    // havada kalmasın.
+    if (!box) return { ...layer, visible: false };
+    return layer.type === "image"
+      ? { ...layer, box }
+      : { ...layer, box: { x: box.x, y: box.y + box.h + 0.008, w: box.w, h: 0.03 } };
+  });
+  return { ...layout, layers };
 }
 
 /** Bir şablonun kullandığı görsel kaynakları. */
@@ -223,6 +273,21 @@ export async function buildCards({
     }
   }
 
+  // Kullanım alanı kareleri — `use1..use4`. Kaçı yüklenirse kolaj ona göre
+  // diziliyor; yüklenemeyen kare sessizce düşüyor ve ızgara yeniden hesaplanıyor.
+  const usageImages: LayerImages = {};
+  const usageSlots = ["use1", "use2", "use3", "use4"] as const;
+  for (let i = 0; i < usageSlots.length; i += 1) {
+    const slot = usageSlots[i];
+    const src = paint.usage?.[i]?.src;
+    if (!src || !needed.has(slot)) continue;
+    try {
+      usageImages[slot] = await loadImageSrc(src);
+    } catch (err) {
+      console.warn("[renkCards] kullanım karesi yüklenemedi:", src, err);
+    }
+  }
+
   let logo: HTMLImageElement | null = null;
   if (needed.has("logo")) {
     try {
@@ -256,7 +321,15 @@ export async function buildCards({
   }
 
   const assets = await loadAssets(resolved);
-  const images: LayerImages = { object: obj, packaging, logo, ...packRange, ...coats, ...assets };
+  const images: LayerImages = {
+    object: obj,
+    packaging,
+    logo,
+    ...packRange,
+    ...coats,
+    ...usageImages,
+    ...assets,
+  };
 
   const out: CardOutput[] = [];
   for (let i = 0; i < wanted.length; i += 1) {
@@ -272,11 +345,25 @@ export async function buildCards({
     // Palet karesi renk listesi olmadan boş bir ızgara olurdu.
     if (usesPalette(layout) && !paint.palette?.length) continue;
 
+    /*
+     * Kolaj: kutular ELDEKİ kare sayısına göre yeniden hesaplanıyor.
+     *
+     * Yerleşim dört kutuyla kayıtlı ama gerçek kare sayısı ancak burada
+     * biliniyor. Sabit ızgarada iki karelik bir renk, yarısı boş bir kare
+     * üretiyordu. Hiç kare yoksa şablon atlanıyor — kolajın kendisi yok.
+     */
+    const usageCount = usageSlots.filter(s => images[s]).length;
+    let drawn = layout;
+    if (sources.has("use1")) {
+      if (usageCount === 0) continue;
+      drawn = fitUsageBoxes(layout, usageCount);
+    }
+
     out.push({
       id: tpl.id,
       label: tpl.label,
       data: await renderLayoutToDataUrl({
-        layout,
+        layout: drawn,
         values,
         images,
         paintHex: paint.hex,

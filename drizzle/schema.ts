@@ -128,6 +128,25 @@ export const productSeries = mysqlTable("productSeries", {
   // geliştirme projesinde bu listeden hangi renklerin üretileceği seçilir.
   // Varyantlar Renk × Ambalaj matrisi olarak üretilir.
   colorOptions: json("colorOptions"),
+  /**
+   * KAT SİSTEMİ — bu seri hangi katmanlarla uygulanır.
+   *
+   * [{ label: "Gümüş baz", product: "ARTOFCOLOUR SILVER" }, { label: "Candy" },
+   *  { label: "Vernik", product: "ARTOFCOLOUR GLOSS" }]
+   *
+   * Serinin en çok sorulan sorusu "nasıl uygulanır"dı ve cevabı yalnız uzun
+   * açıklama metninin içinde, paragraf arasında duruyordu. Zincir VERİ olunca
+   * şablon onu tek karede şema olarak basabiliyor ve seri değişince kare
+   * kendiliğinden doğru kalıyor.
+   *
+   * Boşsa seri adından makul bir varsayılan türetilir (bkz.
+   * `shared/color/coatSystem.ts`) — hiçbir seri kat şemasız kalmasın.
+   */
+  coatSystem: json("coatSystem"),
+  /** Banner sloganı — AI serinin kendi metninden kısaltır, kullanıcı düzeltir. */
+  bannerSlogan: varchar("bannerSlogan", { length: 160 }),
+  /** Banner maddeleri: ["Güçlü yapışma", "Hızlı kuruma", "Üstün örtücülük"]. */
+  bannerBullets: json("bannerBullets"),
   // Kullanım kılavuzu şablonu. Değişkenler: {{renk}}, {{seri}}, {{ambalaj}}.
   guideTemplate: text("guideTemplate"),
   // Etiket içerik şablonu (aynı değişkenler desteklenir).
@@ -1178,6 +1197,83 @@ export const seriesColorNumbers = mysqlTable(
 );
 
 export type SeriesColorNumber = typeof seriesColorNumbers.$inferSelect;
+
+/**
+ * Seri × kullanım alanı — "bu serinin vitrininde hangi kullanımlar gösterilir".
+ *
+ * Kullanım alanı zaten bir İLAN eksenidir (aynı şişe 3D baskıcıya ve olta
+ * yapımcısına ayrı ilanla satılır). Kullanım alanı KOLAJI da aynı sözlükten
+ * beslenmeli — ikinci bir "nesne listesi" açmak, iki listeyi ayrı ayrı güncel
+ * tutmak demekti ve biri hep eskirdi.
+ *
+ * Satır yoksa serinin bütün kullanım alanları geçerlidir; satır varsa yalnız
+ * seçilenler. CANDY'de motor deposu, METEOR'da figürin öne çıksın diye.
+ */
+export const seriesUseCases = mysqlTable(
+  "seriesUseCases",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    seriesId: int("seriesId").notNull(),
+    useCaseId: int("useCaseId").notNull(),
+    sortOrder: int("sortOrder").notNull().default(0),
+  },
+  t => [
+    unique("seriesUseCases_uq").on(t.seriesId, t.useCaseId),
+    index("seriesUseCases_usecase_idx").on(t.useCaseId),
+  ],
+);
+
+/**
+ * Sosyal gönderi kuyruğu — "sırada ne paylaşılacak".
+ *
+ * ── Neden kuyruk, neden doğrudan yayın değil ──────────────────────────────
+ * Instagram'a doğrudan basmak Meta Graph API'si, Business hesap ve App Review
+ * demek — WhatsApp köprüsünün sökülme sebebinin aynısı. Kuyruk o kararı
+ * ERTELER: kare, başlık ve etiketler burada hazırlanır, onaylanır ve
+ * paylaşıma hazır durur. Yayın köprüsü eklendiğinde değişen tek şey son adım
+ * olur; kuyruk, rotasyon ve onay aynen kalır.
+ *
+ * `status` akışı: taslak → onaylandi → paylasildi (ya da atlandi).
+ * Kare veriyi burada TUTMAZ: üretilen görseller `masterImages`/`sampleMasters`
+ * tarafında yaşıyor, burada yalnız kimlikleri durur — aynı kare iki yerde
+ * saklanırsa biri güncellenip diğeri eskir.
+ */
+export const socialPosts = mysqlTable(
+  "socialPosts",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    /** İçerik tipi: yeni renk · kat sistemi · kullanım alanı · palet. */
+    kind: mysqlEnum("kind", ["renk", "katsistemi", "kullanim", "palet"]).notNull(),
+    status: mysqlEnum("status", ["taslak", "onaylandi", "paylasildi", "atlandi"])
+      .notNull()
+      .default("taslak"),
+    /** Planlanan gün (İstanbul günü, YYYY-MM-DD) — kuyruk buna göre sıralanır. */
+    plannedFor: varchar("plannedFor", { length: 10 }).notNull(),
+    seriesId: int("seriesId"),
+    colorId: int("colorId"),
+    masterId: int("masterId"),
+    /** Kare gönderi görseli (masterImages.id). */
+    imageId: int("imageId"),
+    /** Story görseli — kare ile birlikte üretilir. */
+    storyImageId: int("storyImageId"),
+    caption: text("caption"),
+    hashtags: text("hashtags"),
+    /** Paylaşıldı işaretinin zamanı — "bu hafta kaç post gitti" buradan. */
+    postedAt: timestamp("postedAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  t => [
+    index("socialPosts_status_idx").on(t.status, t.plannedFor),
+    // Aynı gün aynı konuyu iki kez planlamayı engeller: kuyruk her sabah
+    // yeniden hesaplanıyor ve idempotent olmazsa her turda kopya üretirdi.
+    unique("socialPosts_slot_uq").on(t.companyId, t.plannedFor, t.kind),
+  ],
+);
+
+export type SocialPost = typeof socialPosts.$inferSelect;
 
 /**
  * Form × ambalaj uyumluluğu.

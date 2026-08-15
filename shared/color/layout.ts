@@ -41,6 +41,30 @@ export const TOKENS = [
   "{pack4}",
   "{brand}",
   "{site}",
+  /* Kat sistemi — "bu boya hangi katmanlarla uygulanır" (bkz. coatSystem.ts). */
+  "{katSistemi}",
+  "{katSayisi}",
+  "{katman1}",
+  "{katman2}",
+  "{katman3}",
+  "{katman4}",
+  "{urun1}",
+  "{urun2}",
+  "{urun3}",
+  "{urun4}",
+  "{ok1}",
+  "{ok2}",
+  "{ok3}",
+  /* Seri banner metni — AI serinin kendi tanıtımından kısaltır. */
+  "{slogan}",
+  "{madde1}",
+  "{madde2}",
+  "{madde3}",
+  /* Kullanım alanı kolajının etiketleri. */
+  "{kullanim1}",
+  "{kullanim2}",
+  "{kullanim3}",
+  "{kullanim4}",
 ] as const;
 
 export type TokenValues = {
@@ -63,6 +87,31 @@ export type TokenValues = {
   pack4?: string | null;
   brand?: string | null;
   site?: string | null;
+  /** Zincirin tamamı: "Gümüş baz → Candy renk → Vernik". */
+  katSistemi?: string | null;
+  /** "3 KAT SİSTEM" — şema başlığı. */
+  katSayisi?: string | null;
+  katman1?: string | null;
+  katman2?: string | null;
+  katman3?: string | null;
+  katman4?: string | null;
+  /** Halkanın önerdiği kendi ürünümüz — "ARTOFCOLOUR GLOSS". */
+  urun1?: string | null;
+  urun2?: string | null;
+  urun3?: string | null;
+  urun4?: string | null;
+  /** Halkalar arası ok — son halkadan sonra boş kalır. */
+  ok1?: string | null;
+  ok2?: string | null;
+  ok3?: string | null;
+  slogan?: string | null;
+  madde1?: string | null;
+  madde2?: string | null;
+  madde3?: string | null;
+  kullanim1?: string | null;
+  kullanim2?: string | null;
+  kullanim3?: string | null;
+  kullanim4?: string | null;
 };
 
 /** Katmanın çizileceği kutu — hepsi 0..1 oranı. */
@@ -140,6 +189,17 @@ export type ImageSource =
   | "pack2"
   | "pack3"
   | "pack4"
+  /**
+   * Kullanım alanı kareleri — bu boyayla boyanmış nesneler, 1 tabanlı.
+   *
+   * Kolaj bunlardan KAÇI VARSA onunla diziliyor: iki kare varsa yan yana,
+   * dört varsa 2×2. Eksik kare yüzünden boş kutu kalmasın diye sayı şablona
+   * gömülü değil (bkz. `layoutDefaults.usageLayout`).
+   */
+  | "use1"
+  | "use2"
+  | "use3"
+  | "use4"
   | `asset:${number}`;
 
 /** `asset:12` → 12; sabit kaynaklarda null. */

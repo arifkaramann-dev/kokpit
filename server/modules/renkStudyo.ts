@@ -23,6 +23,9 @@ import { IMAGE_MODELS, activeImageProvider, generateProductImage } from "../imag
 import { protectedProcedure, router } from "../_core/trpc";
 import { imageUrlOf, masterImagePath } from "../masterFields";
 import * as db from "../db";
+import { planSocialPosts } from "../socialQueue";
+import { colorLabelOf } from "@shared/productName";
+import { POST_KIND_LABEL, type PostKind } from "@shared/socialPlan";
 
 /** Data URL biçimi — istemciden gelen her görsel bunu karşılamalı. */
 const dataUrl = z
@@ -541,5 +544,112 @@ export const renkStudyoRouter = router({
         });
       }
       return result;
+    }),
+
+  /* ---- Düzenli Instagram kuyruğu ---------------------------------------- */
+
+  /**
+   * Kuyruk — planlanan, onaylanan ve paylaşılan gönderiler.
+   *
+   * Kare verisi DÖNMEZ, yalnız adresi: kuyruk ekranı otuz gönderi
+   * listeliyor ve her birinin base64'ünü taşımak megabaytlarca veri demekti.
+   */
+  socialQueue: protectedProcedure.query(async () => {
+    const [posts, colors, series] = await Promise.all([
+      db.listSocialPosts(60),
+      db.listColors(),
+      db.listProductSeries(),
+    ]);
+    const colorById = new Map(
+      (colors as { id: number; name: string; nameEn: string | null }[]).map(c => [c.id, c]),
+    );
+    const seriesById = new Map((series as { id: number; name: string }[]).map(s => [s.id, s]));
+    return (posts as Record<string, unknown>[]).map(p => ({
+      id: p.id as number,
+      kind: p.kind as PostKind,
+      status: p.status as "taslak" | "onaylandi" | "paylasildi" | "atlandi",
+      plannedFor: String(p.plannedFor ?? ""),
+      masterId: (p.masterId as number | null) ?? null,
+      seriesId: (p.seriesId as number | null) ?? null,
+      colorId: (p.colorId as number | null) ?? null,
+      caption: (p.caption as string | null) ?? null,
+      hashtags: (p.hashtags as string | null) ?? null,
+      imageUrl: p.imageId != null ? masterImagePath(p.imageId as number) : null,
+      storyImageUrl: p.storyImageId != null ? masterImagePath(p.storyImageId as number) : null,
+      kindLabel: POST_KIND_LABEL[p.kind as PostKind],
+      colorLabel: colorLabelOf(colorById.get((p.colorId as number) ?? -1)),
+      seriesName: seriesById.get((p.seriesId as number) ?? -1)?.name ?? null,
+    }));
+  }),
+
+  /**
+   * Kuyruğu ileriye doğru doldurur — planlayıcının da çağırdığı işin aynısı.
+   *
+   * ── Neden ileriye ─────────────────────────────────────────────────────────
+   * Yalnız bugünü planlamak, sunucu uykudayken geçen bir günü telafi
+   * edemiyor (Render ücretsiz planda süreç uyuyabiliyor). İleriye doğru
+   * planlamak kuyruğu görünür de yapıyor: kullanıcı önümüzdeki iki haftada
+   * ne paylaşacağını bugünden görüyor ve beğenmediğini atlıyor.
+   *
+   * İdempotent: aynı gün+tip için ikinci kayıt açılmaz.
+   */
+  planSocialQueue: protectedProcedure
+    .input(z.object({ days: z.number().int().min(1).max(60).default(21) }).default({ days: 21 }))
+    .mutation(({ input }) => planSocialPosts(input.days)),
+
+  /** Gönderi metnini/durumunu günceller — onay, atlama, elle düzeltme. */
+  updateSocialPost: protectedProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        status: z.enum(["taslak", "onaylandi", "paylasildi", "atlandi"]).optional(),
+        caption: z.string().max(2200).nullable().optional(),
+        hashtags: z.string().max(600).nullable().optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const post = await db.getSocialPost(input.id);
+      if (!post) throw new TRPCError({ code: "NOT_FOUND", message: "Gönderi bulunamadı" });
+      const data: Record<string, unknown> = {};
+      if (input.caption !== undefined) data.caption = input.caption;
+      if (input.hashtags !== undefined) data.hashtags = input.hashtags;
+      if (input.status !== undefined) {
+        data.status = input.status;
+        // "Paylaşıldı" zamanı ölçüt: haftada kaç post gittiğini gösteren tek
+        // veri bu. Geri alınırsa (taslağa dönerse) damga da silinir.
+        data.postedAt = input.status === "paylasildi" ? new Date() : null;
+      }
+      await db.updateSocialPost(input.id, data);
+      return { ok: true };
+    }),
+
+  /**
+   * Üretilen kareyi gönderiye bağlar.
+   *
+   * Kare `masterImages` tarafında yaşıyor; kuyruk yalnız kimliğini tutuyor.
+   * İki yerde saklansaydı biri güncellenip diğeri eskirdi.
+   */
+  attachSocialImage: protectedProcedure
+    .input(
+      z.object({
+        id: z.number().int().positive(),
+        data: dataUrl,
+        /** Story karesi mi kare gönderi mi. */
+        story: z.boolean().default(false),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const post = await db.getSocialPost(input.id);
+      if (!post) throw new TRPCError({ code: "NOT_FOUND", message: "Gönderi bulunamadı" });
+      if (post.masterId == null) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Gönderinin ürünü yok." });
+      }
+      const imageId = await db.addMasterImage({
+        masterId: post.masterId,
+        data: input.data,
+        role: input.story ? "sosyal-story" : "sosyal",
+      });
+      await db.updateSocialPost(input.id, input.story ? { storyImageId: imageId } : { imageId });
+      return { imageId };
     }),
 });

@@ -484,6 +484,47 @@ olabilir; aynı numara iki seride serbesttir, seri İÇİNDE tekildir.
 - Kartta, künyede, palette, stüdyo aramasında aynı indeks kullanılıyor — kod artık
   hiçbir ekranda ayrışmıyor. 1092 test, 0 tip hatası, build ✓.
 
+## Vitrin paketi: çift dilli isim + kat sistemi + banner + Instagram (15.08.2026)
+Patronla mutabakat sonrası beş iş tek seferde yapıldı (soru-cevap turuyla her
+karar onaylandı).
+
+1. **Çift dilli renk adı — `FUŞYA / MAGENTA`.** Kural tek yerde: `colorLabelOf`
+   (`shared/productName.ts`). Türkçe önde, eğik çizgiyle; tek ad varsa sarkan
+   ayraç yok, iki ad aynıysa tekrar yok. Satış adı, kart, etiket ve palet aynı
+   biçimi basıyor. Kartlarda TR üste alındı (İngilizce soluk alt satır).
+   `shared/colorNames.ts` sabit TR↔EN sözlüğü (AI değil — ücretsiz, anında,
+   deterministik); Tanımlar → "İngilizce ad öner" **düzenlenebilir onay
+   listesi** açıyor, sözlükte olmayan renk boş satırla geliyor.
+   ⚠️ Pazaryerine gitmiş ilan başlıkları kendiliğinden değişmez (ilan geçmişi
+   kopmasın); yeni üretilenler yeni biçimi alır.
+2. **Kat sistemi şablonu.** `productSeries.coatSystem` (JSON, migration 0056) +
+   `shared/color/coatSystem.ts`. Şema kutusu: `ARTOFCOLOUR PRIMER → CANDY →
+   ARTOFCOLOUR GLOSS`. Varsayılan zincirler seri adından: CANDY 3 (gümüş baz),
+   METEOR 3 (siyah zemin), örtücüler 2, PRIMER/GLOSS 1. Ok yalnız halkalar
+   ARASINDA (`{ok1..3}` yer tutucusu) — iki katlı seride sarkmıyor. Aşama
+   kareleri varsa alt şeride ekleniyor, yoksa şema tek başına tam kare (AI
+   gerekmiyor). Seriler ekranında "Kat Sistemi & Banner" sekmesinden
+   düzenlenebiliyor.
+3. **Seri banner'ı — 4 ölçü.** `banner` (1080×1080), `bannerWide` (1200×628),
+   `bannerHero` (1920×600), `bannerStory` (1080×1920); tek yerleşim tarifi,
+   oran farkını dikey akış soğuruyor. Metin: `generateSeriesBanner` serinin
+   KAYITLI tanıtımını kısaltıyor (uydurmuyor); metin boşsa AI'a hiç gidilmiyor.
+   Öneri forma düşüyor, kullanıcı düzeltip kaydediyor.
+4. **Düzenli Instagram kuyruğu (B yolu — Meta API yok).** `socialPosts` tablosu
+   + `shared/socialPlan.ts` (rotasyon, tekrar eleme, yedek metin) +
+   `server/socialQueue.ts` + zamanlayıcıda 09:00 TR işi. Haftada 3 (Pzt/Çar/Cum),
+   üç hafta ileriye idempotent planlama, her post onaydan geçiyor, dört tip
+   sırayla dönüyor (yeni renk · kat sistemi · kullanım alanı · palet). Renk
+   Stüdyosu → "3 · Instagram" sekmesi: onayla / metni düzenle / atla / paylaştım.
+   Yayın köprüsü eklendiğinde değişen tek şey son adım olacak.
+5. **Kullanım alanı kolajı.** `use1..use4` görsel kaynakları + `usageBoxes`
+   esnek ızgara: 1 kare tam, 2 yan yana, 3 şerit, 4 → 2×2. Kareler ürünün
+   KAYITLI obje karelerinden (yeni AI turu yok), etiketler `seriesUseCases`
+   seçiminden (Seri Uyumluluğu ekranında). Kullanıcının taşıdığı kutuya
+   dokunulmuyor.
+
+Doğrulama: 0 tip hatası, **1119 test** (74 dosya), build ✓.
+
 ## Açık işler / sırada ne var (takım denetimi: 15.07.2026, kanıtlı liste todo.md sonunda)
 Sağlık: `pnpm check` 0 hata, 74/74 test geçiyor, kod içi TODO/FIXME borcu yok.
 

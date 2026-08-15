@@ -344,7 +344,7 @@ describe("salesNameOf", () => {
   };
 
   it("markadan ambalaja tam adı kurar", () => {
-    expect(salesNameOf(full)).toBe("ARTOFCOLOUR CANDY PAINT MAGENTA (FUŞYA) - AİRBRUSH 100 ML");
+    expect(salesNameOf(full)).toBe("ARTOFCOLOUR CANDY PAINT FUŞYA / MAGENTA - AİRBRUSH 100 ML");
   });
 
   /* Türkçe büyük harf: ad etikete ve pazaryeri kartına gidiyor. */
@@ -353,7 +353,7 @@ describe("salesNameOf", () => {
     expect(salesNameOf({ colorName: "Işıltı" })).toContain("IŞILTI");
   });
 
-  it("İngilizce renk yoksa parantez açmaz", () => {
+  it("İngilizce renk yoksa ayraç sarkmaz", () => {
     expect(salesNameOf({ ...full, colorNameEn: null })).toBe(
       "ARTOFCOLOUR CANDY PAINT FUŞYA - AİRBRUSH 100 ML",
     );
@@ -366,7 +366,7 @@ describe("salesNameOf", () => {
   });
 
   it("seri İngilizce adı yoksa seri adına düşer", () => {
-    expect(salesNameOf({ ...full, seriesNameEn: null })).toContain("ARTOFCOLOUR CANDY MAGENTA");
+    expect(salesNameOf({ ...full, seriesNameEn: null })).toContain("ARTOFCOLOUR CANDY FUŞYA / MAGENTA");
   });
 
   /*
@@ -375,7 +375,7 @@ describe("salesNameOf", () => {
    */
   it("r2u ürünü ayırt eder", () => {
     expect(salesNameOf({ ...full, readiness: "r2u" })).toBe(
-      "ARTOFCOLOUR CANDY PAINT MAGENTA (FUŞYA) - AİRBRUSH 100 ML R2U",
+      "ARTOFCOLOUR CANDY PAINT FUŞYA / MAGENTA - AİRBRUSH 100 ML R2U",
     );
   });
 
