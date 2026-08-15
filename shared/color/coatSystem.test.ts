@@ -8,7 +8,8 @@ import {
 } from "./coatSystem";
 import { defaultLayout } from "./layoutDefaults";
 import { suggestColorNameEn } from "../colorNames";
-import { colorLabelOf } from "../productName";
+import { colorLabelOf, effectLabelOf } from "../productName";
+import { fillBannerVars } from "../bannerText";
 
 /**
  * Kat sistemi müşterinin en çok sorduğu sorunun cevabı ("nasıl uygulanır").
@@ -153,5 +154,58 @@ describe("banner yerleşimi", () => {
     const wide = defaultLayout("bannerHero");
     const slogan = wide.layers.find(l => l.id.startsWith("slogan"));
     expect(slogan?.box.w).toBeLessThan(0.5);
+  });
+});
+
+/**
+ * Kartta "{seri} {efekt}" yazıyor. Efekt rengin `finish` alanından tahmin
+ * ediliyor ve varsayılanı "duz"; katalogdaki renklerin çoğunda hiç
+ * değiştirilmemiş. Sonuç kartta **CANDY SOLID** oluyordu: candy saydam bir
+ * efekt, düz değil — kendi kendini yalanlayan bir etiket.
+ */
+describe("seri + efekt etiketi", () => {
+  it("SOLID hiç yazılmaz — varsayılan değer bilgi katmıyor", () => {
+    expect(effectLabelOf("CANDY", "SOLID")).toBe("");
+    expect(effectLabelOf("VIVID", "SOLID")).toBe("");
+  });
+
+  it("seri adı efekti zaten söylüyorsa tekrar etmez", () => {
+    expect(effectLabelOf("CANDY", "CANDY")).toBe("");
+    expect(effectLabelOf("METEOR", "METEOR")).toBe("");
+  });
+
+  it("bilgi katan efekt korunur — VIVID CANDY gerçek bir hat adı", () => {
+    expect(effectLabelOf("VIVID", "CANDY")).toBe("CANDY");
+    expect(effectLabelOf("VIVID", "PEARLY")).toBe("PEARLY");
+    expect(effectLabelOf("METEOR", "GRADIENT")).toBe("GRADIENT");
+  });
+
+  it("seri bilinmiyorsa efekt tek başına yazılır", () => {
+    expect(effectLabelOf(null, "PEARLY")).toBe("PEARLY");
+    expect(effectLabelOf("CANDY", null)).toBe("");
+  });
+});
+
+/**
+ * İlan metinleri bilerek değişkenli yazılıyor ({{renk}}, {{ambalaj}}); banner
+ * ise tek serinin karesi ve değişkeni dolduracak bir yer yok. İki istem
+ * karışınca banner'a ham "{{seri}} ile derinlik" basıldı.
+ */
+describe("banner metni temizliği", () => {
+  it("bilinen değişkeni gerçek değeriyle doldurur", () => {
+    expect(fillBannerVars("{{seri}} ile derinlik ve canlılık", "CANDY")).toBe(
+      "CANDY ile derinlik ve canlılık",
+    );
+  });
+
+  it("bilinmeyen değişkeni atar ve boşluk bırakmaz", () => {
+    expect(fillBannerVars("{{renk}} tonlarında {{ambalaj}} güç", "CANDY")).toBe("tonlarında güç");
+  });
+
+  it("temiz metne dokunmaz", () => {
+    expect(fillBannerVars("Şeffaf Renklerin Efsanesi", "CANDY")).toBe(
+      "Şeffaf Renklerin Efsanesi",
+    );
+    expect(fillBannerVars(null, "CANDY")).toBe("");
   });
 });

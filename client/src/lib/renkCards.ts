@@ -10,6 +10,7 @@
  */
 
 import { renderCoat } from "@shared/color/candy";
+import { effectLabelOf } from "@shared/productName";
 import { coatSystemTokens, defaultCoatSystem } from "@shared/color/coatSystem";
 import { hexToLab, type Lab } from "@shared/color/color";
 import {
@@ -67,9 +68,11 @@ export function tokenValues(paint: PaintInfo): TokenValues {
     nameTr: paint.nameTr ?? "",
     nameEn: paint.nameEn ?? "",
     series: paint.seriesLine?.trim() || series.label,
-    // Marka hattı ÜRÜNÜN serisinden; efekt sıfatı bitiş türünden.
+    // Marka hattı ÜRÜNÜN serisinden; efekt sıfatı bitiş türünden ve YALNIZ
+    // bilgi katıyorsa (bkz. `effectLabelOf`) — "CANDY SOLID" gibi kendini
+    // yalanlayan etiketler basılmasın.
     line: paint.seriesLine?.trim() || series.line,
-    effect: series.effect,
+    effect: effectLabelOf(paint.seriesLine?.trim() || series.line, series.effect),
     packaging: paint.packagingName ?? "",
     volume: paint.volumeLabel ?? "",
     packSizes: range.join("  ·  "),
