@@ -836,27 +836,33 @@ function bannerLayout(width: number, height: number): TemplateLayout {
   const wide = aspect >= 1.6;
   const tall = height / width >= 1.5;
 
-  // Geniş banner'da metin solda / obje sağda; kare ve dikeyde metin üstte,
-  // obje ortada. Aynı tarifin üç oranda da nefes alması için tek fark bu.
-  const textW = wide ? 0.42 : 0.86;
+  /*
+   * Kompozisyon: obje KENARDAN TAŞAR.
+   *
+   * Önce obje kutunun içine sığdırılıyordu ve etrafında geniş bir ölü alan
+   * kalıyordu — kare "ortasına bir şey konmuş" gibi duruyordu. Taşan obje
+   * kadrajı doldurur, derinlik verir ve metne yer bırakır: otomotiv boya
+   * reklamlarının kurduğu kompozisyon budur.
+   */
   const heroBox = wide
-    ? { x: 0.5, y: 0.08, w: 0.46, h: 0.8 }
+    ? { x: 0.46, y: -0.06, w: 0.62, h: 1.12 }
     : tall
-      ? { x: 0.08, y: 0.34, w: 0.84, h: 0.3 }
-      : { x: 0.12, y: 0.38, w: 0.76, h: 0.34 };
-  const paletteBox = wide
-    ? { x: 0.06, y: 0.72, w: 0.36, h: 0.1 }
+      ? { x: 0.02, y: 0.3, w: 1.06, h: 0.4 }
+      : { x: 0.24, y: 0.16, w: 0.92, h: 0.62 };
+
+  const textW = wide ? 0.4 : tall ? 0.84 : 0.56;
+  // Çip şeridi metin bloğunun altında, aynı sol kenardan hizalı.
+  const chips = wide
+    ? { x: 0.06, y: 0.72, w: 0.3, h: 0.07 }
     : tall
-      ? { x: 0.08, y: 0.68, w: 0.84, h: 0.08 }
-      : { x: 0.12, y: 0.75, w: 0.76, h: 0.09 };
-  // Yazı boyu geniş formatta küçülüyor: 1920×600'de kare oranındaki puntolar
-  // bandın yarısını yiyordu.
-  const k = wide ? 0.55 : tall ? 0.85 : 1;
+      ? { x: 0.07, y: 0.76, w: 0.5, h: 0.06 }
+      : { x: 0.07, y: 0.7, w: 0.42, h: 0.07 };
+  const k = wide ? 0.58 : tall ? 0.86 : 1;
 
   return {
     width,
     height,
-    background: "#0a0a0a",
+    background: "#0a0a0c",
     layers: [
       {
         id: newLayerId("arkaplan"),
@@ -868,12 +874,20 @@ function bannerLayout(width: number, height: number): TemplateLayout {
         fit: "cover",
         visible: false,
       },
+      /*
+       * Rengin kendisinden ışık havuzu.
+       *
+       * Düz koyu zemin karenin cansız durmasının asıl sebebiydi. Geçişli
+       * yıkama objenin arkasından yükseliyor: zemin artık boşluk değil,
+       * ürünün ışığı.
+       */
       {
-        id: newLayerId("yikama"),
+        id: newLayerId("isik"),
         type: "rect",
-        box: { x: 0, y: 0, w: 1, h: 1 },
+        box: wide ? { x: 0.3, y: 0, w: 0.7, h: 1 } : { x: 0, y: 0.06, w: 1, h: 0.72 },
         fill: "paint",
-        opacity: 0.28,
+        opacity: 0.34,
+        radius: 0.02,
         gradient: true,
         visible: true,
       },
@@ -884,16 +898,16 @@ function bannerLayout(width: number, height: number): TemplateLayout {
         source: "object",
         fit: "contain",
         // Obje karesi beyaz fonlu; koyu zeminde fon silinmezse etrafında
-        // beyaz bir dikdörtgen kalır.
+        // beyaz bir dikdörtgen kalır (bkz. `shared/color/matte.ts`).
         knockout: true,
         visible: true,
       },
       {
         id: newLayerId("seri"),
         type: "text",
-        box: { x: 0.06, y: tall ? 0.08 : 0.09, w: textW, h: 0.09 },
+        box: { x: 0.06, y: tall ? 0.07 : 0.08, w: textW, h: 0.1 },
         text: "{line}",
-        size: 0.062 * k,
+        size: 0.075 * k,
         weight: 700,
         color: "#ffffff",
         align: "left",
@@ -903,15 +917,24 @@ function bannerLayout(width: number, height: number): TemplateLayout {
       {
         id: newLayerId("slogan"),
         type: "text",
-        box: { x: 0.06, y: tall ? 0.16 : 0.185, w: textW, h: 0.14 },
+        box: { x: 0.06, y: tall ? 0.155 : 0.185, w: textW, h: 0.15 },
         text: "{slogan}",
-        size: 0.038 * k,
+        size: 0.036 * k,
         weight: 700,
         color: "#ffffff",
         align: "left",
         transform: "none",
         wrap: true,
-        lineHeight: 1.25,
+        lineHeight: 1.3,
+        visible: true,
+      },
+      // İnce renk çizgisi metin bloğunu kapatıyor — markanın kendi rengiyle.
+      {
+        id: newLayerId("cizgi"),
+        type: "rect",
+        box: { x: 0.06, y: tall ? 0.33 : 0.36, w: 0.09, h: 0.006 },
+        fill: "paint",
+        radius: 0.003,
         visible: true,
       },
       ...[1, 2, 3].map((n, i) => ({
@@ -919,41 +942,47 @@ function bannerLayout(width: number, height: number): TemplateLayout {
         type: "text" as const,
         box: {
           x: 0.06,
-          y: (tall ? 0.25 : 0.28) + i * 0.042 * (wide ? 1.5 : 1),
+          y: (tall ? 0.37 : 0.4) + i * 0.045 * (wide ? 1.4 : 1),
           w: textW,
           h: 0.04,
         },
         text: `{madde${n}}`,
         size: 0.021 * k,
         weight: 400 as const,
-        color: "#d4d4d8",
+        color: "#cfc9d4",
         align: "left" as const,
         transform: "none" as const,
         visible: true,
       })),
+      /*
+       * Palet: obje kopyaları değil RENK ÇİPLERİ.
+       *
+       * Kahraman zaten o obje; altına aynı objenin küçük kopyalarını dizmek
+       * kareyi "aynı şeyin tekrarı" hâline getiriyordu. Çip hem tekrarı
+       * kırıyor hem gamı daha okunur gösteriyor.
+       */
       {
         id: newLayerId("palet"),
         type: "palette",
-        box: paletteBox,
+        box: chips,
         columns: 0,
-        gap: 0.012,
+        gap: 0.014,
         showCode: false,
         labelSize: 0.014,
         labelColor: "#a1a1aa",
         radius: 0.01,
         highlight: false,
-        // Koyu zeminde beyaz fonlu kareler basmıyoruz.
-        knockout: true,
+        swatches: true,
         visible: true,
       },
       {
         id: newLayerId("gam"),
         type: "text",
-        box: { x: 0.06, y: wide ? 0.85 : tall ? 0.8 : 0.87, w: 0.88, h: 0.04 },
+        box: { x: 0.06, y: wide ? 0.84 : tall ? 0.85 : 0.81, w: textW, h: 0.04 },
         text: "{packSizes}",
-        size: 0.017 * (wide ? 0.75 : 1),
+        size: 0.017 * (wide ? 0.8 : 1),
         weight: 400,
-        color: "#a1a1aa",
+        color: "#8f8896",
         align: "left",
         transform: "upper",
         visible: true,

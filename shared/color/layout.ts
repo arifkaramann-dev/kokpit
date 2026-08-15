@@ -301,6 +301,15 @@ export type PaletteLayer = {
    * Varsayılan KAPALI: mevcut açık zeminli şablonların çıktısı değişmesin.
    */
   knockout?: boolean;
+  /**
+   * Kareleri DEĞİL, rengin kendisini çizer — dolu daireler.
+   *
+   * Palet karesi olarak rengin stüdyo çekimini basmak kartta doğru: müşteri
+   * gerçek boyayı görüyor. Banner'da ise kahraman zaten aynı obje, palet de
+   * onun küçültülmüş kopyalarını basınca kare "aynı şeyin tekrarı" gibi
+   * okunuyordu. Renk çipi hem tekrarı kırıyor hem gamı daha net gösteriyor.
+   */
+  swatches?: boolean;
   visible: boolean;
   opacity?: number;
 };

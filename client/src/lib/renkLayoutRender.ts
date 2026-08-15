@@ -18,6 +18,7 @@ import {
   type TokenValues,
   type Watermark,
 } from "@shared/color/layout";
+import { knockoutBackgroundRaster } from "@shared/color/matte";
 import { extractSubjectMask } from "@shared/color/subject";
 import { ensureBrandFont, forceWhiteBackground } from "./renkTemplates";
 
@@ -220,9 +221,10 @@ function knockoutBackground(
   // Fon bulunamadıysa maske "her şey obje" olur; alfa yazmak anlamsız.
   if (noBackgroundFound) return img;
 
-  for (let i = 0; i < mask.length; i += 1) {
-    if (!mask[i]) image.data[i * 4 + 3] = 0;
-  }
+  // Maskeyi doğrudan alfaya yazmak yetmiyor: kenardaki karışık pikseller
+  // (obje + beyaz fon) tam opak kalıyor ve koyu zeminde HÂLE oluyordu.
+  // Aşındır → yumuşat → beyazı sök (bkz. `shared/color/matte.ts`).
+  knockoutBackgroundRaster(raster, mask);
   ctx.putImageData(image, 0, 0);
   knockoutCache.set(img, canvas);
   return canvas;
@@ -261,7 +263,8 @@ function drawPalette(
     // Rengin stüdyo karesi varsa O çizilir; hex yalnız görsel yoksa devreye
     // giren yedek. Kutuya sığdırılıyor (kırpmadan): kareler farklı oranlarda
     // olabilir ve obje kırpılırsa palet bozuk görünür.
-    const raw = e.code ? images[e.code] : undefined;
+    // `swatches` açıkken kare hiç aranmaz: çizilecek şey rengin kendisi.
+    const raw = layer.swatches ? undefined : e.code ? images[e.code] : undefined;
     const img = raw && layer.knockout ? knockoutBackground(raw) : raw;
     if (img) {
       const { w: sw, h: sh } = sizeOf(img);
@@ -273,7 +276,10 @@ function drawPalette(
       ctx.restore();
     } else {
       ctx.fillStyle = e.hex || "#e5e7eb";
-      roundedPath(ctx, x, y, cellW, swatchH, radius);
+      // Çip modunda daire: yarıçap kutunun yarısı. Kare çipler zaten renk
+      // kutusu gibi duruyor ve palet şeridini tabloya çeviriyordu.
+      const r = layer.swatches ? Math.min(cellW, swatchH) / 2 : radius;
+      roundedPath(ctx, x, y, cellW, swatchH, r);
       ctx.fill();
     }
 
