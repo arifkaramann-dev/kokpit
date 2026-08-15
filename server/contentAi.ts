@@ -10,6 +10,7 @@
  * alanındaki bütün renk ve ambalaj varyantlarını doldurur.
  */
 
+import { fillBannerVars } from "@shared/bannerText";
 import { invokeLLM } from "./_core/llm";
 import { extractJson } from "./autofill";
 
@@ -140,6 +141,23 @@ export async function generateSeriesBanner(ctx: {
   const source = [ctx.shortDescription, ctx.longDescription].filter(Boolean).join("\n\n").trim();
   if (!source) return null;
 
+  /*
+   * Banner'ın KENDİ sistem istemi.
+   *
+   * İlan istemi ({{renk}} {{ambalaj}} {{seri}} kullanmayı ZORUNLU kılıyor)
+   * buraya bulaşınca AI "{{seri}} ile derinlik ve canlılık" diye bir slogan
+   * yazdı ve banner'a ham değişken basıldı. İlan metni bütün renk/ambalaj
+   * varyantlarında kullanıldığı için o kural orada doğru; banner TEK bir
+   * serinin karesi, değişkene ihtiyacı yok — serinin adını doğrudan yazabilir.
+   */
+  const bannerSystem = `Sen Art of Colour markasının reklam metni yazarısın. Art of Colour Türkiye'de otomotiv rötuş boyaları, bukalemun efekt boyalar, airbrush boyaları, sedefli (VİVİD), transparan (CANDY) boyalar, vernik (GLOSS) ve astar (PRİMER) üretir.
+
+Türkçe yaz. Abartılı veya yanıltıcı iddia, uydurma istatistik ve rakip karşılaştırması YAZMA.
+
+ÇOK ÖNEMLİ — metinde {{...}} biçiminde DEĞİŞKEN KULLANMA. Bu metin tek bir serinin reklam karesine basılacak; serinin adını gerekiyorsa doğrudan yaz.
+
+SADECE geçerli JSON döndür, başka hiçbir metin yazma.`;
+
   const userPrompt = `Seri: ${ctx.seriesName}
 ${ctx.coatSystem ? `Uygulama sistemi: ${ctx.coatSystem}` : ""}
 ${ctx.surfaces?.length ? `Yüzeyler: ${surfaceSentence(ctx.surfaces, "")}` : ""}
@@ -163,7 +181,7 @@ karakter, her madde en fazla 32 karakter olmalı (banner'a sığacak).
     try {
       const response = await invokeLLM({
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: bannerSystem },
           { role: "user", content: userPrompt },
         ],
       });
@@ -171,12 +189,11 @@ karakter, her madde en fazla 32 karakter olmalı (banner'a sığacak).
       const parsed = extractJson(typeof raw === "string" ? raw : "");
       if (!parsed || typeof parsed !== "object") continue;
       const row = parsed as Record<string, unknown>;
-      const slogan = typeof row.slogan === "string" ? row.slogan.trim().slice(0, 160) : "";
+      const clean = (v: unknown, max: number) =>
+        typeof v === "string" ? fillBannerVars(v, ctx.seriesName).slice(0, max) : "";
+      const slogan = clean(row.slogan, 160);
       const bullets = Array.isArray(row.bullets)
-        ? row.bullets
-            .map(b => (typeof b === "string" ? b.trim().slice(0, 80) : ""))
-            .filter(Boolean)
-            .slice(0, 3)
+        ? row.bullets.map(b => clean(b, 80)).filter(Boolean).slice(0, 3)
         : [];
       if (slogan) return { slogan, bullets };
     } catch {

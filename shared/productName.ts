@@ -52,6 +52,37 @@ export function displayNameOf(p: NameableProduct): string {
 export const DEFAULT_BRAND = "ARTOFCOLOUR";
 
 /**
+ * Serinin yanına yazılacak EFEKT sıfatı — yazılmaya değerse.
+ *
+ * ── Sorun ─────────────────────────────────────────────────────────────────
+ * Kart "{seri} {efekt}" basıyor. Seri adı ürünün gerçek serisinden geliyor
+ * (CANDY), efekt ise rengin `finish` alanından tahmin ediliyor. `finish`
+ * varsayılanı "duz" ve katalogdaki renklerin çoğunda hiç değiştirilmemiş —
+ * sonuç kartta **"CANDY SOLID"**: kendi kendini yalanlayan bir etiket, çünkü
+ * candy zaten saydam bir efekt, düz değil.
+ *
+ * ── Kural ─────────────────────────────────────────────────────────────────
+ * Efekt yalnız BİLGİ KATIYORSA yazılır:
+ *   · "SOLID" hiç yazılmaz — varsayılan değer, ayırt edici bir şey söylemiyor
+ *   · seri adı efekti zaten söylüyorsa yazılmaz (CANDY + CANDY → "CANDY")
+ *   · kalan durumda yazılır: VIVID + CANDY → "VIVID CANDY"
+ *
+ * Yani "VIVID CANDY" gibi gerçek bir hat adı korunuyor, "CANDY SOLID" gibi
+ * uydurma bir eşleşme basılmıyor.
+ */
+export function effectLabelOf(
+  seriesName: string | null | undefined,
+  effect: string | null | undefined,
+): string {
+  const up = (s: string) => s.trim().toLocaleUpperCase("tr-TR");
+  const e = effect?.trim() ? up(effect) : "";
+  if (!e || e === "SOLID" || e === "DÜZ" || e === "DUZ") return "";
+  const s = seriesName?.trim() ? up(seriesName) : "";
+  if (!s) return e;
+  return s.includes(e) ? "" : e;
+}
+
+/**
  * Çift dilli renk adı: "FUŞYA / MAGENTA".
  *
  * ── Neden iki dil ─────────────────────────────────────────────────────────

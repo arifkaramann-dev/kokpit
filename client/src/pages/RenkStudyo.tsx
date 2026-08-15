@@ -32,6 +32,7 @@ import SablonEditor from "@/components/SablonEditor";
 import { buildCards } from "@/lib/renkCards";
 import { TEMPLATES, fallbackPackaging, getSeries, type PaintInfo } from "@/lib/renkTemplates";
 import type { PaletteEntry, TemplateLayout } from "@shared/color/layout";
+import { fillBannerVars } from "@shared/bannerText";
 import { coatSystemOf } from "@shared/color/coatSystem";
 import { makeColorCodeIndex, type SeriesColorNo } from "@shared/colorCode";
 import {
@@ -349,8 +350,16 @@ function useKatalogBoyutlari() {
           name: s?.name ?? null,
           coatSystem: (s as { coatSystem?: unknown } | undefined)?.coatSystem,
         }),
-        bannerSlogan: (s as { bannerSlogan?: string | null } | undefined)?.bannerSlogan ?? null,
-        bannerBullets: Array.isArray(bullets) ? (bullets as string[]) : [],
+        // Daha önce kaydedilmiş metinlerde ham {{seri}} kalmış olabilir
+        // (eski istem değişken yazdırıyordu). Çizimden önce temizleniyor ki
+        // kullanıcı hepsini yeniden üretmek zorunda kalmasın.
+        bannerSlogan: fillBannerVars(
+          (s as { bannerSlogan?: string | null } | undefined)?.bannerSlogan,
+          s?.name,
+        ) || null,
+        bannerBullets: (Array.isArray(bullets) ? (bullets as string[]) : [])
+          .map(b => fillBannerVars(b, s?.name))
+          .filter(Boolean),
       };
     },
     [seriesRows],
