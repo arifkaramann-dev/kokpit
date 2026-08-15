@@ -238,23 +238,37 @@ function drawPalette(
   width: number,
   images: Record<string, HTMLImageElement | HTMLCanvasElement>,
 ) {
+  /*
+   * Çip modunda RENGİ OLMAYAN kayıt çizilmez.
+   *
+   * Katalogdaki renklerin çoğunun hex'i boş (renk kaynağı referans fotoğraf).
+   * Yedek dolgu açık gri olduğu için banner'da yan yana boş beyaz haplar
+   * çıkıyordu — "renk gamı" değil, doldurulmamış form gibi. Rengi bilinmeyeni
+   * göstermemek, yanlış göstermekten iyi.
+   */
+  const list = layer.swatches ? entries.filter(e => !!e.hex) : entries;
+  if (layer.swatches && list.length < 2) return;
+
   const columns =
     layer.columns > 0
       ? Math.max(1, Math.round(layer.columns))
-      : paletteColumns(entries.length, box.w, box.h);
-  const rows = Math.ceil(entries.length / columns);
+      : paletteColumns(list.length, box.w, box.h);
+  const rows = Math.ceil(list.length / columns);
   if (!rows) return;
 
   const gap = Math.max(0, layer.gap) * width;
-  const cellW = (box.w - gap * (columns - 1)) / columns;
+  let cellW = (box.w - gap * (columns - 1)) / columns;
   const cellH = (box.h - gap * (rows - 1)) / rows;
   const labelPx = layer.showCode ? layer.labelSize * width : 0;
   // Etiket için hücrenin altından yer ayrılıyor; kalanı kutu.
   const swatchH = Math.max(cellW * 0.25, cellH - labelPx * 1.5);
+  // Çip DAİRE olmalı: hücre genişliği yüksekliğinden büyükse hap şeklinde
+  // uzuyor ve boş bir düğmeye benziyordu. Genişlik yüksekliğe kırpılıyor.
+  if (layer.swatches) cellW = Math.min(cellW, swatchH);
   const radius = (layer.radius ?? 0) * width;
 
-  for (let i = 0; i < entries.length; i += 1) {
-    const e = entries[i];
+  for (let i = 0; i < list.length; i += 1) {
+    const e = list[i];
     const col = i % columns;
     const row = Math.floor(i / columns);
     const x = box.x + col * (cellW + gap);
