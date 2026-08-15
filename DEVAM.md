@@ -457,6 +457,33 @@ ayrı, şablon ürettiğimiz sayfa ayrı olmalı"):** sekmeler artık `1 · Obje
   şeridi tıklanınca tam boy açılıyor (indir düğmesiyle).
 - 1070 test.
 
+## Katalog kodu artık ÜRÜNE ait (15.08.2026)
+Patron tespiti: "her ürünün ayrı renk kodu var ama buradan tanımlamaya çalışırsak
+sistem saçmalıyor." Haklıydı — Tanımlar → Renkler ekranı tek bir global numara
+gösterip başına **listedeki ilk serinin** ön ekini basıyordu: "tüm seriler"de
+kullanılan 26 rengin hepsi `CND10xx` görünüyordu (o renk METEOR ürününde MTR ile
+basılıyor olsa bile). Serinin kendi numara düzeni ise hiç girilemiyordu:
+`colors_company_colorNo_uq` global tekillik olduğu için iki seri aynı numarayı
+kullanamıyor, RAL 3020 gibi dizi dışı kodlar oturmuyordu.
+
+Kod artık iki katmanlı ve karar **tek yerde** (`shared/colorCode.ts` →
+`makeColorCodeIndex`): ön ek ÜRÜNÜN serisinden, numara önce o serinin kendi
+kaydından (`seriesColorNumbers`, migration 0055), yoksa rengin varsayılan
+numarasından (`colors.colorNo`). Aynı renk CANDY'de CND1004, METEOR'da MTR1012
+olabilir; aynı numara iki seride serbesttir, seri İÇİNDE tekildir.
+
+- **Tanımlar → Renkler:** "Katalog kodu (seriye göre)" sütunu rengin gerçekten
+  üretildiği her seri için ayrı kod gösteriyor (serinin kendi numarası koyu,
+  varsayılana düşen soluk). Düzenleme formunda seri başına numara alanı + "Üret"
+  (o serinin dizisinden devam eder). Toplu "Numara üret" hedef seri seçiyor.
+- **Renksiz / Nötr artık numara almıyor:** o satır bir renk değil, `colorId` NOT
+  NULL kalsın diye duran yer tutucu; tinerin etiketine renk kodu basılıyordu.
+- **"Seri" sütunu doğruyu söylüyor:** kapsam kuralı `shared/colorScope.ts`'e taşındı
+  ve üretim planlayıcısı (`catalogPlan`) da oradan soruyor. Ekran "tüm seriler"
+  derken planlayıcının o rengi o seride hiç üretmemesi bitti.
+- Kartta, künyede, palette, stüdyo aramasında aynı indeks kullanılıyor — kod artık
+  hiçbir ekranda ayrışmıyor. 1092 test, 0 tip hatası, build ✓.
+
 ## Açık işler / sırada ne var (takım denetimi: 15.07.2026, kanıtlı liste todo.md sonunda)
 Sağlık: `pnpm check` 0 hata, 74/74 test geçiyor, kod içi TODO/FIXME borcu yok.
 

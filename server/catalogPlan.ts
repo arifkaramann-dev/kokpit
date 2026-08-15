@@ -15,6 +15,7 @@
  *    (masterProducts küp koordinatı, listings master+kullanım alanı).
  */
 
+import { colorsForSeries } from "@shared/colorScope";
 import { buildInternalSku, buildListingTitle, buildSlug } from "./catalogCodes";
 
 export type Readiness = "konsantre" | "r2u";
@@ -183,11 +184,14 @@ export function planMasters(input: {
   for (const series of input.series) {
     if (wanted && !wanted.has(series.id)) continue;
     // Renk: açık seri×renk bağı varsa YALNIZ o renkler. Bağ yoksa eski kural
-    // (seriye özel + tüm serilerde geçerli) — geçiş dönemi için.
-    const explicit = series.colorIds && series.colorIds.length > 0 ? new Set(series.colorIds) : null;
-    const colors = explicit
-      ? input.colors.filter(c => explicit.has(c.id))
-      : input.colors.filter(c => c.seriesId === null || c.seriesId === series.id);
+    // (seriye özel + tüm serilerde geçerli) — geçiş dönemi için. Kuralın tek
+    // sahibi `shared/colorScope`; Tanımlar ekranı da oradan soruyor ki "bu renk
+    // hangi seride" sorusuna ekran ile üretim aynı cevabı versin.
+    const colors = colorsForSeries({
+      seriesId: series.id,
+      colors: input.colors,
+      links: (series.colorIds ?? []).map(colorId => ({ seriesId: series.id, colorId })),
+    });
     const readinessList = series.readiness.length > 0 ? series.readiness : ["konsantre" as const];
 
 
@@ -274,7 +278,7 @@ export function planMasters(input: {
       pairs,
       readiness: readinessList.length,
       total: colors.length * pairs * readinessList.length,
-      colorsExplicit: explicit !== null,
+      colorsExplicit: (series.colorIds?.length ?? 0) > 0,
     });
   }
 

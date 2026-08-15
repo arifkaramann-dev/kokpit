@@ -23,9 +23,17 @@ import PackagingCost from "@/components/PackagingCost";
 import PackagingImages from "@/components/PackagingImages";
 import { trpc } from "@/lib/trpc";
 import { packagingImageUrl } from "@shared/color/packagingImage";
-import { formatColorCode, parseColorNo } from "@shared/colorCode";
+import {
+  colorCodePrefix,
+  formatColorCode,
+  isNeutralColor,
+  makeColorCodeIndex,
+  parseColorNo,
+  type SeriesColorNo,
+} from "@shared/colorCode";
+import { seriesForColor } from "@shared/colorScope";
 import { ImagePlus, Loader2, Pencil, Plus, Trash2, Wand2 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 
@@ -37,7 +45,7 @@ const NONE = "__none__";
 const KIND_META: Record<Kind, { title: string; desc: string }> = {
   colors: {
     title: "Renkler",
-    desc: "Seriye özel renkler (RAL kodları, candy tonları) o seriye bağlanır; boş bırakılan renk tüm serilerde kullanılır.",
+    desc: "Katalog kodu renge DEĞİL ürüne aittir: ön ek ürünün serisinden, numara o serinin kendi düzeninden gelir. Aynı renk CANDY'de CND1004, METEOR'da MTR1012 olabilir — her seri kendi numarasını verir, vermezse rengin varsayılan numarası kullanılır.",
   },
   families: {
     title: "Formlar",
@@ -92,14 +100,55 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
     skuSegment: "",
     titlePattern: "",
   });
+  /**
+   * Serinin kendi renk numaraları — seriId → yazılan metin ("" = numara yok).
+   * Renk kaydıyla AYNI formda düzenlenir; kaydederken renk satırından sonra
+   * seri satırları yazılır.
+   */
+  const [seriesNos, setSeriesNos] = useState<Record<number, string>>({});
 
+  const seriesRows = useMemo(
+    () => (series ?? []).map(s => ({ id: s.id, name: s.name, prefix: s.prefix ?? null })),
+    [series],
+  );
+  const colorLinks = useMemo(
+    () => ((dims?.seriesColors ?? []) as { seriesId: number; colorId: number }[]),
+    [dims?.seriesColors],
+  );
+  const seriesColorNumbers = useMemo(
+    () => ((dims?.seriesColorNumbers ?? []) as SeriesColorNo[]),
+    [dims?.seriesColorNumbers],
+  );
+  /** Kodun tek karar noktası — kart, künye ve stüdyo ile aynı indeks. */
+  const codeIndex = useMemo(
+    () => makeColorCodeIndex({ series: seriesRows, overrides: seriesColorNumbers }),
+    [seriesRows, seriesColorNumbers],
+  );
+  /** Formda seçili "seriye kilitli mi" değeri — düzenlenirken kapsam buna göre. */
+  const formSeriesId = form.seriesId === NONE ? null : Number(form.seriesId);
+  /** Bu renk hangi serilerde üretiliyor — üretim planlayıcısıyla aynı kural. */
+  const seriesOfColor = (row: { id: number; seriesId?: number | null }) =>
+    seriesForColor({
+      color: { id: row.id, seriesId: row.seriesId ?? null },
+      series: seriesRows,
+      links: colorLinks,
+    });
+
+  // Diyalog kapanışı ve bildirim `submit`'te: renk satırından sonra serinin
+  // numaraları da yazılıyor, "Kaydedildi" hepsi bitmeden görünmemeli.
   const save = trpc.katalog.saveDimension.useMutation({
-    onSuccess: () => {
-      utils.katalog.dimensions.invalidate();
-      setOpen(false);
-      toast.success("Kaydedildi");
-    },
     onError: e => toast.error(e.message, { duration: 8000 }),
+  });
+
+  /**
+   * Serinin renk numarası — renk kaydından AYRI bir satır.
+   *
+   * Sessizce yutulmaz: numara reddedilirse (aynı seride başka renk o numarayı
+   * tutuyorsa) kullanıcı hangi rengin tuttuğunu görmeli, yoksa kaydettiğini
+   * sanıp ilanı yanlış kodla açar.
+   */
+  const saveSeriesNo = trpc.katalog.setSeriesColorNo.useMutation({
+    onError: e => toast.error(e.message, { duration: 9000 }),
   });
 
   /**
@@ -107,27 +156,34 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
    *
    * Sunucudan isteniyor çünkü "sıradaki numara" bütün renklerin koduna bakmayı
    * gerektiriyor; istemcideki listeden hesaplamak, başka biri aynı anda kod
-   * verdiğinde çakışırdı.
+   * verdiğinde çakışırdı. `seriesId` verilirse o serinin kendi dizisinden
+   * devam eder — CANDY'nin sırası METEOR'unkini kaydırmaz.
    */
-  const [suggesting, setSuggesting] = useState(false);
-  const suggestColorNo = async () => {
-    setSuggesting(true);
+  const [suggesting, setSuggesting] = useState<number | "default" | null>(null);
+  const suggestColorNo = async (seriesId: number | null) => {
+    setSuggesting(seriesId ?? "default");
     try {
-      const r = await utils.katalog.nextColorNo.fetch();
-      setForm(f => ({ ...f, colorNo: String(r.colorNo) }));
+      const r = await utils.katalog.nextColorNo.fetch({ seriesId });
+      if (seriesId == null) setForm(f => ({ ...f, colorNo: String(r.colorNo) }));
+      else setSeriesNos(p => ({ ...p, [seriesId]: String(r.colorNo) }));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Numara üretilemedi");
     } finally {
-      setSuggesting(false);
+      setSuggesting(null);
     }
   };
 
   /**
-   * Kodu olmayan tüm renklere toplu kod verir — önce ne olacağını gösterir.
+   * Numarası olmayan renklere toplu numara verir — önce ne olacağını gösterir.
    *
-   * Katalogdaki onlarca rengi tek tek açıp kod yazmak saatlik bir iş; dolu
-   * kodlara dokunulmadığı için tekrar çalıştırmak da güvenli.
+   * Katalogdaki onlarca rengi tek tek açıp numara yazmak saatlik bir iş; dolu
+   * numaralara dokunulmadığı için tekrar çalıştırmak da güvenli.
+   *
+   * Hedef seri seçilirse O SERİNİN kendi dizisi doldurulur (CND1001, CND1002…)
+   * ve yalnız o seride üretilen renkler işlenir. Seçilmezse rengin varsayılan
+   * numarası yazılır — hiçbir serinin kendi numarası olmadığında kullanılan.
    */
+  const [assignSeriesId, setAssignSeriesId] = useState<string>(NONE);
   const assignCodes = trpc.katalog.assignColorNumbers.useMutation({
     onSuccess: r => {
       if (!r.dryRun) {
@@ -139,25 +195,31 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
   });
 
   const runAssignCodes = async () => {
-    const preview = await assignCodes.mutateAsync({ dryRun: true });
+    const seriesId = assignSeriesId === NONE ? null : Number(assignSeriesId);
+    const hedef = seriesId == null ? null : seriesRows.find(s => s.id === seriesId);
+    const preview = await assignCodes.mutateAsync({ dryRun: true, seriesId });
     if (!preview.plan.length) {
-      toast.message("Numarası olmayan renk yok");
+      toast.message(
+        hedef ? `${hedef.name} serisinde numarasız renk yok` : "Numarası olmayan renk yok",
+      );
       return;
     }
+    // Örnekte KODUN TAMAMI gösteriliyor: kullanıcı "1001" değil "CND1001"
+    // basılacağını görmeli — onaylanan şey karta basılan şey olsun.
     const ornek = preview.plan
       .slice(0, 5)
-      .map(p => `${p.colorNo} — ${p.name}`)
+      .map(p => `${formatColorCode(hedef?.prefix, p.colorNo) ?? p.colorNo} — ${p.name}`)
       .join("\n");
     if (
       await confirm({
-        title: "Renk numarası üret",
+        title: hedef ? `${hedef.name} renk numaraları` : "Varsayılan renk numarası üret",
         description: `${preview.plan.length} renge numara verilecek. Dolu numaralara dokunulmaz.\n\n${ornek}${
           preview.plan.length > 5 ? `\n… ve ${preview.plan.length - 5} tane daha` : ""
         }`,
         confirmText: "Üret",
       })
     ) {
-      await assignCodes.mutateAsync({ dryRun: false });
+      await assignCodes.mutateAsync({ dryRun: false, seriesId });
     }
   };
 
@@ -170,14 +232,12 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
   });
 
   const rows = (k: Kind) => (dims?.[k] ?? []) as Record<string, unknown>[];
-  const seriesName = new Map((series ?? []).map(s => [s.id, s.name]));
-  /** Örnek kodu göstermek için serilerin ön ekleri. */
-  const seriesPrefixes = (series ?? []).map(s => s.prefix).filter(Boolean) as string[];
   const materialName = new Map((materials ?? []).map(m => [m.id, m.name]));
 
   function openNew(k: Kind) {
     setKind(k);
     setEditId(null);
+    setSeriesNos({});
     setForm({
       code: "",
       name: "",
@@ -196,6 +256,15 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
   function openEdit(k: Kind, row: Record<string, unknown>) {
     setKind(k);
     setEditId(row.id as number);
+    // Serinin KENDİ numarası yazılır; varsayılana düşenler boş kalır ki
+    // kullanıcı hangisinin gerçekten tanımlı olduğunu görsün.
+    setSeriesNos(
+      Object.fromEntries(
+        seriesColorNumbers
+          .filter(n => n.colorId === (row.id as number))
+          .map(n => [n.seriesId, String(n.colorNo)]),
+      ),
+    );
     setForm({
       code: String(row.code ?? ""),
       name: String(row.name ?? ""),
@@ -211,9 +280,18 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
     setOpen(true);
   }
 
-  function submit() {
+  async function submit() {
     if (!form.code.trim() || !form.name.trim()) return toast.error("Kod ve ad gerekli");
-    save.mutate({
+    try {
+      await saveAll();
+    } catch {
+      // Hata mesajını mutation'ların onError'ı gösterdi; diyalog AÇIK kalır ki
+      // kullanıcı reddedilen numarayı düzeltebilsin.
+    }
+  }
+
+  async function saveAll() {
+    const saved = await save.mutateAsync({
       kind,
       id: editId,
       code: form.code.trim(),
@@ -227,6 +305,28 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
       skuSegment: form.skuSegment.trim() || null,
       titlePattern: form.titlePattern.trim() || null,
     });
+
+    // Seri numaraları renk satırından SONRA yazılır: yeni renkte kimlik ancak
+    // burada oluşuyor. Yalnız DEĞİŞENLER gönderilir — dokunulmamış seriye
+    // boşuna yazma yapılmaz.
+    if (kind === "colors") {
+      const before = new Map(
+        seriesColorNumbers.filter(n => n.colorId === saved.id).map(n => [n.seriesId, n.colorNo]),
+      );
+      // Alan boşaltıldıysa `parseColorNo` null döner ve kayıt silinir: renk o
+      // seride varsayılan numarasına geri döner. Formda hiç görünmeyen seriye
+      // dokunulmaz.
+      for (const [key, value] of Object.entries(seriesNos)) {
+        const seriesId = Number(key);
+        const next = parseColorNo(value);
+        if ((before.get(seriesId) ?? null) === next) continue;
+        await saveSeriesNo.mutateAsync({ seriesId, colorId: saved.id, colorNo: next });
+      }
+    }
+
+    utils.katalog.dimensions.invalidate();
+    setOpen(false);
+    toast.success("Kaydedildi");
   }
 
   return (
@@ -261,19 +361,37 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
             <Card className="flex flex-wrap items-center gap-3 p-4">
               <p className="flex-1 text-sm text-muted-foreground">{KIND_META[k].desc}</p>
               {k === "colors" && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={assignCodes.isPending}
-                  onClick={() => void runAssignCodes()}
-                >
-                  {assignCodes.isPending ? (
-                    <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                  ) : (
-                    <Wand2 className="mr-1 h-4 w-4" />
-                  )}
-                  Katalog kodu üret
-                </Button>
+                <div className="flex items-center gap-2">
+                  {/* Hedef seri numaranın hangi diziye yazılacağını belirler;
+                      "varsayılan" hiçbir serinin kendi numarası olmadığında
+                      kullanılan sayıdır. */}
+                  <Select value={assignSeriesId} onValueChange={setAssignSeriesId}>
+                    <SelectTrigger className="h-8 w-44 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NONE}>Varsayılan numara</SelectItem>
+                      {seriesRows.map(s => (
+                        <SelectItem key={s.id} value={String(s.id)}>
+                          {s.name} ({colorCodePrefix(s.prefix)}…)
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={assignCodes.isPending}
+                    onClick={() => void runAssignCodes()}
+                  >
+                    {assignCodes.isPending ? (
+                      <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Wand2 className="mr-1 h-4 w-4" />
+                    )}
+                    Numara üret
+                  </Button>
+                </div>
               )}
               <Button size="sm" onClick={() => openNew(k)}>
                 <Plus className="mr-1 h-4 w-4" /> Yeni
@@ -287,9 +405,9 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
                     <tr>
                       {k === "packagings" && <th className="p-2 text-left">Görsel</th>}
                       <th className="p-2 text-left">Ad</th>
-                      {k === "colors" && <th className="p-2 text-left">Renk no</th>}
+                      {k === "colors" && <th className="p-2 text-left">Katalog kodu (seriye göre)</th>}
                       <th className="p-2 text-left">Kod</th>
-                      {k === "colors" && <th className="p-2 text-left">Seri</th>}
+                      {k === "colors" && <th className="p-2 text-left">Varsayılan no</th>}
                       {k === "packagings" && <th className="p-2 text-right">Hacim (ml)</th>}
                       {k === "packagings" && <th className="p-2 text-left">Stok kalemi</th>}
                       {(k === "families" || k === "packagings") && (
@@ -324,42 +442,40 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
                           </span>
                         </td>
                         {k === "colors" && (
-                          <td className="p-2 font-mono text-xs">
-                            {row.colorNo != null ? (
-                              <>
-                                {String(row.colorNo)}
-                                {/* Kodun tamamı üründe oluşuyor; kullanıcı
-                                    numaranın karta nasıl basılacağını burada
-                                    görmeli. */}
-                                <span className="ml-1.5 text-muted-foreground">
-                                  {seriesPrefixes
-                                    .map(p => formatColorCode(p, row.colorNo as number))
-                                    .filter(Boolean)
-                                    .slice(0, 2)
-                                    .join(" / ")}
-                                </span>
-                              </>
-                            ) : (
-                              <span
-                                className="text-amber-600"
-                                title="Numarası olmayan rengin kartında rengin adı basılır"
-                              >
-                                —
-                              </span>
-                            )}
+                          <td className="p-2">
+                            <ColorCodes
+                              color={{
+                                id: row.id as number,
+                                code: String(row.code),
+                                colorNo: (row.colorNo as number | null) ?? null,
+                                seriesId: (row.seriesId as number | null) ?? null,
+                              }}
+                              series={seriesOfColor({
+                                id: row.id as number,
+                                seriesId: (row.seriesId as number | null) ?? null,
+                              })}
+                              index={codeIndex}
+                            />
                           </td>
                         )}
                         <td className="p-2 font-mono text-xs text-muted-foreground">
                           {String(row.code)}
                         </td>
                         {k === "colors" && (
-                          <td className="p-2 text-xs">
-                            {row.seriesId != null ? (
-                              <Badge variant="secondary" className="text-[10px]">
-                                {seriesName.get(row.seriesId as number) ?? "?"}
-                              </Badge>
+                          <td className="p-2 font-mono text-xs">
+                            {row.colorNo != null ? (
+                              <span className="text-muted-foreground">{String(row.colorNo)}</span>
+                            ) : isNeutralColor(String(row.code)) ? (
+                              <span className="text-muted-foreground" title="Renksiz kalemlerin yer tutucusu — katalog kodu almaz">
+                                gerekmez
+                              </span>
                             ) : (
-                              <span className="text-muted-foreground">tüm seriler</span>
+                              <span
+                                className="text-muted-foreground"
+                                title="Serilerin kendi numarası varsa varsayılana gerek yok"
+                              >
+                                —
+                              </span>
                             )}
                           </td>
                         )}
@@ -495,7 +611,7 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
                     "Kod") karıştırılmasın diye hemen altında ve ayrı
                     açıklamayla duruyor. */}
                 <div className="space-y-1.5">
-                  <Label>Renk numarası</Label>
+                  <Label>Varsayılan renk numarası</Label>
                   <div className="flex gap-2">
                     <Input
                       value={form.colorNo}
@@ -507,19 +623,83 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
                     <Button
                       type="button"
                       variant="outline"
-                      disabled={suggesting}
-                      onClick={suggestColorNo}
+                      disabled={suggesting !== null}
+                      onClick={() => void suggestColorNo(null)}
                     >
-                      {suggesting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Üret"}
+                      {suggesting === "default" ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        "Üret"
+                      )}
                     </Button>
                   </div>
                   <p className="text-[11px] text-muted-foreground">
-                    Katalog kodunun sayı kısmı. Ön ek ÜRÜNÜN serisinden gelir — aynı renk
-                    CANDY'de {formatColorCode("cnd", parseColorNo(form.colorNo) ?? 1324)},
-                    METEOR'da {formatColorCode("mtr", parseColorNo(form.colorNo) ?? 1324)} olarak
-                    basılır. "Üret" sıradaki boş numarayı verir; istediğini elle de yazabilirsin.
+                    Hiçbir serinin kendi numarası yoksa kullanılan sayı. Kod ürün anında kurulur:
+                    ön ek ÜRÜNÜN serisinden gelir.
+                    {editId == null &&
+                      " Seriye özel numaralar renk kaydedildikten sonra bu formda açılır."}
                   </p>
                 </div>
+
+                {/* Kodun asıl tanım yeri: her seri kendi numarasını verir.
+                    Yalnız rengin GERÇEKTEN üretildiği seriler listelenir —
+                    üretilmediği seriye kod yazmak koda anlam katmaz. */}
+                {editId != null && (
+                  <div className="space-y-1.5">
+                    <Label>Seri kodları</Label>
+                    {seriesOfColor({ id: editId, seriesId: formSeriesId }).length === 0 ? (
+                      <p className="text-[11px] text-amber-600">
+                        Bu renk hiçbir seride üretilmiyor — önce Seri Uyumluluğu ekranından bir
+                        seriye ekleyin.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {seriesOfColor({ id: editId, seriesId: formSeriesId }).map(s => {
+                          const yazilan = seriesNos[s.id] ?? "";
+                          const no = parseColorNo(yazilan) ?? parseColorNo(form.colorNo);
+                          return (
+                            <div key={s.id} className="flex items-center gap-2">
+                              <span className="w-24 shrink-0 truncate text-xs">{s.name}</span>
+                              <span className="w-20 shrink-0 font-mono text-xs text-muted-foreground">
+                                {formatColorCode(s.prefix, no) ?? `${colorCodePrefix(s.prefix)}—`}
+                              </span>
+                              <Input
+                                value={yazilan}
+                                onChange={e =>
+                                  setSeriesNos(p => ({ ...p, [s.id]: e.target.value }))
+                                }
+                                className="h-8 font-mono"
+                                placeholder={
+                                  form.colorNo ? `varsayılan ${form.colorNo}` : "numara yok"
+                                }
+                                inputMode="numeric"
+                              />
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-8 shrink-0"
+                                disabled={suggesting !== null}
+                                onClick={() => void suggestColorNo(s.id)}
+                              >
+                                {suggesting === s.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  "Üret"
+                                )}
+                              </Button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <p className="text-[11px] text-muted-foreground">
+                      Her serinin kendi numara düzeni olabilir; boş bırakılan seri varsayılan
+                      numarayı kullanır. Numara seri İÇİNDE tekildir — CND1004 ile MTR1004 farklı
+                      ürünlerdir, çakışma değildir.
+                    </p>
+                  </div>
+                )}
 
                 <div className="space-y-1.5">
                   <Label>Uluslararası ad</Label>
@@ -550,7 +730,7 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
                   </div>
                 </div>
                 <div className="space-y-1.5">
-                  <Label>Seri</Label>
+                  <Label>Seriye kilitle</Label>
                   <Select
                     value={form.seriesId}
                     onValueChange={v => setForm(f => ({ ...f, seriesId: v }))}
@@ -559,7 +739,7 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value={NONE}>Tüm seriler</SelectItem>
+                      <SelectItem value={NONE}>Kilitleme (tüm seriler)</SelectItem>
                       {(series ?? []).map(s => (
                         <SelectItem key={s.id} value={String(s.id)}>
                           {s.name}
@@ -567,6 +747,10 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
                       ))}
                     </SelectContent>
                   </Select>
+                  <p className="text-[11px] text-muted-foreground">
+                    Yalnız bir seride anlamı olan renkler için (RAL kodları gibi). Hangi seride
+                    üretileceğinin asıl yeri Seri Uyumluluğu ekranıdır; burası kilit, kapsam değil.
+                  </p>
                 </div>
               </>
             )}
@@ -656,6 +840,73 @@ export default function Definitions({ embedded = false }: { embedded?: boolean }
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+/**
+ * Rengin katalog kodları — HER SERİDE AYRI.
+ *
+ * Bu hücre eskiden tek bir kod basıyordu: rengin numarasının başına listedeki
+ * ilk serinin ön eki ekleniyordu. Sonuç, "tüm seriler"de kullanılan bir renge
+ * "CND1026" yazmak — yani her rengi CANDY'ye aitmiş gibi göstermekti. Renk
+ * METEOR ürününde MTR ile basılıyor, ekranda CND yazıyordu.
+ *
+ * Artık rengin gerçekten üretildiği her seri için o serinin kodu ayrı ayrı
+ * yazılıyor. Serinin kendi numarası varsa koyu, rengin varsayılan numarasına
+ * düşüyorsa soluk — kullanıcı hangisinin tanımlı olduğunu görüyor.
+ */
+function ColorCodes({
+  color,
+  series,
+  index,
+}: {
+  color: { id: number; code: string; colorNo: number | null; seriesId: number | null };
+  series: { id: number; name: string; prefix: string | null }[];
+  index: ReturnType<typeof makeColorCodeIndex>;
+}) {
+  // Renksiz yer tutucu katalog kodu almaz: tinerin etiketine renk kodu
+  // basılması bir kodlama hatası değil, ürün hatasıdır.
+  if (isNeutralColor(color.code)) {
+    return <span className="text-xs text-muted-foreground">renksiz — kod basılmaz</span>;
+  }
+  if (series.length === 0) {
+    return (
+      <span className="text-xs text-amber-600" title="Seri Uyumluluğu ekranından bu rengi bir seriye ekleyin">
+        hiçbir seride üretilmiyor
+      </span>
+    );
+  }
+
+  const shown = series.slice(0, 3);
+  return (
+    <span className="flex flex-wrap items-center gap-1">
+      {shown.map(s => {
+        const own = index.overrideOf(s.id, color.id);
+        const code = index.codeOf(s.id, color.id, color.colorNo);
+        return (
+          <span
+            key={s.id}
+            title={`${s.name} — ${own != null ? "serinin kendi numarası" : "rengin varsayılan numarası"}`}
+            className={`rounded border px-1.5 py-0.5 font-mono text-xs ${
+              own != null ? "border-primary/40 text-foreground" : "text-muted-foreground"
+            }`}
+          >
+            {code ?? `${colorCodePrefix(s.prefix)}—`}
+          </span>
+        );
+      })}
+      {series.length > shown.length && (
+        <span className="text-xs text-muted-foreground">+{series.length - shown.length}</span>
+      )}
+      {color.colorNo == null && series.some(s => index.overrideOf(s.id, color.id) == null) && (
+        <span
+          className="text-xs text-amber-600"
+          title="Numarası olmayan rengin kartında rengin adı basılır"
+        >
+          numara yok
+        </span>
+      )}
+    </span>
   );
 }
 

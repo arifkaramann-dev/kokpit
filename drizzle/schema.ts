@@ -882,7 +882,10 @@ export const colors = mysqlTable(
     code: varchar("code", { length: 64 }).notNull(),
     name: varchar("name", { length: 128 }).notNull(),
     /**
-     * RENK NUMARASI — katalog kodunun sayı kısmı. 1008 → "CND1008".
+     * VARSAYILAN RENK NUMARASI — katalog kodunun sayı kısmı. 1008 → "CND1008".
+     *
+     * Serinin kendi numarası varsa (`seriesColorNumbers`) O kazanır; burası
+     * "hiçbir seri kendi numarasını söylemediyse" durumudur.
      *
      * ── Neden `code` yetmiyor ────────────────────────────────────────────
      * `code` bir SLUG'dır ("fusya", "kirmizi") ve internal SKU'nun içine
@@ -1128,6 +1131,53 @@ export const seriesColors = mysqlTable(
   },
   t => [unique("seriesColors_uq").on(t.seriesId, t.colorId), index("seriesColors_color_idx").on(t.colorId)],
 );
+
+/**
+ * Seri × renk NUMARASI — katalog kodunun sayı kısmının gerçek sahibi.
+ *
+ * ── Neden `colors.colorNo` yetmiyor ───────────────────────────────────────
+ * Numara önce renge ait tek bir global sayı olarak tutuldu: 1008 o yeşildi ve
+ * her seride 1008 kalıyordu (CND1008 / MTR1008). Kod üretimi açısından tutarlı
+ * ama kataloğun gerçeği bu değil — her serinin kendi numara düzeni var:
+ * CANDY 1001'den sayar, METEOR'un 1004'ü başka bir renktir, RAL COLOUR'da
+ * numara zaten RAL kodudur (3020). Global tek dizi bunları GİRİLEMEZ yapıyordu:
+ * `colors_company_colorNo_uq` iki serinin aynı numarayı kullanmasını
+ * reddediyor, "Tanımlar → Renkler" ekranı ise tek bir numara alanı gösterip
+ * hepsinin başına aynı ön eki basıyordu.
+ *
+ * Bu tablo o boşluğu kapatır: "CANDY'de bu renk 1004'tür" ayrı bir kayıttır.
+ * Kayıt yoksa rengin varsayılan numarası (`colors.colorNo`) kullanılır — çoğu
+ * renk için tek numara hâlâ yeterli ve hiçbir şey değişmez.
+ *
+ * ── Neden `seriesColors`'a sütun eklenmedi ────────────────────────────────
+ * `seriesColors` ÜRETİM KAPSAMIDIR: bir satır "bu seride bu renk üretilir"
+ * demek ve kapsam boşken seri tüm renklere açıktır. Numarayı oraya koymak,
+ * kod yazmak için satır açmayı gerektirir ve bu sessizce üretim kapsamını
+ * daraltırdı. Kod ile kapsam ayrı sorular, ayrı tablolar.
+ */
+export const seriesColorNumbers = mysqlTable(
+  "seriesColorNumbers",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    companyId: int("companyId").notNull().default(1),
+    seriesId: int("seriesId").notNull(),
+    colorId: int("colorId").notNull(),
+    /** Bu seride rengin numarası. Silinmek istendiğinde satır silinir. */
+    colorNo: int("colorNo").notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  t => [
+    unique("seriesColorNumbers_uq").on(t.seriesId, t.colorId),
+    // Numara SERİ İÇİNDE tekildir: aynı seride iki renk aynı kodu taşırsa
+    // depoda yanlış şişe kutulanır. Farklı serilerde aynı numara serbesttir —
+    // ön ek onları ayırır (CND1004 ≠ MTR1004).
+    unique("seriesColorNumbers_no_uq").on(t.companyId, t.seriesId, t.colorNo),
+    index("seriesColorNumbers_color_idx").on(t.colorId),
+  ],
+);
+
+export type SeriesColorNumber = typeof seriesColorNumbers.$inferSelect;
 
 /**
  * Form × ambalaj uyumluluğu.
