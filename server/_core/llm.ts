@@ -213,15 +213,38 @@ const normalizeToolChoice = (
   return toolChoice;
 };
 
-const resolveApiUrl = () =>
-  ENV.forgeApiUrl && ENV.forgeApiUrl.trim().length > 0
-    ? `${ENV.forgeApiUrl.replace(/\/$/, "")}/v1/chat/completions`
-    : "https://forge.manus.im/v1/chat/completions";
+// OmniRoute: 290+ provider gateway @ localhost:20128/v1
+const OMNIROUTE_URL = process.env.OMNIROUTE_URL || "http://localhost:20128/v1";
+const OMNIROUTE_ENABLED = process.env.OMNIROUTE_ENABLED !== "false";
+
+const isOmniRouteAvailable = async (): Promise<boolean> => {
+  if (!OMNIROUTE_ENABLED) return false;
+  try {
+    const res = await fetch(`${OMNIROUTE_URL.replace(/\/v1$/, "")}/health`, {
+      timeout: 2000
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+};
+
+const resolveApiUrl = (useOmniRoute: boolean = false) => {
+  if (useOmniRoute && OMNIROUTE_ENABLED) {
+    return `${OMNIROUTE_URL}/chat/completions`;
+  }
+
+  if (ENV.forgeApiUrl && ENV.forgeApiUrl.trim().length > 0) {
+    return `${ENV.forgeApiUrl.replace(/\/$/, "")}/v1/chat/completions`;
+  }
+
+  return "https://forge.manus.im/v1/chat/completions";
+};
 
 const assertApiKey = () => {
-  if (!ENV.forgeApiKey) {
+  if (!ENV.forgeApiKey && !OMNIROUTE_ENABLED) {
     throw new Error(
-      "AI özelliği yapılandırılmamış: ANTHROPIC_API_KEY ortam değişkenini ekleyin (console.anthropic.com'dan alınır)."
+      "AI özelliği yapılandırılmamış: ANTHROPIC_API_KEY ortam değişkenini ekleyin veya OmniRoute'u başlatın (localhost:20128)."
     );
   }
 };
@@ -343,10 +366,115 @@ const fetchWithBackoff = async (
 };
 
 export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
-  // ANTHROPIC_API_KEY tanımlıysa Claude'a git; Manus forge yalnızca yedek yol.
+  // Routing logic:
+  // 1. If Claude configured → Claude first (native Anthropic SDK)
+  // 2. Else if OmniRoute healthy → OmniRoute (290+ providers + fallback)
+  // 3. Else → Manus Forge (fallback gateway)
+
   if (isClaudeConfigured()) {
     return invokeClaude(params);
   }
+
+  const omnirouteHealthy = await isOmniRouteAvailable();
+  if (omnirouteHealthy) {
+    return invokeViaOmniRoute(params);
+  }
+
+  // Fallback to Manus Forge
+  return invokeViaForge(params);
+}
+
+async function invokeViaOmniRoute(params: InvokeParams): Promise<InvokeResult> {
+  const {
+    messages,
+    tools,
+    toolChoice,
+    tool_choice,
+    outputSchema,
+    output_schema,
+    responseFormat,
+    response_format,
+    model,
+    thinking,
+    reasoning,
+    maxTokens,
+    max_tokens,
+  } = params;
+
+  const payload: Record<string, unknown> = {
+    messages: messages.map(normalizeMessage),
+  };
+
+  // OmniRoute route to first available provider (default: claude, fallback: gpt-4, gemini, etc.)
+  if (model) {
+    payload.model = model;
+  } else {
+    payload.model = "claude-3-5-sonnet-20241022";
+  }
+
+  if (tools && tools.length > 0) {
+    payload.tools = tools;
+  }
+
+  const normalizedToolChoice = normalizeToolChoice(
+    toolChoice || tool_choice,
+    tools
+  );
+  if (normalizedToolChoice) {
+    payload.tool_choice = normalizedToolChoice;
+  }
+
+  const resolvedMaxTokens = max_tokens ?? maxTokens;
+  if (typeof resolvedMaxTokens === "number") {
+    payload.max_tokens = resolvedMaxTokens;
+  }
+
+  if (thinking) {
+    payload.thinking = thinking;
+  }
+  if (reasoning) {
+    payload.reasoning = reasoning;
+  }
+
+  const normalizedResponseFormat = normalizeResponseFormat({
+    responseFormat,
+    response_format,
+    outputSchema,
+    output_schema,
+  });
+
+  if (normalizedResponseFormat) {
+    payload.response_format = normalizedResponseFormat;
+  }
+
+  try {
+    const response = await fetchWithBackoff(`${OMNIROUTE_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer omniroute",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(
+        `OmniRoute invoke failed: ${response.status} ${response.statusText}`
+      );
+      throw new Error(
+        `OmniRoute failed: ${response.status} ${response.statusText}`
+      );
+    }
+
+    return (await response.json()) as InvokeResult;
+  } catch (err) {
+    console.warn(`OmniRoute error, falling back to Forge:`, err);
+    return invokeViaForge(params);
+  }
+}
+
+async function invokeViaForge(params: InvokeParams): Promise<InvokeResult> {
   assertApiKey();
 
   const {
@@ -408,7 +536,7 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     payload.response_format = normalizedResponseFormat;
   }
 
-  const response = await fetchWithBackoff(resolveApiUrl(), {
+  const response = await fetchWithBackoff(resolveApiUrl(false), {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -440,6 +568,21 @@ export type ModelsResponse = {
 };
 
 export async function listLLMModels(): Promise<ModelsResponse> {
+  const omnirouteHealthy = await isOmniRouteAvailable();
+  if (omnirouteHealthy) {
+    try {
+      const response = await fetchWithBackoff(`${OMNIROUTE_URL}/models`, {
+        headers: { authorization: "Bearer omniroute" },
+      });
+
+      if (response.ok) {
+        return (await response.json()) as ModelsResponse;
+      }
+    } catch (err) {
+      console.warn("OmniRoute models list failed, falling back to Forge");
+    }
+  }
+
   assertApiKey();
 
   const url = ENV.forgeApiUrl && ENV.forgeApiUrl.trim().length > 0
