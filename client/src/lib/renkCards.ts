@@ -76,6 +76,8 @@ export function tokenValues(paint: PaintInfo): TokenValues {
     packaging: paint.packagingName ?? "",
     volume: paint.volumeLabel ?? "",
     packSizes: range.join("  ·  "),
+    // "40 RENK" — banner'ın tek iddiası, paletin uzunluğundan geliyor.
+    renkSayisi: paint.palette?.length ? `${paint.palette.length} RENK` : "",
     pack1: range[0] ?? "",
     pack2: range[1] ?? "",
     pack3: range[2] ?? "",
@@ -343,20 +345,23 @@ export async function buildCards({
     // kare basmak yerine atlanıyor ve sebebi çağıran tarafa bırakılıyor.
     const sources = usedSources(layout);
     if (sources.has("coat1") && !coats.coat1) continue;
-    // Ambalaj gamı şablonu, gam çekimleri yüklenmeden yalnız etiketlerden
+    // Ambalaj gamı ŞABLONU, gam çekimleri yüklenmeden yalnız etiketlerden
     // oluşan boş bir tablo olurdu. Aynı gerekçe: boş kare basılmaz.
-    if (sources.has("pack1") && !packRange.pack1) continue;
+    //
+    // Kural yalnız o şablona ait: banner da kutuları kullanıyor ama onlar
+    // afişin konusu değil, dekoru — çekim yoksa kutu çizilmez, afiş yine
+    // ayakta durur.
+    if (tpl.kind === "range" && sources.has("pack1") && !packRange.pack1) continue;
     // Palet karesi renk listesi olmadan boş bir ızgara olurdu.
     if (usesPalette(layout) && !paint.palette?.length) continue;
     /*
-     * Banner sloganı yoksa kare basılmaz.
+     * Banner artık slogansız da basılıyor.
      *
-     * Slogan ve maddeler karenin YARISI: onlarsız geriye seri adı ve boş bir
-     * zemin kalıyor, "tasarlanmış" değil "yarım kalmış" bir reklam görüntüsü
-     * çıkıyordu. Aynı kural kat/gam/palet şablonlarında da geçerli — eksik
-     * veriyle boş kare basmıyoruz, kullanıcı sebebini ekranda görüyor.
+     * Afişin taşıyıcısı seri yazısı ve tek iddia ("40 RENK"); slogan varsa
+     * altına tek satır olarak ekleniyor, yoksa kare yine tam. Önceki kural
+     * kareyi bir madde listesi üstüne kurduğu için slogansız yarım kalıyordu —
+     * o kurgu değişti.
      */
-    if (tpl.kind === "banner" && !paint.bannerSlogan?.trim()) continue;
 
     /*
      * Kolaj: kutular ELDEKİ kare sayısına göre yeniden hesaplanıyor.
