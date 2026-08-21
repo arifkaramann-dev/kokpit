@@ -35,6 +35,8 @@ export const TOKENS = [
   "{packaging}",
   "{volume}",
   "{packSizes}",
+  /* "40 RENK" — serinin gam büyüklüğü, banner'ın tek iddiası. */
+  "{renkSayisi}",
   "{pack1}",
   "{pack2}",
   "{pack3}",
@@ -80,6 +82,8 @@ export type TokenValues = {
   volume?: string | null;
   /** Serinin bütün boyları, ayraçla: "30 ML · 100 ML · 250 ML". */
   packSizes?: string | null;
+  /** "40 RENK" — palet uzunluğundan. Boş palette boş kalır. */
+  renkSayisi?: string | null;
   /** Gamdaki boyların adları — `pack1..pack4` görsel katmanlarının etiketi. */
   pack1?: string | null;
   pack2?: string | null;
@@ -255,6 +259,15 @@ export type RectLayer = {
    * rengi gösteriyor hem metin bloğuna bağlanıyor.
    */
   gradient?: boolean;
+  /**
+   * Geçişi TERSİNE çevirir: altta opak, yukarı doğru saydam.
+   *
+   * Fotoğraf üstüne yazı basarken gereken şey bu — karartma alt kenardan
+   * yükseliyor, yazı okunuyor, fotoğrafın üstü açık kalıyor. Aşağı inen
+   * geçişle aynı işi yapmak fotoğrafın gökyüzünü karartıp altını açık
+   * bırakırdı.
+   */
+  flip?: boolean;
 };
 
 /**

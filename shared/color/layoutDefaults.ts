@@ -806,188 +806,155 @@ export function usageBoxes(count: number): LayerBox[] {
 }
 
 /**
- * SERİ BANNER'I — reklam karesi.
+ * SERİ BANNER'I — reklam afişi.
  *
- * ── İlk hâli neden çiğ görünüyordu ────────────────────────────────────────
- * Kare üç şeyden oluşuyordu: seri adı, ambalaj boyları ve ortada palet
- * ızgarası. Palet kareleri beyaz fonlu ürün çekimleri olduğu için koyu zeminde
- * PARLAK BEYAZ DİKDÖRTGENLER olarak duruyordu; slogan boş olduğunda da karenin
- * yarısı bomboş kalıyordu. Sonuç, tasarlanmış değil "yerleştirilmiş" bir kare.
+ * ── Şablonun mantığı ──────────────────────────────────────────────────────
+ * Bu kare bir ÜRÜN KARTI değil, AFİŞ. Sektörün yaptığı iş şu (Stardust,
+ * House of Kolor ve benzerleri aynı düzeni kuruyor):
  *
- * ── Şimdiki kurgu ─────────────────────────────────────────────────────────
- * Banner'ın işi SERİYİ satmak, renk listesi göstermek değil:
- *   · zemin      → rengin kendisinden geçişli yıkama (+ istenirse AI arka plan)
- *   · kahraman   → ürünün obje karesi, büyük ve tek
- *   · metin      → seri adı + slogan + üç madde
- *   · palet      → altta İNCE bir şerit, fonu silinmiş (kod yazısı yok)
+ *   tam sayfa GERÇEK FOTOĞRAF  →  üstüne büyük SERİ YAZISI
+ *   →  önünde ÜRÜN KUTULARI  →  tek kısa İDDİA ("40 COLOURS")
  *
- * Palet artık ana konu değil destek: "bu seride başka renkler de var" demek
- * için üç-dört kare yeter. `knockout` ile fonu siliniyor, objeler zeminde
- * yüzüyor.
+ * Yani afişin konusu boyanın kendisi değil, boyanmış İŞ: boyanmış scooter,
+ * boyanmış kaporta, boyanmış bisiklet. Kutular öne konuyor ki "bu işi bu
+ * ürünle yaptık" desin.
  *
- * ── AI arka plan ──────────────────────────────────────────────────────────
- * En alttaki `arkaplan` katmanı KULLANICI VARLIĞI bekliyor ve varsayılan
- * olarak kapalı: bir kez AI ile düzgün bir zemin üretilip Şablon Varlıkları'na
- * kaydedilir, Şablon Editörü'nden bu katmana bağlanır ve o günden sonra bütün
- * banner'lar onun üstüne basılır. Bir üretim, sınırsız kare.
+ * ── Önceki hâli neden yanlıştı ────────────────────────────────────────────
+ * Kare bir kurumsal slayt gibi kurulmuştu: ortada tek obje, solda madde
+ * listesi, altta renk çipleri. Madde listesi afişte okunmaz; çip şeridi
+ * katalog işidir, reklam işi değil. Sonuç "şablon doldurulmuş" hissi veriyordu.
+ *
+ * ── Fotoğraf nereden gelir ────────────────────────────────────────────────
+ * `arkaplan` katmanı KULLANICI VARLIĞI bekliyor: gerçek çekim ya da bir kez
+ * AI ile üretilmiş bir sahne, Şablon Varlıkları'na yüklenip buraya bağlanır.
+ * Bağlanana kadar obje karesi tam sayfa kullanılıyor (fonu silinmiş, koyu
+ * zemin üstünde) — afiş yine ayakta duruyor ama asıl gücünü fotoğrafla
+ * kazanıyor.
  */
 function bannerLayout(width: number, height: number): TemplateLayout {
   const aspect = width / height;
   const wide = aspect >= 1.6;
   const tall = height / width >= 1.5;
-
-  /*
-   * Kompozisyon: obje KENARDAN TAŞAR.
-   *
-   * Önce obje kutunun içine sığdırılıyordu ve etrafında geniş bir ölü alan
-   * kalıyordu — kare "ortasına bir şey konmuş" gibi duruyordu. Taşan obje
-   * kadrajı doldurur, derinlik verir ve metne yer bırakır: otomotiv boya
-   * reklamlarının kurduğu kompozisyon budur.
-   */
-  const heroBox = wide
-    ? { x: 0.46, y: -0.06, w: 0.62, h: 1.12 }
-    : tall
-      ? { x: 0.02, y: 0.3, w: 1.06, h: 0.4 }
-      : { x: 0.24, y: 0.16, w: 0.92, h: 0.62 };
-
-  const textW = wide ? 0.4 : tall ? 0.84 : 0.56;
-  // Çip şeridi metin bloğunun altında, aynı sol kenardan hizalı.
-  const chips = wide
-    ? { x: 0.06, y: 0.72, w: 0.3, h: 0.07 }
-    : tall
-      ? { x: 0.07, y: 0.76, w: 0.5, h: 0.06 }
-      : { x: 0.07, y: 0.7, w: 0.42, h: 0.07 };
-  const k = wide ? 0.58 : tall ? 0.86 : 1;
+  // Afişte yazı büyük olur; geniş banddaki yükseklik sınırı yüzünden oran
+  // başına ayrı ölçek.
+  const k = wide ? 0.5 : tall ? 0.9 : 1;
 
   return {
     width,
     height,
     background: "#0a0a0c",
     layers: [
+      /*
+       * Tam sayfa fotoğraf. `cover`: kadraj dolar, oran ne olursa olsun
+       * boşluk kalmaz. Kullanıcı varlığa bağlayana kadar kapalı.
+       */
       {
         id: newLayerId("arkaplan"),
         type: "image",
         box: { x: 0, y: 0, w: 1, h: 1 },
-        // Geçerli bir varlığa bağlanana kadar çizilmez; kapalı geliyor ki
-        // kullanıcı bilinçli olarak açsın.
         source: "asset:0" as ImageSource,
         fit: "cover",
         visible: false,
       },
-      /*
-       * Rengin kendisinden ışık havuzu.
-       *
-       * Düz koyu zemin karenin cansız durmasının asıl sebebiydi. Geçişli
-       * yıkama objenin arkasından yükseliyor: zemin artık boşluk değil,
-       * ürünün ışığı.
-       */
+      // Fotoğraf yokken sahneyi kuran katman: obje büyük ve taşarak.
       {
-        id: newLayerId("isik"),
-        type: "rect",
-        box: wide ? { x: 0.3, y: 0, w: 0.7, h: 1 } : { x: 0, y: 0.06, w: 1, h: 0.72 },
-        fill: "paint",
-        opacity: 0.34,
-        radius: 0.02,
-        gradient: true,
-        visible: true,
-      },
-      {
-        id: newLayerId("hero"),
+        id: newLayerId("sahne"),
         type: "image",
-        box: heroBox,
+        box: wide ? { x: 0.34, y: -0.12, w: 0.72, h: 1.3 } : { x: 0.06, y: 0.16, w: 1.02, h: 0.6 },
         source: "object",
         fit: "contain",
-        // Obje karesi beyaz fonlu; koyu zeminde fon silinmezse etrafında
-        // beyaz bir dikdörtgen kalır (bkz. `shared/color/matte.ts`).
         knockout: true,
         visible: true,
       },
+      /*
+       * Karartma ALT KENARDAN yükseliyor (`flip`): fotoğrafın üstü açık
+       * kalıyor, yazının oturduğu alt bölge okunur oluyor. Aşağı inen geçiş
+       * tam tersini yapardı — gökyüzünü karartıp yazıyı fotoğrafın en parlak
+       * yerine bırakırdı.
+       */
       {
-        id: newLayerId("seri"),
-        type: "text",
-        box: { x: 0.06, y: tall ? 0.07 : 0.08, w: textW, h: 0.1 },
-        text: "{line}",
-        size: 0.075 * k,
-        weight: 700,
-        color: "#ffffff",
-        align: "left",
-        transform: "upper",
-        visible: true,
-      },
-      {
-        id: newLayerId("slogan"),
-        type: "text",
-        box: { x: 0.06, y: tall ? 0.155 : 0.185, w: textW, h: 0.15 },
-        text: "{slogan}",
-        size: 0.036 * k,
-        weight: 700,
-        color: "#ffffff",
-        align: "left",
-        transform: "none",
-        wrap: true,
-        lineHeight: 1.3,
-        visible: true,
-      },
-      // İnce renk çizgisi metin bloğunu kapatıyor — markanın kendi rengiyle.
-      {
-        id: newLayerId("cizgi"),
+        id: newLayerId("karartma"),
         type: "rect",
-        box: { x: 0.06, y: tall ? 0.33 : 0.36, w: 0.09, h: 0.006 },
-        fill: "paint",
-        radius: 0.003,
+        box: { x: 0, y: 0.4, w: 1, h: 0.6 },
+        fill: "#000000",
+        opacity: 0.72,
+        gradient: true,
+        flip: true,
         visible: true,
       },
+      /*
+       * ÜRÜN KUTULARI önde, alt köşede, üst üste binerek.
+       *
+       * Afişin "bu işi bu ürünle yaptık" cümlesi bu. Kutular Tanımlar'daki
+       * gerçek çekimlerden geliyor; çekimi olmayan boy sessizce düşüyor.
+       */
       ...[1, 2, 3].map((n, i) => ({
-        id: newLayerId(`madde${n}`),
-        type: "text" as const,
-        box: {
-          x: 0.06,
-          y: (tall ? 0.37 : 0.4) + i * 0.045 * (wide ? 1.4 : 1),
-          w: textW,
-          h: 0.04,
-        },
-        text: `{madde${n}}`,
-        size: 0.021 * k,
-        weight: 400 as const,
-        color: "#cfc9d4",
-        align: "left" as const,
-        transform: "none" as const,
+        id: newLayerId(`kutu${n}`),
+        type: "image" as const,
+        box: wide
+          ? { x: 0.04 + i * 0.075, y: 0.42, w: 0.13, h: 0.5 }
+          : { x: 0.05 + i * 0.11, y: tall ? 0.62 : 0.58, w: 0.19, h: 0.26 },
+        source: (`pack${n}` as "pack1" | "pack2" | "pack3"),
+        fit: "contain" as const,
+        knockout: true,
         visible: true,
       })),
       /*
-       * Palet: obje kopyaları değil RENK ÇİPLERİ.
+       * SERİ YAZISI — afişin en büyük öğesi.
        *
-       * Kahraman zaten o obje; altına aynı objenin küçük kopyalarını dizmek
-       * kareyi "aynı şeyin tekrarı" hâline getiriyordu. Çip hem tekrarı
-       * kırıyor hem gamı daha okunur gösteriyor.
+       * Kutuların üstünde ve sağında duruyor; afişte marka adı fısıldanmaz.
        */
       {
-        id: newLayerId("palet"),
-        type: "palette",
-        box: chips,
-        columns: 0,
-        gap: 0.014,
-        showCode: false,
-        labelSize: 0.014,
-        labelColor: "#a1a1aa",
-        radius: 0.01,
-        highlight: false,
-        swatches: true,
-        visible: true,
-      },
-      {
-        id: newLayerId("gam"),
+        id: newLayerId("seri"),
         type: "text",
-        box: { x: 0.06, y: wide ? 0.84 : tall ? 0.85 : 0.81, w: textW, h: 0.04 },
-        text: "{packSizes}",
-        size: 0.017 * (wide ? 0.8 : 1),
-        weight: 400,
-        color: "#8f8896",
-        align: "left",
+        box: wide
+          ? { x: 0.38, y: 0.52, w: 0.58, h: 0.24 }
+          : { x: 0.06, y: tall ? 0.79 : 0.79, w: 0.88, h: 0.13 },
+        text: "{line}",
+        size: 0.14 * k,
+        weight: 700,
+        color: "#ffffff",
+        align: wide ? "left" : "left",
         transform: "upper",
         visible: true,
       },
-      ...footer(tall ? 0.95 : 0.93, 0.016, aspect),
+      /*
+       * TEK İDDİA: "40 RENK".
+       *
+       * Madde listesi yerine tek bir sayı. Afişte okunan şey budur ve veri
+       * zaten elimizde — paletin uzunluğu.
+       */
+      {
+        id: newLayerId("iddia"),
+        type: "text",
+        box: wide
+          ? { x: 0.38, y: 0.76, w: 0.58, h: 0.08 }
+          : { x: 0.06, y: tall ? 0.9 : 0.9, w: 0.6, h: 0.06 },
+        text: "{renkSayisi}",
+        size: 0.045 * k,
+        weight: 700,
+        color: "#ffffff",
+        align: "left",
+        transform: "upper",
+        opacity: 0.85,
+        visible: true,
+      },
+      // Slogan varsa iddianın altında tek satır; yoksa kare yine tam.
+      {
+        id: newLayerId("slogan"),
+        type: "text",
+        box: wide
+          ? { x: 0.38, y: 0.845, w: 0.5, h: 0.06 }
+          : { x: 0.06, y: tall ? 0.94 : 0.95, w: 0.7, h: 0.05 },
+        text: "{slogan}",
+        size: 0.026 * k,
+        weight: 400,
+        color: "#d9d3de",
+        align: "left",
+        transform: "none",
+        visible: true,
+      },
+      ...footer(tall ? 0.975 : wide ? 0.93 : 0.965, 0.015, aspect),
     ],
   };
 }

@@ -435,7 +435,11 @@ export async function renderLayout({
     if (layer.type === "rect") {
       const base = layer.fill === "paint" ? paintHex || "#cccccc" : layer.fill;
       if (layer.gradient) {
-        const g = ctx.createLinearGradient(box.x, box.y, box.x, box.y + box.h);
+        // `flip`: altta opak, yukarı doğru saydam — fotoğraf üstüne yazı
+        // basarken karartma alt kenardan yükselmeli.
+        const g = layer.flip
+          ? ctx.createLinearGradient(box.x, box.y + box.h, box.x, box.y)
+          : ctx.createLinearGradient(box.x, box.y, box.x, box.y + box.h);
         g.addColorStop(0, base);
         g.addColorStop(1, fadeOut(base));
         ctx.fillStyle = g;

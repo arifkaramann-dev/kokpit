@@ -124,33 +124,45 @@ describe("çift dilli renk adı", () => {
  */
 describe("banner yerleşimi", () => {
   const banner = defaultLayout("banner");
-  const hero = banner.layers.find(l => l.id.startsWith("hero"));
-  const palette = banner.layers.find(l => l.type === "palette");
-  const backdrop = banner.layers.find(l => l.id.startsWith("arkaplan"));
+  const id = (p: string) => banner.layers.find(l => l.id.startsWith(p));
+  const sahne = id("sahne");
+  const karartma = id("karartma");
+  const backdrop = id("arkaplan");
 
-  it("koyu zeminde çizilen görselin fonu silinir", () => {
-    // Palet artık görsel taşımıyor (çip modu), o yüzden yalnız kahraman obje
-    // fon silme istiyor.
-    expect(hero?.type).toBe("image");
-    expect(hero && "knockout" in hero && hero.knockout).toBe(true);
-  });
-
-  it("palet kod yazmaz ve obje kopyalamaz — banner'ın konusu seri", () => {
-    expect(palette && "showCode" in palette && palette.showCode).toBe(false);
-    // Çip modu: kahraman zaten o obje, altına küçük kopyalarını dizmek kareyi
-    // "aynı şeyin tekrarı" hâline getiriyordu.
-    expect(palette && "swatches" in palette && palette.swatches).toBe(true);
-  });
-
-  it("obje kadrajdan taşar — ortada ölü alan kalmasın", () => {
-    const box = hero?.box;
-    // Taşma: kutu karenin dışına çıkıyor (x+w > 1 ya da y < 0).
-    expect(box && (box.x + box.w > 1 || box.y < 0)).toBe(true);
-  });
-
-  it("AI arka plan katmanı hazır ama kapalı gelir", () => {
-    // Varlığa bağlanmadan görünür olsaydı her banner boş bir katman taşırdı.
+  it("tam sayfa fotoğraf katmanı hazır ama kapalı gelir", () => {
+    // Afişin asıl zemini gerçek çekim; varlığa bağlanmadan görünür olsaydı
+    // her banner boş bir katman taşırdı.
     expect(backdrop?.visible).toBe(false);
+    expect(backdrop?.type === "image" && backdrop.fit).toBe("cover");
+    expect(backdrop?.box).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+  });
+
+  it("fotoğraf yokken sahne objesi kadrajdan taşar", () => {
+    const box = sahne?.box;
+    expect(box && (box.x + box.w > 1 || box.y < 0)).toBe(true);
+    expect(sahne && "knockout" in sahne && sahne.knockout).toBe(true);
+  });
+
+  it("karartma ALT kenardan yükselir — yazı okunsun, fotoğrafın üstü açık kalsın", () => {
+    expect(karartma?.type).toBe("rect");
+    expect(karartma && "flip" in karartma && karartma.flip).toBe(true);
+    expect(karartma && "gradient" in karartma && karartma.gradient).toBe(true);
+  });
+
+  it("afişin taşıyıcısı seri yazısı ve tek iddia — madde listesi yok", () => {
+    const seri = id("seri");
+    const iddia = id("iddia");
+    expect(seri?.type === "text" && seri.text).toBe("{line}");
+    expect(iddia?.type === "text" && iddia.text).toBe("{renkSayisi}");
+    // Madde listesi afişte okunmuyor; kurumsal slayt kurgusu kaldırıldı.
+    expect(id("madde1")).toBeUndefined();
+    expect(banner.layers.some(l => l.type === "palette")).toBe(false);
+  });
+
+  it("ürün kutuları önde — 'bu işi bu ürünle yaptık'", () => {
+    const kutu = id("kutu1");
+    expect(kutu?.type === "image" && kutu.source).toBe("pack1");
+    expect(kutu && "knockout" in kutu && kutu.knockout).toBe(true);
   });
 
   it("dört ölçünün de kendi tarifi var ve oranları doğru", () => {
@@ -158,12 +170,6 @@ describe("banner yerleşimi", () => {
     expect([defaultLayout("bannerWide").width, defaultLayout("bannerWide").height]).toEqual([1200, 628]);
     expect([defaultLayout("bannerHero").width, defaultLayout("bannerHero").height]).toEqual([1920, 600]);
     expect([defaultLayout("bannerStory").width, defaultLayout("bannerStory").height]).toEqual([1080, 1920]);
-  });
-
-  it("geniş formatta metin kutusu karenin yarısını geçmez", () => {
-    const wide = defaultLayout("bannerHero");
-    const slogan = wide.layers.find(l => l.id.startsWith("slogan"));
-    expect(slogan?.box.w).toBeLessThan(0.5);
   });
 });
 
