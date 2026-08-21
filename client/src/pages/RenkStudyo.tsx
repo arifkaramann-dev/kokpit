@@ -2047,6 +2047,23 @@ function ReferansObjeler() {
     }
   };
 
+  /*
+   * AI ile referans üretimi.
+   *
+   * Referans elde her zaman yok: yeni bir form denemek isteyen kullanıcı
+   * dışarıdan fotoğraf aramak zorunda kalıyordu. Üretim ÖNİZLEMEYLE bitiyor —
+   * beğenmediğini kaydetmesin, kütüphane çöplenmesin.
+   */
+  const { data: status } = trpc.renkStudyo.status.useQuery();
+  const [subjectId, setSubjectId] = useState(SUBJECT_PRESETS[0].id);
+  const [subject, setSubject] = useState(SUBJECT_PRESETS[0].text);
+  const [preview, setPreview] = useState<string | null>(null);
+
+  const generate = trpc.renkStudyo.generateReference.useMutation({
+    onSuccess: r => setPreview(r.data),
+    onError: e => toast.error(e.message, { duration: 9000 }),
+  });
+
   return (
     <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
       <Card className="space-y-4 p-4">
@@ -2098,6 +2115,94 @@ function ReferansObjeler() {
         <p className="text-xs text-muted-foreground">
           Beyaz fonlu, tek objeli kare çekim en iyi sonucu verir.
         </p>
+
+        <div className="space-y-2 border-t pt-4">
+          <div className="flex items-center gap-2">
+            <Sparkles className="size-4 text-muted-foreground" />
+            <span className="text-sm font-medium">AI ile üret</span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Elinde çekim yoksa formu AI çizsin. Referans <strong>nötr gri</strong>
+            üretilir — parlak renkli bir referans sonraki üretimlerde eski rengin
+            izini bırakıyor.
+          </p>
+
+          <Select
+            value={subjectId}
+            onValueChange={v => {
+              setSubjectId(v);
+              const p = SUBJECT_PRESETS.find(x => x.id === v);
+              if (p) setSubject(p.text);
+            }}
+          >
+            <SelectTrigger className="h-9">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SUBJECT_PRESETS.map(p => (
+                <SelectItem key={p.id} value={p.id}>
+                  {p.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Textarea
+            rows={2}
+            value={subject}
+            onChange={e => setSubject(e.target.value)}
+            className="text-xs"
+            placeholder="a motorcycle helmet"
+          />
+
+          <Button
+            variant="outline"
+            className="w-full"
+            disabled={generate.isPending || !status?.provider}
+            onClick={() => {
+              setPreview(null);
+              generate.mutate({ subject: subject.trim() });
+            }}
+          >
+            {generate.isPending ? (
+              <Loader2 className="mr-2 size-4 animate-spin" />
+            ) : (
+              <Sparkles className="mr-2 size-4" />
+            )}
+            {preview ? "Yeniden üret" : "Üret"}
+          </Button>
+          {!status?.provider && (
+            <p className="text-xs text-amber-600">
+              Görsel üretimi yapılandırılmamış — OPENAI_API_KEY ya da GEMINI_API_KEY
+              tanımlı değil.
+            </p>
+          )}
+
+          {preview && (
+            <div className="space-y-2 rounded border p-2">
+              <img src={preview} alt="Önizleme" className="w-full rounded bg-white" />
+              {/* Kaydetme AYRI adım: beğenilmeyen kare kütüphaneye girmesin. */}
+              <Button
+                className="w-full"
+                disabled={save.isPending}
+                onClick={() => {
+                  if (!label.trim()) {
+                    toast.error("Önce bir ad yaz");
+                    return;
+                  }
+                  save.mutate({
+                    objectType: slug(label),
+                    label: label.trim(),
+                    data: preview,
+                  });
+                  setPreview(null);
+                }}
+              >
+                Referans olarak kaydet
+              </Button>
+            </div>
+          )}
+        </div>
       </Card>
 
       <Card className="p-4">
@@ -2107,7 +2212,7 @@ function ReferansObjeler() {
           </div>
         ) : !references?.length ? (
           <div className="py-12 text-center text-sm text-muted-foreground">
-            Henüz referans obje yok. Soldan bir görsel yükle.
+            Henüz referans obje yok. Soldan bir görsel yükle ya da AI ile üret.
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
