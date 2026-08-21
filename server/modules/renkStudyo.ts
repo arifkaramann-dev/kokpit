@@ -169,6 +169,82 @@ export const renkStudyoRouter = router({
       return { id };
     }),
 
+  /**
+   * REFERANS OBJE ÜRETİMİ — şekli sabitleyecek kareyi AI ile çizdirir.
+   *
+   * ── Neden ayrı bir üretim ─────────────────────────────────────────────────
+   * `generateForColor` bir RENGİ üretiyor: elinde hedef renk ya da boyanın
+   * fotoğrafı olmalı. Referans objede öyle bir şey yok — üretilecek şey henüz
+   * rengi olmayan bir FORM. Aynı ucu zorlamak "renk kaynağı yok" hatası
+   * veriyor ve kullanıcı referansı ancak dışarıdan bulup yükleyerek
+   * ekleyebiliyordu.
+   *
+   * ── Neden nötr gri ────────────────────────────────────────────────────────
+   * Referansın işi şekil, açı ve ışığı sabitlemek; rengi taşımıyor. Parlak
+   * renkli bir referans sonraki üretimlerde renk kaçağı yapıyor — model eski
+   * rengin izini bırakıyor. Nötr gümüş gri hem tarafsız hem kaplamayı
+   * (parlama, clearcoat derinliği) gösteriyor, yani sonraki boyama için
+   * en temiz zemin.
+   *
+   * `baseHex` verilirse o renk kullanılır: kullanıcı özellikle renkli bir
+   * referans istiyorsa yolu açık kalsın.
+   */
+  generateReference: protectedProcedure
+    .input(
+      z.object({
+        /** Ne çizilecek — "a motorcycle helmet" gibi. */
+        subject: z.string().trim().min(1).max(500),
+        /** Referansın rengi. Boşsa nötr gümüş gri. */
+        baseHex: hex.optional(),
+        /** Serbest ek yönerge — istemin sonuna eklenir, hazır kalıbı ezer. */
+        extra: z.string().trim().max(500).optional(),
+        model: z
+          .string()
+          .trim()
+          .max(64)
+          .regex(/^[a-z0-9][a-z0-9.\-]*$/i, "Geçersiz model kimliği")
+          .optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const colour = input.baseHex
+        ? `painted in ${input.baseHex}`
+        : "painted in a neutral silver-grey automotive paint";
+
+      const prompt = [
+        `A photorealistic studio product photograph of ${input.subject}`,
+        colour,
+        // Referansın tek işi formu sabitlemek: kadraj, açı ve ışık her
+        // üretimde aynı kalsın diye burada da açıkça yazılıyor.
+        "single object, centred in frame, three-quarter view",
+        "plain pure white seamless background",
+        "professional automotive catalogue lighting with large softboxes",
+        "sharp elongated highlights along the body, visible clearcoat depth",
+        "no text, no watermark, no logo, no people, no props",
+      ].join(", ");
+
+      const finalPrompt = input.extra ? `${prompt} ${input.extra}` : prompt;
+
+      try {
+        const result = await generateProductImage({
+          prompt: finalPrompt,
+          references: [],
+          model: input.model ?? null,
+        });
+        return {
+          data: result.dataUrl,
+          provider: result.provider,
+          model: result.model,
+          prompt: finalPrompt,
+        };
+      } catch (err) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: err instanceof Error ? err.message : "Referans üretilemedi",
+        });
+      }
+    }),
+
   deleteReference: protectedProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .mutation(async ({ input }) => {
