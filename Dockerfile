@@ -19,7 +19,13 @@ WORKDIR /app
 # Bağımlılıklar ÖNCE: kaynak dosya değişince bu katman yeniden kurulmasın.
 # Kod değişikliğinde imaj yeniden derlenirken pnpm install atlanıyor, yani
 # "değişikliği gör" turu dakikalar değil saniyeler sürüyor.
+#
+# `patches/` de bu adımda lazım: package.json bir pakete yama uyguluyor
+# (`pnpm.patchedDependencies` → wouter). Yama dosyası ortada yoksa pnpm
+# kurulumun ORTASINDA ENOENT ile düşüyor ve hata "paket bulunamadı" gibi
+# değil, okunması zor bir yığın izi olarak çıkıyor.
 COPY package.json pnpm-lock.yaml ./
+COPY patches ./patches
 RUN pnpm install --frozen-lockfile
 
 COPY . .
