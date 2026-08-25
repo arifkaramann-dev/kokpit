@@ -5,14 +5,17 @@ import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { renderLayout } from "@/lib/renkLayoutRender";
+import { FAMILIES, FAMILY_IDS } from "@shared/color/families";
 import { tokenValues } from "@/lib/renkCards";
-import { BRAND, TEMPLATES, fallbackPackaging, forceWhiteBackground, getSeries, loadImageSrc, type PaintInfo } from "@/lib/renkTemplates";
+import { BRAND, TEMPLATES, templatesOfFamily, fallbackPackaging, forceWhiteBackground, getSeries, loadImageSrc, type PaintInfo } from "@/lib/renkTemplates";
 import {
   assetIdOf,
   clampBox,
@@ -78,6 +81,19 @@ const SOURCE_LABEL: Record<string, string> = {
   pack2: "gam 2. boy",
   pack3: "gam 3. boy",
   pack4: "gam 4. boy",
+  use1: "kullanım 1",
+  use2: "kullanım 2",
+  use3: "kullanım 3",
+  use4: "kullanım 4",
+  before: "öncesi çekimi",
+  after: "sonrası çekimi",
+};
+
+/** Sahne türlerinin insan tarafındaki adı. */
+const SCENE_LABEL: Record<string, string> = {
+  panel: "açılı panel",
+  glow: "halo",
+  sweep: "yatay bant",
 };
 
 /** Katmanın insan tarafındaki adı. */
@@ -85,6 +101,7 @@ function layerName(l: Layer): string {
   if (l.type === "text") return `Metin: ${l.text.slice(0, 24) || "(boş)"}`;
   if (l.type === "image") return `Görsel: ${SOURCE_LABEL[l.source] ?? l.source}`;
   if (l.type === "palette") return `Palet: ${l.columns} kolon`;
+  if (l.type === "scene") return `Sahne: ${SCENE_LABEL[l.variant] ?? l.variant}`;
   return `Kutu: ${l.fill === "paint" ? "renk" : l.fill}`;
 }
 
@@ -220,8 +237,13 @@ export default function SablonEditor({
           coat3: obj,
           ...packRange,
           ...assetImages,
+          // Öncesi/sonrası çekimleri örnekle temsil ediliyor: editörde
+          // yerleşimi ayarlarken kareler boş görünürse kutular kör ayarlanır.
+          before: obj,
+          after: obj,
         },
         paintHex: paint.hex,
+        accentHex: paint.accentHex,
         palette: paint.palette,
         // Önizleme gerçek kareyi göstermeli: filigran üretimde basılıp
         // editörde görünmezse kullanıcı yerleşimi eksik bilgiyle ayarlar.
@@ -359,12 +381,23 @@ export default function SablonEditor({
             <SelectTrigger className="w-56">
               <SelectValue />
             </SelectTrigger>
+            {/*
+              Şablonlar aileye göre gruplu listeleniyor: düz liste on dört
+              satırdı ve hangisinin hangi işi yaptığı ancak adından tahmin
+              ediliyordu.
+            */}
             <SelectContent>
-              {TEMPLATES.map(t => (
-                <SelectItem key={t.id} value={t.id}>
-                  {t.label}
-                  {saved[t.id] ? " ·  düzenlendi" : ""}
-                </SelectItem>
+              {FAMILY_IDS.map(fid => (
+                <SelectGroup key={fid}>
+                  <SelectLabel>{FAMILIES[fid].label}</SelectLabel>
+                  {templatesOfFamily(fid).map(t => (
+                    <SelectItem key={t.id} value={t.id}>
+                      {t.label}
+                      {t.sizeLabel ? ` · ${t.sizeLabel}` : ""}
+                      {saved[t.id] ? " ·  düzenlendi" : ""}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
               ))}
             </SelectContent>
           </Select>

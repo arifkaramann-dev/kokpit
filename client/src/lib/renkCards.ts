@@ -351,9 +351,20 @@ export async function buildCards({
     // Kural yalnız o şablona ait: banner da kutuları kullanıyor ama onlar
     // afişin konusu değil, dekoru — çekim yoksa kutu çizilmez, afiş yine
     // ayakta durur.
-    if (tpl.kind === "range" && sources.has("pack1") && !packRange.pack1) continue;
     // Palet karesi renk listesi olmadan boş bir ızgara olurdu.
     if (usesPalette(layout) && !paint.palette?.length) continue;
+    /*
+     * ÖNCESİ / SONRASI: iki çekim de bağlanmadan basılmaz.
+     *
+     * Bu karenin tek işi KANIT göstermek ve kanıtın yarısı eksikse kare
+     * kanıt olmaktan çıkıyor. `before`/`after` kaynaklarının sistemde veri
+     * karşılığı yok; kullanıcı Şablon Editörü'nden kendi yüklediği varlığa
+     * bağlıyor (bkz. `shared/color/layout.ts`).
+     */
+    if (tpl.kind === "beforeafter") {
+      const ikisiDe = Array.from(sources).filter(src => images[src]).length >= 2;
+      if (!ikisiDe) continue;
+    }
     /*
      * Banner artık slogansız da basılıyor.
      *
@@ -385,6 +396,7 @@ export async function buildCards({
         values,
         images,
         paintHex: paint.hex,
+        accentHex: paint.accentHex,
         palette: paint.palette,
         paletteImages,
         watermark: watermarks[i],
