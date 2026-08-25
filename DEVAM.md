@@ -31,6 +31,82 @@ route, WHATSAPP_* env'leri, WHATSAPP.md kaldırıldı. **Korundu:** müşteriye/
 faturaya tek-tık `wa.me` mesaj linkleri (API'siz). Uygulama içi + sesli asistan aynen
 çalışıyor. Doğrulama: 0 tip hatası, 289 test, build ✓. İstenirse git geçmişinden dönülür.
 
+## 🔴 SON DURUM — 25.08.2026 (bulut oturumundan devir)
+
+Bu oturum buluttaydı; artık geliştirme **yerelde**, patronun kendi bilgisayarında
+(`C:\Users\arifk\Desktop\kokpit\kokpit`, Windows + Docker Desktop) devam ediyor.
+
+### 1. Şablonlar üç aileye ayrıldı (PR #127, main'e merge edildi)
+
+14 şablon → 9. Kök sorun: hepsi tek düz listedeydi ve üç farklı işi yapıyorlardı
+(pazarlama sattırır / tanıtım anlatır / banner durdurur). Ayrım olmayınca afişe
+pazarlama ve tanıtım kelimeleri sızıyordu — banner dört ayrı denemede tek tek
+yamanarak düzelmedi.
+
+- **Aile sözleşmeleri:** `shared/color/families.ts` — YORUM DEĞİL, denetlenen kural.
+  `checkLayout` her fabrika yerleşimini ailesine karşı sınıyor, test bağlıyor
+  (`shared/color/families.test.ts`). Afişe palet/madde listesi/kimlik bloğu geri
+  sızarsa test kırılır.
+- **Elenenler:** `social` (kartın BİREBİR kopyasıydı), `range` (ürün karesine
+  taşındı), `coats` (kat sistemi şemasının içinde zaten vardı). Kayıtlı
+  yerleşimleri migration 0057 ile silindi.
+- **Afişin zemini artık koddan çiziliyor:** `shared/color/scene.ts` + `scene`
+  katman türü. Dip/gövde/ışık paneli/halo tek renkten türüyor. Renk kaynağı
+  `productSeries.accentColor` (migration 0057) — rengin kendi hex'i DEĞİL, çünkü
+  afiş serinin karesi.
+- **Yeni:** `announce` (duyuru) ve `beforeafter` (öncesi/sonrası) şablonları.
+  Öncesi/sonrası'nın veri kaynağı YOK ve olmamalı — kullanıcı iki çekimi Şablon
+  Editörü'nden kendi varlığına bağlıyor, ikisi de bağlanmadan üretilmiyor.
+- **Üretim ekranı aile aile** bölündü.
+
+**Patrondan bekleyen:** 13 serinin aksan rengini bir kez girmek (Tanımlar →
+Seriler → Kat Sistemi & Banner → "Afiş aksan rengi"). Girilmezse afişler koyu
+grafit varsayılanla çıkıyor.
+
+### 2. TiDB kotası doldu — canlı ÇÖKTÜ
+
+```
+[ensure-db] Due to the usage quota being exhausted, access to the cluster
+has been restricted.
+```
+
+Render deploy'u `ensure-db` adımında ölüyor; migration 0057 CANLIDA HİÇ KOŞMADI.
+Uygulamada hata yok, sorun TiDB Serverless'ın ücretsiz RU kotası.
+
+**Canlı verine şu an erişilemiyor.** Yerele taşımak için önce kota açılmalı,
+sonra TiDB'den dump alınmalı.
+
+Kalıcı çözüm ölçüm istiyor: TiDB Cloud → Diagnosis → **Top SQL (by RU)**.
+Şüpheli, ölçülmedi: zamanlayıcı her 60 saniyede bir `db.getSettings()` okuyor
+(`server/scheduler.ts:79`), pazaryeri senkronu 15 dk, katalog 30 dk.
+
+### 3. Yerel kurulum (PR #128 — HÂLÂ TASLAK, main'e çekilmedi)
+
+Render ve TiDB olmadan kendi bilgisayarında çalışıyor, **doğrulandı: kalktı.**
+
+- `Dockerfile` + `docker-compose.yml` → MariaDB + uygulama, tek komut
+- `pnpm yerel` / `yerel:durdur` / `yerel:yeniden` / `yerel:log` /
+  `yerel:yedek` / `yerel:geri-yukle`
+- `.env.yerel.example` → kopyala, `JWT_SECRET` + `OWNER_PASSWORD` doldur
+- Rehber: **`YEREL.md`**
+- Portlar `127.0.0.1`'e bağlı — dışarıya kapalı. Açma yolu YEREL.md'de.
+- Zamanlayıcı yerelde kapalı (`SCHEDULER_DISABLED=1`)
+
+Kurulumda çıkan ve düzeltilen hata: Dockerfile `patches/` klasörünü
+kopyalamıyordu, `pnpm install` yamayı bulamayıp exit 254 ile düşüyordu.
+
+**Yerel veritabanı BOŞ.** Gerçek veri gelene kadar ekranlar boş görünür.
+
+### Sıradakiler
+
+1. **Yedek al** — veri artık patronun diskinde, sağlayıcı yedeklemiyor:
+   `pnpm yerel:yedek` → çıkan dosyayı buluta/harici diske kopyala
+2. TiDB kotasını aç → dump al → `pnpm yerel:geri-yukle <dosya>`
+3. RU'yu yakan sorguyu bul (Top SQL by RU) — kotayı büyütmek para harcar,
+   asıl mesele niye yandığı
+4. Seri aksan renklerini gir, afişleri değerlendir
+5. PR #128'i main'e çekmeye karar ver
+
 ## Çalışma kuralları (önemli)
 - **Doğrudan `main`'e gönder** (PR yok). Değişiklikten sonra commit + `main`'e push.
 - **Az kredi, çok iş:** doğrulamayı riske göre yap — küçük/güvenli değişiklikte sadece
