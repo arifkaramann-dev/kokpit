@@ -80,7 +80,7 @@ Kalıcı çözüm ölçüm istiyor: TiDB Cloud → Diagnosis → **Top SQL (by R
 Şüpheli, ölçülmedi: zamanlayıcı her 60 saniyede bir `db.getSettings()` okuyor
 (`server/scheduler.ts:79`), pazaryeri senkronu 15 dk, katalog 30 dk.
 
-### 3. Yerel kurulum (PR #128 — HÂLÂ TASLAK, main'e çekilmedi)
+### 3. Yerel kurulum (main'e alındı — 25.08.2026)
 
 Render ve TiDB olmadan kendi bilgisayarında çalışıyor, **doğrulandı: kalktı.**
 
@@ -97,15 +97,41 @@ kopyalamıyordu, `pnpm install` yamayı bulamayıp exit 254 ile düşüyordu.
 
 **Yerel veritabanı BOŞ.** Gerçek veri gelene kadar ekranlar boş görünür.
 
+### 4. RU taraması — kod tarafı (25.08.2026)
+
+Ölçüm olmadan yapılan kod incelemesi. **Kesin sebep hâlâ Top SQL'i bekliyor**;
+aşağısı "kod okuyarak bulunabilecekler" listesi, kanıt değil.
+
+**Düzeltildi:** kimlik doğrulanan HER istek `users` tablosuna `lastSignedIn`
+yazıyordu (`server/_core/sdk.ts`). Bir sayfa açılışındaki her tRPC çağrısı =
+bir yazma; TiDB'de okuma ucuz, yazma pahalı (prewrite + commit). Bildirim zili
+60 sn'de bir yokladığı için açık duran boş bir sekme bile kotayı kemiriyordu.
+Alan hiçbir yerde okunmuyor — iz 15 dk'da bire kısıldı.
+
+**Elenenler (bakıldı, sorun değil):**
+- `/api/health` DB'ye hiç gitmiyor — uptime monitörü masum.
+- `writeBuildableQty` değişmeyen satırı atlıyor ve `buildableQty` `int`, yani
+  `===` karşılaştırması doğru çalışıyor (string/number tuzağı YOK).
+- Zamanlayıcı turu dakikada 2 sorgu — aylık ~90k, tek başına kotayı yakmaz.
+- `ensure-db` sadece `CREATE DATABASE IF NOT EXISTS` — ucuz.
+
+**Kalan şüpheliler (ölçülmedi, dokunulmadı):**
+- Katalog işi (30 dk'da bir) `loadCapacityInputs` ile 6 TAM TABLO taraması
+  yapıyor; `writeBuildableQty` 7.'yi, `runFormulaBinding` aynı turda 3 tabloyu
+  İKİNCİ kez okuyor. Okuma ucuz ama `masterProducts` büyükse toplamı büyür.
+- Render ücretsiz plan yeniden başlatmaları: her açılışta `drizzle-kit migrate`
+  koşuyor, TiDB'de `information_schema` okumaları pahalıdır.
+
 ### Sıradakiler
 
-1. **Yedek al** — veri artık patronun diskinde, sağlayıcı yedeklemiyor:
-   `pnpm yerel:yedek` → çıkan dosyayı buluta/harici diske kopyala
-2. TiDB kotasını aç → dump al → `pnpm yerel:geri-yukle <dosya>`
-3. RU'yu yakan sorguyu bul (Top SQL by RU) — kotayı büyütmek para harcar,
-   asıl mesele niye yandığı
-4. Seri aksan renklerini gir, afişleri değerlendir
-5. PR #128'i main'e çekmeye karar ver
+1. **TiDB kotasını aç** (panel) → dump al → `pnpm yerel:geri-yukle <dosya>`.
+   Ücretsiz kota ay başında sıfırlanıyor; canlı muhtemelen kendiliğinden döner
+   ama yakan sebep durdukça yine dolar.
+2. **Top SQL (by RU)** — TiDB Cloud → Diagnosis. Kod tarafı taraması aşağıda,
+   ama #1 sorguyu ölçüm söyler. Panele erişim açılınca ilk bakılacak yer.
+3. **Yedek al** — yerel DB dolduktan SONRA anlamlı (`pnpm yerel:yedek`), çıkan
+   dosyayı buluta/harici diske kopyala. Sağlayıcı artık yedeklemiyor.
+4. Seri aksan renklerini gir (13 seri), afişleri değerlendir.
 
 ## Çalışma kuralları (önemli)
 - **Doğrudan `main`'e gönder** (PR yok). Değişiklikten sonra commit + `main`'e push.
