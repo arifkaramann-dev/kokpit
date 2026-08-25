@@ -320,14 +320,30 @@ class SDKServer {
       throw ForbiddenError("User not found");
     }
 
-    await db.upsertUser({
-      openId: user.openId,
-      lastSignedIn: signedInAt,
-    });
+    /*
+     * "Son görülme" izi: her istekte DEĞİL, en fazla 15 dakikada bir yazılır.
+     *
+     * Eskiden bu upsert kimlik doğrulanan HER istekte koşuyordu — bir sayfa
+     * açılışındaki her tRPC çağrısı users tablosuna bir yazma üretiyordu. TiDB
+     * Serverless'ta okuma ucuz ama YAZMA pahalıdır (dağıtık işlem: prewrite +
+     * commit), dolayısıyla açık duran tek bir sekme boşta dururken bile kotayı
+     * kemiriyordu. Alan hiçbir yerde OKUNMUYOR; dakikalık tazelik fazlasıyla
+     * yeterli, istek başına tazelik kimseye bir şey kazandırmıyordu.
+     */
+    const lastSeen = user.lastSignedIn instanceof Date ? user.lastSignedIn.getTime() : 0;
+    if (signedInAt.getTime() - lastSeen > LAST_SEEN_WRITE_INTERVAL_MS) {
+      await db.upsertUser({
+        openId: user.openId,
+        lastSignedIn: signedInAt,
+      });
+    }
 
     return user;
   }
 }
+
+/** `lastSignedIn` izinin yazılma sıklığı — bkz. authenticateRequest. */
+const LAST_SEEN_WRITE_INTERVAL_MS = 15 * 60 * 1000;
 
 const CRON_OPEN_ID_PREFIX = "cron_";
 
