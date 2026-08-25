@@ -1,0 +1,66 @@
+# Kokpit — kendi bilgisayarında çalıştırma.
+#
+# Tek komut: pnpm yerel        (arka planda başlatır)
+# Adres:     http://localhost:3000
+#
+# ── Neden Docker ───────────────────────────────────────────────────────────
+# Yerel kurulum "MariaDB kur, sürümünü tuttur, kullanıcı aç, Node sürümünü
+# ayarla" adımlarına dağılıyordu ve her bilgisayarda biraz farklı çıkıyordu.
+# Burada veritabanı da uygulama da sabit sürümlerle geliyor: aynı kurulum
+# senin bilgisayarında da, ileride taşıyacağımız sunucuda da birebir aynı.
+#
+# ── Dışarıya kapalı ────────────────────────────────────────────────────────
+# İki portun da başında `127.0.0.1:` var — yani yalnızca BU bilgisayardan
+# erişilebilir, aynı wifi'daki başka cihazdan bile açılmaz. Dükkan içi
+# erişim gerektiğinde bu ön eki kaldırmak yetiyor (bkz. YEREL.md).
+
+services:
+  veritabani:
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      # Yerel kurulum; şifreler bilgisayarın dışına çıkmıyor (port 127.0.0.1'e
+      # bağlı). Sunucuya taşırken bunlar mutlaka değişecek.
+      MARIADB_ROOT_PASSWORD: kokpit
+      MARIADB_DATABASE: kokpit
+    volumes:
+      # Veri BURADA duruyor. Kaplama silinse bile bu birim kalır; veriyi
+      # gerçekten silmek için `docker compose down -v` gerekir.
+      - kokpit-veri:/var/lib/mysql
+    ports:
+      - "127.0.0.1:3306:3306"
+    healthcheck:
+      # Uygulama veritabanı HAZIR olmadan açılırsa `ensure-db` bağlanamayıp
+      # çıkıyor ve kaplama sürekli yeniden başlıyordu. Sağlık kontrolü
+      # bekletiyor.
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  kokpit:
+    build: .
+    restart: unless-stopped
+    # Gizli bilgiler burada değil, .env.yerel dosyasında — o dosya git'e
+    # girmiyor (bkz. .gitignore).
+    env_file:
+      - .env.yerel
+    environment:
+      # Bağlantı adresi compose tarafından veriliyor: .env.yerel içinde
+      # yanlış bir adres yazılıp iki yerin çakışması, bu kurulumdaki en kolay
+      # hata olurdu.
+      #
+      # `root` kullanılıyor çünkü açılıştaki `ensure-db` betiği "veritabanı
+      # yoksa oluştur" diyor ve bu CREATE DATABASE yetkisi istiyor.
+      DATABASE_URL: mysql://root:kokpit@veritabani:3306/kokpit
+      PORT: "3000"
+      NODE_ENV: production
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      veritabani:
+        condition: service_healthy
+
+volumes:
+  kokpit-veri:

@@ -1,0 +1,16 @@
+# İmaja girmesi gereksiz ya da zararlı olanlar.
+#
+# node_modules özellikle önemli: imajın içinde `pnpm install` ile Linux'a göre
+# kuruluyor. Windows/mac'ten kopyalanan node_modules yanlış platformun ikili
+# dosyalarını taşır ve derleme sessizce bozulur.
+node_modules
+dist
+.git
+.github
+yedek
+.env
+.env.*
+!.env.example
+!.env.yerel.example
+*.log
+.DS_Store

@@ -12,6 +12,12 @@
     "test": "vitest run",
     "db:push": "drizzle-kit generate && drizzle-kit migrate",
     "db:migrate": "node scripts/ensure-db.mjs && drizzle-kit migrate",
+    "yerel": "docker compose up -d --build",
+    "yerel:durdur": "docker compose down",
+    "yerel:yeniden": "docker compose restart kokpit",
+    "yerel:log": "docker compose logs -f kokpit",
+    "yerel:yedek": "node scripts/yedek.mjs",
+    "yerel:geri-yukle": "node scripts/geri-yukle.mjs",
     "import:urun-kayit": "node scripts/import-urun-kayit.mjs",
     "render": "NODE_USE_ENV_PROXY=1 node scripts/render.mjs"
   },

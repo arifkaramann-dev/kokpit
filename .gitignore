@@ -4,6 +4,11 @@ dist/
 .env
 .env.*
 !.env.example
+# Yerel kurulumun ÖRNEK dosyası depoda durur; doldurulmuş `.env.yerel`
+# yukarıdaki `.env.*` kuralıyla dışarıda kalır.
+!.env.yerel.example
+# Veritabanı yedekleri — kendi bilgisayarında kalır, depoya girmez.
+yedek/
 *.tsbuildinfo
 .DS_Store
 # WhatsApp köprüsü oturum sırları (giriş anahtarları) — repoya ASLA girmez
