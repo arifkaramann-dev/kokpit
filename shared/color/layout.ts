@@ -118,6 +118,8 @@ export type TokenValues = {
   kullanim4?: string | null;
 };
 
+import type { SceneVariant } from "./scene";
+
 /** Katmanın çizileceği kutu — hepsi 0..1 oranı. */
 export type LayerBox = {
   x: number;
@@ -204,6 +206,17 @@ export type ImageSource =
   | "use2"
   | "use3"
   | "use4"
+  /**
+   * Öncesi / sonrası çekimi — rötuş işinin kanıtı.
+   *
+   * Bu ikisinin sistemde HENÜZ veri kaynağı yok: çizik kaporta ile rötuşlanmış
+   * kaporta, renk kaydından türetilebilecek şeyler değil. Şablon Editörü'nde
+   * kullanıcı bunları kendi yüklediği varlığa (`asset:<id>`) bağlıyor.
+   * Bağlanmadan kare üretilmiyor — yarısı boş bir "öncesi/sonrası" basmak,
+   * hiç basmamaktan kötü.
+   */
+  | "before"
+  | "after"
   | `asset:${number}`;
 
 /** `asset:12` → 12; sabit kaynaklarda null. */
@@ -358,7 +371,39 @@ export function paletteColumns(count: number, boxW: number, boxH: number): numbe
   return Math.max(1, Math.min(count, cols || 1));
 }
 
-export type Layer = TextLayer | ImageLayer | RectLayer | PaletteLayer;
+/**
+ * SAHNE KATMANI — koddan çizilen afiş zemini.
+ *
+ * ── Neden ayrı bir katman türü ────────────────────────────────────────────
+ * Afişin zemini elimizdeki `rect` ile kurulmaya çalışıldı: üst üste birkaç
+ * geçişli dikdörtgen. Çıkan şey zemin değil, "üst üste konmuş dikdörtgenler"
+ * gibi görünüyordu — çünkü zeminin işi renk basmak değil, IŞIK kurmak: dip,
+ * gövde, ışığın vurduğu panel ve objenin arkasındaki halo birlikte derinlik
+ * yapıyor. Dördünü ayrı katman olarak yerleştirmek kullanıcıya dört ayrı
+ * kutu vermek demekti ve biri kaydığında sahne dağılıyordu.
+ *
+ * Katman tek: rengi ve türü seçiliyor, gerisini `shared/color/scene.ts`
+ * hesaplıyor.
+ */
+export type SceneLayer = {
+  id: string;
+  type: "scene";
+  box: LayerBox;
+  variant: SceneVariant;
+  /**
+   * "accent" = SERİNİN aksan rengi (Tanımlar → Seriler), "paint" = ürünün
+   * kendi rengi, aksi halde CSS rengi.
+   *
+   * Afiş serinin karesi — bu yüzden varsayılan aksan. Rengin kendi hex'i
+   * katalogdaki çoğu kayıtta boş ve afişi renkten rengi değişen bir şeye
+   * çevirirdi: aynı serinin kırk afişi kırk farklı zeminle çıkardı.
+   */
+  color: string;
+  visible: boolean;
+  opacity?: number;
+};
+
+export type Layer = TextLayer | ImageLayer | RectLayer | PaletteLayer | SceneLayer;
 
 /** Yerleşim palet çiziyor mu — renk listesi olmadan o kare boş çıkar. */
 export function usesPalette(layout: TemplateLayout): boolean {

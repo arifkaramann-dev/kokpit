@@ -18,6 +18,7 @@
 
 import type { CoatSystem } from "@shared/color/coatSystem";
 import type { PaletteEntry } from "@shared/color/layout";
+import type { TemplateFamily } from "@shared/color/families";
 
 export type PackagingOption = {
   id: string;
@@ -38,7 +39,27 @@ export type TemplateDef = {
   width: number;
   height: number;
   bare: boolean;
-  kind?: "product" | "coats" | "range" | "palette" | "system" | "usage" | "banner";
+  /**
+   * Şablonun ailesi — hangi işi yaptığı.
+   *
+   * Aile tasarım dilini belirliyor: zemin, tipografi ölçeği, bilgi yoğunluğu
+   * ve hangi katmanların kullanılabileceği (bkz. `shared/color/families.ts`).
+   * Üretim ekranı da aileye göre bölünüyor: banner beğenilmediğinde yalnız
+   * banner yeniden üretiliyor.
+   */
+  family: TemplateFamily;
+  /**
+   * Aynı tarifin başka ölçüsü olan şablonlar aynı `group` değerini taşır.
+   *
+   * Afişin dört ölçüsü dört ayrı tasarım değil, tek tasarımın dört kadrajı;
+   * üretim ekranında tek başlık altında ölçü rozetleriyle toplanıyorlar. On
+   * dört ayrı kutu olarak listelemek, dört ölçüyü dört ayrı iş gibi
+   * gösteriyordu.
+   */
+  group?: string;
+  /** Ölçünün adı — grup içinde hangi kadraj olduğunu söyler. */
+  sizeLabel?: string;
+  kind?: "product" | "palette" | "system" | "usage" | "banner" | "beforeafter";
 };
 
 /** Şablonun bastığı renk bilgisi. */
@@ -91,6 +112,14 @@ export type PaintInfo = {
    * (bkz. `shared/color/coatSystem.ts`), yani hiçbir seri kat şemasız kalmaz.
    */
   coatSystem?: CoatSystem;
+  /**
+   * SERİNİN AKSAN RENGİ — afişin zemini bundan türetiliyor.
+   *
+   * Rengin kendi hex'i değil serinin rengi: afiş serinin karesi ve aynı
+   * serinin kırk rengi için kırk farklı zeminli afiş çıkarsa seri bir marka
+   * gibi görünmez. Katalogdaki renklerin çoğunda hex zaten boş.
+   */
+  accentHex?: string | null;
   /** Seri banner metni — AI serinin kendi tanıtımından kısaltır. */
   bannerSlogan?: string | null;
   bannerBullets?: string[];
@@ -186,32 +215,82 @@ export function getSeries(code: string | null | undefined): SeriesInfo {
   return SERIES.find((s) => s.code === code) || SERIES[0];
 }
 
+/**
+ * ŞABLONLAR — üç aile, dokuz tarif.
+ *
+ * ── Neden dokuz, neden on dört değil ──────────────────────────────────────
+ * Liste on dört kutuydu ve dördü fazlalıktı: `social` kartın BİREBİR kopyası
+ * (aynı fonksiyon, aynı ölçü), `story` aynı kartın dikey hâli, `range` ürün
+ * karesinin zaten yazdığı ambalaj gamı, `coats` ise kat sistemi şemasının
+ * içinde çizilen üç aşama karesi. Dördü de aynı cevabı ikinci kez veriyordu.
+ *
+ * Üçü de aynı anda üretiliyordu, bu yüzden fark edilmiyordu: müşteriye giden
+ * on dört karenin dördü, bir diğerinin daha zayıf kopyasıydı.
+ *
+ * Aile alanı listenin en önemli kısmı — bkz. `shared/color/families.ts`.
+ */
 export const TEMPLATES: TemplateDef[] = [
+  /* ── PAZARLAMA — sattırır ─────────────────────────────────────────────── */
+  {
+    id: 'marketplace',
+    label: 'Pazaryeri ana görsel',
+    hint: 'Beyaz fon, sıfır metin. Amazon/Trendyol ana görsel kuralı.',
+    width: 1600,
+    height: 1600,
+    bare: true,
+    family: 'pazarlama',
+  },
   {
     id: 'product',
-    label: 'Ürün + Numune',
-    hint: 'Ambalaj ve renk numunesi aynı karede. Ana satış görseli.',
+    label: 'Ürün + numune + gam',
+    hint: 'Ambalaj, renk numunesi ve boy seçenekleri aynı karede. Ana satış görseli.',
     width: 1400,
     height: 1400,
     bare: false,
+    family: 'pazarlama',
     kind: 'product',
   },
   {
-    id: 'coats',
-    label: 'Kat Progresyonu',
-    hint: '1/2/3 kat — candy ve şeffaf renklerde derinleşmeyi gösterir.',
-    width: 1400,
-    height: 1400,
+    id: 'card',
+    label: 'Renk kartı — kare',
+    hint: 'Kod, isim, seri. Katalog, site listesi ve Instagram gönderisi.',
+    width: 1080,
+    height: 1080,
     bare: false,
-    kind: 'coats',
+    family: 'pazarlama',
+    group: 'kart',
+    sizeLabel: 'Kare 1:1',
   },
+  {
+    id: 'story',
+    label: 'Renk kartı — dikey',
+    hint: 'Aynı kart 9:16 kadrajda. Story ve Reels.',
+    width: 1080,
+    height: 1920,
+    bare: false,
+    family: 'pazarlama',
+    group: 'kart',
+    sizeLabel: 'Dikey 9:16',
+  },
+  {
+    id: 'announce',
+    label: 'Duyuru',
+    hint: '"Yeni renk", "kampanya", "stokta" — üstteki bant metni elle yazılır.',
+    width: 1080,
+    height: 1080,
+    bare: false,
+    family: 'pazarlama',
+  },
+
+  /* ── TANITIM — anlatır ────────────────────────────────────────────────── */
   {
     id: 'system',
     label: 'Kat sistemi',
-    hint: 'Nasıl uygulanır: zemin → renk → vernik. Serinin kendi zinciri basılır.',
+    hint: 'Nasıl uygulanır: zemin → renk → vernik. Serinin kendi zinciri, varsa kat kareleriyle.',
     width: 1400,
     height: 1400,
     bare: false,
+    family: 'tanitim',
     kind: 'system',
   },
   {
@@ -221,102 +300,90 @@ export const TEMPLATES: TemplateDef[] = [
     width: 1400,
     height: 1400,
     bare: false,
+    family: 'tanitim',
     kind: 'usage',
-  },
-  {
-    id: 'range',
-    label: 'Ambalaj gamı',
-    hint: 'Bu renk hangi boylarda var — serinin ambalajları tek karede.',
-    width: 1400,
-    height: 1400,
-    bare: false,
-    kind: 'range',
   },
   {
     id: 'palette',
     label: 'Seri paleti',
-    hint: 'Serinin diğer renkleri, kodlarıyla. Katalog ve pazarlama karesi.',
+    hint: 'Serinin diğer renkleri, kodlarıyla. Renk ölçümü yapılmamışsa üretilmez.',
     width: 1400,
     height: 1400,
     bare: false,
+    family: 'tanitim',
     kind: 'palette',
   },
   {
-    id: 'marketplace',
-    label: 'Pazaryeri ana görsel',
-    hint: 'Beyaz fon, sıfır metin. Amazon/Trendyol ana görsel kuralı.',
-    width: 1600,
-    height: 1600,
-    bare: true,
-  },
-  {
-    id: 'card',
-    label: 'Renk kartı',
-    hint: 'Kod, isim, seri. Katalog ve site listesi.',
-    width: 1080,
-    height: 1080,
+    id: 'beforeafter',
+    label: 'Öncesi / sonrası',
+    hint: 'Rötuşun kanıtı. İki çekimi Şablon Editörü\'nden kendi varlıklarına bağla.',
+    width: 1400,
+    height: 1400,
     bare: false,
+    family: 'tanitim',
+    kind: 'beforeafter',
   },
-  {
-    id: 'social',
-    label: 'Instagram gönderi',
-    hint: 'Kare, marka katmanlı.',
-    width: 1080,
-    height: 1080,
-    bare: false,
-  },
-  {
-    id: 'story',
-    label: 'Story / Reels',
-    hint: 'Dikey 9:16.',
-    width: 1080,
-    height: 1920,
-    bare: false,
-  },
+
   /*
-   * Seri banner'ları — konusu RENK değil SERİdir.
+   * ── BANNER — durdurur ─────────────────────────────────────────────────
    *
-   * Dört ölçü ayrı şablon: her mecranın kendi oranı var ve tek şablonu
-   * yeniden ölçeklendirmek metni ya eziyor ya kayboluyordu. Yerleşim tarifi
-   * ortak (bkz. `bannerLayout`), yalnız kare ölçüsü değişiyor.
+   * Tek tarif, dört kadraj. Ayrı ölçü olmalarının sebebi tasarım değil mecra:
+   * tek şablonu yeniden ölçeklendirmek yazıyı ya eziyor ya kaybediyordu.
    */
   {
     id: 'banner',
-    label: 'Banner — Instagram kare',
-    hint: 'Seri reklamı 1080×1080. Slogan + maddeler serinin kendi metninden.',
+    label: 'Seri afişi',
+    hint: 'Seri reklamı. Çizilmiş zemin, dev seri yazısı, tek iddia.',
     width: 1080,
     height: 1080,
     bare: false,
+    family: 'banner',
+    group: 'banner',
+    sizeLabel: 'Instagram kare',
     kind: 'banner',
   },
   {
     id: 'bannerWide',
-    label: 'Banner — pazaryeri vitrin',
-    hint: '1200×628. Mağaza vitrini ve site kartı.',
+    label: 'Seri afişi',
+    hint: 'Mağaza vitrini ve site kartı.',
     width: 1200,
     height: 628,
     bare: false,
+    family: 'banner',
+    group: 'banner',
+    sizeLabel: 'Pazaryeri vitrin',
     kind: 'banner',
   },
   {
     id: 'bannerHero',
-    label: 'Banner — site başlığı',
-    hint: '1920×600. Geniş ekran üst şeridi.',
+    label: 'Seri afişi',
+    hint: 'Geniş ekran üst şeridi.',
     width: 1920,
     height: 600,
     bare: false,
+    family: 'banner',
+    group: 'banner',
+    sizeLabel: 'Site başlığı',
     kind: 'banner',
   },
   {
     id: 'bannerStory',
-    label: 'Banner — story',
-    hint: '1080×1920. Dikey seri tanıtımı.',
+    label: 'Seri afişi',
+    hint: 'Dikey seri tanıtımı.',
     width: 1080,
     height: 1920,
     bare: false,
+    family: 'banner',
+    group: 'banner',
+    sizeLabel: 'Story 9:16',
     kind: 'banner',
   },
 ];
+
+/** Ailenin şablonları — üretim ekranı ve editör bununla bölünüyor. */
+export function templatesOfFamily(family: TemplateFamily): TemplateDef[] {
+  return TEMPLATES.filter(t => t.family === family);
+}
 
 export function getTemplate(id: string): TemplateDef {
   return TEMPLATES.find((t) => t.id === id) || TEMPLATES[0];

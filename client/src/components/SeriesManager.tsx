@@ -51,6 +51,13 @@ const emptySeriesForm = {
    * fazla tören olurdu.
    */
   coatSystem: "",
+  /**
+   * Serinin aksan rengi — afişin çizilen zemini bundan türetiliyor.
+   *
+   * Boş dize "seçilmemiş" demek; kayıtta null olur ve afiş koyu grafit
+   * varsayılana düşer (bkz. `shared/color/scene.ts`).
+   */
+  accentColor: "",
   bannerSlogan: "",
   bannerBullets: "",
 };
@@ -183,6 +190,7 @@ export default function SeriesManager() {
       guideTemplate: form.guideTemplate || null,
       labelTemplate: form.labelTemplate || null,
       coatSystem: parseCoatLines(form.coatSystem).length ? parseCoatLines(form.coatSystem) : null,
+      accentColor: /^#[0-9a-fA-F]{6}$/.test(form.accentColor) ? form.accentColor : null,
       bannerSlogan: form.bannerSlogan.trim() || null,
       bannerBullets: toLines(form.bannerBullets).slice(0, 3),
     };
@@ -311,6 +319,7 @@ export default function SeriesManager() {
                     })
                       .map(l => (l.product ? `${l.label} | ${l.product}` : l.label))
                       .join("\n"),
+                    accentColor: (s as { accentColor?: string | null }).accentColor ?? "",
                     bannerSlogan: (s as { bannerSlogan?: string | null }).bannerSlogan ?? "",
                     bannerBullets: Array.isArray((s as { bannerBullets?: unknown }).bannerBullets)
                       ? ((s as { bannerBullets?: string[] }).bannerBullets ?? []).join("\n")
@@ -562,6 +571,45 @@ export default function SeriesManager() {
                     <code>işlem | ÜRÜN ADI</code> yazın — kartta ürün adı da basılır (çapraz
                     satış). En fazla {MAX_COAT_LAYERS} katman. Boş bırakılırsa seri adından
                     varsayılan zincir türetilir.
+                  </p>
+                </div>
+
+                {/*
+                  AKSAN RENGİ — afişin zemininin tek girdisi.
+                  Bir kez giriliyor, serinin bütün afişleri ondan besleniyor.
+                */}
+                <div className="space-y-1.5">
+                  <Label>Afiş aksan rengi</Label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      className="h-9 w-14 cursor-pointer rounded border bg-background p-1"
+                      value={/^#[0-9a-fA-F]{6}$/.test(form.accentColor) ? form.accentColor : "#2b2b33"}
+                      onChange={e => setForm(f => ({ ...f, accentColor: e.target.value }))}
+                    />
+                    <Input
+                      value={form.accentColor}
+                      onChange={e => setForm(f => ({ ...f, accentColor: e.target.value.trim() }))}
+                      placeholder="#5b21b6"
+                      maxLength={7}
+                      className="w-32 font-mono"
+                    />
+                    {form.accentColor ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 text-xs"
+                        onClick={() => setForm(f => ({ ...f, accentColor: "" }))}
+                      >
+                        Temizle
+                      </Button>
+                    ) : null}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Serinin afişlerinde zemin bu renkten çizilir — dip, gövde, ışık ve halo hep
+                    aynı renkten türer. Boş bırakılırsa koyu grafit kullanılır. Rengin kendi
+                    hex'i DEĞİL serinin kimlik rengi: afiş serinin karesi, tek ürünün değil.
                   </p>
                 </div>
 

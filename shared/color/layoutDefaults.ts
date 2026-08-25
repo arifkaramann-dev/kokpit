@@ -13,10 +13,10 @@
  * göre; böylece kare gönderi ile 9:16 story aynı tarifle doğru çalışır.
  */
 
+import { FAMILIES } from "./families";
 import {
   DEFAULT_WATERMARK,
   newLayerId,
-  type ImageSource,
   type Layer,
   type LayerBox,
   type TemplateLayout,
@@ -25,6 +25,11 @@ import {
 const INK = "#0a0a0a";
 const INK_SOFT = "#3f3f46";
 const INK_FAINT = "#a1a1aa";
+
+/** Ailelerin zemini tek yerden — sözleşme ile yerleşim ayrışmasın. */
+const PAZAR_ZEMIN = FAMILIES.pazarlama.background;
+const TANITIM_ZEMIN = FAMILIES.tanitim.background;
+const BANNER_ZEMIN = FAMILIES.banner.background;
 
 /**
  * Marka alt şeridi — logo solda, site sağda. Altı şablonun beşinde ortak.
@@ -132,95 +137,38 @@ function heading(x: number, y: number, scale = 1): Layer[] {
   ];
 }
 
-/** Ürün + numune — ana satış görseli. */
-function productLayout(): TemplateLayout {
-  return {
-    width: 1400,
-    height: 1400,
-    background: "#ffffff",
-    layers: [
-      // Rengin kendisinden yumuşak bir zemin: beyaz üstünde beyaz ambalaj
-      // fotoğrafı havada duruyordu, kare de rengi ancak numunede gösteriyordu.
-      //
-      // Sol kenarı obje kutusunun BİTTİĞİ yerde başlıyor (0.05 + 0.52 = 0.57):
-      // AI çıktısı beyaz FONLU geliyor, yani objenin kutusu opak bir beyaz
-      // dikdörtgen. Üst üste binerlerse o beyaz, yıkamanın üstünü kesiyor.
-      {
-        id: newLayerId("wash"),
-        type: "rect",
-        box: { x: 0.585, y: 0.05, w: 0.375, h: 0.74 },
-        fill: "paint",
-        opacity: 0.1,
-        radius: 0.03,
-        gradient: true,
-        visible: true,
-      },
-      ...heading(0.06, 0.055),
-      {
-        id: newLayerId("pack"),
-        type: "image",
-        box: { x: 0.55, y: 0.06, w: 0.4, h: 0.7 },
-        source: "packaging",
-        fit: "contain",
-        shadow: true,
-        visible: true,
-      },
-      {
-        id: newLayerId("obj"),
-        type: "image",
-        box: { x: 0.05, y: 0.42, w: 0.52, h: 0.42 },
-        source: "object",
-        fit: "contain",
-        shadow: true,
-        visible: true,
-      },
-      {
-        id: newLayerId("sizes"),
-        type: "text",
-        box: { x: 0.06, y: 0.855, w: 0.88, h: 0.03 },
-        text: "{packSizes}",
-        size: 0.019,
-        weight: 400,
-        color: INK_FAINT,
-        align: "left",
-        transform: "upper",
-        visible: true,
-      },
-      ...footer(0.925, 0.017, 1),
-    ],
-  };
-}
-
 /**
- * Ambalaj gamı — "bu renk hangi boylarda var?"
+ * Ürün + numune + AMBALAJ GAMI — ana satış görseli.
  *
- * En sık sorulan soru ve bugüne kadar hiçbir karede cevabı yoktu; müşteri
- * ilanın açıklamasını okumak zorundaydı. Kutular Tanımlar'daki çekimlerden,
- * etiketler ambalaj adlarından geliyor — yani yeni bir boy eklenince kare
- * kendiliğinden doğru çıkar.
+ * ── Neden gam da burada ───────────────────────────────────────────────────
+ * "Bu renk hangi boylarda var" ayrı bir şablondu (`range`) ve bu kare de aynı
+ * bilgiyi zaten `{packSizes}` satırında yazıyordu: aynı cevap iki karede, biri
+ * yazıyla biri görselle. İki kare üretip müşteriye ikisini de göndermek,
+ * ikisini de yarım göstermek demekti.
  *
- * Dört kutuluk yer var: gamın tamamı değil, ilk dört boy. Beşinci boy
- * `{packSizes}` satırında yine yazılı.
+ * Birleşti: üstte ürünün kendi kutusu ve rengin numunesi (asıl satış kurgusu),
+ * altta gamın şeridi. Gamın çekimi yoksa şerit sessizce boş kalıyor ve kare
+ * eski hâliyle aynı — yani ambalaj çekimi olmayan kurulumda hiçbir şey
+ * kaybedilmiyor.
  */
-function rangeLayout(): TemplateLayout {
-  const slots: Layer[] = [];
+function productLayout(): TemplateLayout {
+  const gam: Layer[] = [];
   for (let i = 0; i < 4; i += 1) {
-    const x = 0.055 + i * 0.2375;
-    slots.push({
+    const x = 0.06 + i * 0.235;
+    gam.push({
       id: newLayerId(`pack${i + 1}`),
       type: "image",
-      box: { x, y: 0.3, w: 0.2, h: 0.36 },
+      box: { x, y: 0.645, w: 0.2, h: 0.17 },
       source: (`pack${i + 1}` as "pack1" | "pack2" | "pack3" | "pack4"),
       fit: "contain",
-      shadow: true,
       visible: true,
     });
-    slots.push({
+    gam.push({
       id: newLayerId(`packlbl${i + 1}`),
       type: "text",
-      box: { x, y: 0.68, w: 0.2, h: 0.035 },
+      box: { x, y: 0.828, w: 0.2, h: 0.03 },
       text: `{pack${i + 1}}`,
-      size: 0.022,
+      size: 0.019,
       weight: 700,
       color: INK_SOFT,
       align: "center",
@@ -231,95 +179,236 @@ function rangeLayout(): TemplateLayout {
   return {
     width: 1400,
     height: 1400,
-    background: "#ffffff",
+    background: PAZAR_ZEMIN,
     layers: [
-      ...heading(0.06, 0.055),
+      // Rengin kendisinden yumuşak bir zemin: beyaz üstünde beyaz ambalaj
+      // fotoğrafı havada duruyordu, kare de rengi ancak numunede gösteriyordu.
+      //
+      // Sol kenarı obje kutusunun BİTTİĞİ yerde başlıyor (0.05 + 0.52 = 0.57):
+      // AI çıktısı beyaz FONLU geliyor, yani objenin kutusu opak bir beyaz
+      // dikdörtgen. Üst üste binerlerse o beyaz, yıkamanın üstünü kesiyor.
       {
-        id: newLayerId("strip"),
+        id: newLayerId("wash"),
         type: "rect",
-        box: { x: 0.06, y: 0.265, w: 0.88, h: 0.012 },
+        box: { x: 0.585, y: 0.05, w: 0.375, h: 0.55 },
         fill: "paint",
-        radius: 0.006,
+        opacity: 0.1,
+        radius: 0.03,
+        gradient: true,
         visible: true,
       },
-      ...slots,
-      // Renk numunesi kutuların altında: kutular rengi göstermiyor (etiket her
-      // renkte aynı), rengi gösteren tek şey numune.
+      ...heading(0.06, 0.055),
+      {
+        id: newLayerId("pack"),
+        type: "image",
+        box: { x: 0.55, y: 0.055, w: 0.4, h: 0.52 },
+        source: "packaging",
+        fit: "contain",
+        shadow: true,
+        visible: true,
+      },
       {
         id: newLayerId("obj"),
         type: "image",
-        box: { x: 0.055, y: 0.73, w: 0.3, h: 0.15 },
+        box: { x: 0.05, y: 0.3, w: 0.47, h: 0.28 },
         source: "object",
         fit: "contain",
+        shadow: true,
         visible: true,
       },
+      // Gam şeridinin başlığı: kutular etiketsiz kalırsa "neden dört kutu var"
+      // sorusu doğuyor. Tek satır cevap veriyor.
       {
-        id: newLayerId("note"),
+        id: newLayerId("gambaslik"),
         type: "text",
-        box: { x: 0.42, y: 0.79, w: 0.52, h: 0.06 },
-        // `{series}` değil `{line} {effect}`: seri etiketi ("Vivid Candy")
-        // küçük harf taşıyor ve Türkçe büyütmede "VİVİD" oluyor. Hat ve efekt
-        // zaten büyük harfle tanımlı.
-        text: "{brand} · {line} {effect}",
-        size: 0.022,
+        box: { x: 0.06, y: 0.595, w: 0.88, h: 0.035 },
+        text: "AMBALAJ SEÇENEKLERİ",
+        size: 0.021,
         weight: 700,
-        color: INK_SOFT,
-        align: "right",
+        color: INK_FAINT,
+        align: "left",
         transform: "upper",
         visible: true,
       },
+      ...gam,
       ...footer(0.925, 0.017, 1),
     ],
   };
 }
 
 /**
- * Kat progresyonu.
+ * DUYURU — "yeni renk geldi", "kampanya", "stokta".
  *
- * Üç küçük kare + etiketleri ayrı katman: kullanıcı kat sayısını azaltmak
- * isterse fazlasını görünmez yapabilsin, kod değişmesin.
+ * ── Neden gerekliydi ──────────────────────────────────────────────────────
+ * On dört şablonun on dördü de KATALOG karesiydi: hepsi "bu ürün şudur" diyor,
+ * hiçbiri haber vermiyordu. Yeni bir renk üretildiğinde paylaşılacak kare
+ * yoktu; ürün kartı paylaşılıyor ve yeni olduğu hiçbir yerde yazmıyordu.
+ *
+ * Üstteki bant metni SABİT ve düzenlenebilir: "YENİ RENK", "KAMPANYA",
+ * "STOKTA" — hangisi gerekiyorsa Şablon Editörü'nden yazılıyor. Yer tutucuya
+ * bağlamadık çünkü duyurunun ne olduğu veride değil, o günün kararında.
  */
-function coatsLayout(): TemplateLayout {
-  const cells: Layer[] = [];
-  for (let i = 0; i < 3; i += 1) {
-    const x = 0.06 + i * 0.293;
-    cells.push({
-      id: newLayerId(`coat${i + 1}`),
-      type: "image",
-      box: { x, y: 0.66, w: 0.26, h: 0.16 },
-      source: (`coat${i + 1}` as "coat1" | "coat2" | "coat3"),
-      fit: "contain",
-      visible: true,
-    });
-    cells.push({
-      id: newLayerId(`coatlbl${i + 1}`),
-      type: "text",
-      box: { x, y: 0.835, w: 0.26, h: 0.03 },
-      text: `${i + 1} KAT`,
-      size: 0.022,
-      weight: 700,
-      color: "#52525b",
-      align: "center",
-      transform: "upper",
-      visible: true,
-    });
-  }
+function announceLayout(): TemplateLayout {
   return {
-    width: 1400,
-    height: 1400,
-    background: "#ffffff",
+    width: 1080,
+    height: 1080,
+    background: PAZAR_ZEMIN,
     layers: [
-      ...heading(0.06, 0.055),
       {
-        id: newLayerId("main"),
+        id: newLayerId("bant"),
+        type: "rect",
+        box: { x: 0, y: 0, w: 1, h: 0.115 },
+        fill: "paint",
+        visible: true,
+      },
+      {
+        id: newLayerId("duyuru"),
+        type: "text",
+        box: { x: 0.06, y: 0.032, w: 0.88, h: 0.06 },
+        text: "YENİ RENK",
+        size: 0.052,
+        weight: 700,
+        color: "#ffffff",
+        align: "left",
+        transform: "upper",
+        visible: true,
+      },
+      {
+        id: newLayerId("obj"),
         type: "image",
-        box: { x: 0.18, y: 0.28, w: 0.64, h: 0.34 },
-        source: "coat3",
+        box: { x: 0.1, y: 0.16, w: 0.8, h: 0.42 },
+        source: "object",
         fit: "contain",
         shadow: true,
         visible: true,
       },
-      ...cells,
+      {
+        id: newLayerId("code"),
+        type: "text",
+        box: { x: 0.07, y: 0.62, w: 0.6, h: 0.1 },
+        text: "{code}",
+        size: 0.085,
+        weight: 700,
+        color: INK,
+        align: "left",
+        transform: "upper",
+        visible: true,
+      },
+      {
+        id: newLayerId("nameTr"),
+        type: "text",
+        box: { x: 0.07, y: 0.725, w: 0.86, h: 0.06 },
+        text: "{nameTr}",
+        size: 0.048,
+        weight: 400,
+        color: INK_SOFT,
+        align: "left",
+        transform: "upper",
+        visible: true,
+      },
+      {
+        id: newLayerId("nameEn"),
+        type: "text",
+        box: { x: 0.07, y: 0.788, w: 0.86, h: 0.05 },
+        text: "{nameEn}",
+        size: 0.034,
+        weight: 400,
+        color: INK_FAINT,
+        align: "left",
+        transform: "upper",
+        visible: true,
+      },
+      {
+        id: newLayerId("series"),
+        type: "text",
+        box: { x: 0.07, y: 0.845, w: 0.86, h: 0.04 },
+        text: "{line}  {effect}",
+        size: 0.026,
+        weight: 700,
+        color: INK,
+        align: "left",
+        transform: "upper",
+        visible: true,
+      },
+      ...footer(0.935, 0.019, 1),
+    ],
+  };
+}
+
+/**
+ * ÖNCESİ / SONRASI — rötuş işinin kanıtı.
+ *
+ * ── Veri kaynağı yok, kasıtlı ─────────────────────────────────────────────
+ * İki kare de kullanıcının kendi çekimi: çizik kaporta ve rötuşlanmış hâli.
+ * Bunlar renk kaydından türetilemez ve AI'den de üretilmemeli — "öncesi"
+ * uydurmak, kanıt olması gereken karenin tek işini bitirir.
+ *
+ * Katmanlar `before`/`after` kaynağına bağlı ve o kaynaklar Şablon
+ * Editörü'nden kullanıcının yüklediği varlığa yönlendiriliyor. Bağlanmadan
+ * kare üretilmiyor (bkz. `renkCards`).
+ */
+function beforeAfterLayout(): TemplateLayout {
+  const frame = (
+    n: number,
+    source: "before" | "after",
+    label: string,
+    x: number,
+  ): Layer[] => [
+    {
+      id: newLayerId(`kare${n}`),
+      type: "image",
+      box: { x, y: 0.3, w: 0.43, h: 0.4 },
+      source,
+      fit: "cover",
+      visible: true,
+    },
+    {
+      id: newLayerId(`kareetiket${n}`),
+      type: "text",
+      box: { x, y: 0.715, w: 0.43, h: 0.04 },
+      text: label,
+      size: 0.026,
+      weight: 700,
+      color: INK_SOFT,
+      align: "center",
+      transform: "upper",
+      visible: true,
+    },
+  ];
+  return {
+    width: 1400,
+    height: 1400,
+    background: TANITIM_ZEMIN,
+    layers: [
+      ...heading(0.06, 0.055),
+      ...frame(1, "before", "ÖNCESİ", 0.05),
+      ...frame(2, "after", "SONRASI", 0.52),
+      // Aradaki ok: iki kare yan yana durunca hangisinin önce olduğu
+      // okunmuyor. Etiketler söylüyor, ok bakışı soldan sağa çekiyor.
+      {
+        id: newLayerId("ok"),
+        type: "text",
+        box: { x: 0.475, y: 0.475, w: 0.05, h: 0.06 },
+        text: "→",
+        size: 0.038,
+        weight: 400,
+        color: INK_FAINT,
+        align: "center",
+        transform: "none",
+        visible: true,
+      },
+      {
+        id: newLayerId("not"),
+        type: "text",
+        box: { x: 0.06, y: 0.79, w: 0.88, h: 0.04 },
+        text: "{brand} · {line} {effect} İLE UYGULANDI",
+        size: 0.021,
+        weight: 700,
+        color: INK_SOFT,
+        align: "left",
+        transform: "upper",
+        visible: true,
+      },
       ...footer(0.925, 0.017, 1),
     ],
   };
@@ -337,7 +426,7 @@ function paletteLayout(): TemplateLayout {
   return {
     width: 1400,
     height: 1400,
-    background: "#ffffff",
+    background: TANITIM_ZEMIN,
     layers: [
       ...heading(0.06, 0.055),
       {
@@ -392,7 +481,7 @@ function marketplaceLayout(): TemplateLayout {
   return {
     width: 1600,
     height: 1600,
-    background: "#ffffff",
+    background: PAZAR_ZEMIN,
     // Filigran BURADA yasak. `resolveWatermark` çıplak şablonda zaten çizdirmez;
     // burada da açıkça kapalı duruyor ki editörde açık görünüp kullanıcıya
     // "koruma var" yalanını söylemesin.
@@ -410,23 +499,38 @@ function marketplaceLayout(): TemplateLayout {
   };
 }
 
-/** Obje üstte, renk şeridi, metin bloğu — katalog ve site listesi. */
+/**
+ * RENK KARTI — obje üstte, renk şeridi, metin bloğu.
+ *
+ * ── Üç kutu değil, tek tarif ──────────────────────────────────────────────
+ * Bu tarif önce üç ayrı şablondu: `card`, `social`, `story`. `social` ile
+ * `card` BİREBİR aynıydı — ikisi de aynı fonksiyonu aynı ölçüyle çağırıyordu,
+ * yani üretim listesinde aynı kare iki kez duruyordu. `story` ise aynı kurgunun
+ * dikey hâliydi, ayrı bir fonksiyon olarak kopyalanmıştı.
+ *
+ * Tek tarif kaldı, ölçüye göre uyarlanıyor: dikey kadrajda obje kadrajı
+ * doldurur (`cover`) çünkü 9:16'da `contain` karenin yarısını boş bırakıyor;
+ * kare kadrajda objenin tamamı görünür (`contain`) çünkü ürün kırpılmamalı.
+ */
 function cardLayout(width: number, height: number): TemplateLayout {
-  const objH = 0.58;
-  const stripY = objH + 0.02;
-  const textY = stripY + 0.06;
+  const tall = height / width >= 1.4;
+  // Dikey kadraj telefonda daha küçük görünüyor; yazı bir kademe büyüyor.
+  const k = tall ? 1.25 : 1;
+  const objH = tall ? 0.62 : 0.58;
+  const stripY = objH + (tall ? 0.015 : 0.02);
+  const textY = stripY + (tall ? 0.055 : 0.06);
   return {
     width,
     height,
-    background: "#ffffff",
+    background: PAZAR_ZEMIN,
     layers: [
       {
         id: newLayerId("obj"),
         type: "image",
-        box: { x: 0.06, y: 0.05, w: 0.88, h: objH },
+        box: tall ? { x: 0, y: 0, w: 1, h: objH } : { x: 0.06, y: 0.05, w: 0.88, h: objH },
         source: "object",
-        fit: "contain",
-        shadow: true,
+        fit: tall ? "cover" : "contain",
+        shadow: !tall,
         visible: true,
       },
       {
@@ -452,7 +556,7 @@ function cardLayout(width: number, height: number): TemplateLayout {
         type: "text",
         box: { x: 0.07, y: textY, w: 0.5, h: 0.09 },
         text: "{code}",
-        size: 0.072,
+        size: 0.072 * k,
         weight: 700,
         color: INK,
         align: "left",
@@ -464,7 +568,7 @@ function cardLayout(width: number, height: number): TemplateLayout {
         type: "text",
         box: { x: 0.07, y: textY + 0.095, w: 0.6, h: 0.05 },
         text: "{nameTr}",
-        size: 0.04,
+        size: 0.04 * k,
         weight: 400,
         color: INK_SOFT,
         align: "left",
@@ -476,7 +580,7 @@ function cardLayout(width: number, height: number): TemplateLayout {
         type: "text",
         box: { x: 0.07, y: textY + 0.15, w: 0.6, h: 0.04 },
         text: "{nameEn}",
-        size: 0.032,
+        size: 0.032 * k,
         weight: 400,
         color: "#71717a",
         align: "left",
@@ -488,7 +592,7 @@ function cardLayout(width: number, height: number): TemplateLayout {
         type: "text",
         box: { x: 0.07, y: textY + 0.2, w: 0.5, h: 0.035 },
         text: "{line}  {effect}",
-        size: 0.025,
+        size: 0.025 * k,
         weight: 700,
         color: INK,
         align: "left",
@@ -500,98 +604,14 @@ function cardLayout(width: number, height: number): TemplateLayout {
         type: "text",
         box: { x: 0.45, y: textY + 0.204, w: 0.48, h: 0.03 },
         text: "{packSizes}",
-        size: 0.018,
+        size: 0.018 * k,
         weight: 400,
         color: INK_FAINT,
         align: "right",
         transform: "upper",
         visible: true,
       },
-      ...footer(0.94, 0.019, width / height),
-    ],
-  };
-}
-
-/** Dikey 9:16 — story ve reels. */
-function storyLayout(): TemplateLayout {
-  return {
-    width: 1080,
-    height: 1920,
-    background: "#ffffff",
-    layers: [
-      {
-        id: newLayerId("obj"),
-        type: "image",
-        box: { x: 0, y: 0, w: 1, h: 0.62 },
-        source: "object",
-        fit: "cover",
-        visible: true,
-      },
-      {
-        id: newLayerId("strip"),
-        type: "rect",
-        box: { x: 0, y: 0.635, w: 1, h: 0.02 },
-        fill: "paint",
-        visible: true,
-      },
-      {
-        id: newLayerId("fade"),
-        type: "rect",
-        box: { x: 0, y: 0.655, w: 1, h: 0.04 },
-        fill: "paint",
-        opacity: 0.22,
-        gradient: true,
-        visible: true,
-      },
-      {
-        id: newLayerId("code"),
-        type: "text",
-        box: { x: 0.08, y: 0.69, w: 0.6, h: 0.06 },
-        text: "{code}",
-        size: 0.09,
-        weight: 700,
-        color: INK,
-        align: "left",
-        transform: "upper",
-        visible: true,
-      },
-      {
-        id: newLayerId("nameTr"),
-        type: "text",
-        box: { x: 0.08, y: 0.755, w: 0.84, h: 0.04 },
-        text: "{nameTr}",
-        size: 0.05,
-        weight: 400,
-        color: INK_SOFT,
-        align: "left",
-        transform: "upper",
-        visible: true,
-      },
-      {
-        id: newLayerId("nameEn"),
-        type: "text",
-        box: { x: 0.08, y: 0.8, w: 0.84, h: 0.035 },
-        text: "{nameEn}",
-        size: 0.038,
-        weight: 400,
-        color: "#71717a",
-        align: "left",
-        transform: "upper",
-        visible: true,
-      },
-      {
-        id: newLayerId("series"),
-        type: "text",
-        box: { x: 0.08, y: 0.845, w: 0.84, h: 0.03 },
-        text: "{line}  {effect}",
-        size: 0.03,
-        weight: 700,
-        color: INK,
-        align: "left",
-        transform: "upper",
-        visible: true,
-      },
-      ...footer(0.95, 0.022, 1080 / 1920),
+      ...footer(tall ? 0.95 : 0.94, 0.019 * k, width / height),
     ],
   };
 }
@@ -697,7 +717,7 @@ function coatSystemLayout(): TemplateLayout {
   return {
     width: 1400,
     height: 1400,
-    background: "#ffffff",
+    background: TANITIM_ZEMIN,
     layers: [
       ...heading(0.06, 0.055),
       {
@@ -770,7 +790,7 @@ function usageLayout(): TemplateLayout {
   return {
     width: 1400,
     height: 1400,
-    background: "#ffffff",
+    background: TANITIM_ZEMIN,
     layers: [...heading(0.06, 0.055), ...cells, ...footer(0.945, 0.017, 1)],
   };
 }
@@ -804,80 +824,91 @@ export function usageBoxes(count: number): LayerBox[] {
     { x: 0.52, y: top + 0.32, w: 0.4, h: 0.28 },
   ];
 }
-
 /**
- * SERİ BANNER'I — reklam afişi.
+ * SERİ AFİŞİ — reklam.
  *
- * ── Şablonun mantığı ──────────────────────────────────────────────────────
- * Bu kare bir ÜRÜN KARTI değil, AFİŞ. Sektörün yaptığı iş şu (Stardust,
- * House of Kolor ve benzerleri aynı düzeni kuruyor):
+ * ── Afişin işi ────────────────────────────────────────────────────────────
+ * Bu kare bir ürün kartı değil. Kartın işi anlatmak, afişin işi DURDURMAK:
+ * akışta 1.5 saniye. O sürede okunan şey tek bir kelime öbeği ve bir sayıdır;
+ * kod, ad, boy listesi, madde listesi okunmaz. Bu yüzden afişin kendi
+ * sözleşmesi var (`shared/color/families.ts`) ve kimlik bloğu, palet, ambalaj
+ * şeridi burada YASAK — dördü de daha önce tek tek sızıp afişi kurumsal bir
+ * slayta çevirdi.
  *
- *   tam sayfa GERÇEK FOTOĞRAF  →  üstüne büyük SERİ YAZISI
- *   →  önünde ÜRÜN KUTULARI  →  tek kısa İDDİA ("40 COLOURS")
+ * ── Zemin neden çizilir ───────────────────────────────────────────────────
+ * Önceki hâli tam sayfa fotoğraf bekliyordu ve fotoğraf gelene kadar objenin
+ * kadraja yayılmış hâliyle idare ediyordu. Çekim hiç gelmedi, dolayısıyla
+ * afişin zemini hiç olmadı. Artık zemin KODDAN çiziliyor: serinin aksan
+ * renginden dip, gövde, ışık paneli ve halo (`shared/color/scene.ts`). Çekim
+ * beklemiyor, her seride tutarlı ve seriye göre gerçekten değişiyor.
  *
- * Yani afişin konusu boyanın kendisi değil, boyanmış İŞ: boyanmış scooter,
- * boyanmış kaporta, boyanmış bisiklet. Kutular öne konuyor ki "bu işi bu
- * ürünle yaptık" desin.
- *
- * ── Önceki hâli neden yanlıştı ────────────────────────────────────────────
- * Kare bir kurumsal slayt gibi kurulmuştu: ortada tek obje, solda madde
- * listesi, altta renk çipleri. Madde listesi afişte okunmaz; çip şeridi
- * katalog işidir, reklam işi değil. Sonuç "şablon doldurulmuş" hissi veriyordu.
- *
- * ── Fotoğraf nereden gelir ────────────────────────────────────────────────
- * `arkaplan` katmanı KULLANICI VARLIĞI bekliyor: gerçek çekim ya da bir kez
- * AI ile üretilmiş bir sahne, Şablon Varlıkları'na yüklenip buraya bağlanır.
- * Bağlanana kadar obje karesi tam sayfa kullanılıyor (fonu silinmiş, koyu
- * zemin üstünde) — afiş yine ayakta duruyor ama asıl gücünü fotoğrafla
- * kazanıyor.
+ * ── Kurgu ─────────────────────────────────────────────────────────────────
+ *   çizilmiş sahne → objenin arkasında halo → kadrajdan taşan obje
+ *   → alttan yükselen karartma → dev SERİ YAZISI → tek iddia ("40 RENK")
+ *   → önde ürün kutuları ("bu işi bu ürünle yaptık")
  */
 function bannerLayout(width: number, height: number): TemplateLayout {
   const aspect = width / height;
   const wide = aspect >= 1.6;
   const tall = height / width >= 1.5;
-  // Afişte yazı büyük olur; geniş banddaki yükseklik sınırı yüzünden oran
-  // başına ayrı ölçek.
+  // Afişte yazı büyük olur; geniş bantta yükseklik sınırı ölçeği düşürüyor.
   const k = wide ? 0.5 : tall ? 0.9 : 1;
 
   return {
     width,
     height,
-    background: "#0a0a0c",
+    background: BANNER_ZEMIN,
     layers: [
       /*
-       * Tam sayfa fotoğraf. `cover`: kadraj dolar, oran ne olursa olsun
-       * boşluk kalmaz. Kullanıcı varlığa bağlayana kadar kapalı.
+       * ZEMİN — tam sayfa çizilmiş sahne.
+       *
+       * Geniş bantta `sweep`: o oranda köşeden inen panel kadrajın yarısını
+       * yiyor ve yazıya yer bırakmıyor.
        */
       {
-        id: newLayerId("arkaplan"),
-        type: "image",
+        id: newLayerId("zemin"),
+        type: "scene",
         box: { x: 0, y: 0, w: 1, h: 1 },
-        source: "asset:0" as ImageSource,
-        fit: "cover",
-        visible: false,
+        variant: wide ? "sweep" : "panel",
+        color: "accent",
+        visible: true,
       },
-      // Fotoğraf yokken sahneyi kuran katman: obje büyük ve taşarak.
+      /*
+       * HALO — objenin arkasındaki ışık.
+       *
+       * Fonu silinmiş obje ışıksız bir zeminde yüzmüyor, YAPIŞTIRILMIŞ
+       * görünüyor. Halo onu zemine oturtuyor ve bakışı objeye çekiyor.
+       */
+      {
+        id: newLayerId("halo"),
+        type: "scene",
+        box: wide ? { x: 0.32, y: 0, w: 0.68, h: 1 } : { x: 0.05, y: 0.05, w: 0.95, h: 0.62 },
+        variant: "glow",
+        color: "accent",
+        opacity: 0.9,
+        visible: true,
+      },
+      // Obje kadrajdan taşıyor: afişte kahraman çerçeveye sığmaz.
       {
         id: newLayerId("sahne"),
         type: "image",
-        box: wide ? { x: 0.34, y: -0.12, w: 0.72, h: 1.3 } : { x: 0.06, y: 0.16, w: 1.02, h: 0.6 },
+        box: wide ? { x: 0.34, y: -0.12, w: 0.72, h: 1.3 } : { x: 0.06, y: 0.14, w: 1.02, h: 0.58 },
         source: "object",
         fit: "contain",
         knockout: true,
         visible: true,
       },
       /*
-       * Karartma ALT KENARDAN yükseliyor (`flip`): fotoğrafın üstü açık
-       * kalıyor, yazının oturduğu alt bölge okunur oluyor. Aşağı inen geçiş
-       * tam tersini yapardı — gökyüzünü karartıp yazıyı fotoğrafın en parlak
-       * yerine bırakırdı.
+       * Karartma ALT KENARDAN yükseliyor (`flip`): sahnenin üstü açık kalıyor,
+       * yazının oturduğu alt bölge okunur oluyor. Aşağı inen geçiş tam tersini
+       * yapar — ışığı karartıp yazıyı en parlak yere bırakırdı.
        */
       {
         id: newLayerId("karartma"),
         type: "rect",
-        box: { x: 0, y: 0.4, w: 1, h: 0.6 },
+        box: { x: 0, y: 0.38, w: 1, h: 0.62 },
         fill: "#000000",
-        opacity: 0.72,
+        opacity: 0.78,
         gradient: true,
         flip: true,
         visible: true,
@@ -899,37 +930,33 @@ function bannerLayout(width: number, height: number): TemplateLayout {
         knockout: true,
         visible: true,
       })),
-      /*
-       * SERİ YAZISI — afişin en büyük öğesi.
-       *
-       * Kutuların üstünde ve sağında duruyor; afişte marka adı fısıldanmaz.
-       */
+      // SERİ YAZISI — afişin en büyük öğesi. Afişte marka adı fısıldanmaz.
       {
         id: newLayerId("seri"),
         type: "text",
         box: wide
           ? { x: 0.38, y: 0.52, w: 0.58, h: 0.24 }
-          : { x: 0.06, y: tall ? 0.79 : 0.79, w: 0.88, h: 0.13 },
+          : { x: 0.06, y: 0.79, w: 0.88, h: 0.13 },
         text: "{line}",
         size: 0.14 * k,
         weight: 700,
         color: "#ffffff",
-        align: wide ? "left" : "left",
+        align: "left",
         transform: "upper",
         visible: true,
       },
       /*
        * TEK İDDİA: "40 RENK".
        *
-       * Madde listesi yerine tek bir sayı. Afişte okunan şey budur ve veri
-       * zaten elimizde — paletin uzunluğu.
+       * Madde listesi yerine tek bir sayı — afişte okunan şey budur ve veri
+       * zaten elimizde: paletin uzunluğu.
        */
       {
         id: newLayerId("iddia"),
         type: "text",
         box: wide
           ? { x: 0.38, y: 0.76, w: 0.58, h: 0.08 }
-          : { x: 0.06, y: tall ? 0.9 : 0.9, w: 0.6, h: 0.06 },
+          : { x: 0.06, y: 0.9, w: 0.6, h: 0.06 },
         text: "{renkSayisi}",
         size: 0.045 * k,
         weight: 700,
@@ -939,7 +966,7 @@ function bannerLayout(width: number, height: number): TemplateLayout {
         opacity: 0.85,
         visible: true,
       },
-      // Slogan varsa iddianın altında tek satır; yoksa kare yine tam.
+      // Slogan varsa iddianın altında tek satır; yoksa afiş yine tam.
       {
         id: newLayerId("slogan"),
         type: "text",
@@ -959,6 +986,16 @@ function bannerLayout(width: number, height: number): TemplateLayout {
   };
 }
 
+/**
+ * KALDIRILAN ŞABLONLAR — kayıtlı yerleşimleri temizlenecek kimlikler.
+ *
+ * `social` kartın birebir kopyasıydı, `range` ürün karesiyle birleşti,
+ * `coats` kat sistemi şemasının içine girdi. Üçünün de veritabanında
+ * düzenlenmiş yerleşimi kalmış olabilir; migration bunları siliyor ve liste
+ * burada duruyor ki silinen kimlik ile kod tek yerden eşleşsin.
+ */
+export const RETIRED_TEMPLATE_IDS = ["social", "range", "coats"] as const;
+
 /** Şablon kimliği → fabrika yerleşimi. */
 export function defaultLayout(templateId: string): TemplateLayout {
   switch (templateId) {
@@ -966,6 +1003,8 @@ export function defaultLayout(templateId: string): TemplateLayout {
       return coatSystemLayout();
     case "usage":
       return usageLayout();
+    case "beforeafter":
+      return beforeAfterLayout();
     case "banner":
       return bannerLayout(1080, 1080);
     case "bannerWide":
@@ -976,18 +1015,15 @@ export function defaultLayout(templateId: string): TemplateLayout {
       return bannerLayout(1080, 1920);
     case "product":
       return productLayout();
-    case "range":
-      return rangeLayout();
     case "palette":
       return paletteLayout();
-    case "coats":
-      return coatsLayout();
+    case "announce":
+      return announceLayout();
     case "marketplace":
       return marketplaceLayout();
+    // Kart tek tarif, iki ölçü: kare gönderi ve dikey story.
     case "story":
-      return storyLayout();
-    case "social":
-      return cardLayout(1080, 1080);
+      return cardLayout(1080, 1920);
     case "card":
     default:
       return cardLayout(1080, 1080);

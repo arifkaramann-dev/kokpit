@@ -30,7 +30,14 @@ import {
 } from "@/lib/renkStudyo";
 import SablonEditor from "@/components/SablonEditor";
 import { buildCards } from "@/lib/renkCards";
-import { TEMPLATES, fallbackPackaging, getSeries, type PaintInfo } from "@/lib/renkTemplates";
+import {
+  TEMPLATES,
+  templatesOfFamily,
+  fallbackPackaging,
+  getSeries,
+  type PaintInfo,
+} from "@/lib/renkTemplates";
+import { FAMILIES, FAMILY_IDS } from "@shared/color/families";
 import type { PaletteEntry, TemplateLayout } from "@shared/color/layout";
 import { fillBannerVars } from "@shared/bannerText";
 import { coatSystemOf } from "@shared/color/coatSystem";
@@ -346,6 +353,9 @@ function useKatalogBoyutlari() {
         // Marka hattı ürünün GERÇEK serisinden: bitiş türünden tahmin edilen
         // eski değer CANDY ürününe "VIVID SOLID" yazdırıyordu.
         seriesLine: s?.name ?? null,
+        // Afişin çizilen zemini serinin aksan renginden türetiliyor; boşsa
+        // sahne koyu grafit varsayılana düşüyor (bkz. shared/color/scene.ts).
+        accentHex: (s as { accentColor?: string | null } | undefined)?.accentColor ?? null,
         coatSystem: coatSystemOf({
           name: s?.name ?? null,
           coatSystem: (s as { coatSystem?: unknown } | undefined)?.coatSystem,
@@ -1213,18 +1223,23 @@ function PazarlamaGorselleri({
       });
       setCards(out);
       if (!out.length) toast.error("Hiçbir şablon üretilemedi");
-      // Atlanan şablonun SEBEBİ söylenmezse kullanıcı "üretilmedi" diye
-      // düğmeye tekrar basıyor. En sık sebep banner metninin boş olması.
-      else if (
-        picked.some(id => id.startsWith("banner")) &&
-        !out.some(c => c.id.startsWith("banner")) &&
-        !paint.bannerSlogan?.trim()
-      ) {
-        toast.message("Banner atlandı — bu serinin sloganı boş", {
-          description:
-            "Seriler → ilgili seri → Kat Sistemi & Banner sekmesinden sloganı yaz ya da \"Seri metninden öner\" ile üret.",
-          duration: 9000,
-        });
+      // Atlanan ya da eksik çıkan şablonun SEBEBİ söylenmezse kullanıcı
+      // "üretilmedi" diye düğmeye tekrar basıyor.
+      else {
+        const uretildi = new Set(out.map(c => c.id));
+        if (picked.includes("beforeafter") && !uretildi.has("beforeafter")) {
+          toast.message("Öncesi / sonrası atlandı — iki çekim bağlı değil", {
+            description:
+              "Bu karenin içeriği senin çekimin: Şablon Varlıkları'na iki fotoğrafı yükle, sonra Şablonları Düzenle → Öncesi / sonrası → kareleri o varlıklara bağla.",
+            duration: 9000,
+          });
+        } else if (picked.some(id => id.startsWith("banner")) && !paint.accentHex) {
+          toast.message("Afişin zemini varsayılan grafitle çizildi", {
+            description:
+              "Seriler → ilgili seri → Kat Sistemi & Banner → \"Afiş aksan rengi\"ni seç; afişin bütün zemini o renkten türer.",
+            duration: 9000,
+          });
+        }
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Şablonlar üretilemedi");
@@ -1521,71 +1536,146 @@ function PazarlamaGorselleri({
             </div>
           )}
 
-          {/* Hangi şablonlar */}
-          <div className="space-y-2 border-t pt-4">
+          {/*
+            ŞABLONLAR — aile aile.
+            Düz liste on dört satırdı ve hepsi tek seferde üretiliyordu: afiş
+            beğenilmediğinde on dört karenin hepsi yeniden bekleniyordu. Aile
+            başlığının kendi seçimi ve kendi "tümü" düğmesi var; aynı tarifin
+            ölçüleri (afişin dört kadrajı, kartın iki ölçüsü) tek satırda
+            rozet olarak toplanıyor.
+          */}
+          <div className="space-y-3 border-t pt-4">
             <div className="flex items-center justify-between gap-2">
               <Label>Şablonlar</Label>
-              <div className="flex items-center gap-1">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() =>
-                    setPicked(prev => (prev.length === TEMPLATES.length ? [] : TEMPLATES.map(t => t.id)))
-                  }
-                >
-                  {picked.length === TEMPLATES.length ? "Hiçbiri" : "Tümü"}
-                </Button>
-                <Button size="sm" variant="ghost" onClick={onSablonDuzenle}>
-                  <Settings2 className="mr-1 size-4" /> Düzenle
-                </Button>
-              </div>
+              <Button size="sm" variant="ghost" onClick={onSablonDuzenle}>
+                <Settings2 className="mr-1 size-4" /> Düzenle
+              </Button>
             </div>
-            <div className="space-y-1">
-              {TEMPLATES.map(t => {
-                const on = picked.includes(t.id);
-                return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() =>
-                      setPicked(prev =>
-                        on ? prev.filter(x => x !== t.id) : [...prev, t.id],
-                      )
-                    }
-                    className={`flex w-full items-start gap-2 rounded border p-2 text-left hover:bg-accent ${
-                      on ? "border-primary/50 bg-accent/50" : ""
-                    }`}
-                  >
-                    <span
-                      className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border ${
-                        on ? "bg-primary text-primary-foreground" : ""
-                      }`}
+
+            {FAMILY_IDS.map(fid => {
+              const aile = FAMILIES[fid];
+              const list = templatesOfFamily(fid);
+              const ids = list.map(t => t.id);
+              const secili = ids.filter(id => picked.includes(id));
+              const hepsi = secili.length === ids.length;
+              // Aynı tarifin ölçüleri tek satırda: grup anahtarı yoksa
+              // şablonun kendi kimliği anahtar olur.
+              const gruplar: Array<{ key: string; items: typeof list }> = [];
+              for (const t of list) {
+                const key = t.group ?? t.id;
+                const found = gruplar.find(g => g.key === key);
+                if (found) found.items.push(t);
+                else gruplar.push({ key, items: [t] });
+              }
+              return (
+                <div key={fid} className="rounded-lg border">
+                  <div className="flex items-start justify-between gap-2 border-b bg-muted/40 px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold">{aile.label}</div>
+                      <div className="text-[11px] text-muted-foreground">{aile.purpose}</div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 shrink-0 text-xs"
+                      onClick={() =>
+                        setPicked(prev =>
+                          hepsi
+                            ? prev.filter(id => !ids.includes(id))
+                            : Array.from(new Set([...prev, ...ids])),
+                        )
+                      }
                     >
-                      {on && <Check className="size-3" />}
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block text-sm font-medium">
-                        {t.label}
-                        {layouts[t.id] && (
-                          <Badge variant="secondary" className="ml-2 text-[10px]">
-                            düzenlendi
-                          </Badge>
-                        )}
-                      </span>
-                      <span className="block text-xs text-muted-foreground">{t.hint}</span>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+                      {hepsi ? "Hiçbiri" : "Tümü"}
+                    </Button>
+                  </div>
+                  <div className="space-y-1 p-2">
+                    {gruplar.map(g => {
+                      const bas = g.items[0];
+                      const tekli = g.items.length === 1;
+                      const acik = g.items.filter(t => picked.includes(t.id));
+                      const on = acik.length > 0;
+                      const toggle = () =>
+                        setPicked(prev =>
+                          on
+                            ? prev.filter(id => !g.items.some(t => t.id === id))
+                            : Array.from(new Set([...prev, ...g.items.map(t => t.id)])),
+                        );
+                      return (
+                        <div
+                          key={g.key}
+                          className={`rounded border p-2 ${on ? "border-primary/50 bg-accent/50" : ""}`}
+                        >
+                          <button
+                            type="button"
+                            onClick={toggle}
+                            className="flex w-full items-start gap-2 text-left"
+                          >
+                            <span
+                              className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border ${
+                                on ? "bg-primary text-primary-foreground" : ""
+                              }`}
+                            >
+                              {on && <Check className="size-3" />}
+                            </span>
+                            <span className="min-w-0">
+                              <span className="block text-sm font-medium">
+                                {bas.label}
+                                {tekli && layouts[bas.id] && (
+                                  <Badge variant="secondary" className="ml-2 text-[10px]">
+                                    düzenlendi
+                                  </Badge>
+                                )}
+                              </span>
+                              <span className="block text-xs text-muted-foreground">
+                                {bas.hint}
+                              </span>
+                            </span>
+                          </button>
+                          {!tekli && (
+                            <div className="mt-2 flex flex-wrap gap-1 pl-6">
+                              {g.items.map(t => {
+                                const secildi = picked.includes(t.id);
+                                return (
+                                  <button
+                                    key={t.id}
+                                    type="button"
+                                    onClick={() =>
+                                      setPicked(prev =>
+                                        secildi
+                                          ? prev.filter(x => x !== t.id)
+                                          : [...prev, t.id],
+                                      )
+                                    }
+                                    className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                                      secildi
+                                        ? "border-primary bg-primary text-primary-foreground"
+                                        : "text-muted-foreground hover:bg-accent"
+                                    }`}
+                                    title={`${t.width}×${t.height}`}
+                                  >
+                                    {t.sizeLabel ?? t.label}
+                                    {layouts[t.id] ? " ·" : ""}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
           {/* Gümüş baz YALNIZ kat progresyonu seçiliyken.
               Başka hiçbir şablon kullanmıyor; her zaman göstermek, formu
               ilgisiz bir alanla uzatmak demekti. */}
-          {picked.includes("coats") && (
+          {picked.includes("system") && (
             <div className="space-y-2 border-t pt-4">
-              <Label>Gümüş baz (kat progresyonu için)</Label>
+              <Label>Gümüş baz (kat sistemi aşama kareleri için)</Label>
               <Select value={silverBaseId} onValueChange={setSilverBaseId}>
                 <SelectTrigger>
                   <SelectValue placeholder="Yok — kat progresyonu üretilemez" />
@@ -1600,13 +1690,15 @@ function PazarlamaGorselleri({
               </Select>
               <p className="text-xs text-muted-foreground">
                 Candy'de altta gümüş metalik baz vardır, üstüne saydam renk katmanları
-                biner. Katlar bu numuneden fizikle türetiliyor: 1. kat gümüş, 2. yarı
-                saydam, 3. doygun. Referans Objeler sekmesinden bir gümüş numune kaydet.
+                biner. Aşama kareleri bu numuneden fizikle türetiliyor: 1. kat gümüş,
+                2. yarı saydam, 3. doygun. Referans Objeler sekmesinden bir gümüş numune
+                kaydet. Seçilmezse kat sistemi şeması yine basılır — yalnız alt şeritteki
+                üç aşama karesi boş kalır.
               </p>
               {!silverBaseId && (
                 <p className="flex items-start gap-1.5 text-xs text-amber-600">
                   <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-                  Gümüş baz seçilmedi — kat progresyonu karesi üretilmeyecek.
+                  Gümüş baz seçilmedi — kat sistemi şeması aşama kareleri olmadan basılacak.
                 </p>
               )}
             </div>

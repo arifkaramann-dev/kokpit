@@ -143,6 +143,21 @@ export const productSeries = mysqlTable("productSeries", {
    * `shared/color/coatSystem.ts`) — hiçbir seri kat şemasız kalmasın.
    */
   coatSystem: json("coatSystem"),
+  /**
+   * SERİNİN AKSAN RENGİ — afişin zemini bundan çiziliyor.
+   *
+   * Afiş artık fotoğraf beklemiyor, zeminini koddan çiziyor (bkz.
+   * `shared/color/scene.ts`) ve o sahnenin bütün derinliği — dip, gövde, ışık
+   * paneli, halo — tek bir renkten türetiliyor.
+   *
+   * Neden rengin kendi hex'i değil: afiş SERİNİN karesi. Ürünün rengini
+   * kullansaydık aynı serinin kırk rengi kırk farklı zeminli afiş üretirdi ve
+   * seri bir marka gibi görünmezdi. Ayrıca katalogdaki renklerin çoğunda hex
+   * boş; afişler gri çıkardı.
+   *
+   * Boşsa koyu grafit varsayılan kullanılır — afiş yine ayakta durur.
+   */
+  accentColor: varchar("accentColor", { length: 9 }),
   /** Banner sloganı — AI serinin kendi metninden kısaltır, kullanıcı düzeltir. */
   bannerSlogan: varchar("bannerSlogan", { length: 160 }),
   /** Banner maddeleri: ["Güçlü yapışma", "Hızlı kuruma", "Üstün örtücülük"]. */

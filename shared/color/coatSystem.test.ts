@@ -118,32 +118,41 @@ describe("çift dilli renk adı", () => {
 });
 
 /**
- * Banner'ın ilk hâli "çiğ" görünüyordu: koyu zeminde beyaz fonlu kareler,
- * boş slogan alanı ve yanlış marka hattı. Bunlar tasarım tercihi değil,
- * düzeltilmiş hatalar — regresyona karşı bağlanıyor.
+ * Afişin dört ayrı denemede düzelmeyen kusurları burada bağlanıyor: bunlar
+ * tasarım tercihi değil, DÜZELTİLMİŞ HATALAR. Zemin fotoğraf bekleyip hiç
+ * gelmiyordu; kimlik bloğu, madde listesi ve çip şeridi afişi kurumsal bir
+ * slayta çeviriyordu.
  */
 describe("banner yerleşimi", () => {
   const banner = defaultLayout("banner");
   const id = (p: string) => banner.layers.find(l => l.id.startsWith(p));
   const sahne = id("sahne");
   const karartma = id("karartma");
-  const backdrop = id("arkaplan");
 
-  it("tam sayfa fotoğraf katmanı hazır ama kapalı gelir", () => {
-    // Afişin asıl zemini gerçek çekim; varlığa bağlanmadan görünür olsaydı
-    // her banner boş bir katman taşırdı.
-    expect(backdrop?.visible).toBe(false);
-    expect(backdrop?.type === "image" && backdrop.fit).toBe("cover");
-    expect(backdrop?.box).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+  it("zemin KODDAN çiziliyor — fotoğraf beklemiyor", () => {
+    // Önceki hâli varlığa bağlanacak bir fotoğraf katmanı taşıyordu ve o
+    // fotoğraf hiç yüklenmedi: afişin zemini hiç olmadı.
+    const zemin = id("zemin");
+    expect(zemin?.type).toBe("scene");
+    expect(zemin?.box).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+    expect(zemin && "color" in zemin && zemin.color).toBe("accent");
+    expect(banner.layers.some(l => l.type === "image" && l.source.startsWith("asset:"))).toBe(
+      false,
+    );
   });
 
-  it("fotoğraf yokken sahne objesi kadrajdan taşar", () => {
+  it("objenin arkasında halo var — ışıksız zeminde obje yapıştırılmış görünüyor", () => {
+    const halo = id("halo");
+    expect(halo?.type === "scene" && halo.variant).toBe("glow");
+  });
+
+  it("obje kadrajdan taşar", () => {
     const box = sahne?.box;
     expect(box && (box.x + box.w > 1 || box.y < 0)).toBe(true);
     expect(sahne && "knockout" in sahne && sahne.knockout).toBe(true);
   });
 
-  it("karartma ALT kenardan yükselir — yazı okunsun, fotoğrafın üstü açık kalsın", () => {
+  it("karartma ALT kenardan yükselir — yazı okunsun, sahnenin üstü açık kalsın", () => {
     expect(karartma?.type).toBe("rect");
     expect(karartma && "flip" in karartma && karartma.flip).toBe(true);
     expect(karartma && "gradient" in karartma && karartma.gradient).toBe(true);
@@ -154,7 +163,6 @@ describe("banner yerleşimi", () => {
     const iddia = id("iddia");
     expect(seri?.type === "text" && seri.text).toBe("{line}");
     expect(iddia?.type === "text" && iddia.text).toBe("{renkSayisi}");
-    // Madde listesi afişte okunmuyor; kurumsal slayt kurgusu kaldırıldı.
     expect(id("madde1")).toBeUndefined();
     expect(banner.layers.some(l => l.type === "palette")).toBe(false);
   });
@@ -170,6 +178,11 @@ describe("banner yerleşimi", () => {
     expect([defaultLayout("bannerWide").width, defaultLayout("bannerWide").height]).toEqual([1200, 628]);
     expect([defaultLayout("bannerHero").width, defaultLayout("bannerHero").height]).toEqual([1920, 600]);
     expect([defaultLayout("bannerStory").width, defaultLayout("bannerStory").height]).toEqual([1080, 1920]);
+  });
+
+  it("geniş bantta zemin yatay tarife geçiyor", () => {
+    const genis = defaultLayout("bannerHero").layers.find(l => l.id.startsWith("zemin"));
+    expect(genis?.type === "scene" && genis.variant).toBe("sweep");
   });
 });
 

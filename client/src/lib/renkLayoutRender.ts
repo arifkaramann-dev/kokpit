@@ -14,11 +14,13 @@ import {
   upperText,
   type PaletteEntry,
   type PaletteLayer,
+  type SceneLayer,
   type TemplateLayout,
   type TokenValues,
   type Watermark,
 } from "@shared/color/layout";
 import { knockoutBackgroundRaster } from "@shared/color/matte";
+import { sceneRecipe } from "@shared/color/scene";
 import { extractSubjectMask } from "@shared/color/subject";
 import { ensureBrandFont, forceWhiteBackground } from "./renkTemplates";
 
@@ -30,6 +32,14 @@ export type RenderLayoutInput = {
   images: LayerImages;
   /** `fill: "paint"` katmanlarının rengi. */
   paintHex?: string | null;
+  /**
+   * `color: "accent"` sahne katmanlarının rengi — SERİNİN aksan rengi.
+   *
+   * Afişin bütün derinliği tek bu renkten türetiliyor (bkz.
+   * `shared/color/scene.ts`). Boşsa gri değil, koyu grafit varsayılan
+   * kullanılıyor: renksiz bir afiş "seçilmemiş" değil "özensiz" görünür.
+   */
+  accentHex?: string | null;
   /** Palet katmanının çizeceği renkler — serinin gamı. */
   palette?: PaletteEntry[];
   /** Palet karelerinin yüklenmiş görselleri, renk KODUNA göre. */
@@ -230,6 +240,78 @@ function knockoutBackground(
   return canvas;
 }
 
+/**
+ * SAHNE — afişin koddan çizilen zemini.
+ *
+ * Dört adım, sırası önemli: dikey gövde gradyanı → açılı ışık paneli →
+ * radyal halo → kenar vinyeti. Panel halodan ÖNCE çiziliyor ki halo panelin
+ * de üstünü aydınlatsın; vinyet en sonda çünkü işi kenarları toplamak.
+ *
+ * Hangi durağın nereye düşeceği burada değil, `sceneRecipe` içinde: renk
+ * matematiği saf ve test edilebilir yerde duruyor, burası yalnız boyuyor.
+ */
+function drawScene(
+  ctx: CanvasRenderingContext2D,
+  layer: SceneLayer,
+  box: { x: number; y: number; w: number; h: number },
+  accentHex: string | null | undefined,
+  paintHex: string | null | undefined,
+) {
+  const color =
+    layer.color === "accent" ? accentHex : layer.color === "paint" ? paintHex : layer.color;
+  const recipe = sceneRecipe(layer.variant, color);
+
+  if (recipe.stops.length) {
+    const g = ctx.createLinearGradient(box.x, box.y, box.x, box.y + box.h);
+    for (const [at, c] of recipe.stops) g.addColorStop(at, c);
+    ctx.fillStyle = g;
+    ctx.fillRect(box.x, box.y, box.w, box.h);
+  }
+
+  if (recipe.panel) {
+    ctx.save();
+    // Panel kutunun dışına taşmamalı: sahne katmanı tam sayfa olmayabilir.
+    ctx.beginPath();
+    ctx.rect(box.x, box.y, box.w, box.h);
+    ctx.clip();
+    ctx.beginPath();
+    recipe.panel.points.forEach(([px, py], i) => {
+      const x = box.x + px * box.w;
+      const y = box.y + py * box.h;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.closePath();
+    ctx.fillStyle = recipe.panel.color;
+    ctx.fill();
+    ctx.restore();
+  }
+
+  if (recipe.glow) {
+    const cx = box.x + recipe.glow.x * box.w;
+    const cy = box.y + recipe.glow.y * box.h;
+    // Yarıçap KISA kenardan: uzun kenardan alınsa geniş bantta halo kadrajı
+    // baştan sona doldurup ışık olmaktan çıkardı.
+    const r = recipe.glow.radius * Math.min(box.w, box.h);
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(1, r));
+    g.addColorStop(0, recipe.glow.color);
+    g.addColorStop(1, recipe.glow.edge);
+    ctx.fillStyle = g;
+    ctx.fillRect(box.x, box.y, box.w, box.h);
+  }
+
+  if (recipe.vignette > 0) {
+    const cx = box.x + box.w / 2;
+    const cy = box.y + box.h / 2;
+    const r = Math.hypot(box.w, box.h) / 2;
+    const g = ctx.createRadialGradient(cx, cy, r * 0.45, cx, cy, r);
+    g.addColorStop(0, "rgba(0,0,0,0)");
+    g.addColorStop(1, `rgba(0,0,0,${recipe.vignette})`);
+    ctx.fillStyle = g;
+    ctx.fillRect(box.x, box.y, box.w, box.h);
+  }
+}
+
 function drawPalette(
   ctx: CanvasRenderingContext2D,
   layer: PaletteLayer,
@@ -408,6 +490,7 @@ export async function renderLayout({
   values,
   images,
   paintHex,
+  accentHex,
   palette = [],
   paletteImages = {},
   watermark,
@@ -431,6 +514,12 @@ export async function renderLayout({
     // yerde geri alınıyor ki bir tür eklenince unutulmasın.
     ctx.save();
     if (layer.opacity != null) ctx.globalAlpha = Math.max(0, Math.min(1, layer.opacity));
+
+    if (layer.type === "scene") {
+      drawScene(ctx, layer, box, accentHex, paintHex);
+      ctx.restore();
+      continue;
+    }
 
     if (layer.type === "rect") {
       const base = layer.fill === "paint" ? paintHex || "#cccccc" : layer.fill;

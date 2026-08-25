@@ -174,6 +174,17 @@ const productSeriesInput = z.object({
     .max(MAX_COAT_LAYERS)
     .nullable()
     .optional(),
+  /**
+   * Serinin aksan rengi — afişin çizilen zemini bundan türetiliyor.
+   *
+   * `#rrggbb` bekleniyor; serbest metin kabul edilirse sahne çizicisi rengi
+   * çözemez ve afiş sessizce varsayılan grafite düşerdi. Boş bırakılabilir.
+   */
+  accentColor: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/, "Renk #rrggbb biçiminde olmalı")
+    .nullable()
+    .optional(),
   /** Banner sloganı ve maddeleri — AI serinin kendi metninden kısaltır. */
   bannerSlogan: z.string().max(160).nullable().optional(),
   bannerBullets: z.array(z.string().max(80)).max(3).nullable().optional(),
@@ -371,6 +382,7 @@ export const seriesRouter = router({
       // Kat sistemi kayıtlı değilse seri adından türetilen varsayılan döner:
       // ekran da kart da aynı zinciri görsün, "boş" diye farklı davranmasın.
       coatSystem: coatSystemOf({ name: s.name, coatSystem: (s as { coatSystem?: unknown }).coatSystem }),
+      accentColor: (s as { accentColor?: string | null }).accentColor ?? null,
       bannerSlogan: (s as { bannerSlogan?: string | null }).bannerSlogan ?? null,
       bannerBullets: asArray((s as { bannerBullets?: unknown }).bannerBullets) as string[],
     }));
